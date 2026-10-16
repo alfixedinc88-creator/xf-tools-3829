@@ -2423,7 +2423,16 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15
     at('2026-10-09T20:00:00Z') && at('2026-10-10T16:45:00Z') && at('2026-10-10T17:44:00Z') && !at('2026-10-10T17:45:00Z') && !at('2026-10-10T16:44:00Z')
     && !at('2026-10-11T20:00:00Z') && at('2026-12-07T20:55:00Z'), null);
   // Owner (2026-10-08): Saturday no 30-min wait from 12:45 pm until printing stops at 1:45 pm.
-  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:45-17:00 ;sat 12:45-13:45') === 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', null);
+  // Owner (2026-10-16) changed the times: Mon–Fri 3:30–4 pm 3 min, from 4 pm none; Sat 12:30–1 pm 3 min, from 1 pm none.
+  const fw = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitWindow'].map(grab).join('\n') + '; return autolabelNoWaitWindow;')();
+  const DEF = 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0';
+  const W = t => { const w = fw({ noWaitTimes: DEF }, new Date(t)); return w ? w.min : 30; };
+  check('…the owner\'s times (2026-10-16), New York: Mon 3:29 pm 30 min · 3:30 pm 3 min · 3:59 pm 3 min · 4:00 pm no wait · 11:59 pm no wait · Tue 12:00 am 30 min',
+    W('2026-10-12T19:29:00Z') === 30 && W('2026-10-12T19:30:00Z') === 3 && W('2026-10-12T19:59:00Z') === 3 && W('2026-10-12T20:00:00Z') === 0 && W('2026-10-13T03:59:00Z') === 0 && W('2026-10-13T04:00:00Z') === 30, null);
+  check('…Sat 12:29 pm 30 min · 12:30 pm 3 min · 1:00 pm no wait; Sunday 4 pm 30 min; Fri 4:15 pm no wait; winter (Dec Mon 3:35 pm) 3 min; written the same way after a save; it is the default',
+    W('2026-10-17T16:29:00Z') === 30 && W('2026-10-17T16:30:00Z') === 3 && W('2026-10-17T17:00:00Z') === 0 && W('2026-10-18T20:00:00Z') === 30 && W('2026-10-16T20:15:00Z') === 0
+    && W('2026-12-07T20:35:00Z') === 3 && f.autolabelNoWaitClean(' mon-fri 15:30-16:00 = 3 ;MON-FRI 16:00-24:00=0; sat 12:30-13:00=3 min; sat 13:00-24:00=0') === DEF
+    && ws.indexOf("noWaitTimes: '" + DEF + "'") >= 0 && f.autolabelNoWaitClean('Mon-Fri 15:45-17:00; Sat 12:45-13:45') === 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', null);
   // A run inside a no-wait time: a 5-minute-old order is not held back; outside it, it waits.
   const realFetch = globalThis.fetch;
   const items = [{ quantity: 1, sellable: { id: 1201, sku_code: '1=NW', weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '1-1-1' }] } }];
@@ -2447,10 +2456,13 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15
   const r3 = await post('/veeqo/autolabel/run', {});
   ord.created_at = new Date(Date.now() - 3 * 60e3).toISOString(); // 3 min old
   const r4 = await post('/veeqo/autolabel/run', {});
-  check('…in a no-wait time an order waits 2 min (a merge order may come in): 1 min old → ⏳ Waiting "1 min left", 3 min old → would buy; the run says "2 min after it comes in"',
-    d(r3) === 'waiting' && /1 min left/.test((r3.orders.find(o => o.number === 'NW-1') || {}).reason) && d(r4) === 'would_buy' && (r3.notes || []).some(n => /2 min after it comes in/.test(n)), { r3: d(r3), r4: d(r4), notes: r3.notes });
-  check('…saved rules moved once to the owner\'s new times (3:45 pm, 2 min) and that is on record',
-    /autolabel_rules_nowait_345_1008/.test(ws) && /noWaitMinutes: 2,/.test(ws) && /waitMinutes: cfgSaved\.noWaitMinutes \|\| 0/.test(ws), null);
+  ord.created_at = new Date(Date.now() - 20e3).toISOString(); // 20 s old
+  await post('/veeqo/autolabel/config', { config: { noWaitTimes: 'Sun-Sat 0:00-24:00=0' } });
+  const r5 = await post('/veeqo/autolabel/run', {});
+  check('…a no-wait time without "=N" waits the general few minutes (3): 1 min old → ⏳ Waiting, 3 min old → would buy; a time with "=0" prints at once (20 s old → would buy, "as soon as it comes in")',
+    d(r3) === 'waiting' && d(r4) === 'would_buy' && (r3.notes || []).some(n => /3 min after it comes in/.test(n)) && d(r5) === 'would_buy' && (r5.notes || []).some(n => /as soon as it comes in/.test(n)), { r3: d(r3), r4: d(r4), r5: d(r5), notes: r5.notes });
+  check('…saved rules moved once to the owner\'s new times (3:30 pm 3 min, 4 pm none; Sat 12:30 / 1 pm) and that is on record; each time uses its own wait',
+    /autolabel_rules_nowait_330_1016/.test(ws) && /noWaitMinutes: 3,/.test(ws) && /const cfg = noWait \? \{ \.\.\.cfgSaved, waitMinutes: nwMin \} : cfgSaved;/.test(ws), null);
   await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
@@ -6767,6 +6779,25 @@ console.log('\n📶 Phone outbox: sent whoever is signed in, recorded as the per
   check('signed in as PK: Maria\'s waiting entry (saved under her name on this phone) is read and sent too, kept in her own list; it is sent as hers (_byUserId 1)',
     JSON.stringify(all) === '["m1","p1"]' && m1.state === 'sent' && p1.state === 'waiting' && O.owner({ _k: 'xf_inv_outbox_1', body: {} }) === 1
       && /body\._byUserId = INV_CRED_USER\.userId;/.test(ih) && /sendBody = Object\.assign\(\{\}, sendBody, \{ _byUserId: invObOwnerId\(ent\) \}\)/.test(ih), { all, m1, p1 });
+}
+
+// Owner (2026-10-16): "Auto Label — Mon–Fri stop the 30-min wait at 3:30 pm, wait 3 min; from 4 pm print as soon as an order
+// comes in; Saturday from 12:30 pm 3 min, from 1 pm instant". 🗓 Auto print schedule says it in plain words.
+console.log('\n🗓 Auto Label schedule: Mon–Fri 3:30 pm 3 min → 4 pm no wait; Sat 12:30 pm 3 min → 1 pm no wait');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const grab = re => (ph.match(re) || [''])[0];
+  const src = [grab(/function _psAlClock\(hm\) \{[\s\S]*?\n\}/), grab(/var _PS_DAYN = [\s\S]*?\nfunction _psAlSchedRender/).replace(/\nfunction _psAlSchedRender$/, '')].join('\n');
+  const html = new Function('var _psAlEsc = function(v){return String(v);};' + src + '; return _psAlSchedHtml;')()({ waitMinutes: 30, noWaitMinutes: 3,
+    noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0', pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Mon-Sun 20:30-24:00; Mon-Sun 0:00-0:05',
+    scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45' });
+  const txt = html.replace(/<\/tr>/g, '\n').replace(/<div style="font-weight:800">/g, '\n== ').replace(/<[^>]+>/g, ' ').replace(/[ ]+/g, ' ');
+  const part = name => (txt.split('== ' + name)[1] || '').split('==')[0];
+  const mf = part('Mon–Fri'), sa = part('Saturday'), su = part('Sunday');
+  check('Mon–Fri: 3:30 pm "No 30-min wait — new orders wait 3 min", 4:00 pm "⚡ No wait — prints as soon as it comes in" (no "back to the 30-min wait" in between); Sat 12:30 pm 3 min, 1:00 pm ⚡; Sunday unchanged',
+    /3:30 pm ⏩ No 30-min wait — new orders wait 3 min/.test(mf) && /4:00 pm ⚡ No wait — an order prints as soon as it comes in/.test(mf) && !/4:00 pm[^\n]*Back to the/.test(mf)
+    && /12:30 pm ⏩ No 30-min wait — new orders wait 3 min/.test(sa) && /1:00 pm ⚡ No wait/.test(sa) && !/⏩|⚡/.test(su), { mf, sa, su });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

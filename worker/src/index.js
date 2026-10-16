@@ -26252,8 +26252,10 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
-  noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', // ...except in these New York times: no 30-min wait (owner 2026-10-08: Mon-Fri from 3:45 pm, Sat 12:45–1:45 pm)
-  noWaitMinutes: 2,            // ...in those times an order waits only this long (owner: "wait 2 minutes to see if a merge order comes in")
+  // ...except in these New York times, each with its own wait (owner 2026-10-16): Mon–Fri 3:30–4 pm 3 min, from 4 pm none;
+  // Sat 12:30–1 pm 3 min, from 1 pm none. Until 3:30 pm (Sat 12:30 pm) and on Sunday: the 30-min wait.
+  noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0',
+  noWaitMinutes: 3,            // ...a no-wait time without its own "=N" waits this long (owner: "wait a few minutes to see if a merge order comes in")
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
   scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45', // New York time (owner 2026-10-08: 8:45 pm EVERY day; Mon-Fri 4:30 pm, Sat 1:45 pm)
   scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
@@ -26419,6 +26421,15 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, 'autolabel_rules_scanform_850_1008', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Scan form every day 8:50 pm + no auto print 8:30 pm – 12:10 am (owner's request): ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
   }
+  // Owner 2026-10-16: "Mon–Fri stop the 30-min wait at 3:30 pm, wait 3 min, from 4 pm print as soon as an order comes in;
+  // Saturday from 12:30 pm 3 min, from 1 pm instant". Saved rules move once to these times (on record).
+  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_330_1016')) !== 'done') {
+    const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
+    saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes; saved.noWaitMinutes = AUTOLABEL_DEFAULTS.noWaitMinutes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_nowait_330_1016', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Mon-Fri 3:30 pm 3-min wait, 4 pm no wait; Sat 12:30 pm 3 min, 1 pm no wait (owner's request): ${JSON.stringify(before)} → ${saved.noWaitTimes}` }).catch(() => {});
+  }
   // Owner 2026-10-08: "Mon–Fri at 3:45 pm stop the 30-min wait; new orders wait 2 min (a merge may come in), then print".
   if ((await autolabelGetKey(env, 'autolabel_rules_nowait_345_1008')) !== 'done') {
     const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
@@ -26494,7 +26505,8 @@ const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 function autolabelNoWaitParse(text) {
   const out = [];
   for (const part of String(text || '').split(/[;\n]+/)) {
-    const m = part.trim().toLowerCase().match(/^([a-z ,\-]+?)\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    // "Mon-Fri 15:30-16:00=3": an optional "=N" = that time's own wait in minutes (=0 = print as soon as it comes in).
+    const m = part.trim().toLowerCase().match(/^([a-z ,\-]+?)\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})(?:\s*=\s*(\d{1,2})\s*(?:min)?)?$/);
     if (!m) continue;
     const days = new Set();
     for (const d of m[1].split(/\s*,\s*/)) {
@@ -26503,7 +26515,7 @@ function autolabelNoWaitParse(text) {
       if (r.length === 1) days.add(r[0]); else for (let i = r[0]; ; i = (i + 1) % 7) { days.add(i); if (i === r[1]) break; }
     }
     const from = +m[2] * 60 + +m[3], to = +m[4] * 60 + +m[5];
-    if (days.size && from < to && to <= 24 * 60) out.push({ days: [...days], from, to });
+    if (days.size && from < to && to <= 24 * 60) out.push({ days: [...days], from, to, min: m[6] != null ? Math.min(30, +m[6]) : null });
   }
   return out;
 }
@@ -26512,11 +26524,19 @@ function autolabelNoWaitText(w) {
   const nm = d => AUTOLABEL_DAYS[d][0].toUpperCase() + AUTOLABEL_DAYS[d].slice(1);
   const ds = w.days.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
   const run = ds.length > 2 && ds.every((d, i) => i === 0 || (ds[i - 1] + 1) % 7 === d);
-  return `${run ? nm(ds[0]) + '-' + nm(ds[ds.length - 1]) : ds.map(nm).join(',')} ${hm(w.from)}-${hm(w.to)}`;
+  return `${run ? nm(ds[0]) + '-' + nm(ds[ds.length - 1]) : ds.map(nm).join(',')} ${hm(w.from)}-${hm(w.to)}${w.min != null ? '=' + w.min : ''}`;
 }
 // Keeps only the parts that make sense, written the same way every time.
 function autolabelNoWaitClean(text) { return autolabelNoWaitParse(text).map(autolabelNoWaitText).join('; '); }
 // Is it a no-wait time right now (New York)? → that time as text, else ''.
+// The no-wait time it is now (New York) with its own wait: { text, min } (min null = the general noWaitMinutes), else null.
+function autolabelNoWaitWindow(cfg, when) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(when || new Date());
+  const get = t => (p.find(x => x.type === t) || {}).value || '';
+  const day = AUTOLABEL_DAYS.indexOf(get('weekday').toLowerCase().slice(0, 3)), mins = +get('hour') * 60 + +get('minute');
+  const w = autolabelNoWaitParse(cfg.noWaitTimes).find(x => x.days.includes(day) && mins >= x.from && mins < x.to);
+  return w ? { text: autolabelNoWaitText(w), min: w.min } : null;
+}
 function autolabelNoWaitNow(cfg, when) {
   const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(when || new Date());
   const get = t => (p.find(x => x.type === t) || {}).value || '';
@@ -28621,8 +28641,10 @@ async function autolabelRun(env, opts = {}) {
 async function autolabelRunOnce(env, opts = {}) {
   const cfgSaved = await autolabelLoadConfig(env);
   // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
-  const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
-  const cfg = noWait ? { ...cfgSaved, waitMinutes: cfgSaved.noWaitMinutes || 0 } : cfgSaved; // owner: in no-wait times, 2 min (catch a merge)
+  const nwWin = autolabelNoWaitWindow(cfgSaved, opts.now || new Date()), noWait = nwWin ? nwWin.text : '';
+  // In a no-wait time: that time's own wait ("=3", "=0" — owner 2026-10-16), else the general noWaitMinutes (catch a merge).
+  const nwMin = nwWin ? (nwWin.min != null ? nwWin.min : (cfgSaved.noWaitMinutes || 0)) : null;
+  const cfg = noWait ? { ...cfgSaved, waitMinutes: nwMin } : cfgSaved;
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
   // ⏸ No auto buying at these times (owner: around the scan forms) — labels bought by hand still work.
@@ -28631,7 +28653,7 @@ async function autolabelRunOnce(env, opts = {}) {
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
   if (paused) { result.paused = paused; result.notes.push(`⏸ No auto buying now (${paused}, New York) — around the USPS scan form; it buys again after that. Labels can still be bought by hand.`); }
-  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): no ${cfgSaved.waitMinutes}-min wait — an order prints ${cfgSaved.noWaitMinutes ? cfgSaved.noWaitMinutes + ' min after it comes in (time for a merge order to come in)' : 'as soon as it comes in'}.`); }
+  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): no ${cfgSaved.waitMinutes}-min wait — an order prints ${nwMin ? nwMin + ' min after it comes in (time for a merge order to come in)' : 'as soon as it comes in'}.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
   // 1) Cancellations from every channel (and Veeqo itself).
