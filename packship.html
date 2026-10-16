@@ -2109,6 +2109,8 @@ body {
           <button class="ps-btn-sm" id="ps-al-sched-edit-btn" onclick="psAlSchedEdit()">✏️ Change times</button>
         </div>
         <div id="ps-al-sched" style="font-size:13px;line-height:1.55"></div>
+        <!-- 🌙 Owner 2026-10-16: labels bought after the cut-off print on the next business day (worker: labelNextDayOf). -->
+        <div style="font-size:12px;color:var(--text2);margin-top:8px;padding:6px 8px;border-radius:6px;background:var(--bg2)">🌙 <b>Labels bought after the cut-off</b> (Mon–Fri 5:30 PM, Saturday 1:45 PM) are kept and print on the next business day from 12:00 midnight — Friday evening → Saturday, Saturday afternoon/evening and all of Sunday → Monday. They show on top of the label list with 🖨 Print them now anyway.</div>
         <div id="ps-al-sched-editor" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
           <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Times are 24-hour (16:30 = 4:30 pm). Days: Mon-Fri, Sat, Sun, Sun-Sat (every day). Separate with ";". The preview above changes as you type — nothing changes until you tap 💾 Save.</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)">
@@ -8978,7 +8980,7 @@ if (typeof psOnLaunch === 'function') psOnLaunch();
 // Worker: /veeqo/autolabel/* (mgmt only). All buying happens on the worker's
 // cron; nothing on this page buys a label except "Test buy ONE label".
 var _psAlConfig = null;
-var _PS_AL_SERVER_NEEDS = 4; // the worker's AUTOLABEL_SERVER_VERSION this page needs
+var _PS_AL_SERVER_NEEDS = 5; // the worker's AUTOLABEL_SERVER_VERSION this page needs (5 = 🌙 after-cut-off labels wait for their ship day)
 var _PS_AL_PAGE_VERSION = 4;  // this page; the worker's AUTOLABEL_PAGE_NEEDS says how new it must be
 var _PS_AL_LABELS = {
   bought:     ['✅ Bought', 'var(--green)'],
@@ -10976,6 +10978,19 @@ window.psAlStackFind = async function(q) {
     });
   }
 };
+// 🌙 Labels waiting for their ship day → print now anyway (asks first; who / when on record).
+window.psAlPrintEarly = async function(btn) {
+  var ids = String(btn.getAttribute('data-ids') || '').split(',').map(function(x) { return parseInt(x); }).filter(function(x) { return x > 0; });
+  if (!ids.length) return;
+  if (!confirm('🖨 Print ' + ids.length + ' label' + (ids.length === 1 ? '' : 's') + ' bought after the cut-off NOW, instead of on the next business day?\n\n(Saved with your name.)')) return;
+  btn.disabled = true;
+  var d = await _psAlFetch('/veeqo/autolabel/labels-print-early', { method: 'POST', body: JSON.stringify({ ids: ids }) });
+  btn.disabled = false;
+  if (!d || d.ok === false) { _psToast('✗ ' + ((d && d.error) || 'Failed')); return; }
+  _psToast('🖨 ' + d.released + ' label' + (d.released === 1 ? '' : 's') + ' will print now');
+  var st = document.getElementById('ps-al-slip-station'); if (st && st.checked && typeof psAlPrintNewLabels === 'function') psAlPrintNewLabels(true); // else the station computer prints them within a minute
+  psAlLoadLabels();
+};
 window.psAlReprintLast = function(btn) { var id = parseInt(btn.getAttribute('data-id')); if (id) psAlStackReprint(id, btn); };
 window.psAlLoadLabels = async function() {
   setTimeout(psAlLoadRecentStacks, 1500); // after the batch just printed is saved
@@ -11001,6 +11016,19 @@ window.psAlLoadLabels = async function() {
   if (!hb) { hb = document.createElement('div'); hb.id = 'ps-al-held'; warn.parentNode.insertBefore(hb, warn.nextSibling); }
   hb.innerHTML = heldL.length ? '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--red)"><b>🛑 ' + heldL.length + ' label' + (heldL.length === 1 ? '' : 's') + ' NOT printed — the order was cancelled after the label was bought.</b> Void ' + (heldL.length === 1 ? 'it' : 'them') + ' in Veeqo (refund); ' + (heldL.length === 1 ? 'it is' : 'they are') + ' on the Cancellation list.'
     + heldL.map(function(l) { return '<div style="margin-top:4px;font-family:var(--mono)">' + _psAlEsc(l.order_number) + ' · ' + _psAlEsc(l.channel || '') + ' · ' + _psAlEsc(l.tracking || '') + ' — <span style="font-family:var(--sans)">' + _psAlEsc(String(l.cancel_hold || '').replace(/^🛑 Not printed: /, '')) + '</span></div>'; }).join('') + '</div>' : '';
+  // 🌙 Owner 2026-10-16: bought after the cut-off (Mon–Fri 5:30 PM, Sat 1:45 PM, all Sunday) → printed on the next
+  // business day from 12:00 midnight (Saturday evening + Sunday → Monday). Shown here with a way to print them now anyway.
+  var nd = (all[0] && all[0].nextDay) || [];
+  var nb = document.getElementById('ps-al-nextday');
+  if (!nb) { nb = document.createElement('div'); nb.id = 'ps-al-nextday'; hb.parentNode.insertBefore(nb, hb.nextSibling); }
+  var ndDay = function(k) { return new Date(k + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }); };
+  var ndDays = nd.map(function(l) { return l.nextDay; }).filter(function(k, i, a) { return a.indexOf(k) === i; }).sort();
+  nb.innerHTML = nd.length ? '<div style="border:1.5px solid var(--accent);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px">'
+    + '<b>🌙 ' + nd.length + ' label' + (nd.length === 1 ? '' : 's') + ' bought after the cut-off — ' + (nd.length === 1 ? 'it prints' : 'they print') + ' on ' + ndDays.map(ndDay).join(' / ') + ' from 12:00 midnight</b>'
+    + '<div style="color:var(--text3);margin-top:2px">Cut-off: Mon–Fri 5:30 PM, Saturday 1:45 PM (Saturday evening and Sunday → Monday). Nothing to do — the 🖨 Printer station prints them by itself.</div>'
+    + '<details style="margin-top:4px"><summary style="cursor:pointer">Show them</summary>' + nd.map(function(l) {
+        return '<div style="margin-top:3px;font-family:var(--mono)">' + _psAlEsc(l.order_number) + ' · ' + _psAlEsc(l.channel || '') + ' · ' + _psAlEsc(l.tracking || '') + ' <span style="font-family:var(--sans);color:var(--text3)">bought ' + _psAlEsc(new Date(l.created_at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '</span></div>'; }).join('') + '</details>'
+    + '<button type="button" onclick="psAlPrintEarly(this)" data-ids="' + nd.map(function(l) { return l.id; }).join(',') + '" style="margin-top:6px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);cursor:pointer;font-size:12px">🖨 Print them now anyway</button></div>' : '';
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
   var e = _psAlEsc;
   box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {
