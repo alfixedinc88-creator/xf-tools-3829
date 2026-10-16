@@ -8409,6 +8409,17 @@ const _app = {
         }
       }
     }
+    // 📶 Phone outbox (owner 2026-10-16): an entry saved on a phone is sent by whoever is signed in when WiFi is back.
+    // It still belongs to the person who made it: _byUserId (an active login) → recorded as that person. The sign-in
+    // that sent it stays in the 🔑 Log in record above (credActionLog).
+    if (session && session.userId && method === 'POST' && OUTBOX_PATHS.has(url.pathname)) {
+      const ob = await request.clone().json().catch(() => null);
+      const byId = ob && ob._outbox ? parseInt(ob._byUserId, 10) || 0 : 0;
+      if (byId && byId !== session.userId) {
+        const u = await env.DB.prepare('SELECT id, username, display_name FROM cred_users WHERE id = ? AND active = 1').bind(byId).first().catch(() => null);
+        if (u) session = { ...session, userId: u.id, displayName: u.display_name || '', username: u.username || '', sentBy: session.displayName || session.username || '' };
+      }
+    }
     if (!session) {
       const token = request.headers.get('X-Session-Token');
       session = await verifyToken(token, env.SESSION_SECRET);
@@ -14621,6 +14632,10 @@ async function palletFoundIn(request, env, session) {
 // POST /inventory/containers/pallet-count {title, vendor, pallet, opened, expected, counted} — 🚢 Container here, before
 // starting a pallet: is it opened, and how many boxes are on it (our record → what they counted). Kept for History so
 // an extra / short box can be traced to before or after the pallet was started. Inventory does not change.
+// Everything the 📶 phone outbox sends (inventory.html invPost): recorded as the person who made it (see the router).
+const OUTBOX_PATHS = new Set(['/inventory/log', '/inventory/transfer', '/inventory/containers/upc-issue', '/inventory/containers/recheck',
+  '/inventory/containers/short', '/inventory/containers/pcs-check', '/inventory/containers/pallet-count', '/inventory/containers/extra',
+  '/inventory/containers/mark-moved', '/inventory/containers/found-in', '/inventory/recount/column-done', '/inventory/barcode-job', '/inventory/barcode-job/stuck']);
 async function palletCountLog(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));

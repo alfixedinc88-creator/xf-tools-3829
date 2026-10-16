@@ -148,8 +148,21 @@ function invAuditTallyRender() {
 }
 window.invAuditTallyRender = invAuditTallyRender;
 function invObKey() { var u = INV_CRED_USER || null; try { u = u || JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {} return 'xf_inv_outbox_' + ((u && u.userId) || 'anon'); }
-function invObRead() { try { var a = JSON.parse(localStorage.getItem(invObKey()) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
-function invObWrite(a) { try { localStorage.setItem(invObKey(), JSON.stringify(a)); } catch (e) {} invObRender(); invObSchedule(); }
+// Owner (2026-10-16): "as long as one is not saved, no matter who is using the phone, as soon as there's WiFi the system
+// updates it — we have a part-time worker who comes once a month". Every person's entries saved on THIS phone are read and
+// sent, whoever is signed in now; each one still says who made it (_byUserId → the Worker records that person).
+function invObKeys() { var ks = [invObKey()];
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('xf_inv_outbox_') === 0 && ks.indexOf(k) < 0) ks.push(k); } } catch (e) {}
+  return ks; }
+function invObRead() { var out = [];
+  invObKeys().forEach(function (k) { try { var a = JSON.parse(localStorage.getItem(k) || '[]'); (Array.isArray(a) ? a : []).forEach(function (x) { if (x && !x._k) x._k = k; out.push(x); }); } catch (e) {} });
+  return out; }
+function invObWrite(a) { var cur = invObKey();
+  try { invObKeys().forEach(function (k) { var mine = a.filter(function (x) { return (x._k || cur) === k; });
+    if (mine.length || localStorage.getItem(k) != null) localStorage.setItem(k, JSON.stringify(mine)); }); } catch (e) {}
+  invObRender(); invObSchedule(); }
+// The person who made an entry (their user id), from the entry or the phone list it was saved in.
+function invObOwnerId(x) { if (x.body && x.body._byUserId) return x.body._byUserId; var m = /^xf_inv_outbox_(\d+)$/.exec(x._k || ''); return m ? +m[1] : null; }
 function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (x.id === id) fn(x); }); invObWrite(a); }
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
@@ -183,9 +196,10 @@ async function invPost(url, opts, after) {
   var path = url.replace(INV_OB_W, '');
   var body = {}; try { body = JSON.parse((opts && opts.body) || '{}'); } catch (e) {}
   var id = invObNewId(); body._requestId = id; body._outbox = true;
+  if (INV_CRED_USER && INV_CRED_USER.userId) body._byUserId = INV_CRED_USER.userId; // who made it, even if someone else's sign-in sends it
   if (/\[AUDIT\]/.test(body.notes || '')) invTallySet(id, 'phone', invObLabel(path, body));
   var ent = { id: id, path: path, body: body, after: invObAfter(after), label: invObLabel(path, body), by: (INV_CRED_USER && INV_CRED_USER.displayName) || '',
-    createdAt: Date.now(), tries: 0, state: 'sending', error: '' };
+    createdAt: Date.now(), tries: 0, state: 'sending', error: '', _k: invObKey() };
   var a = invObRead(); a.push(ent); invObWrite(a);
   var r = await invObSend(ent, true);
   if (r.status === 'waiting') return invJsonResp({ ok: true, queued: true, offline: true, requestId: id,
@@ -196,7 +210,8 @@ async function invPost(url, opts, after) {
 async function invObSend(ent, first) {
   invObPatch(ent.id, function (x) { x.tries = (x.tries || 0) + 1; x.lastTry = Date.now(); });
   var r, d = null;
-  try { r = await invObFetch(INV_OB_W + ent.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ent.body) }); }
+  var sendBody = ent.body || {}; if (!sendBody._byUserId && invObOwnerId(ent)) sendBody = Object.assign({}, sendBody, { _byUserId: invObOwnerId(ent) }); // saved before this was recorded
+  try { r = await invObFetch(INV_OB_W + ent.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sendBody) }); }
   catch (e) {
     var why = e && e.message === 'Unauthorized' ? 'Sign in again to send it' : 'No WiFi';
     invObPatch(ent.id, function (x) { x.state = 'waiting'; x.error = why; });

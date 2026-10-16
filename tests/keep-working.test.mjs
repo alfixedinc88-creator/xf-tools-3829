@@ -6735,5 +6735,39 @@ console.log('\n🔢 SKU Mgr → UPC codes: upload / fix outside box + inside bag
   sq.exec("DELETE FROM master_list WHERE base_sku LIKE '931-%'; DELETE FROM upc WHERE sku LIKE '931-%'; DELETE FROM upc_edit WHERE part LIKE '931-%'; DELETE FROM upc_link WHERE part LIKE '931-%'");
 }
 
+// Owner (2026-10-16): "as long as one is not saved, no matter who is using the phone, as soon as there is WiFi the system
+// updates it — our part-time worker comes once a month". Every person's entries saved on a phone are sent by whoever is
+// signed in; each is still recorded as the person who made it.
+console.log('\n📶 Phone outbox: sent whoever is signed in, recorded as the person who made it');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const tsId = sq.prepare("SELECT id FROM cred_users WHERE username = 'tester'").get().id;
+  const pkHd = { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' };
+  const send = async b => (await call('/inventory/containers/pallet-count', { method: 'POST', headers: pkHd, body: JSON.stringify(b) })).json();
+  const base = { title: 'OBW CT', vendor: 'KW', pallet: '1', opened: true, expected: 5, counted: 5 };
+  const r1 = await send({ ...base, _outbox: true, _byUserId: tsId, _requestId: 'obw-1' });   // TS saved it, PK's sign-in sends it
+  const r2 = await send({ ...base, _outbox: true, _requestId: 'obw-2' });                    // PK's own
+  const r3 = await send({ ...base, _outbox: true, _byUserId: 999999, _requestId: 'obw-3' }); // unknown person → the sender
+  const r4 = await send({ ...base, _byUserId: tsId, _requestId: 'obw-4' });                  // not from the outbox → never swapped
+  const by = sq.prepare("SELECT by_user FROM pallet_count WHERE title = 'OBW CT' ORDER BY id").all().map(r => r.by_user);
+  check('TS\'s saved entry sent later by PK\'s sign-in is recorded as TS; PK\'s own as PK; an unknown person or a non-outbox request stays the sender',
+    r1.ok && r2.ok && r3.ok && r4.ok && JSON.stringify(by) === '["TS","PK","PK","PK"]', by);
+  sq.exec("DELETE FROM pallet_count WHERE title = 'OBW CT'");
+  // The phone: every person's list is read and sent; each entry carries who made it.
+  const store = {}, ls = { get length() { return Object.keys(store).length; }, key: i => Object.keys(store)[i], getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+  const src = ih.slice(ih.indexOf('function invObKey() {'), ih.indexOf('function invObNewId() {'));
+  const O = new Function('localStorage', 'INV_CRED_USER', 'invObRender', 'invObSchedule', src + '; return { read: invObRead, write: invObWrite, patch: invObPatch, owner: invObOwnerId, key: invObKey };')(
+    ls, { userId: 2, displayName: 'PK' }, () => {}, () => {});
+  store['xf_inv_outbox_1'] = JSON.stringify([{ id: 'm1', state: 'waiting', body: { notes: '[AUDIT] x' }, by: 'Maria' }]);   // part-timer, saved last month
+  store['xf_inv_outbox_2'] = JSON.stringify([{ id: 'p1', state: 'waiting', body: {}, by: 'PK' }]);
+  const all = O.read().map(x => x.id).sort();
+  O.patch('m1', y => { y.state = 'sent'; });
+  const m1 = JSON.parse(store['xf_inv_outbox_1'])[0], p1 = JSON.parse(store['xf_inv_outbox_2'])[0];
+  check('signed in as PK: Maria\'s waiting entry (saved under her name on this phone) is read and sent too, kept in her own list; it is sent as hers (_byUserId 1)',
+    JSON.stringify(all) === '["m1","p1"]' && m1.state === 'sent' && p1.state === 'waiting' && O.owner({ _k: 'xf_inv_outbox_1', body: {} }) === 1
+      && /body\._byUserId = INV_CRED_USER\.userId;/.test(ih) && /sendBody = Object\.assign\(\{\}, sendBody, \{ _byUserId: invObOwnerId\(ent\) \}\)/.test(ih), { all, m1, p1 });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
