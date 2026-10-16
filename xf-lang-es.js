@@ -3745,4 +3745,21 @@ XFLang.add({
   "Reprint": "Reimprimir"
 });
 
+// ── Pack & Ship → Auto Label: 🌙 labels bought after the cut-off print on the next business day (2026-10-16)
+XFLang.add({
+  "{n} labels bought after the cut-off — they print on {} from 12:00 midnight": "{n} etiquetas compradas después de la hora de corte — se imprimen el {} desde las 12:00 de la medianoche",
+  "{n} label bought after the cut-off — it prints on {} from 12:00 midnight": "{n} etiqueta comprada después de la hora de corte — se imprime el {} desde las 12:00 de la medianoche",
+  "Cut-off: Mon–Fri {}, Saturday {} (Saturday evening and Sunday → Monday). Nothing to do — the 🖨 Printer station prints them by itself.": "Hora de corte: lun–vie {}, sábado {} (sábado en la tarde y domingo → lunes). No hay que hacer nada — la 🖨 estación de impresión las imprime sola.",
+  "Show them": "Verlas",
+  "bought {}": "comprada {}",
+  "Print them now anyway": "Imprimirlas ahora de todos modos",
+  "Print {n} labels bought after the cut-off NOW, instead of on the next business day": "¿Imprimir AHORA {n} etiquetas compradas después de la hora de corte, en vez del siguiente día hábil",
+  "Print {n} label bought after the cut-off NOW, instead of on the next business day": "¿Imprimir AHORA {n} etiqueta comprada después de la hora de corte, en vez del siguiente día hábil",
+  "(Saved with your name.)": "(Se guarda con tu nombre.)",
+  "{n} labels will print now": "{n} etiquetas se imprimen ahora",
+  "{n} label will print now": "{n} etiqueta se imprime ahora",
+  "Labels bought after the cut-off": "Etiquetas compradas después de la hora de corte",
+  "(Mon–Fri {}, Saturday {}) are kept and print on the next business day from 12:00 midnight — Friday evening → Saturday, Saturday afternoon/evening and all of Sunday → Monday. They show on top of the label list with 🖨 Print them now anyway.": "(lun–vie {}, sábado {}) se guardan y se imprimen el siguiente día hábil desde las 12:00 de la medianoche — viernes en la noche → sábado, sábado en la tarde/noche y todo el domingo → lunes. Salen arriba de la lista de etiquetas con 🖨 Imprimirlas ahora de todos modos."
+});
+
 XFLang._ready();

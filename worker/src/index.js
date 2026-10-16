@@ -25917,7 +25917,7 @@ const AUTOLABEL_SPLIT_VERIFIED_KEY = 'autolabel_split_verified'; // auto runs sp
 // version it expects and shows a red warning when the server is older (owner:
 // "low value still won't print, merge gone" — Cloudflare's build had failed, so
 // the old server was still running behind the new page).
-const AUTOLABEL_SERVER_VERSION = 4; // 1 = merge one box, 2 = low value printable, 3 = this check, 4 = Run now buys in auto + low value auto-bought
+const AUTOLABEL_SERVER_VERSION = 5; // 1 = merge one box, 2 = low value printable, 3 = this check, 4 = Run now buys in auto + low value auto-bought, 5 = 🌙 after-cut-off labels print on their ship day
 // ...and the other way round: the page must be at least this new. A stuck
 // GitHub Pages deploy left the OLD page live behind the new server (owner: "low
 // value still won't print, merge gone"); the page then says "refresh / not updated".
@@ -26049,6 +26049,10 @@ async function autolabelEnsureTables(env) {
   // What is in the box (SKU, qty, bin) — printed on a 4×6 sticker right after the label (owner).
   await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN items TEXT').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN cancel_hold TEXT').run().catch(()=>{}); // 🛑 cancelled before it printed — not printed
+  // 🌙 Bought after the cut-off → printed on its ship day (owner 2026-10-16): next_day = the day it waits for (on record),
+  // print_early = someone tapped "Print them now anyway" (who, when).
+  await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN next_day TEXT').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN print_early TEXT').run().catch(()=>{});
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -26359,6 +26363,36 @@ function shipDayOfIso(iso) {
   if (wd === 6) return mins >= 13 * 60 + 40 ? add(key, 2) : key;
   return mins >= 17 * 60 + 30 ? add(key, 1) : key;
 }
+// 🌙 Owner 2026-10-16: "all the labels we purchase after the cut-off time, print them on the next business day; Saturday
+// after 1:45 pm save all the labels, print them on Monday". A label bought Mon–Fri from 5:30 PM → prints from 12:00 midnight
+// of the next day (Friday → Saturday); Saturday from 1:45 PM and all of Sunday → Monday 12:00 midnight. New York time.
+// Returns the 'YYYY-MM-DD' it waits for, or '' (prints right away). The Pack & Ship ship-day count keeps Saturday 1:40 PM
+// (owner: "1:45 hold, keep 1:40 count").
+const LABEL_NEXT_DAY_CUTOFF = { weekday: 17 * 60 + 30, saturday: 13 * 60 + 45 };
+function labelNextDayOf(iso) {
+  const t = Date.parse(iso || ''); if (!(t > 0)) return '';
+  const n = autolabelNyNow(new Date(t));
+  const add = d => { const [y, m, dd] = n.date.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd + d)).toISOString().slice(0, 10); };
+  if (n.day === 0) return add(1);
+  if (n.day === 6) return n.mins >= LABEL_NEXT_DAY_CUTOFF.saturday ? add(2) : '';
+  return n.mins >= LABEL_NEXT_DAY_CUTOFF.weekday ? add(1) : '';
+}
+// Waiting labels split into the ones the 🖨 station prints now and the ones that wait for their day (unless 🖨 Print them
+// now anyway was tapped). A label put to wait is on record once (autolabel_log 'print_next_day').
+async function labelSplitNextDay(env, rows, nowMs) {
+  const today = autolabelNyNow(new Date(nowMs || Date.now())).date, ready = [], wait = [], fresh = [];
+  for (const r of rows) {
+    const day = labelNextDayOf(r.created_at);
+    if (day && day > today && !r.print_early) { wait.push({ ...r, nextDay: day }); if (!r.next_day) fresh.push({ ...r, nextDay: day }); }
+    else ready.push(r);
+  }
+  for (const r of fresh) {
+    const res = await env.DB.prepare('UPDATE label_print_queue SET next_day = ? WHERE id = ? AND next_day IS NULL').bind(r.nextDay, r.id).run().catch(() => null);
+    if (res && res.meta && res.meta.changes) await autolabelLog(env, { action: 'print_next_day', orderNumber: r.order_number || '', channel: r.channel || '', carrier: r.carrier || '', tracking: r.tracking || '',
+      reason: `🌙 Bought after the cut-off (${r.created_at}) — waits, prints on ${r.nextDay} from 12:00 midnight` }).catch(() => {});
+  }
+  return { ready, wait };
+}
 async function labelWatchEnsure(env) {
   await labelBatchEnsure(env);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_watch_checked (label_id INTEGER PRIMARY KEY, by_user TEXT, at TEXT, note TEXT)').run();
@@ -26472,11 +26506,16 @@ async function labelSkippedScans(env, trackings) {
 }
 async function labelPrintWait(env) {
   await autolabelEnsureTables(env);
-  const w = await d1First(env, `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM label_print_queue
-    WHERE printed_at IS NULL AND cancel_hold IS NULL AND created_at >= ?`, [new Date(Date.now() - 2 * 86400000).toISOString()]) || {};
+  // 🌙 labels waiting for their ship day (bought after the cut-off) are not "not printed" — counted apart (nextDay)
+  const pend = await d1All(env, `SELECT id, order_number, channel, carrier, tracking, created_at, next_day, print_early FROM label_print_queue
+    WHERE printed_at IS NULL AND cancel_hold IS NULL AND created_at >= ? ORDER BY id`, [new Date(Date.now() - 4 * 86400000).toISOString()]);
+  const sp = await labelSplitNextDay(env, pend);
+  const since2 = new Date(Date.now() - 2 * 86400000).toISOString(), late = sp.ready.filter(r => r.created_at >= since2);
+  const w = { n: late.length, oldest: late.length ? late.map(r => r.created_at).sort()[0] : null };
   const lp = await d1First(env, 'SELECT MAX(printed_at) AS t FROM label_print_queue') || {};
   const j = async k => { try { return JSON.parse(await autolabelGetKey(env, k) || 'null'); } catch (_) { return null; } };
-  return { count: w.n || 0, oldest: w.oldest || null, lastPrintedAt: lp.t || null, stationTick: await j('label_station_tick'), stationSeen: await j('label_station_seen') };
+  return { count: w.n || 0, oldest: w.oldest || null, nextDay: sp.wait.length, nextDayOn: sp.wait.length ? sp.wait.map(r => r.nextDay).sort()[0] : null,
+    lastPrintedAt: lp.t || null, stationTick: await j('label_station_tick'), stationSeen: await j('label_station_seen') };
 }
 // Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
 async function labelWatchRun(env, nowMs) {
@@ -27344,12 +27383,15 @@ function autolabelSlipWanted(items, rule) {
 
 // Queues a bought shipping label for the 🖨 Printer station.
 // merged: { items (Veeqo line items of every order in the box), number ("A + B") }.
-async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source, merged) {
+// byHand: a person bought / added this label themselves (name) → it prints right away, even after the cut-off;
+// labels Auto Label buys by itself after the cut-off wait for the next business day (labelNextDayOf).
+async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source, merged, byHand) {
   try {
     const items = merged ? autolabelLabelItems(merged.items) : await autolabelBoxItems(env, o, allocId);
-    await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    const now = new Date().toISOString();
+    await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items, print_early) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [String(o.id || ''), String(allocId || ''), (merged && merged.number) || o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '', service || '',
-       JSON.stringify(source || {}).slice(0, 20000), new Date().toISOString(), JSON.stringify(items)]);
+       JSON.stringify(source || {}).slice(0, 20000), now, JSON.stringify(items), byHand ? (now + ' by hand ' + String(byHand)).slice(0, 80) : null]);
     return true;
   } catch (e) { console.error('[autolabel] label queue failed', e.message); return false; }
 }
@@ -27685,7 +27727,7 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap, opts) {
   await autolabelLog(env, { ...logBase, action: 'bought', tracking, carrier: p.carrier, service: p.service, price: p.price, orderTotal: total,
     reason: `🧩 Merged box ${nums} (${plan.lb} lb, ${items.reduce((n, i) => n + (parseInt(i.q) || 0), 0)} items)${by ? ' by ' + by : ''}: ${choice.reason}` });
   const merged = { items, number: nums, orders };
-  await autolabelQueueLabel(env, lead, leadAlloc.id, tracking, p.carrier, p.service, resp, merged);
+  await autolabelQueueLabel(env, lead, leadAlloc.id, tracking, p.carrier, p.service, resp, merged, by || null); // by '' = the auto run (waits after the cut-off)
   const slip = await autolabelQueueSlip(env, cfg, lead, leadAlloc, tracking, p.carrier, 1, 1, merged);
   await autolabelMergeManifest(env, plan, tracking, p.carrier, p.service, items);
 
@@ -28775,7 +28817,7 @@ async function autolabelBuyByHand(env, number, by, allowLow) {
     try {
       const r = await autolabelBuyLocked(env, o, p.alloc.id, pk);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
-      await autolabelQueueLabel(env, o, p.alloc.id, r.tracking, pk.carrier, pk.service, r.response);
+      await autolabelQueueLabel(env, o, p.alloc.id, r.tracking, pk.carrier, pk.service, r.response, null, by || '?');
       await autolabelQueueSlip(env, cfg, o, p.alloc, r.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length);
       out.push({ carrier: pk.carrier, service: pk.service, price: pk.price, tracking: r.tracking });
     } catch (e) {
@@ -29356,7 +29398,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     try {
       const r = await autolabelBuyLocked(env, o, allocs[0].id, choice.pick);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
-      await autolabelQueueLabel(env, o, allocs[0].id, r.tracking, choice.pick.carrier, choice.pick.service, r.response);
+      await autolabelQueueLabel(env, o, allocs[0].id, r.tracking, choice.pick.carrier, choice.pick.service, r.response, null, String((session && (session.displayName || session.username)) || 'test buy'));
       await autolabelQueueSlip(env, cfg, o, allocs[0], r.tracking, choice.pick.carrier, 1, 1);
       await autolabelSetKey(env, AUTOLABEL_VERIFIED_KEY, 'yes');
       return veeqoResp({ ok: true, order: o.number, carrier: choice.pick.carrier, service: choice.pick.service,
@@ -29500,9 +29542,26 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const rows = q.length >= 3
       ? await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
           FROM label_print_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%'])
-      : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
+      : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items, next_day, print_early
       FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL${printed ? '' : ' AND cancel_hold IS NULL'} AND id > ? ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`,
       [printed ? 0 : (parseInt(url.searchParams.get('after')) || 0), limit]); // ?after= → the next round (the station prints every waiting label, 50 at a time)
+    // 🌙 Bought after the cut-off → not given to the station until its day (labelNextDayOf). Rounds go on past waiting
+    // labels so a later label (e.g. one tapped "Print them now anyway") is never stuck behind them.
+    let nextDay = [];
+    if (!printed && q.length < 3) {
+      let got = rows.splice(0, rows.length), last = got.length ? got[got.length - 1].id : 0;
+      for (let round = 0; round < 10; round++) {
+        const sp = await labelSplitNextDay(env, got);
+        rows.push(...sp.ready);
+        if (rows.length >= limit || got.length < limit || !sp.wait.length) break;
+        got = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items, next_day, print_early
+          FROM label_print_queue WHERE printed_at IS NULL AND cancel_hold IS NULL AND id > ? ORDER BY id ASC LIMIT ?`, [last, limit]);
+        if (!got.length) break; last = got[got.length - 1].id;
+      }
+      const pend = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, next_day, print_early FROM label_print_queue
+        WHERE printed_at IS NULL AND cancel_hold IS NULL AND created_at >= ? ORDER BY id LIMIT 1000`, [new Date(Date.now() - 4 * 86400000).toISOString()]).catch(() => []);
+      nextDay = (await labelSplitNextDay(env, pend)).wait.map(r => ({ id: r.id, order_number: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, created_at: r.created_at, nextDay: r.nextDay }));
+    }
     // 🛑 Last check right before printing: an order cancelled after its label was bought is held back, never printed.
     let held = [];
     if (!printed && q.length < 3) {
@@ -29516,7 +29575,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     if (!printed && url.searchParams.has('after')) await autolabelSetKey(env, 'label_station_seen', JSON.stringify({ at: new Date().toISOString(), by: String((session && (session.displayName || session.username)) || '').slice(0, 40) })).catch(() => {});
     let stationSeen = null; try { stationSeen = JSON.parse(await autolabelGetKey(env, 'label_station_seen') || 'null'); } catch (_) {}
     const orig = await labelOrigins(env, rows.map(r => r.tracking));
-    return veeqoResp({ ok: true, stationSeen, held, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
+    return veeqoResp({ ok: true, stationSeen, held, nextDay, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
       const t = String(r.tracking || ''); return { ...r, items, origin: labelOrigin(orig.get(t), orig.has(t)) }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
@@ -29677,6 +29736,26 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   // ⏭ POST { before, note } — 🩺 Printing check (owner 2026-10-12: 207 labels waiting since yesterday): labels bought before
   // `before` that were already printed another way (from Veeqo by hand…) are marked so the printer station doesn't print them
   // again. Each keeps who / when / why (printed_by "⏭ skipped by …"), and one line in the Auto Label log lists them.
+  // 🌙 POST { ids:[...] } → labels waiting for their ship day (bought after the cut-off) print now anyway — who / when on record.
+  if (path === '/veeqo/autolabel/labels-print-early' && method === 'POST') {
+    await autolabelEnsureTables(env);
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 500);
+    if (!ids.length) return veeqoResp({ ok: false, error: 'No labels picked' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40), now = new Date().toISOString();
+    const rows = [];
+    for (let i = 0; i < ids.length; i += 80) {
+      const ch = ids.slice(i, i + 80);
+      rows.push(...await d1All(env, `SELECT id, order_number, tracking FROM label_print_queue WHERE printed_at IS NULL AND cancel_hold IS NULL AND print_early IS NULL AND id IN (${ch.map(() => '?').join(',')})`, ch));
+    }
+    for (let i = 0; i < rows.length; i += 80) {
+      const ch = rows.slice(i, i + 80).map(r => r.id);
+      await d1Run(env, `UPDATE label_print_queue SET print_early = ? WHERE printed_at IS NULL AND id IN (${ch.map(() => '?').join(',')})`, [(now + ' ' + (by || '?')).slice(0, 80), ...ch]);
+    }
+    if (rows.length) await autolabelLog(env, { action: 'print_early', customer: by, reason: `🖨 ${rows.length} label(s) bought after the cut-off printed now anyway (not waiting for the next business day) — by ${by || '?'}`,
+      detail: rows.map(r => r.order_number + ' ' + (r.tracking || '')).join(', ').slice(0, 4000) });
+    return veeqoResp({ ok: true, released: rows.length, printWait: await labelPrintWait(env) });
+  }
   if (path === '/veeqo/autolabel/labels-skip' && method === 'POST') {
     await autolabelEnsureTables(env);
     const b = await request.json().catch(() => ({}));
@@ -29788,7 +29867,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     if (!o) return veeqoResp({ ok: false, error: `Order ${number} not found in Veeqo` });
     const allocs = (o.allocations || []).filter(a => _psAllocTrackingNumber(a));
     if (!allocs.length) return veeqoResp({ ok: false, error: 'This order has no label in Veeqo yet' });
-    for (const a of allocs) await autolabelQueueLabel(env, o, a.id, _psAllocTrackingNumber(a), veeqoExtractCarrier(o), '', a);
+    const addBy = String((session && (session.displayName || session.username)) || b.by || '?');
+    for (const a of allocs) await autolabelQueueLabel(env, o, a.id, _psAllocTrackingNumber(a), veeqoExtractCarrier(o), '', a, null, addBy); // added by a person → prints now
     return veeqoResp({ ok: true, order: o.number, added: allocs.length });
   }
 

@@ -12,6 +12,25 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const require0 = createRequire(import.meta.url);
 
+// 🕚 The checks always run in New York business hours. Auto Label keeps labels bought after the cut-off (Mon–Fri
+// 5:30 PM, Saturday 1:45 PM, all Sunday) for the next business day, so a label put in the print queue "now" by a
+// check would wait when CI runs at night or on a weekend. Outside business hours the clock of this run moves
+// FORWARD to the next business day 11:00 AM (New York) — every check stays the same, the answer no longer depends
+// on when CI runs. (Hold checks use their own label times.)
+{
+  const RealDate = Date, ny = ms => { const o = {}; new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new RealDate(ms)).forEach(x => { o[x.type] = x.value; }); return { wd: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(o.weekday), m: +o.hour * 60 + +o.minute }; };
+  const open = t => (t.wd >= 1 && t.wd <= 5 && t.m < 17 * 60 + 30) || (t.wd === 6 && t.m < 13 * 60 + 45);
+  const real = RealDate.now(); let shift = 0;
+  if (!open(ny(real))) { let t = real; for (let i = 0; i < 4 * 24 * 60 && !(open(ny(t)) && ny(t).m === 11 * 60); i++) t += 60000; shift = t - real; }
+  if (shift) {
+    globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + shift); } static now() { return RealDate.now() + shift; } };
+    const fmtGet = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format').get, ftp = Intl.DateTimeFormat.prototype.formatToParts;
+    Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', { configurable: true, get() { const f = fmtGet.call(this); return d => f(d === undefined ? Date.now() : d); } });
+    Intl.DateTimeFormat.prototype.formatToParts = function (d) { return ftp.call(this, d === undefined ? Date.now() : d); };
+    console.log('(clock of this run: ' + new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' New York — moved forward ' + Math.round(shift / 60000) + ' min into business hours)');
+  }
+}
 const workerPath = fileURLToPath(new URL('../worker/src/index.js', import.meta.url));
 let failed = 0, passed = 0;
 const check = (name, ok, got) => { if (ok) { passed++; console.log('  ✅ ' + name); } else { failed++; console.log('  ❌ ' + name + '  — got: ' + JSON.stringify(got)); } };
@@ -6474,6 +6493,62 @@ console.log('\nInventory: the "More…" number pad types and saves; every button
   };
   const miss = { inventory: undefinedCalls('inventory.html'), packship: undefinedCalls('packship.html'), admin: undefinedCalls('xfitting-admin.html') };
   check('every button on Inventory, Pack & Ship and Admin calls a function that exists (none lost)', !miss.inventory.length && !miss.packship.length && !miss.admin.length, miss);
+}
+
+const readFileSync0w = () => require0('node:fs').readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+const readFileSync0p = () => require0('node:fs').readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+
+console.log('\n🌙 Auto Label: labels bought after the cut-off print on the next business day (Sat after 1:45 PM → Monday)');
+{
+  // Owner 2026-10-16: "for the auto label all the label we purchase after cut off time, print it on the next business
+  // day, Saturday after 1:45pm save all the labels print it at Monday" (prints from 12:00 midnight; the Pack & Ship
+  // ship-day count keeps Saturday 1:40 PM).
+  const fetch0 = globalThis.fetch;
+  globalThis.fetch = async () => new Response('[]', { headers: { 'Content-Type': 'application/json' } }); // no Veeqo / channels in this check
+  sq.prepare("DELETE FROM label_print_queue").run();
+  const two = n => String(n).padStart(2, '0');
+  const nyIso = (ymd, h, m) => { for (const off of ['-04:00', '-05:00']) { const d = new Date(`${ymd}T${two(h)}:${two(m)}:00${off}`);
+    if (new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d) === `${two(h)}:${two(m)}`) return d.toISOString(); } };
+  const addD = (ymd, n) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  let fri = addD(today, 7); while (new Date(fri + 'T12:00:00Z').getUTCDay() !== 5) fri = addD(fri, 1); // a Friday next week
+  const wed = addD(fri, -2), thu = addD(fri, -1), sat = addD(fri, 1), sun = addD(fri, 2), mon = addD(fri, 3);
+  const L = {};
+  const put = (name, iso) => { L[name] = Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run('O-' + name, 'A-' + name, name, 'eBay', 'T-' + name, 'USPS', 'Ground', '{}', iso, '[]').lastInsertRowid); };
+  put('WED-529PM', nyIso(wed, 17, 29)); put('WED-530PM', nyIso(wed, 17, 30)); put('FRI-6PM', nyIso(fri, 18, 0));
+  put('SAT-144PM', nyIso(sat, 13, 44)); put('SAT-145PM', nyIso(sat, 13, 45)); put('SAT-9PM', nyIso(sat, 21, 0)); put('SUN-10AM', nyIso(sun, 10, 0));
+  put('LAST-EVENING', nyIso(addD(today, -1), 19, 0)); // bought last evening → its day is today → prints now
+  const r1 = await get('/veeqo/autolabel/labels?status=new&limit=50&after=0');
+  const got = new Set((r1.labels || []).map(l => l.order_number)), nd = {}; (r1.nextDay || []).forEach(l => { nd[l.order_number] = l.nextDay; });
+  check('🖨 station gets only the ones to print now: Wed 5:29 PM, Sat 1:44 PM, and last evening\'s (its day is today)',
+    got.size === 3 && got.has('WED-529PM') && got.has('SAT-144PM') && got.has('LAST-EVENING'), [...got]);
+  check('…the rest wait for their day: Wed 5:30 PM → Thursday · Fri 6 PM → Saturday · Sat 1:45 PM, Sat 9 PM, Sun 10 AM → Monday',
+    nd['WED-530PM'] === thu && nd['FRI-6PM'] === sat && nd['SAT-145PM'] === mon && nd['SAT-9PM'] === mon && nd['SUN-10AM'] === mon && Object.keys(nd).length === 5, nd);
+  await get('/veeqo/autolabel/labels?status=new&limit=200');
+  const logged = sq.prepare("SELECT order_number FROM autolabel_log WHERE action = 'print_next_day'").all().map(r => r.order_number).sort();
+  check('…each waiting label is on record once (🌙 waits, prints on <day>) — not again on every station check',
+    logged.length === 5 && logged.join() === ['FRI-6PM', 'SAT-145PM', 'SAT-9PM', 'SUN-10AM', 'WED-530PM'].join() && sq.prepare("SELECT next_day FROM label_print_queue WHERE id = ?").get(L['SAT-145PM']).next_day === mon, logged);
+  const pw = await get('/veeqo/autolabel/print-watch');
+  check('…waiting on purpose is NOT "bought but not printed" (no false 🖨 alarm): 3 to print, 5 waiting for their day',
+    pw.printWait && pw.printWait.count === 3 && pw.printWait.nextDay === 5 && pw.printWait.nextDayOn === thu, pw.printWait);
+  const pe = await post('/veeqo/autolabel/labels-print-early', { ids: [L['SAT-9PM']] });
+  const r2 = await get('/veeqo/autolabel/labels?status=new&limit=50&after=0');
+  const early = sq.prepare("SELECT print_early FROM label_print_queue WHERE id = ?").get(L['SAT-9PM']).print_early || '';
+  check('🖨 Print them now anyway → that label prints now, with who / when on record',
+    pe.ok && pe.released === 1 && (r2.labels || []).some(l => l.order_number === 'SAT-9PM') && (r2.nextDay || []).length === 4 && /TS|tester/.test(early)
+      && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'print_early' AND detail LIKE '%SAT-9PM%'").get().n === 1, { pe, early });
+  // A later label tapped "print now" is never stuck behind waiting ones (the station asks 1 at a time here: the waiting one comes first).
+  const a1 = await get('/veeqo/autolabel/labels?status=new&limit=1&after=' + L['SAT-144PM']);
+  check('…the station\'s rounds go on past waiting labels (Sat 9 PM printed-now label found behind the Sat 1:45 PM one)', (a1.labels || []).some(l => l.order_number === 'SAT-9PM'), (a1.labels || []).map(l => l.order_number));
+  globalThis.fetch = fetch0;
+  const wk = readFileSync0w(), ph = readFileSync0p();
+  check('labels a person buys / adds by hand (Buy by hand, Test buy, + Add label, merge by hand) print right away; only Auto Label\'s own buys wait',
+    /autolabelQueueLabel\(env, o, p\.alloc\.id, r\.tracking, pk\.carrier, pk\.service, r\.response, null, by \|\| '\?'\)/.test(wk) && /merged, by \|\| null\)/.test(wk)
+      && /a, null, addBy\)/.test(wk) && /choice\.pick\.service, r\.response, null, String\(/.test(wk) && /plan\.done = await autolabelMergeBuy\(env, cfg, plan, '', mergeMap\)/.test(wk), null);
+  check('Pack & Ship shows the 🌙 waiting labels (when they print) with 🖨 Print them now anyway; the schedule says the rule; ship-day count keeps Sat 1:40 PM',
+    /id = 'ps-al-nextday'/.test(ph) && /psAlPrintEarly = async function/.test(ph) && /Labels bought after the cut-off<\/b> \(Mon–Fri 5:30 PM, Saturday 1:45 PM\)/.test(ph)
+      && /PS_SHIPDAY_CUTOFF = \{ weekday: 17 \* 60 \+ 30, saturday: 13 \* 60 \+ 40 \}/.test(ph) && /LABEL_NEXT_DAY_CUTOFF = \{ weekday: 17 \* 60 \+ 30, saturday: 13 \* 60 \+ 45 \}/.test(wk), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
