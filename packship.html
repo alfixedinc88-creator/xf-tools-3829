@@ -2115,7 +2115,7 @@ body {
           <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Times are 24-hour (16:30 = 4:30 pm). Days: Mon-Fri, Sat, Sun, Sun-Sat (every day). Separate with ";". The preview above changes as you type — nothing changes until you tap 💾 Save.</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)">
             <label>Normal wait after the newest order (min)<input class="ps-field-input" data-sk="waitMinutes" type="number" min="0" step="1" oninput="psAlSchedPreview()"></label>
-            <label>⏩ No 30-min wait at<input class="ps-field-input" data-sk="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 12:45-13:45" oninput="psAlSchedPreview()"></label>
+            <label>⏩ No 30-min wait at<input class="ps-field-input" data-sk="noWaitTimes" type="text" placeholder="Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0" oninput="psAlSchedPreview()"></label>
             <label>…then new orders wait only (min)<input class="ps-field-input" data-sk="noWaitMinutes" type="number" min="0" max="30" step="1" oninput="psAlSchedPreview()"></label>
             <label>⏸ Auto print stops at<input class="ps-field-input" data-sk="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05" oninput="psAlSchedPreview()"></label>
             <label>📄 Scan form made at<input class="ps-field-input" data-sk="scanFormTimes" type="text" placeholder="Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45" oninput="psAlSchedPreview()"></label>
@@ -2133,7 +2133,7 @@ body {
         <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules <span style="font-weight:400;color:var(--text3)">— tap to open</span></summary>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
-          <label>No 30-min wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 12:45-13:45"></label>
+          <label>No 30-min wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0"></label>
           <label>…in those times wait only (min, to catch a merge)<input class="ps-field-input" data-k="noWaitMinutes" type="number" min="0" max="30" step="1" placeholder="2"></label>
           <label>⏸ No auto buying at these times (New York)<input class="ps-field-input" data-k="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00"></label>
           <label>📄 USPS scan form by itself<select class="ps-field-input" data-k="scanFormOn"><option value="true">Yes</option><option value="false">No — by hand only</option></select></label>
@@ -9057,10 +9057,11 @@ function _psAlMin(hm) { var m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/); r
 function _psAlSegs(text, ranges) { // → [{ days, from, to }] (ranges) or [{ days, at }] (times)
   var out = [];
   String(text || '').split(/[;\n]+/).forEach(function(seg) {
-    var m = seg.trim().match(/^([A-Za-z ,\-]+?)\s+([\d:,\s\-]+)$/); if (!m) return;
+    var m = seg.trim().match(/^([A-Za-z ,\-]+?)\s+([\d:,\s\-=]+)(?:\s*min)?$/i); if (!m) return;
     var days = _psAlDays(m[1].trim());
     m[2].split(/\s*,\s*/).forEach(function(x) {
-      if (ranges) { var r = x.split(/\s*-\s*/); var f = _psAlMin(r[0]), t = _psAlMin(r[1]); if (f != null && t != null) out.push({ days: days, from: f, to: t }); }
+      // "15:30-16:00=3": that time's own wait in minutes (=0 → print as soon as an order comes in) — owner 2026-10-16
+      if (ranges) { var q = x.split('='), r = q[0].split(/\s*-\s*/); var f = _psAlMin(r[0]), t = _psAlMin(r[1]); if (f != null && t != null) out.push({ days: days, from: f, to: t, min: q.length > 1 && q[1].trim() !== '' ? +q[1] : null }); }
       else { var a = _psAlMin(x.trim()); if (a != null) out.push({ days: days, at: a }); }
     });
   });
@@ -9077,8 +9078,10 @@ function _psAlSchedHtml(c) {
     var stopped = function(t) { return pS.some(function(x) { return x.days.indexOf(d) >= 0 && t >= x.from && t < x.to; }); };
     pS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS'); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again'); });
     sfS.forEach(function(x) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made'); });
-    nwS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; add(x.from, '⏩ No ' + wait + '-min wait — new orders wait ' + (nw ? nw + ' min (to catch a merge)' : 'no time') + ', then print');
-      if (x.to < 1440 && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait'); }); // printing stopped then anyway → not said
+    nwS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; var mn = x.min != null ? x.min : nw;
+      add(x.from, mn ? '⏩ No ' + wait + '-min wait — new orders wait ' + mn + ' min (to catch a merge), then print' : '⚡ No wait — an order prints as soon as it comes in');
+      var next = nwS.some(function(y) { return y !== x && y.days.indexOf(d) >= 0 && y.from === x.to; }); // the next no-wait time starts right then
+      if (x.to < 1440 && !next && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait'); }); // printing stopped then anyway → not said
     var keys = Object.keys(ev).map(Number).sort(function(a, b) { return a - b; });
     perDay.push(keys.map(function(k) { return '<tr><td style="padding:2px 10px 2px 0;white-space:nowrap;font-weight:700;font-family:var(--mono);vertical-align:top">' + e(_psAlHm(k)) + '</td><td style="padding:2px 0">' + ev[k].map(e).join(' · ') + '</td></tr>'; }).join(''));
   }
@@ -9150,7 +9153,7 @@ function _psAlRenderConfig(d) {
     + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
-    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints ' + (c.noWaitMinutes ? c.noWaitMinutes + ' min after an order comes in (time for a merge order to come in)' : 'as soon as an order comes in') + '' : '') + '<br>'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints ' + (c.noWaitMinutes ? c.noWaitMinutes + ' min after an order comes in (time for a merge order to come in)' : 'as soon as an order comes in') + ' — "=3" after a time = that time waits 3 min, "=0" = prints at once' : '') + '<br>'
     + '• Never buys for a cancelled order<br>'
     + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
     + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(_psAlTimesText(c.scanFormTimes) || '—') + '</b>, night check <b>' + _psAlEsc(_psAlClock(c.scanFormCheckAt)) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
