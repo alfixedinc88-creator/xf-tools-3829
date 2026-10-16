@@ -6554,5 +6554,49 @@ console.log('\n🌙 Auto Label: labels bought after the cut-off print on the nex
       && /PS_SHIPDAY_CUTOFF = \{ weekday: 17 \* 60 \+ 30, saturday: 13 \* 60 \+ 40 \}/.test(ph) && /LABEL_NEXT_DAY_CUTOFF = \{ weekday: 17 \* 60 \+ 30, saturday: 13 \* 60 \+ 45 \}/.test(wk), null);
 }
 
+// Owner 2026-10-16: "4–5 scanners — people take one and never bring it back. Which scanner, who used it last?
+// If we can't find it, make it sound loud when I click a button in our app, so we can track it down."
+console.log('\n📱 Scanners: who used each device last, 🔊 Ring until ✅ Found it');
+{
+  const { readFileSync } = await import('node:fs');
+  const rd = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const xa = rd('xf-access.js'), ad = rd('xfitting-admin.html');
+  const DEV = 'dev-test-scanner-0001';
+  const p1 = await get('/auth/ping?device=' + DEV + '&model=MC002&page=inventory.html');
+  const p2 = await get('/auth/ping?device=' + DEV + '&model=MC002&page=inventory.html');
+  const noTok = await call('/auth/ping?device=' + DEV);
+  const bad = await call('/auth/ping?device=x', { headers: H });
+  // a second person picks up the same scanner
+  const salt = crypto.getRandomValues(new Uint8Array(16)), km = await crypto.subtle.importKey('raw', new TextEncoder().encode('scanpass1'), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km, 256);
+  const hx = a => [...a].map(b => b.toString(16).padStart(2, '0')).join('');
+  const w2 = sq.prepare('INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?,?,?,1,?)').run('scanguy', hx(salt) + ':' + hx(new Uint8Array(bits)), 'Mike', new Date().toISOString());
+  sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(w2.lastInsertRowid, 'ops');
+  const lg2 = await (await call('/auth/login', { method: 'POST', body: JSON.stringify({ username: 'scanguy', password: 'scanpass1' }) })).json();
+  const p3 = await (await call('/auth/ping?device=' + DEV + '&model=MC002&page=packship.html', { headers: { 'X-Cred-Token': lg2.token } })).json();
+  const list = await get('/admin/devices');
+  const D = (list.devices || []).find(x => x.id === DEV);
+  check('a scanner checks in (model, page, who); a new person on it → a new line in "who used it", newest first; no sign-in → refused',
+    p1.ok && p2.ok && p3.ok && noTok.status === 401 && bad.status === 400 && D && D.model === 'MC002' && D.last_user === 'Mike' && D.last_page === 'packship.html' && D.online
+    && D.uses.length === 2 && D.uses[0].user_name === 'Mike' && D.uses[1].user_name === 'TS', D);
+  const mike = { 'X-Cred-Token': lg2.token, 'Content-Type': 'application/json' };
+  const forbid = await call('/admin/devices', { headers: { 'X-Cred-Token': lg2.token } });
+  check('…only an Admin sees the list / rings', forbid.status === 403, forbid.status);
+  await post('/admin/devices/name', { device: DEV, name: 'Scanner 3' });
+  const rg = await post('/admin/devices/ring', { device: DEV });
+  const p4 = await (await call('/auth/ping?device=' + DEV + '&model=MC002&page=packship.html', { headers: { 'X-Cred-Token': lg2.token } })).json();
+  await call('/auth/device-found', { method: 'POST', headers: mike, body: JSON.stringify({ device: DEV }) });
+  const p5 = await (await call('/auth/ping?device=' + DEV + '&model=MC002&page=packship.html', { headers: { 'X-Cred-Token': lg2.token } })).json();
+  const D2 = ((await get('/admin/devices')).devices || []).find(x => x.id === DEV);
+  check('🔊 Ring → the scanner\'s next check-in says ring (with who rang, its name); ✅ Found it on the scanner → ring off, kept: found by Mike',
+    rg.ok && p4.name === 'Scanner 3' && p4.ring && p4.ring.by === 'TS' && !p5.ring && D2.found_by === 'Mike' && !D2.ringing, { p4, p5, D2 });
+  await post('/admin/devices/ring', { device: DEV }); await post('/admin/devices/ring', { device: DEV, stop: true });
+  const p6 = await (await call('/auth/ping?device=' + DEV + '&page=packship.html', { headers: { 'X-Cred-Token': lg2.token } })).json();
+  check('…⏹ Stop from Admin → ring off on the scanner too', !p6.ring, p6);
+  check('pages: every page checks in every 20 s and alarms (beep + talk + vibrate + flash) until ✅ Found it; ⌨️ menu shows its name / ID + 🔊 test; Admin → 📱 Scanners with Ring / Stop / ✏️ name',
+    /setInterval\(ping, 20000\)/.test(xa) && /'\/auth\/device-found'/.test(xa) && /✅ Found it — stop/.test(xa) && /navigator\.vibrate\(\[400, 150, 400\]\)/.test(xa) && /📱 This is: /.test(xa)
+    && /id="ad-tab-devices" onclick="adSwitchTab\('devices'\)">📱 Scanners</.test(ad) && /window\.adRingDevice = async function/.test(ad) && /window\.adNameDevice = async function/.test(ad), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
