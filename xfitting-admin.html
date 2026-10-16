@@ -163,6 +163,7 @@
       <div class="ad-tab" id="ad-tab-levels" style="display:none" onclick="adSwitchTab('levels')">🎚️ Levels</div>
       <div class="ad-tab" id="ad-tab-pages" onclick="adSwitchTab('pages')">🧩 Pages &amp; Tabs</div>
       <div class="ad-tab" id="ad-tab-logins" onclick="adSwitchTab('logins')">🔑 Log in</div>
+      <div class="ad-tab" id="ad-tab-devices" onclick="adSwitchTab('devices')">📱 Scanners</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
       <div class="ad-tab" id="ad-tab-test" onclick="adSwitchTab('test')">🧪 Test</div>
     </div>
@@ -205,6 +206,20 @@
         </div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Every sign-in (who, when, where, which device), every sign-in refused because it was not their time, and every change of hours.</div>
         <div id="ad-signins"><div class="ad-empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- 📱 Scanners (owner 2026-10-16: "people take a scanner and never bring it back — which scanner, who used it last;
+         if we can't find it, make it sound loud from a button in our app") -->
+    <div id="ad-panel-devices" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header">
+          <h2>📱 Scanners — who used each one, and 🔊 Ring to find it</h2>
+          <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adLoadDevices()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Every phone / scanner / computer with our app open checks in every 20 seconds. <b>🔊 Ring</b> makes it beep loud, talk, vibrate and flash until someone taps <b>✅ Found it</b> on it.
+          It only hears the ring while it is awake with our app open — a scanner asleep rings as soon as its screen comes on. Name each one (✏️) so you know which is which: the ID is under ⌨️ (bottom left) on the scanner.</div>
+        <div id="ad-devices"><div class="ad-empty">Loading…</div></div>
       </div>
     </div>
 
@@ -440,12 +455,13 @@ function adShowDenied() {
 }
 
 window.adSwitchTab = function(name) {
-  ['users','levels','pages','logins','activity','test'].forEach(function(n) {
+  ['users','levels','pages','logins','devices','activity','test'].forEach(function(n) {
     ge('ad-tab-' + n).classList.toggle('active', n === name);
     ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
   });
   if (name === 'activity') adLoadActivity();
   if (name === 'logins') { adLoadLogins(); adLoadSignins(); }
+  if (name === 'devices') adLoadDevices();
   if (name === 'levels') adRenderLevels();
   if (name === 'pages') adLoadPages();
   if (name === 'test') adLoadTest();
@@ -599,6 +615,42 @@ window.adLoadLogins = async function() {
       + (list ? '<table class="ad-table" style="margin-top:6px"><thead><tr><th>Time</th><th>What</th><th>Details</th></tr></thead><tbody>' + list + '</tbody></table>' + (x.more ? '<div class="ad-empty">+ ' + x.more + ' earlier lines not shown</div>' : '')
         : '<div style="font-size:12px;color:var(--text3);margin-top:4px">Nothing opened or saved after this sign-in.</div>') + '</details>';
   }).join('');
+};
+
+// 📱 Scanners — who used each device last, 🔊 Ring / ⏹ Stop, ✏️ name.
+function adAgo(iso) { if (!iso) return 'never'; var m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; }
+window.adLoadDevices = async function() {
+  var box = ge('ad-devices'); if (!box) return;
+  var r = await adFetch('/admin/devices'); if (r.status !== 200 || !r.data.ok) { box.innerHTML = '<div class="ad-empty">Could not load.</div>'; return; }
+  var list = r.data.devices || []; AD.devices = list;
+  if (!list.length) { box.innerHTML = '<div class="ad-empty">No device has checked in yet — open the app on a scanner and sign in.</div>'; return; }
+  box.innerHTML = '<table class="ad-table"><thead><tr><th>Scanner</th><th>Now</th><th>Who used it (newest first)</th><th></th></tr></thead><tbody>' + list.map(function(d, i) {
+    var nm = d.name ? '<b>' + adEsc(d.name) + '</b>' : '<span style="color:var(--orange);font-weight:700">not named</span>';
+    var uses = (d.uses || []).map(function(u, k) { return '<div style="font-size:12px' + (k ? ';color:var(--text3)' : '') + '">' + (k ? '' : '👤 ') + '<b>' + adEsc(u.user_name || '?') + '</b> · ' + adEsc(adNY(u.first_at)) + (u.last_at !== u.first_at ? ' – ' + adEsc(new Date(u.last_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })) : '') + '</div>'; }).join('');
+    return '<tr' + (d.ringing ? ' style="background:#fee2e2"' : '') + '><td>' + nm + ' <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto;padding:2px 7px" onclick="adNameDevice(' + i + ')">✏️</button>'
+      + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">ID ' + adEsc(String(d.id).slice(0, 4).toUpperCase()) + ' · ' + adEsc(d.model || '') + '</div></td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + (d.online ? '<span style="color:var(--green,#16a34a);font-weight:700">● on now</span>' : '<span style="color:var(--text3)">○ last seen ' + adEsc(adAgo(d.last_seen)) + '</span>')
+      + '<div>' + adEsc(d.last_user || '') + (d.last_page ? ' · ' + adEsc(String(d.last_page).replace('.html', '')) : '') + '</div>'
+      + (d.found_at && d.ring_at && d.found_at >= d.ring_at ? '<div style="color:var(--text3)">✅ found ' + adEsc(adAgo(d.found_at)) + ' by ' + adEsc(d.found_by || '?') + '</div>' : '') + '</td>'
+      + '<td>' + (uses || '<span style="color:var(--text3)">—</span>') + '</td>'
+      + '<td style="white-space:nowrap">' + (d.ringing ? '<span style="color:var(--red,#c0392b);font-weight:800">🔊 ringing…</span> <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adRingDevice(' + i + ', true)">⏹ Stop</button>'
+        : '<button class="ad-btn ad-btn-sm" style="width:auto;background:var(--red,#c0392b);border-color:var(--red,#c0392b)" onclick="adRingDevice(' + i + ')">🔊 Ring</button>') + '</td></tr>';
+  }).join('') + '</tbody></table>';
+};
+window.adRingDevice = async function(i, stop) {
+  var d = (AD.devices || [])[i]; if (!d) return;
+  var r = await adFetch('/admin/devices/ring', { method: 'POST', body: JSON.stringify({ device: d.id, stop: !!stop }) });
+  if (r.status !== 200 || !r.data.ok) { adToast((r.data && r.data.error) || 'Failed', 'err'); return; }
+  adToast(stop ? 'Stopped' : '🔊 Ringing ' + (d.name || 'this scanner') + ' — it starts within 20 seconds' + (d.online ? '' : ' (when its screen is on and our app is open)'), 'ok');
+  adLoadDevices();
+};
+window.adNameDevice = async function(i) {
+  var d = (AD.devices || [])[i]; if (!d) return;
+  var n = prompt('Name for this device (e.g. Scanner 1, Packing station, Office PC)\nID ' + String(d.id).slice(0, 4).toUpperCase() + ' · ' + (d.model || '') + ' · last used by ' + (d.last_user || '?'), d.name || '');
+  if (n === null) return;
+  var r = await adFetch('/admin/devices/name', { method: 'POST', body: JSON.stringify({ device: d.id, name: n }) });
+  if (r.status !== 200 || !r.data.ok) { adToast((r.data && r.data.error) || 'Failed', 'err'); return; }
+  adToast('Saved', 'ok'); adLoadDevices();
 };
 
 window.adRemoveUser = async function(userId) {

@@ -469,6 +469,85 @@ async function credActionLog(env, s, kind, path, detail, at) {
     if (Math.random() < 0.01) await env.DB.prepare(`DELETE FROM cred_action_log WHERE at < ?`).bind(new Date(Date.now() - 180 * 86400000).toISOString()).run();
   } catch (e) { console.error('[action log]', e.message); }
 }
+// 📱 Scanners (owner 2026-10-16): "4–5 scanners — people take one and never bring it back. Which scanner, who used it
+// last? And if we can't find it, make it sound loud from a button in our app so we can track it down." Every phone /
+// computer with our app open checks in every 20 s (/auth/ping): its own id, model, who is signed in, which page.
+// Admin → 📱 Scanners lists them (who used each one, when) with 🔊 Ring: the scanner alarms until someone taps Found it.
+let _devReady = false;
+async function ensureDeviceTables(env) {
+  if (_devReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_devices (id TEXT PRIMARY KEY, name TEXT, model TEXT, last_user_id INTEGER, last_user TEXT,
+    last_seen TEXT, last_page TEXT, ring_at TEXT, ring_by TEXT, found_at TEXT, found_by TEXT, created_at TEXT)`).run().catch(() => {});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_device_use (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, user_id INTEGER,
+    user_name TEXT, first_at TEXT NOT NULL, last_at TEXT NOT NULL)`).run().catch(() => {});
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_app_device_use_dev ON app_device_use(device_id, id)').run().catch(() => {});
+  _devReady = true;
+}
+const DEVICE_RING_MS = 10 * 60000; // a ring lasts 10 min unless Found it / Stop
+function deviceIdOk(id) { return /^[A-Za-z0-9-]{8,40}$/.test(String(id || '')); }
+function deviceRinging(row, now) { return !!(row && row.ring_at && !(row.found_at && row.found_at >= row.ring_at) && now - Date.parse(row.ring_at) < DEVICE_RING_MS); }
+// GET /auth/ping?device=&model=&page= → { name, ring } — the device's check-in. Writes at most once a minute
+// (or at once when the person / page changes), so 5 scanners every 20 s stay light.
+async function devicePing(url, env, s) {
+  await ensureDeviceTables(env);
+  const id = String(url.searchParams.get('device') || '');
+  if (!deviceIdOk(id)) return { ok: false, error: 'bad device id' };
+  const model = String(url.searchParams.get('model') || '').replace(/[^\w\s.\-#()/]/g, '').trim().slice(0, 60);
+  const page = String(url.searchParams.get('page') || '').replace(/[^\w.#\-]/g, '').slice(0, 60);
+  const nowMs = Date.now(), now = new Date(nowMs).toISOString(), who = String(s.displayName || s.username || '').slice(0, 60);
+  let row = await env.DB.prepare('SELECT * FROM app_devices WHERE id = ?').bind(id).first();
+  if (!row) {
+    await env.DB.prepare('INSERT INTO app_devices (id, name, model, last_user_id, last_user, last_seen, last_page, created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(id, '', model, s.userId || null, who, now, page, now).run();
+    row = { id, name: '' };
+    await env.DB.prepare('INSERT INTO app_device_use (device_id, user_id, user_name, first_at, last_at) VALUES (?,?,?,?,?)').bind(id, s.userId || null, who, now, now).run();
+  } else if (row.last_user_id !== (s.userId || null) || row.last_page !== page || !row.last_seen || nowMs - Date.parse(row.last_seen) > 55000) {
+    await env.DB.prepare('UPDATE app_devices SET model = ?, last_user_id = ?, last_user = ?, last_seen = ?, last_page = ? WHERE id = ?')
+      .bind(model || row.model || '', s.userId || null, who, now, page, id).run();
+    // who used it: same person within 30 min → the same stretch, else a new line
+    const u = await env.DB.prepare('SELECT id, user_id, last_at FROM app_device_use WHERE device_id = ? ORDER BY id DESC LIMIT 1').bind(id).first();
+    if (u && u.user_id === (s.userId || null) && nowMs - Date.parse(u.last_at) < 30 * 60000) await env.DB.prepare('UPDATE app_device_use SET last_at = ? WHERE id = ?').bind(now, u.id).run();
+    else await env.DB.prepare('INSERT INTO app_device_use (device_id, user_id, user_name, first_at, last_at) VALUES (?,?,?,?,?)').bind(id, s.userId || null, who, now, now).run();
+  }
+  return { ok: true, name: row.name || '', ring: deviceRinging(row, nowMs) ? { at: row.ring_at, by: row.ring_by || '' } : null };
+}
+// POST /auth/device-found { device } — someone tapped ✅ Found it on the ringing scanner (who / when kept).
+async function deviceFound(request, env, s) {
+  await ensureDeviceTables(env);
+  const b = await request.json().catch(() => ({}));
+  if (!deviceIdOk(b.device)) return { ok: false, error: 'bad device id' };
+  await env.DB.prepare('UPDATE app_devices SET found_at = ?, found_by = ? WHERE id = ?').bind(new Date().toISOString(), String(s.displayName || s.username || '').slice(0, 60), b.device).run();
+  return { ok: true };
+}
+// GET /admin/devices → every device, newest check-in first, with its last 8 users.
+async function adminDevices(env) {
+  await ensureDeviceTables(env);
+  const now = Date.now();
+  const rows = (await env.DB.prepare('SELECT * FROM app_devices ORDER BY last_seen DESC LIMIT 100').all()).results || [];
+  for (const r of rows) {
+    r.uses = (await env.DB.prepare('SELECT user_name, first_at, last_at FROM app_device_use WHERE device_id = ? ORDER BY id DESC LIMIT 8').bind(r.id).all()).results || [];
+    r.ringing = deviceRinging(r, now);
+    r.online = !!(r.last_seen && now - Date.parse(r.last_seen) < 90000);
+  }
+  return cors(new Response(JSON.stringify({ ok: true, devices: rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /admin/devices/ring { device, stop } · POST /admin/devices/name { device, name }
+async function adminDeviceSet(request, env, s, what) {
+  await ensureDeviceTables(env);
+  const b = await request.json().catch(() => ({})), J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!deviceIdOk(b.device)) return J({ ok: false, error: 'bad device id' }, 400);
+  const by = String(s.displayName || s.username || '').slice(0, 60), now = new Date().toISOString();
+  if (what === 'ring') {
+    if (b.stop) await env.DB.prepare('UPDATE app_devices SET found_at = ?, found_by = ? WHERE id = ?').bind(now, by + ' (stopped)', b.device).run();
+    else await env.DB.prepare('UPDATE app_devices SET ring_at = ?, ring_by = ? WHERE id = ?').bind(now, by, b.device).run();
+  } else {
+    const name = String(b.name || '').trim().slice(0, 40);
+    await env.DB.prepare('UPDATE app_devices SET name = ? WHERE id = ?').bind(name, b.device).run();
+  }
+  await logUserActivity(env, s.userId, what === 'ring' ? (b.stop ? 'device_ring_stop' : 'device_ring') : 'device_name', { device: b.device, name: b.name || '', by });
+  return J({ ok: true });
+}
+
 // GET /admin/logins?days=7&userId= → each sign-in (who, when, where, device) with what that person did
 // from that sign-in until their next one: pages opened + everything saved, in order.
 async function adminLogins(url, env) {
@@ -7922,6 +8001,13 @@ const _app = {
       return await credLogout(request, env);
     }
     // What this signed-in person may not see (xf-access.js on every page).
+    // 📱 Scanner check-in / ✅ Found it (any signed-in device)
+    if ((url.pathname === '/auth/ping' && method === 'GET') || (url.pathname === '/auth/device-found' && method === 'POST')) {
+      const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      const out = url.pathname === '/auth/ping' ? await devicePing(url, env, s) : await deviceFound(request, env, s);
+      return cors(new Response(JSON.stringify(out), { status: out.ok ? 200 : 400, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.pathname === '/auth/access' && method === 'GET') {
       const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
       if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
@@ -7958,6 +8044,9 @@ const _app = {
       if (url.pathname === '/admin/users/hours' && method === 'POST')         return await adminSetHours(request, env, credSession);
       if (url.pathname === '/admin/signins' && method === 'GET')              return await adminSignins(url, env);
       if (url.pathname === '/admin/logins' && method === 'GET')               return await adminLogins(url, env);
+      if (url.pathname === '/admin/devices' && method === 'GET')              return await adminDevices(env);
+      if (url.pathname === '/admin/devices/ring' && method === 'POST')        return await adminDeviceSet(request, env, credSession, 'ring');
+      if (url.pathname === '/admin/devices/name' && method === 'POST')        return await adminDeviceSet(request, env, credSession, 'name');
       if (url.pathname === '/admin/users/remove' && method === 'POST')        return await adminRemoveUser(request, env, credSession, false);
       if (url.pathname === '/admin/users/restore' && method === 'POST')       return await adminRemoveUser(request, env, credSession, true);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);

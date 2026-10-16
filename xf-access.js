@@ -877,6 +877,8 @@ document.addEventListener('input', function (e) {
     B('⌨️ Type in this box (our keyboard)' + (last && document.contains(last) ? '' : ' — tap a box first'), show, true);
     B('🔍 Test the scanner', scanTest);
     if (window.xfStationSet) B(window.xfStation() ? '🔄 Station mode: ON — tap to turn off' : '🔄 Use as a station (upside down, screen stays on)', function () { window.xfStationSet(!window.xfStation()); });
+    // 📱 which device this is (named in Admin → 📱 Scanners) + hear the 🔊 Ring once
+    if (window.xfDeviceId) B('📱 This is: ' + ((window.xfDeviceName && window.xfDeviceName()) || 'not named yet') + ' · ID ' + String(window.xfDeviceId()).slice(0, 4).toUpperCase() + ' — 🔊 test the ring', function () { window.xfDeviceRingTest(); });
     B('Cancel', function () {});
     document.body.appendChild(p);
   }
@@ -1077,4 +1079,79 @@ document.addEventListener('input', function (e) {
   document.addEventListener('visibilitychange', wake); // the screen lock drops when the app is hidden: take it again
   window.addEventListener('storage', function (e) { if (e.key === KEY) apply(); }); // other tabs follow
   apply();
+})();
+
+
+// ── 📱 Find a scanner (owner, 2026-10-16) ───────────────────────────────────
+// "4–5 scanners: people take one and never bring it back — which scanner, who used it last? If we can't find it,
+// make it sound loud from a button in our app." This phone / computer checks in every 20 s (its own id + model,
+// who is signed in, which page). Admin → 📱 Scanners shows who used each one and when, and 🔊 Ring: this device then
+// beeps loud, talks, vibrates and flashes until someone taps ✅ Found it. It has to be awake with our app open to
+// hear the ring (a phone asleep in a drawer rings as soon as its screen comes on).
+(function () {
+  var WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  function token() { try { return localStorage.getItem('xf_cred_token') || ''; } catch (e) { return ''; } }
+  function devId() {
+    var id = ''; try { id = localStorage.getItem('xf_device_id') || ''; } catch (e) {}
+    if (!/^[A-Za-z0-9-]{8,40}$/.test(id)) {
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      try { localStorage.setItem('xf_device_id', id); } catch (e) {}
+    }
+    return id;
+  }
+  function model() {
+    var ua = navigator.userAgent || '', m = ua.match(/Android [\d.]+; ([^;)]+)/);
+    if (m && !/^K$/.test(m[1].trim())) return m[1].replace(/\s*Build\/.*$/, '').trim();
+    return /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Windows/.test(ua) ? 'Windows PC' : /Macintosh/.test(ua) ? 'Mac' : 'device';
+  }
+  var name = '', ringing = false, ctx = null, loop = null, ov = null;
+  // Sound needs one tap / scan on the page first (phone rule) — get the speaker ready on the first one.
+  function unlock() { try { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state === 'suspended') ctx.resume(); } catch (e) {} }
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { window.addEventListener(ev, unlock, { capture: true, passive: true }); });
+  function beep(f, t0, d) {
+    try { var o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'square'; o.frequency.value = f; g.gain.value = 1; o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t0); o.stop(ctx.currentTime + t0 + d); } catch (e) {}
+  }
+  function alarmOnce() {
+    unlock();
+    if (ctx) { beep(1400, 0, 0.18); beep(1900, 0.22, 0.18); beep(1400, 0.44, 0.18); beep(1900, 0.66, 0.18); }
+    try { if (navigator.vibrate) navigator.vibrate([400, 150, 400]); } catch (e) {}
+    if (ov) ov.style.background = ov.style.background === 'rgb(220, 38, 38)' ? '#facc15' : '#dc2626';
+  }
+  var said = 0;
+  function say() { try { if (window.speechSynthesis && Date.now() - said > 5000) { said = Date.now(); var u = new SpeechSynthesisUtterance('Scanner here! ' + (name || '')); u.volume = 1; u.rate = 0.95; speechSynthesis.speak(u); } } catch (e) {} }
+  function ring(r) {
+    if (ringing) return; ringing = true;
+    try { if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').catch(function () {}); } catch (e) {}
+    ov = document.createElement('div'); ov.id = 'xf-ring';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#dc2626;color:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;font:800 22px system-ui,sans-serif;padding:20px';
+    ov.innerHTML = '<div style="font-size:64px">🔊</div><div style="background:#fff;border-radius:14px;padding:14px 18px">This scanner' + (name ? ' (<b>' + name.replace(/</g, '&lt;') + '</b>)' : '') + ' is being looked for'
+      + (r && r.by ? '<div style="font-size:15px;font-weight:600;margin-top:6px">by ' + String(r.by).replace(/</g, '&lt;') + '</div>' : '') + '</div>'
+      + '<button type="button" id="xf-ring-found" style="font:800 24px system-ui,sans-serif;padding:18px 30px;border-radius:16px;border:none;background:#16a34a;color:#fff">✅ Found it — stop</button>';
+    document.body.appendChild(ov);
+    document.getElementById('xf-ring-found').addEventListener('click', function () { stop(true); });
+    alarmOnce(); say();
+    loop = setInterval(function () { alarmOnce(); say(); }, 1000);
+    setTimeout(function () { if (ringing && loop) { clearInterval(loop); loop = null; } }, 3 * 60000); // sound stops after 3 min, the screen stays until Found it
+  }
+  function stop(found) {
+    ringing = false; if (loop) clearInterval(loop); loop = null;
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+    if (ov) ov.remove(); ov = null;
+    if (found && token()) fetch(WORKER + '/auth/device-found', { method: 'POST', headers: { 'X-Cred-Token': token(), 'Content-Type': 'application/json' }, body: JSON.stringify({ device: devId() }) }).catch(function () {});
+  }
+  function ping() {
+    var t = token(); if (!t) return;
+    var page = (location.pathname.split('/').pop() || 'index.html');
+    fetch(WORKER + '/auth/ping?device=' + encodeURIComponent(devId()) + '&model=' + encodeURIComponent(model()) + '&page=' + encodeURIComponent(page), { headers: { 'X-Cred-Token': t } })
+      .then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d || !d.ok) return;
+        name = d.name || '';
+        if (d.ring && !ringing) ring(d.ring); else if (!d.ring && ringing) stop(false); // stopped from Admin
+      }).catch(function () {});
+  }
+  window.xfDeviceId = devId;
+  window.xfDeviceName = function () { return name; };
+  window.xfDeviceRingTest = function () { ring({ by: 'test on this phone' }); }; // ⌨️ menu: hear how loud it is
+  setTimeout(ping, 3000); setInterval(ping, 20000);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') ping(); }); // woke up → ask at once
 })();
