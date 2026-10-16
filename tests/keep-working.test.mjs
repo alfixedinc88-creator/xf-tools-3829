@@ -6087,19 +6087,22 @@ console.log('\n📊 Stock Levels: Out / Low each split into nothing coming · al
            R('4-4-4=1', 1, 10, 900, 0, 0), R('5-5-5=1', 1, 10, 900, 0, 30), R('6-6-6=1', 1, 10, 900, 20, 0), R('8-8-8=1', 100, 1000, 90, 0, 0)] });
   g.window.soSetView('part'); // judged on "Each part #" (the first page is one row per parent since 2026-10-13)
   const h = els['res-oos'].innerHTML, by = Object.fromEntries((api.items() || []).map(r => [r.part, r.status + ':' + r.sub]));
-  check('out: 1-1-1 nothing coming · 2-2-2 owed → already ordered · 3-3-3 on the water → already shipped · 7-7-7 📋 PO placed → already ordered; low: 4-4-4 / 5-5-5 ordered / 6-6-6 shipped',
-    by['1-1-1=1'] === 'out:none' && by['2-2-2=1'] === 'out:ordered' && by['3-3-3=1'] === 'out:shipped' && by['7-7-7=1'] === 'out:ordered'
+  // Owner 2026-10-16 "delete the PO": a PO note on the sheet (7-7-7) no longer counts as ordered — only Reorder (owed / on the water) does.
+  check('out: 1-1-1 nothing coming · 2-2-2 owed → already ordered · 3-3-3 on the water → already shipped · 7-7-7 (only an old PO note, PO removed) → nothing coming; low: 4-4-4 / 5-5-5 ordered / 6-6-6 shipped',
+    by['1-1-1=1'] === 'out:none' && by['2-2-2=1'] === 'out:ordered' && by['3-3-3=1'] === 'out:shipped' && by['7-7-7=1'] === 'out:none'
     && by['4-4-4=1'] === 'low:none' && by['5-5-5=1'] === 'low:ordered' && by['6-6-6=1'] === 'low:shipped' && by['8-8-8=1'].startsWith('in'), by);
-  check('…buttons with counts: Out of stock (1) / — already ordered (2) / — already shipped (1); Low stock (1) / (1) / (1); the old 🔴 Out of Stock (4) / 🟠 Low Stock (3) stay',
-    /🔴 Out of stock \(1\)/.test(h) && /Out of stock — already ordered \(2\)/.test(h) && /Out of stock — already shipped \(1\)/.test(h)
+  check('…buttons with counts: Out of stock (2) / — already ordered (1) / — already shipped (1); Low stock (1) / (1) / (1); the old 🔴 Out of Stock (4) / 🟠 Low Stock (3) stay',
+    /🔴 Out of stock \(2\)/.test(h) && /Out of stock — already ordered \(1\)/.test(h) && /Out of stock — already shipped \(1\)/.test(h)
     && /🟠 Low stock \(1\)/.test(h) && /Low stock — already ordered \(1\)/.test(h) && /Low stock — already shipped \(1\)/.test(h)
     && /🔴 Out of Stock \(4\)/.test(h) && /🟠 Low Stock \(3\)/.test(h) && /Out of Stock — already shipped<\/span>/.test(h), h.slice(0, 3000));
   api.setF('out:ordered'); api.renderOOS();
   const shown = (api.items() || []).map(r => r.part).sort().join(',');
   api.setF('out'); api.renderOOS();
   const outAll = (api.items() || []).map(r => r.part);
-  check('…tap "Out of stock — already ordered" → only 2-2-2 and 7-7-7; "Out of Stock" still shows all 4, nothing coming first',
-    shown === '2-2-2=1,7-7-7=1' && outAll.length === 4 && outAll[0] === '1-1-1=1' && outAll[3] === '3-3-3=1', [shown, outAll]);
+  check('…tap "Out of stock — already ordered" → only 2-2-2; "Out of Stock" still shows all 4, nothing coming first',
+    shown === '2-2-2=1' && outAll.length === 4 && outAll[0] === '1-1-1=1' && outAll[3] === '3-3-3=1', [shown, outAll]);
+  check('Stock Levels: no PO any more (owner 2026-10-16 "delete the PO") — no PO column, no PO: All / ✓ PO Placed / ⚠ Not Ordered filter, no 📋 Log PO Placed button or form',
+    !/<th>PO<\/th>/.test(h) && !/PO Placed|Not Ordered|>PO:</.test(h) && !/po-log-form|Log PO Placed<\/button>|poLogSubmit|oosSetFilter/.test(wh), null);
 }
 
 // Owner (2026-10-13): "4-3-1=OLD — we already have 4-3-1=2, 4-3-1=5 ordered, not shipped yet → it belongs in 'Out of stock -
