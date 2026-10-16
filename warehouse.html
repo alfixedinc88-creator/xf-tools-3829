@@ -2027,7 +2027,11 @@ async function loadAllSheets() {
       fetchSheet(SHEET_NAMES.master),
       fetchSheet(SHEET_NAMES.products),
       fetchSheet(SHEET_NAMES.awd),
-      fetchSheet(SHEET_NAMES.upc),
+      // UPCs from our database (owner 2026-10-16: "all saved under our database"): SKU Mgr → 🔢 UPC codes first, then the
+      // database UPC table, the old Google sheet only for part #s not in the database yet. The sheet itself if that fails.
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/upc-list').then(function(r) { return r.json(); })
+        .then(function(d) { if (!d || !d.ok) throw new Error('upc-list'); return [['', 'Part #', 'Inside', 'Outside']].concat(d.rows.map(function(x) { return ['', x.part, x.inside, x.outside]; })); })
+        .catch(function() { return fetchSheet(SHEET_NAMES.upc); }),
       fetchSheet(SHEET_NAMES.oos),
     ]);
     DB.master    = parseMasterListRows(results[0]);

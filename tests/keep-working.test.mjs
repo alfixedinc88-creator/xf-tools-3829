@@ -6676,5 +6676,64 @@ console.log('\n🔍 Item Search: a UPC (outside box or inside bag) finds its par
     /\/inventory\/lookup\?code=00810097206540$/.test(asked) && /24-1-2/.test(h5) && /🔎 UPC of 24-1-2=1/.test(h5), [asked, h5.slice(0, 300)]);
 }
 
+// Owner (2026-10-16): "On SKU Mgr build something I can click to upload the new UPC codes with the part #, or edit them if
+// something is wrong (a part # with the wrong UPC) — editing our database too, so all of our items use the newest info"
+// + "I thought we don't use the Google Sheet anymore — all saved in our database?"
+console.log('\n🔢 SKU Mgr → UPC codes: upload / fix outside box + inside bag UPCs, saved in the database, every scan uses the newest');
+{
+  const now = new Date().toISOString();
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('931-1-1','tee','931-1-1=10','C1=3-1-1',4,10), ('931-1-1','tee','931-1-1=5','C1=3-1-2',2,5), ('931-1-2','cap','931-1-2=1','C1=3-1-3',1,1)`).run();
+  await get('/inventory/upc-manager'); // tables
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '931-1-1=10', '931-1-1', '850031110001', '10850031110008', ?)").run(now);
+  sq.prepare("CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)").run();
+  sq.prepare("INSERT INTO upc_link (upc, part, by_user, at) VALUES ('850031119999', '931-1-1=10', 'KL', ?)").run(now);
+  const whB = shelf(), sheetWrites0 = { n: 0 }, f0 = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { if (String(u).includes('sheets') && o && /PUT|POST/.test(o.method || '')) sheetWrites0.n++; return f0(u, o); };
+  const m = await get('/inventory/upc-manager?q=931-1-1');
+  const P = k => (m.parts || []).find(x => x.part === k) || {};
+  check('look up parent 931-1-1 → both pack sizes; =10 uses bag 850031110001 / box 10850031110008 (the database), "Kept in" lists the Stock In link too; counts shown',
+    P('931-1-1=10').inside === '850031110001' && P('931-1-1=10').outside === '10850031110008' && P('931-1-1=5').part && P('931-1-1=10').sources.some(x => x.from === 'link') && typeof m.dbRows === 'number' && m.sheetLimit === 20000, m);
+  const rows = [{ part: '931-1-1=10', inside: '850031110002', outside: '' }, { part: '931-1-1=5', inside: '850031150001', outside: '10850031150008' },
+    { part: '999-9-9=1', inside: '850099990001', outside: '' }, { part: '931-1-1=5', inside: '850031150009', outside: '' }, { part: '931-1-2=1X', inside: '8.50031E+11', outside: '' },
+    { part: '931-1-2=1 ', inside: '', outside: '10850031110008' }];
+  const pv = await post('/inventory/upc-manager/save', { rows, dryRun: true });
+  const st = pv.rows.map(r => r.status + (r.needsConfirm ? '!' : ''));
+  check('check first (nothing saved): =10 ✏️ change (bag 850031110001 → 850031110002, box kept), =5 🆕 new, 999-9-9=1 ❌ unknown part #, =5 twice ❌, "8.50031E+11" ❌ not a UPC, 931-1-2=1 box already on 931-1-1=10 → tick to move',
+    st.join(',') === 'change,new,error,error,error,new!' && pv.rows[0].old.inside === '850031110001' && pv.rows[0].outside === '10850031110008' && /not in SKU Mgr/.test(pv.rows[2].problems[0]) && /twice/.test(pv.rows[3].problems[0])
+    && /not a UPC/.test(pv.rows[4].problems[0]) && /is on 931-1-1=10 now/.test(pv.rows[5].warn[0]) && !sq.prepare("SELECT COUNT(*) n FROM upc_edit WHERE part LIKE '931-%'").get().n, st);
+  const noMgmt = await call('/inventory/upc-manager/save', { method: 'POST', body: JSON.stringify({ rows }) });
+  const sv = await post('/inventory/upc-manager/save', { rows });
+  const L = async c => (await get('/inventory/lookup?code=' + c)).partNum || null;
+  check('save (not signed in → refused): 2 saved, the moved one waits for its tick; =10 now bag 850031110002 in the database (upc_edit + UPC table); never written to the Google Sheet',
+    noMgmt.status >= 400 && sv.ok && sv.saved.length === 2 && sv.skipped.length === 4 && sq.prepare("SELECT inside_upc i FROM upc_edit WHERE part = '931-1-1=10'").get().i === '850031110002'
+    && sq.prepare("SELECT inside_upc i FROM upc WHERE sku = '931-1-1=10'").get().i === '850031110002' && sq.prepare("SELECT outside_upc o FROM upc WHERE sku = '931-1-1=5'").get().o === '10850031150008' && sheetWrites0.n === 0, sv);
+  const [a1, a2, a3, a4] = [await L('850031110002'), await L('850031110001'), await L('850031119999'), await L('0850031150001')];
+  check('…every scan uses the newest: new bag 850031110002 → 931-1-1=10; the old wrong 850031110001 and the wrong Stock In link 850031119999 no longer find 931-1-1=10; =5 bag (leading 0) → 931-1-1=5',
+    a1 === '931-1-1=10' && a2 !== '931-1-1=10' && a3 !== '931-1-1=10' && a4 === '931-1-1=5' && !sq.prepare("SELECT 1 FROM upc_link WHERE upc = '850031119999'").get(), [a1, a2, a3, a4]);
+  const sv2 = await post('/inventory/upc-manager/save', { rows: [{ part: '931-1-2=1', inside: '', outside: '10850031110008' }], confirm: ['931-1-2=1'] });
+  const e10 = sq.prepare("SELECT inside_upc i, outside_upc o FROM upc_edit WHERE part = '931-1-1=10'").get();
+  check('…ticked → box 10850031110008 moves to 931-1-2=1 (taken off 931-1-1=10, its bag stays); the box scan finds 931-1-2=1',
+    sv2.saved.length === 1 && e10.o === '' && e10.i === '850031110002' && await L('10850031110008') === '931-1-2=1', [sv2, e10]);
+  const h = sq.prepare("SELECT part_num, initials, notes FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[SKU MGR UPC] 931-%' ORDER BY id").all();
+  check('…History: who + old → new for each (=10 bag 850031110001 → 850031110002; =5 new; the move both ways); cases untouched (' + whB + ' → ' + shelf() + ')',
+    h.length === 4 && h.every(x => x.initials === 'TS') && /inside bag 850031110001 → 850031110002/.test(h[0].notes) && /moved to 931-1-2=1/.test(h[2].notes) && /moved from 931-1-1=10/.test(h[3].notes) && shelf() === whB, h.map(x => x.notes));
+  const ul = await get('/inventory/upc-list');
+  const U2 = k => (ul.rows || []).find(x => x.part === k) || {};
+  check('Item Search reads the UPC list from the database (/inventory/upc-list): 931-1-1=10 bag 850031110002, 931-1-2=1 box 10850031110008',
+    U2('931-1-1=10').inside === '850031110002' && U2('931-1-2=1').outside === '10850031110008', [U2('931-1-1=10'), U2('931-1-2=1')]);
+  // 📥 the part #s only in the old Google sheet → copied into the database (rows it has are not changed)
+  globalThis.fetch = async (u, o) => { if (String(u).includes('UPC!A2')) return new Response(JSON.stringify({ values: [['', '931-1-1=10', '111111111111', ''], ['', '931-9-9=1', '850031990001', '10850031990008'], ['', '931-9-8=1', '', '']] })); return f0(u, o); };
+  const cp = await post('/inventory/upc-manager/copy-sheet', {});
+  globalThis.fetch = f0;
+  check('📥 copy the old sheet: 931-9-9=1 (only in the sheet) added; 931-1-1=10 already in the database — not changed (still 850031110002)',
+    cp.ok && cp.added === 1 && cp.already === 1 && sq.prepare("SELECT outside_upc o FROM upc WHERE sku = '931-9-9=1'").get().o === '10850031990008' && sq.prepare("SELECT inside_upc i FROM upc WHERE sku = '931-1-1=10'").get().i === '850031110002', cp);
+  const { readFileSync: rfN } = await import('node:fs');
+  const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), wh = rfN(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('screens: SKU Mgr 🔢 UPC codes (look up / fix one, paste or .csv → 🔎 check → 💾 save, 📥 copy the old sheet); Item Search loads /inventory/upc-list',
+    /id="skumgr-upc-btn" onclick="skumgrUpc\(\)"/.test(ih) && /window\.skumgrUpcCheck = function/.test(ih) && /window\.skumgrUpcSaveAll = function/.test(ih) && /window\.skumgrUpcSaveOne = function/.test(ih) && /skumgrUpcCopy\(\)/.test(ih)
+    && /\/inventory\/upc-list'\)\.then/.test(wh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '931-%'; DELETE FROM upc WHERE sku LIKE '931-%'; DELETE FROM upc_edit WHERE part LIKE '931-%'; DELETE FROM upc_link WHERE part LIKE '931-%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
