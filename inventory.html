@@ -126,6 +126,27 @@ async function invObFetch(url, opts) {
 var INV_OB_W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var INV_OB_OLD_MS = 6 * 86400000; // the server remembers ids for 7 days
 var invObBusy = false, invObTimer = null, invObJustSaved = 0;
+var INV_OB_CALM_MS = 30 * 60000; // waiting longer than this → the full orange bar (walk to WiFi)
+
+// 📋 Audit today on this phone (owner 2026-10-16: "we are doing the audit right now, make sure it got everything"): every
+// [AUDIT] entry saved on this phone today, and whether History has it. Per person, per New York day.
+function invTallyKey() { var u = INV_CRED_USER || null; try { u = u || JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
+  var d = ''; try { d = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); } catch (e) { d = new Date().toISOString().slice(0, 10); }
+  return 'xf_inv_audit_tally_' + ((u && u.userId) || 'anon') + '_' + d; }
+function invTallyRead() { try { var o = JSON.parse(localStorage.getItem(invTallyKey()) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+function invTallySet(id, st, label) { var o = invTallyRead(); if (!o[id] && !label) return; o[id] = { s: st, l: label || (o[id] && o[id].l) || '', at: (o[id] && o[id].at) || Date.now() };
+  try { localStorage.setItem(invTallyKey(), JSON.stringify(o)); } catch (e) {} invAuditTallyRender(); }
+function invAuditTallyRender() {
+  var el = document.getElementById('inv-audit-tally'); if (!el) return;
+  var o = invTallyRead(), ids = Object.keys(o), c = { history: 0, phone: 0, failed: 0 };
+  ids.forEach(function (k) { var st = o[k].s; c[st === 'history' ? 'history' : st === 'failed' ? 'failed' : 'phone']++; });
+  if (!ids.length) { el.innerHTML = '<span style="color:var(--text3)">📋 Audit today on this phone: nothing saved yet</span>'; return; }
+  el.innerHTML = '📋 <b>Audit today on this phone: ' + ids.length + '</b> · <span style="color:var(--green)">✅ ' + c.history + ' in History</span>'
+    + (c.phone ? ' · <span style="color:var(--text2)">💾 ' + c.phone + ' sending</span>' : '')
+    + (c.failed ? ' · <span style="color:var(--red);font-weight:800">✗ ' + c.failed + ' NOT saved — tap</span>' : '')
+    + (!c.phone && !c.failed ? ' <span style="color:var(--green);font-weight:800">— all saved ✓</span>' : '');
+}
+window.invAuditTallyRender = invAuditTallyRender;
 function invObKey() { var u = INV_CRED_USER || null; try { u = u || JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {} return 'xf_inv_outbox_' + ((u && u.userId) || 'anon'); }
 function invObRead() { try { var a = JSON.parse(localStorage.getItem(invObKey()) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
 function invObWrite(a) { try { localStorage.setItem(invObKey(), JSON.stringify(a)); } catch (e) {} invObRender(); invObSchedule(); }
@@ -162,6 +183,7 @@ async function invPost(url, opts, after) {
   var path = url.replace(INV_OB_W, '');
   var body = {}; try { body = JSON.parse((opts && opts.body) || '{}'); } catch (e) {}
   var id = invObNewId(); body._requestId = id; body._outbox = true;
+  if (/\[AUDIT\]/.test(body.notes || '')) invTallySet(id, 'phone', invObLabel(path, body));
   var ent = { id: id, path: path, body: body, after: invObAfter(after), label: invObLabel(path, body), by: (INV_CRED_USER && INV_CRED_USER.displayName) || '',
     createdAt: Date.now(), tries: 0, state: 'sending', error: '' };
   var a = invObRead(); a.push(ent); invObWrite(a);
@@ -200,6 +222,7 @@ async function invObSend(ent, first) {
   }
   // The server said no (e.g. missing part #). First try: the screen shows
   // the error as before, so it isn't kept. Later try: kept, shown in red.
+  invTallySet(ent.id, 'failed'); // the server said no — counted as NOT saved on 📋 Audit today
   if (first) invObDrop(ent.id);
   else invObPatch(ent.id, function (x) { x.state = 'failed'; x.error = (d && d.error) || ('Rejected (' + r.status + ')'); });
   return { status: 'failed', data: d || { ok: false, error: 'Rejected (' + r.status + ')' }, http: r.status };
@@ -247,7 +270,7 @@ async function invObTick() {
         var saved = 0;
         var a = invObRead().filter(function (x) {
           var st = cd.results && cd.results[x.id];
-          if (x.state === 'sent' && st && st.state === 'saved') { saved++; return false; }
+          if (x.state === 'sent' && st && st.state === 'saved') { saved++; invTallySet(x.id, 'history'); return false; }
           if (x.state === 'sent' && st && st.state === 'missing') { x.state = 'waiting'; x.error = 'Not in History — sending again'; }
           return true;
         });
@@ -285,6 +308,19 @@ function invObRender() {
   }
   var n = function (st) { return a.filter(function (x) { return st.indexOf(x.state) >= 0; }).length; };
   var wait = n(['waiting', 'sending', 'after-waiting']), chk = n(['sent']), bad = n(['failed', 'old']);
+  invAuditTallyRender();
+  // Owner (2026-10-16, during the audit): "the WiFi thing keeps popping up, it makes them worry — hide it, but save
+  // everything". Saved on the phone = safe (it sends by itself, checked in History, never twice), so: a just-sent entry
+  // being checked shows nothing; a short WiFi gap is a small grey note; only one waiting over 30 min, or one NOT saved,
+  // shows the full bar (as before) — real problems are never hidden.
+  var longWait = a.filter(function (x) { return ['waiting', 'sending', 'after-waiting'].indexOf(x.state) >= 0 && Date.now() - (x.createdAt || 0) > INV_OB_CALM_MS; }).length;
+  if (!bad && !longWait) {
+    if (!wait) { bar.style.display = 'none'; return; }
+    bar.style.display = 'block'; bar.style.background = '#F3F4F6'; bar.style.color = '#4b5563'; bar.style.fontSize = '11px'; bar.style.fontWeight = '600'; bar.style.padding = '3px 12px';
+    bar.innerHTML = '💾 ' + wait + ' saved on this phone — sends by itself';
+    return;
+  }
+  bar.style.fontSize = '13px'; bar.style.fontWeight = '700'; bar.style.padding = '8px 12px';
   bar.style.display = 'block';
   bar.style.background = bad ? '#FDF0EE' : wait ? '#FFF7ED' : '#EEF4FF';
   bar.style.color = bad ? '#b91c1c' : wait ? '#9a3412' : '#1e40af';
@@ -1068,6 +1104,7 @@ window.invCredLogin = async function() {
   <div id="ck-out"></div>
 </div>
 <div class="ipanel" id="inv-panel-audit">
+  <div id="inv-audit-tally" onclick="invObShow()" style="font-size:12px;padding:6px 10px;margin-bottom:8px;border-radius:8px;background:var(--bg3);cursor:pointer"></div>
 
   <!-- Approval mode card — off the screen (owner); the mode is still read (Manual / Auto) and saved as before. -->
   <div class="icard" id="inv-audit-mode-card" style="display:none">
@@ -1811,7 +1848,7 @@ window.invCredLogin = async function() {
       verifyFor ? function (d) { return { path: '/inventory/verify', body: verifyFor(d) }; } : null)
       .then(function (r) { return r.json(); });
   }
-  var INV_OFFLINE_MSG = '📶 No WiFi — saved on this phone. It sends by itself when WiFi is back.';
+  var INV_OFFLINE_MSG = '✓ Saved on this phone — it sends by itself'; // calm (owner 2026-10-16): it IS saved; shown green
   var invMode = "out"; // Stock Out is now the default landing tab (see invOnLogin, which calls invSwitchTab('stockout') to fully initialize this)
   var invPart = null;
   var invSelLoc = null;
@@ -1853,6 +1890,7 @@ window.invCredLogin = async function() {
   function g(id) { return document.getElementById(id); }
 
   function invFlash(msg, type) {
+    if (msg === INV_OFFLINE_MSG) type = 'success'; // saved on the phone is saved — green, not a warning (owner 2026-10-16)
     clearTimeout(invFlashTimer);
     g("inv-flash-msg").textContent = msg;
     g("inv-flash").className = "iflash " + type + " show";
@@ -1958,7 +1996,7 @@ window.invCredLogin = async function() {
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
     if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
-    if (tab === "audit") { ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
+    if (tab === "audit") { invAuditTallyRender(); ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');

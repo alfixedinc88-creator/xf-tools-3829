@@ -6598,5 +6598,51 @@ console.log('\n📱 Scanners: who used each device last, 🔊 Ring until ✅ Fou
     && /id="ad-tab-devices" onclick="adSwitchTab\('devices'\)">📱 Scanners</.test(ad) && /window\.adRingDevice = async function/.test(ad) && /window\.adNameDevice = async function/.test(ad), null);
 }
 
+// Owner (2026-10-16, audit in progress): "the WiFi thing keeps popping up during the audit, it makes them worry — hide it,
+// but make sure we save everything on the scanner and update the system when it is on WiFi". Every audit count is saved on
+// the phone first (outbox) and checked in History; the bar now stays quiet unless something is really wrong.
+console.log('\n📶 Audit: calm WiFi bar, everything still saved on the phone, 📋 Audit today tally');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const grab = (s, end) => { const i = ih.indexOf(s); return ih.slice(i, ih.indexOf(end, i) + end.length); };
+  const src = grab('var INV_OB_CALM_MS', 'window.invAuditTallyRender = invAuditTallyRender;') + '\n' + grab('function invObRender() {', '\n}\n');
+  const els = {}, mk = id => (els[id] = els[id] || { id, style: {}, innerHTML: '', onclick: null });
+  const store = {};
+  const doc = { getElementById: id => els[id] || null, createElement: () => mk('inv-ob-bar'), body: { insertBefore: () => {}, firstChild: null } };
+  const ls = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+  let list = [];
+  const api = new Function('window', 'document', 'localStorage', 'INV_CRED_USER', 'invObRead', 'invObShow', src + '; return { render: invObRender, tallySet: invTallySet, tally: invAuditTallyRender };')(
+    {}, doc, ls, { userId: 7 }, () => list, () => {});
+  mk('inv-audit-tally');
+  const now = Date.now();
+  list = [{ id: 'a', state: 'sent', createdAt: now }]; api.render();
+  const hiddenWhenChecking = els['inv-ob-bar'].style.display === 'none';
+  list = [{ id: 'b', state: 'waiting', createdAt: now - 5 * 60000 }]; api.render();
+  const calm = els['inv-ob-bar'].innerHTML, calmColor = els['inv-ob-bar'].style.background;
+  list = [{ id: 'c', state: 'waiting', createdAt: now - 40 * 60000 }]; api.render();
+  const long = els['inv-ob-bar'].innerHTML;
+  list = [{ id: 'd', state: 'failed', createdAt: now }]; api.render();
+  const bad = els['inv-ob-bar'].innerHTML;
+  check('bar: a just-sent count being checked in History → nothing shown; a short WiFi gap → small grey "💾 1 saved on this phone — sends by itself"',
+    hiddenWhenChecking && calm === '💾 1 saved on this phone — sends by itself' && calmColor === '#F3F4F6', { calm, calmColor });
+  check('…waiting over 30 min → the full orange "waiting for WiFi" bar as before; NOT saved → red as before (real problems never hidden)',
+    /waiting for WiFi — they send by themselves/.test(long) && /NOT saved — tap to see/.test(bad), { long, bad });
+  api.tallySet('x1', 'phone', 'Audit 1-1=1 × 2 @ C1=1-1-1'); api.tallySet('x2', 'phone', 'Audit 2'); api.tallySet('x3', 'phone', 'Audit 3');
+  api.tallySet('x1', 'history'); api.tallySet('x2', 'history'); api.tallySet('x3', 'failed'); api.tallySet('zz', 'history');
+  const t1 = els['inv-audit-tally'].innerHTML;
+  api.tallySet('x3', 'history'); const t2 = els['inv-audit-tally'].innerHTML;
+  check('📋 Audit today on this phone: 3 · ✅ 2 in History · ✗ 1 NOT saved (red); when all are in History → "all saved ✓"; an entry not from today\'s audit is not counted',
+    /Audit today on this phone: 3<\/b>/.test(t1) && /✅ 2 in History/.test(t1) && /✗ 1 NOT saved/.test(t1) && /✅ 3 in History/.test(t2) && /all saved ✓/.test(t2), { t1, t2 });
+  check('…wired: every [AUDIT] entry is counted when saved on the phone, ✅ when History has it, ✗ when the server says no; "saved on this phone" flashes green',
+    /if \(\/\\\[AUDIT\\\]\/\.test\(body\.notes \|\| ''\)\) invTallySet\(id, 'phone', invObLabel\(path, body\)\);/.test(ih)
+      && /st\.state === 'saved'\) \{ saved\+\+; invTallySet\(x\.id, 'history'\); return false; \}/.test(ih) && /invTallySet\(ent\.id, 'failed'\);/.test(ih)
+      && /if \(msg === INV_OFFLINE_MSG\) type = 'success';/.test(ih) && /<div id="inv-audit-tally" onclick="invObShow\(\)"/.test(ih), null);
+  // Every audit count goes through the phone outbox (saved first, sent when WiFi is back, never twice) — none sent directly.
+  const auditWrites = [...ih.matchAll(/\[AUDIT\][^\n]*/g)].length;
+  check('…every one of the ' + auditWrites + ' audit entry kinds is saved through the phone outbox (invPost / invLogAndApprove); no Stock In / Out is ever sent straight to the server',
+    auditWrites >= 10 && !/wFetch\(W \+ ['"]\/inventory\/log['"]/.test(ih) && !/[^b]fetch\(W \+ ['"]\/inventory\/log['"]/.test(ih) && /function invLogAndApprove\(body, verifyFor\) \{\n    return invPost\(W \+ '\/inventory\/log'/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
