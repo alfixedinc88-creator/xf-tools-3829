@@ -1651,7 +1651,7 @@ body {
       <div class="search-row">
         <div class="search-wrap">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="search-input" id="inp-search" placeholder="Search by SKU or product name&hellip;" onkeydown="if(event.key==='Enter')doSearch('search')" />
+          <input class="search-input" id="inp-search" placeholder="Search by SKU, product name or UPC (outside box / inside bag)&hellip;" onkeydown="if(event.key==='Enter')doSearch('search')" />
         </div>
         <div class="count-pill">
           <label for="inp-count">Count</label>
@@ -2307,9 +2307,36 @@ function doSearch(tab) {
       have.add(b); results.push(pr ? { ...pr, countWeight: (parseFloat(pr.weight) && countAmt) ? (parseFloat(pr.weight) * countAmt).toFixed(3) : '' } : { sku: b, name: name || '', warehouseName: '', weight: '', countWeight: '', notOnProducts: true }); };
     if (raw.includes('=')) addBase(baseSKU(raw), '');
     DB.master.forEach(r => { if ((r.casesNum || 0) > 0 && hit(r.name + ' ' + r.partNum + ' ' + r.sku)) addBase(baseSKU(r.partNum) || r.sku, r.name); });
+    // Owner (2026-10-16): "Item Search — also search by the outside box and inside bag UPC". A UPC typed / scanned (6–14
+    // digits; leading 0s don't matter) finds the part # it is on (UPC list: inside bag, outside box) → its parent card first.
+    const upcQ = String(raw).replace(/[\s-]/g, '');
+    const upcHits = [];
+    if (/^\d{6,14}$/.test(upcQ)) {
+      const z = v => String(v || '').replace(/\D/g, '').replace(/^0+/, ''), key = z(upcQ);
+      (DB.upc || []).forEach(u => {
+        const w = [z(u.inside) === key ? 'inside bag' : '', z(u.outside) === key ? 'outside box' : ''].filter(Boolean);
+        if (!w.length) return;
+        const b = baseSKU(u.variant); addBase(b, '');
+        upcHits.push({ base: b.toUpperCase(), text: w.join(' + ') + ' UPC of ' + u.variant });
+      });
+      // Not on this page's UPC list → ask the same UPC → part # lookup Stock In uses (vendor box / bag lists, box UPCs
+      // saved in Container here, a scanner that drops the first digit); then search again with its answer.
+      const _whUpcSrv = doSearch._upc = doSearch._upc || {}; // UPC → part # answers from the server lookup
+      const sv = _whUpcSrv[upcQ];
+      if (sv && sv.part) { const b = baseSKU(sv.part); addBase(b, ''); upcHits.push({ base: b.toUpperCase(), text: 'UPC of ' + sv.part }); }
+      else if (!upcHits.length && !sv && typeof wFetch === 'function') {
+        _whUpcSrv[upcQ] = { asking: true };
+        wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/lookup?code=' + encodeURIComponent(upcQ)).then(r => r.json()).then(d => {
+          _whUpcSrv[upcQ] = { part: d && d.partNum ? String(d.partNum).toUpperCase() : '' };
+          if (_whUpcSrv[upcQ].part && String(document.getElementById('inp-search').value).replace(/[\s-]/g, '') === upcQ) doSearch('search');
+        }).catch(() => { delete _whUpcSrv[upcQ]; });
+      }
+    }
     results.forEach(r => { const t = r.name + ' ' + r.sku + ' ' + (r.warehouseName || ''); r._sm = sm.match(t) ? sm.score(r.name || t) : 1e6; });
+    results.forEach(r => { const h = upcHits.filter(x => x.base === String(r.sku).toUpperCase()); if (h.length) { r.upcHits = h.map(x => x.text); r._sm = -1; } else delete r.upcHits; });
     const byPart = whCompare(raw, r => r.sku, () => ''), q = String(raw).trim().toUpperCase().replace(/\s+/g, '');
     results.sort((a, b) => {
+      if ((a._sm === -1) !== (b._sm === -1)) return a._sm === -1 ? -1 : 1; // a UPC match first
       const ra = whRank(q, a.sku), rb = whRank(q, b.sku);
       if (ra < 4 || rb < 4) return byPart(a, b);           // a part # typed: exact part # first (as before)
       if (a._sm !== b._sm) return a._sm - b._sm;           // best name match first
@@ -2498,6 +2525,7 @@ function cardSearch(r) {
       </div>
     </div>
     <div class="card-name">${r.name || '—'}</div>
+    ${r.upcHits ? `<div style="font-size:12px;color:var(--green);font-weight:700;margin:-2px 0 6px">🔎 ${r.upcHits.join(' · ')}</div>` : ''}
     <div class="fields">
       ${r.weight ? `<div class="field"><div class="field-lbl">Unit Weight (lbs)</div><div class="field-val">${r.weight}</div></div>` : ''}
       ${r.countWeight ? `<div class="field"><div class="field-lbl">Count Weight (lbs)</div><div class="field-val green">${r.countWeight}</div></div>` : ''}

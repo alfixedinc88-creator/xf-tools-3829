@@ -6644,5 +6644,37 @@ console.log('\n📶 Audit: calm WiFi bar, everything still saved on the phone, �
     auditWrites >= 10 && !/wFetch\(W \+ ['"]\/inventory\/log['"]/.test(ih) && !/[^b]fetch\(W \+ ['"]\/inventory\/log['"]/.test(ih) && /function invLogAndApprove\(body, verifyFor\) \{\n    return invPost\(W \+ '\/inventory\/log'/.test(ih), null);
 }
 
+// Owner (2026-10-16): "Warehouse Lookup → Item Search — we can also search it by the outside box and inside bag UPC code".
+console.log('\n🔍 Item Search: a UPC (outside box or inside bag) finds its part #');
+{
+  const { readFileSync: rfU } = await import('node:fs');
+  const wh = rfU(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const pick = n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0];
+  const code = wh.slice(wh.indexOf('const WH_SYN'), wh.indexOf('// Exact part # first (owner)'))
+    + ['buildRe', 'baseSKU', 'whParent', 'whRank', 'whPackKey', 'whCompare', 'doSearch', 'renderCards', 'cardLocator', 'cardSearch', 'whInvRows', 'whInvField', 'whInvFill', 'whInvToggle'].map(pick).join('\n');
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '' };
+  const g = { document: { getElementById: el, querySelectorAll: () => [] }, wpShowButtons() {}, clearPane() {}, whPhotoLoad() {}, whPhotoHtml: () => '', whPalletHtml: () => '',
+    lookupUPC: () => '', vbField: () => '', wpCan: () => false, wpAttr: v => String(v), getWarehouseName: () => '', setTimeout: f => f(), countAmt: 1, pages: { search: 1 }, PER_PAGE: 30,
+    DB: { products: [{ sku: '30-3-4', name: 'Hex nipple', warehouseName: 'HN', weight: '0.1' }, { sku: '8-8-8', name: 'Cap 850123', warehouseName: '', weight: '' }],
+      master: [{ partNum: '30-3-4=10X', sku: '30-3-4', name: 'Hex nipple', location: 'C1=1-1-1', cases: '3', casesNum: 3 }],
+      upc: [{ variant: '30-3-4=10X', inside: '850012345678', outside: '10850012345675' }, { variant: '30-3-4=2', inside: '850099999999', outside: '' }, { variant: '77-1-1=5', inside: '', outside: '0850077777777' }] } };
+  const run = new Function(...Object.keys(g), code + '; return { doSearch };')(...Object.values(g));
+  const S = q => { el('inp-search').value = q; run.doSearch('search'); return els['res-search'].innerHTML; };
+  const h1 = S('850012345678'), h2 = S('10850012345675'), h3 = S('850077777777'), h4 = S('hex');
+  check('inside bag UPC 850012345678 → 30-3-4 card, "🔎 inside bag UPC of 30-3-4=10X"; outside box 10850012345675 → same card "outside box UPC of 30-3-4=10X"',
+    /30-3-4/.test(h1) && /🔎 inside bag UPC of 30-3-4=10X/.test(h1) && /🔎 outside box UPC of 30-3-4=10X/.test(h2), [h1.slice(0, 300), h2.slice(0, 300)]);
+  check('…leading 0 doesn\'t matter (0850077777777 found by 850077777777 → 77-1-1, not on Products still shows); name / part # search unchanged (no 🔎 line)',
+    /77-1-1/.test(h3) && /outside box UPC of 77-1-1=5/.test(h3) && /30-3-4/.test(h4) && !/🔎/.test(h4) && /or UPC \(outside box \/ inside bag\)/.test(wh), [h3.slice(0, 300)]);
+  // Not on the page's UPC list → the server lookup Stock In uses (/inventory/lookup?code=), then the card.
+  let asked = '';
+  const g2 = { ...g, wFetch: u => { asked = u; return Promise.resolve({ json: () => ({ partNum: '24-1-2=1' }) }); } };
+  const run2 = new Function(...Object.keys(g2), code + '; return { doSearch };')(...Object.values(g2));
+  el('inp-search').value = '00810097206540'; run2.doSearch('search');
+  await new Promise(r => setTimeout(r, 20));
+  const h5 = els['res-search'].innerHTML;
+  check('…a UPC not on the page\'s list (box UPC 00810097206540) → asks the server UPC lookup (same as Stock In) → 24-1-2 card "🔎 UPC of 24-1-2=1"',
+    /\/inventory\/lookup\?code=00810097206540$/.test(asked) && /24-1-2/.test(h5) && /🔎 UPC of 24-1-2=1/.test(h5), [asked, h5.slice(0, 300)]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
