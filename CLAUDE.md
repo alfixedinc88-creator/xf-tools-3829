@@ -139,6 +139,13 @@ Read `docs/ORDERS-AND-CONTAINERS.md` before touching Reorder orders / containers
   again.
 - The "Orders and containers" checks in `tests/keep-working.test.mjs` must stay green.
 
+## Every new page / tab / section gets a 🧩 Pages & Tabs check mark
+Owner (2026-10-17): "every time we add new stuff, under Pages & Tabs add the check mark for it too, so we can tick who can
+see it". When a change adds a page, a tab, or a section / button someone might need to hide (a card, a report, a tool), add
+it to `XF_ACCESS_CATALOG` in `xf-access.js` (page → tab → part, with a selector) in the same PR, so it shows up in
+Admin → 🧩 Pages & Tabs. The "Pages & Tabs" check in `tests/keep-working.test.mjs` fails for a new tab or card without one.
+A check mark can only hide things: a server-side rule (e.g. Admin / Owner only) still applies on top.
+
 ## Other standing rules
 - Scanner "stopped working" (N77, Zebra DS2278, Farset R20H, Svantto MC002)? Read `docs/SCANNERS.md`
   first: the known causes and the exact working settings are there.

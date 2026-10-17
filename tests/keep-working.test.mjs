@@ -7375,5 +7375,55 @@ console.log('\n📊 Recount report: Admin and Owner only');
     /var rcAdm = !!\(INV_CRED_USER && INV_CRED_USER\.roles && \(INV_CRED_USER\.roles\.indexOf\('admin'\) >= 0 \|\| INV_CRED_USER\.roles\.indexOf\('owner'\) >= 0\)\);/.test(ih) && /rep\.style\.display = invUnlocked && rcAdm \? '' : 'none';/.test(ih), null);
 }
 
+// Owner (2026-10-17): "every time we add new stuff, under Pages & Tabs add the check mark for it too, so we can tick who can see it".
+// Every tab on every page, and every card (Inventory .icard / Pack & Ship .ps-card with an id), must be in XF_ACCESS_CATALOG
+// (Admin → 🧩 Pages & Tabs) — or be named below on purpose as a working part of a screen (not a feature to hide on its own).
+// A NEW tab or card fails here until it gets its check mark (add it to xf-access.js) or is added below with the reason.
+console.log('\n🧩 Pages & Tabs: every tab and card has a check mark (new ones too)');
+{
+  const { readFileSync: rfP } = await import('node:fs');
+  const R = f => rfP(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const xa = R('xf-access.js'), win = {};
+  new Function('window', xa.slice(xa.indexOf('  var card = function'), xa.indexOf('  window.XF_ACCESS_CATALOG = CATALOG;')) + 'window.XF_ACCESS_CATALOG = CATALOG;')(win);
+  const cat = win.XF_ACCESS_CATALOG;
+  // Tabs nothing ever shows (old, style="display:none" and never switched on).
+  const NEVER_SHOWN = new Set(['ro-tab-upload', 'ro-tab-jq', 'ro-tab-eff']);
+  // Cards that are steps inside a screen (the result of a search, the spot list, a label…) — hidden with their tab / part.
+  const SCREEN_PARTS = new Set([
+    'inv-stockout-dest-card', 'inv-result-card', 'inv-loc-card', 'inv-loc-label', 'inv-detail-card', // Stock Out / Stock In: the item found, its spots
+    'xfr-result-card', 'xfr-grab-card', 'xfr-from-label',                                             // Transfer steps
+    'inv-audit-mode-card', 'inv-audit-search-card', 'inv-audit-result-card', 'rc-aisle',              // inside 📋 Full recount / 🔧 Other audit tools
+  ]);
+  const TABS = { 'inventory.html': /id="(inv-tab-[a-z0-9]+)"/g, 'packship.html': /id="(ps-tab-[a-z0-9]+)"/g, 'reorder.html': /id="(ro-tab-[a-z0-9]+)"/g,
+    'repricer.html': /id="(tab-[a-z0-9-]+)"/g, 'awd.html': /id="(tab-[a-z0-9]+)"/g, 'sales.html': /id="(db-tab-[a-z0-9]+)"/g, 'ldash.html': /id="(ldash-ih-btn-[a-z]+)"/g,
+    'imagemaker.html': /id="(imx-tab-[a-z]+)"/g, 'warehouse.html': /class="tabitem[^"]*"[^>]*onclick="switchTab\('([a-z]+)'\)"/g };
+  const CARDS = { 'inventory.html': /<(?:div|details)[^>]*class="icard(?: [^"]*)?"[^>]*id="([\w-]+)"|<(?:div|details)[^>]*id="([\w-]+)"[^>]*class="icard(?: [^"]*)?"/g,
+    'packship.html': /<div[^>]*class="ps-card(?: [^"]*)?"[^>]*id="([\w-]+)"|<div[^>]*id="([\w-]+)"[^>]*class="ps-card(?: [^"]*)?"/g };
+  const noMark = [], stale = [];
+  for (const [f, re] of Object.entries(TABS)) {
+    const src = R(f), p = cat.find(x => x.file === f), j = JSON.stringify(p || {});
+    [...new Set([...src.matchAll(re)].map(m => m[1]))].forEach(id => { if (!NEVER_SHOWN.has(id) && !j.includes(id)) noMark.push(f + ' tab ' + id); });
+  }
+  for (const [f, re] of Object.entries(CARDS)) {
+    const src = R(f), j = JSON.stringify(cat.find(x => x.file === f) || {});
+    [...new Set([...src.matchAll(re)].map(m => m[1] || m[2]))].forEach(id => { if (!SCREEN_PARTS.has(id) && !j.includes(id)) noMark.push(f + ' card #' + id); });
+  }
+  for (const p of cat) {
+    let src = ''; try { src = R(p.file); } catch (_) { continue; }
+    [...(p.tabs || []).flatMap(t => [t, ...(t.parts || [])]), ...(p.parts || [])].forEach(t => {
+      const ids = (t.sel || '').match(/#[A-Za-z][\w-]*/g) || [];
+      if (ids.length && ids.every(i => !src.includes(i.slice(1)))) stale.push(p.file + ' ' + t.key + ' ' + t.sel);
+    });
+  }
+  check('every tab and card on every page has a 🧩 Pages & Tabs check mark (a new one fails here until it gets one)', !noMark.length, noMark);
+  check('…and every check mark still points at something on its page (nothing stale)', !stale.length, stale);
+  const keys = new Set(); cat.forEach(p => (p.tabs || []).forEach(t => (t.parts || []).forEach(x => keys.add(p.key + ':' + t.key + ':' + x.key))));
+  check('the new ones are there: Audit 📊 Recount report / 🔧 Other audit tools / Location Prefixes / Product Photos / Export / Rename Locations; Reorder 🔢 Check every UPC; Pack & Ship 🔍 Why not one label?, ⏭ Skipped labels, 🤖 Auto print report',
+    ['inventory:audit:recountreport', 'inventory:audit:othertools', 'inventory:audit:prefixes', 'inventory:audit:photos', 'inventory:audit:exportlocs', 'inventory:audit:renamelocs',
+     'reorder:reorder:upccheck', 'packship:autolabel:whymerge', 'packship:autolabel:skipped', 'packship:printlog:autoprint'].every(k => keys.has(k)), null);
+  const cm = R('CLAUDE.md');
+  check('CLAUDE.md says it: every new page / tab / section gets its 🧩 Pages & Tabs check mark', /Pages & Tabs/.test(cm) && /check mark/.test(cm) && /xf-access\.js/.test(cm), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
