@@ -3552,8 +3552,8 @@ async function inventoryUpcManagerSave(request, env, session) {
     if (/^\d{8,14}$/.test(part)) row.problems.push('the part # is a UPC barcode — put the part # first');
     if (seen.has(part)) row.problems.push('this part # is twice in the list — only the first is used');
     seen.add(part);
+    if (o.bad) row.problems.push(`outside box UPC "${o.bad}" is not a UPC (8–14 digits)`); // outside box always first (owner 2026-10-17)
     if (i.bad) row.problems.push(`inside bag UPC "${i.bad}" is not a UPC (8–14 digits)`);
-    if (o.bad) row.problems.push(`outside box UPC "${o.bad}" is not a UPC (8–14 digits)`);
     if (i.keep && o.keep) row.problems.push('no UPC given');
     if (!row.problems.length && !(await upcKnownPart(env, part))) row.problems.push(`part # ${part} is not in SKU Mgr, the UPC list or Products — check the spelling`);
     row.i = i; row.o = o; rows.push(row);
@@ -3567,7 +3567,7 @@ async function inventoryUpcManagerSave(request, env, session) {
     r.status = upcZ(r.inside) === upcZ(cur.inside) && upcZ(r.outside) === upcZ(cur.outside) ? 'same' : (cur.inside || cur.outside) ? 'change' : 'new';
     if (r.inside && upcZ(r.inside) === upcZ(r.outside)) r.warn.push('inside bag and outside box UPC are the same');
     r.moves = [];
-    for (const [k, v] of [['inside', r.inside], ['outside', r.outside]]) {
+    for (const [k, v] of [['outside', r.outside], ['inside', r.inside]]) {
       if (!v || (k === 'inside' ? r.i.keep : r.o.keep)) continue;
       const other = await upcToPart(env, v);
       if (other && other !== r.part) { r.moves.push({ upc: v, from: other }); r.warn.push(`${k === 'inside' ? 'inside bag' : 'outside box'} UPC ${v} is on ${other} now — tick to move it to ${r.part}`); }
@@ -3597,7 +3597,7 @@ async function inventoryUpcManagerSave(request, env, session) {
     }
     const before = await invPartCases(env, part).catch(() => null);
     await _skuMgrInsertLog(env, who, { part_num: part, location: '', cases: 0, name: '' },
-      `[SKU MGR UPC] ${part}: inside bag ${old.inside || '—'} → ${inside || '—'} · outside box ${old.outside || '—'} → ${outside || '—'}${note ? ' — ' + note : ''} (SKU Mgr → 🔢 UPC codes)`,
+      `[SKU MGR UPC] ${part}: outside box ${old.outside || '—'} → ${outside || '—'} · inside bag ${old.inside || '—'} → ${inside || '—'}${note ? ' — ' + note : ''} (SKU Mgr → 🔢 UPC codes)`,
       before == null ? null : { newPart: part, newBefore: before, wh }, null).catch(e => console.error('[upc history]', e.message));
   };
   const saved = [], skipped = [];
