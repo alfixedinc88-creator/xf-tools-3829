@@ -1519,7 +1519,7 @@ window.invCredLogin = async function() {
 
     <!-- Search bar -->
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input id="skumgr-search-inp" type="text" placeholder="Base SKU (e.g. 27-3-1)" autocomplete="off"
+      <input id="skumgr-search-inp" type="text" placeholder="Base SKU (27-3-1), product name or UPC (outside box / inside bag)" autocomplete="off"
         style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);background:var(--bg);color:var(--text)"
         onkeydown="if(event.key==='Enter')skumgrSearch()">
       <button onclick="skumgrSearch()"
@@ -7901,13 +7901,18 @@ window.invCredLogin = async function() {
         .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Search failed</div>'; });
       return;
     }
-    skumgrLoadIncoming(q);
-    skumgrPriceHistory(q, false);
+    // Owner (2026-10-17): also a product name or a UPC (outside box / inside bag) — the server tries those when no part # matches.
+    var looksPart = /\d-\d/.test(q) && !/^\d{8,14}$/.test(q.replace(/[\s-]/g, ''));
+    if (looksPart) { skumgrLoadIncoming(q); skumgrPriceHistory(q, false); }
     wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=asc' + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
         _skumgrRows = d.results || [];
+        if (d.matchedBy === 'upc') {
+          if (d.upcPart) { invFlash('UPC ' + d.upc + ' = ' + d.upcPart + (_skumgrRows.length ? '' : ' — not in SKU Mgr yet'), _skumgrRows.length ? 'success' : 'error'); var b0 = String(d.upcPart).split('=')[0]; skumgrLoadIncoming(b0); skumgrPriceHistory(b0, false); }
+          else invFlash('UPC ' + d.upc + ' is not on any part # yet (add it in 🔢 UPC codes)', 'error');
+        } else if (d.matchedBy === 'name') invFlash(_skumgrRows.length + ' row' + (_skumgrRows.length === 1 ? '' : 's') + ' with "' + q.toLowerCase() + '" in the name', _skumgrRows.length ? 'success' : 'error');
         skumgrApplySortAndRender(); // applies whatever sort is currently active
       })
       .catch(function() { invFlash('Search failed', 'error'); });
@@ -8081,7 +8086,7 @@ window.invCredLogin = async function() {
     if (mode === 'sku') {
       if (skuBtn) { skuBtn.style.background='var(--accent)'; skuBtn.style.color='#fff'; skuBtn.style.borderColor='var(--accent)'; }
       if (locBtn) { locBtn.style.background='var(--bg3)'; locBtn.style.color='var(--text)'; locBtn.style.borderColor='var(--border)'; }
-      if (inp) inp.placeholder = 'Base SKU (e.g. 27-3-1)';
+      if (inp) inp.placeholder = 'Base SKU (27-3-1), product name or UPC (outside box / inside bag)';
     } else {
       if (locBtn) { locBtn.style.background='var(--accent)'; locBtn.style.color='#fff'; locBtn.style.borderColor='var(--accent)'; }
       if (skuBtn) { skuBtn.style.background='var(--bg3)'; skuBtn.style.color='var(--text)'; skuBtn.style.borderColor='var(--border)'; }

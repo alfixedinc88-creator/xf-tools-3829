@@ -6915,5 +6915,25 @@ console.log('\n🔢 UPC codes: outside box UPC always first (look up, upload lis
     && !/<th>Inside bag UPC<\/th><th>Outside box UPC<\/th>/.test(ih) && /part #, outside box UPC, inside bag UPC<\/b> \(outside box always first\)/.test(ih), r);
 }
 
+// Owner (2026-10-17): "SKU Mgr → By SKU — I want to also search the name and the outside box / inside bag UPC".
+console.log('\n🔎 SKU Mgr → By SKU: also by product name and by outside box / inside bag UPC');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('932-1-1','1/2 PEX Brass Tee QZ','932-1-1=10','C1=4-1-1',3,10), ('932-1-1','1/2 PEX Brass Tee QZ','932-1-1=5','C1=4-1-2',1,5), ('932-2-2','3/4 Ball Valve QZ','932-2-2=1','C1=4-1-3',2,1)`).run();
+  await get('/inventory/upc-manager');
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '932-1-1=10', '932-1-1', '850032110001', '10850032110008', ?)").run(new Date().toISOString());
+  const S = async q => get('/inventory/sku-search?q=' + encodeURIComponent(q.toUpperCase()) + '&sort=asc');
+  const p = await S('932-1-1'), n = await S('tee pex qz'), bx = await S('10850032110008'), bg = await S('0850032110001'), no = await S('850099999991');
+  const parts = d => (d.results || []).map(r => r.part_num).sort().join(',');
+  check('part # 932-1-1 → its 2 rows as before (no name / UPC search); name "tee pex qz" (any order) → both 932-1-1 rows, not the valve',
+    parts(p) === '932-1-1=10,932-1-1=5' && !p.matchedBy && n.matchedBy === 'name' && parts(n) === '932-1-1=10,932-1-1=5', [parts(p), n.matchedBy, parts(n)]);
+  check('…outside box UPC 10850032110008 / inside bag 0850032110001 (leading 0) → 932-1-1=10 row; an unknown UPC → no rows, says it is on no part #',
+    bx.matchedBy === 'upc' && bx.upcPart === '932-1-1=10' && parts(bx) === '932-1-1=10' && bg.upcPart === '932-1-1=10' && parts(bg) === '932-1-1=10' && no.matchedBy === 'upc' && !no.upcPart && !(no.results || []).length, [bx, bg.upcPart, no]);
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const ih = rfS2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the SKU Mgr box says so (Base SKU, product name or UPC) and tells which part # a UPC is', /placeholder="Base SKU \(27-3-1\), product name or UPC \(outside box \/ inside bag\)"/.test(ih) && /d\.matchedBy === 'upc'/.test(ih) && /is not on any part # yet \(add it in 🔢 UPC codes\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '932-%'; DELETE FROM upc WHERE sku LIKE '932-%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
