@@ -2851,7 +2851,7 @@ console.log('\n🏷 Barcode designer: 💾 save on the phone → 🖨 print on t
   const ih2 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   // Owner (2026-10-17): "take off 'Print label here' and 'Save — print it on the computer'; only Save, to the Label Printer page" —
   // the 🖨 Print here button is gone on purpose (was checked here before).
-  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); the boxes typed = the labels, saved by itself (no How many labels / 💾 Save, WiFi-safe, no 🖨 Print here); the office PC sees "🏷 Barcode labels to print"',
+  check('…the designer: tabs ✏️ Design / 📍 Where does it go? (🖨 To print tab removed — owner 2026-10-17); scan each column → how many boxes (number pad); the boxes typed = the labels, saved by itself (no How many labels / 💾 Save, WiFi-safe, no 🖨 Print here); the office PC sees "🏷 Barcode labels to print"',
     /t\('design', '✏️ Design'\)/.test(ih2) && /t\('where', '📍 Where does it go\?'\)/.test(ih2) && /onkeydown="if\(event\.key===\\'Enter\\'\)bdColScan\(\)"/.test(ih2)
     // Owner (2026-10-17, later): "remove 'how many labels'; after the column label and the quantity, save by itself — no Save"
     // → the 💾 Save button is gone on purpose (it was checked here before); the number of boxes is the number of labels.
@@ -7181,6 +7181,15 @@ console.log('\n📅 SKU Mgr "Got here": when the cases at a spot arrived (contai
   check('…SKU Mgr table: "📅 Got here" column next to Location (date · days, from where, who; last out), filled for the page shown',
     /📅 Got here<\/th>/.test(ih) && /id="skumgr-got-' \+ idx \+ '"/.test(ih) && /skumgrLoadArrivals\(pageRows\);/.test(ih) && /\/inventory\/arrivals', \{ method: 'POST'/.test(ih) && /colspan="10"/.test(ih), null);
   sq.exec("DELETE FROM inventory_log WHERE part_num = '936-1-1=10'");
+}
+
+// Owner 2026-10-17: "Barcode designer — remove the 'To print'" (saved labels print on the 🏷 Label Printer page).
+console.log('\n🏷 Barcode designer: no 🖨 To print tab');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const tabs = (ih.match(/function bdTabs\(\) \{[\s\S]*?\n  \}/) || [''])[0];
+  check('the designer tabs are ✏️ Design and 📍 Where does it go? only — no 🖨 To print', /t\('design', '✏️ Design'\)/.test(tabs) && /t\('where', '📍 Where does it go\?'\)/.test(tabs) && !/t\('print'/.test(tabs) && !/To print/.test(tabs), tabs);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
