@@ -143,6 +143,8 @@ window.lpCredLogin = async function() {
 
 <style>
 #labelprint-app {
+  /* shown with display:flex — stack top to bottom: the bar across the top, the page under it (owner 2026-10-17: it sat as a left column) */
+  flex-direction: column;
   --lp-cyan: #0891B2;
   --lp-cyan-bg: #E0F2FE;
   --lp-border: #CBD5E1;
@@ -165,7 +167,7 @@ window.lpCredLogin = async function() {
 #labelprint-app .lp-header-title { font-size:17px;font-weight:700 }
 #labelprint-app .lp-back { background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:var(--sans);min-height:36px }
 #labelprint-app .lp-back:hover { background:var(--bg3);color:var(--text) }
-#labelprint-app .lp-body { padding:16px;max-width:640px;margin:0 auto }
+#labelprint-app .lp-body { padding:16px;max-width:640px;margin:0 auto;width:100%;box-sizing:border-box }
 #labelprint-app .lp-card { background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px }
 #labelprint-app .lp-card-title { font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px }
 #labelprint-app .lp-status-dot { width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px }
