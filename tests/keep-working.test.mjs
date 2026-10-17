@@ -7498,5 +7498,21 @@ console.log('\n🗺 Recount report by area: tap an area → every spot 🟩 done
   sq.exec("DELETE FROM master_list WHERE base_sku = '939-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q9=%'; DELETE FROM inventory_log WHERE part_num = '939-1-1=10'");
 }
 
+// Owner (2026-10-17, Recount report → 🗺 By area): "why do we have '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?"
+console.log('\n⚠ Recount report: SKU Mgr Locations that are a note / barcode / container are not spots — listed apart to fix');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('940-1-1','tee','940-1-1=10','3/7/26 order 500',2,10), ('940-1-1','tee','940-1-1=5','810097203419',1,5), ('940-1-1','tee','940-1-1=10','jq2605b-17 8/17/26',4,10), ('940-1-1','tee','940-1-1=10','W9=1-1-1',1,10)`).run();
+  const d = await get('/inventory/recount/report');
+  const names = (d.areas || []).map(a => a.area), bad = Object.fromEntries((d.notSpots || []).map(b => [b.loc, b]));
+  check('"3/7/26 ORDER 500", "810097203419", "JQ2605B-17 8/17/26" are NOT areas / spots to recount; listed under ⚠ not real spots with their part # and cases; W9=1-1-1 still a normal area',
+    !names.some(n => /ORDER|810097203419|JQ2605B/.test(n)) && names.includes('W9') && bad['3/7/26 ORDER 500'] && bad['3/7/26 ORDER 500'].parts[0].part === '940-1-1=10' && bad['3/7/26 ORDER 500'].parts[0].cases === 2
+    && bad['810097203419'] && bad['JQ2605B-17 8/17/26'] && !(d.aisles || []).some(a => /ORDER|JQ2605B/.test(a.aisle)), { names: names.filter(n => /W9|ORDER|8100|JQ/.test(n)), bad: Object.keys(bad) });
+  const { readFileSync: rfB } = await import('node:fs');
+  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…report screen: "⚠ N not real spots" button → the list with how to fix it in SKU Mgr', /not real spots<\/b>/.test(ih) && /RC\.area === '__bad'/.test(ih) && /SKU Mgr → <b>By Location<\/b> → search the text/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '940-1-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
