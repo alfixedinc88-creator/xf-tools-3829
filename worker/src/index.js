@@ -9393,6 +9393,8 @@ const _app = {
       if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
       if (path === '/inventory/recount/report' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
+        if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env);
       }
       if (path === '/inventory/recount/new-round' && method === 'POST') {

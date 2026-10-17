@@ -1555,8 +1555,8 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const nrM = await post('/inventory/recount/new-round', {}), st2 = await get('/inventory/recount/status?aisle=C3=4');
   check('only a manager can start a new recount; after it every column shows "not done" again', nrW.status === 403 && nrM.ok && st2.spots.every(x => !x.done), { w: nrW.status, nrM });
   const repW = await call('/inventory/recount/report', { headers: { 'X-Cred-Token': pkt3 } });
-  check('📊 the recount report is for managers only (a picker gets 403); on the Audit tab it is folded and hidden until a manager signs in',
-    repW.status === 403 && /<details class="icard" id="rc-report" style="display:none" ontoggle="if\(this\.open\)rcReport\(\)">/.test(ckSrc + rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')) && /rep\.style\.display = invUnlocked \? '' : 'none'/.test(rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), repW.status);
+  check('📊 the recount report is for Admin / Owner only (a picker gets 403); on the Audit tab it is folded and hidden unless an Admin or Owner signs in',
+    repW.status === 403 && /<details class="icard" id="rc-report" style="display:none" ontoggle="if\(this\.open\)rcReport\(\)">/.test(ckSrc + rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')) && /rep\.style\.display = invUnlocked && rcAdm \? '' : 'none'/.test(rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), repW.status);
   const { readFileSync: rfs } = await import('node:fs');
   const ihA = rfs(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('Audit tab: the recount card first; the old part # / location audit tools kept, folded under "🔧 Other audit tools"',
@@ -7359,6 +7359,20 @@ console.log('\n📦 Sold as a whole case of: Stock Out Big Company ships whole c
   check('✏️ window shows "📦 Sold as a whole case of 30-4-6=10X"; 📦 button on ✏️ and on every 🔢 row (same setting as the Reorder row button, kept in 🕘 History)',
     inf.caseOf === '30-4-6=10X' && /function rvoCaseOfPart\(part, cur, fromList\)/.test(rh) && /📦 Sold as a whole case of <span/.test(rh) && /'\\', 1\)" title="We ship a whole case of another part #/.test(rh) && /📦 Whole case of…<\/button>/.test(rh)
       && /wFetch\(W \+ '\/reorder\/fix\/case-of', \{ method: 'POST'/.test(rh), inf.caseOf);
+}
+
+// Owner (2026-10-17): "for Audit → Recount report, only Admin and Owner level and up can review it".
+console.log('\n📊 Recount report: Admin and Owner only');
+{
+  const { readFileSync: rfA } = await import('node:fs');
+  const ih = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const tok = async u => (await (await call('/auth/login', { method: 'POST', body: JSON.stringify({ username: u, password: 'password1' }) })).json()).token;
+  const rep = async t => { const r = await call('/inventory/recount/report', { headers: { 'X-Cred-Token': t } }); return { st: r.status, d: await r.json() }; };
+  const mgr = await rep(await tok('manager1')), own = await rep(await tok('owner1')), adm = await rep(login.token), pk = await rep(await tok('picker'));
+  check('a manager (not Admin / Owner) → 403 "Only Admin and Owner can see the recount report"; a picker → 403; an Admin ✅; an Owner ✅',
+    mgr.st === 403 && /Only Admin and Owner/.test(mgr.d.error) && pk.st === 403 && adm.st === 200 && adm.d.ok && own.st === 200 && own.d.ok, { mgr: mgr.st, pk: pk.st, adm: adm.st, own: own.st });
+  check('page: the 📊 Recount report card shows only for an Admin or Owner signed in',
+    /var rcAdm = !!\(INV_CRED_USER && INV_CRED_USER\.roles && \(INV_CRED_USER\.roles\.indexOf\('admin'\) >= 0 \|\| INV_CRED_USER\.roles\.indexOf\('owner'\) >= 0\)\);/.test(ih) && /rep\.style\.display = invUnlocked && rcAdm \? '' : 'none';/.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

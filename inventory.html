@@ -13952,7 +13952,9 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/recount/status' + (aisle ? '?aisle=' + encodeURIComponent(aisle) : '')).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) return;
       RC.status = d; if (aisle) RC.aisle = d;
-      var rep = g('rc-report'); if (rep) rep.style.display = invUnlocked ? '' : 'none';
+      // 📊 Only Admin and Owner see the recount report (owner 2026-10-17) — the Worker refuses it for anyone else too.
+      var rcAdm = !!(INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0));
+      var rep = g('rc-report'); if (rep) rep.style.display = invUnlocked && rcAdm ? '' : 'none';
       var p = g('rc-progress');
       if (p) p.innerHTML = 'This recount (since ' + ckE(xfrFmtT(d.roundStart).split(',')[0]) + '): <b>' + d.doneCount + '</b> column(s) done'
         + (d.spotsWithStock ? ' of about <b>' + d.spotsWithStock + '</b> spots with stock' : '') + '. ' + (RC.loc ? '' : 'Scan the column label to start.')
