@@ -7265,5 +7265,16 @@ console.log('\n✔ Check every UPC: "Codes are right" takes a part # off the lis
       && /await rvoUpcOkPost\(part, out, inn, 'saved with ✏️ — already our codes'\);/.test(rh) && /rvoUpcOkUndo\(/.test(rh) && /part # marked right \(hidden until a code changes\)/.test(rh), null);
 }
 
+// Owner (2026-10-17): "for 'Barcode / vendor for a part #' make sure there's an X I can close it".
+console.log('\n✕ Barcode / vendor for a part #: an X at the top that always closes it');
+{
+  const { readFileSync: rfX } = await import('node:fs');
+  const rh = rfX(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('✕ button in a sticky top bar (stays while the 🔢 list scrolls), tapping outside or Esc closes too, the bottom Close still there',
+    /<button id="rvo-p-x" onclick="rvoPartClose\(\)" title="Close" aria-label="Close"[^>]*>✕<\/button>/.test(rh) && /position:sticky;top:0;z-index:2;background:var\(--bg2\)/.test(rh)
+      && /<div id="rvo-part" onclick="if\(event\.target===this\)rvoPartClose\(\)"/.test(rh) && /if \(ev\.key === 'Escape'\) \{ var m = document\.getElementById\('rvo-part'\)/.test(rh)
+      && /<button class="btn btn-secondary" onclick="rvoPartClose\(\)">Close<\/button>/.test(rh) && /function rvoPartClose\(\) \{ document\.getElementById\('rvo-part'\)\.style\.display = 'none'; \}/.test(rh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

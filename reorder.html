@@ -2206,9 +2206,13 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <div id="rvo-ck-body"></div>
         </div>
       </div>
-      <div id="rvo-part" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
-        <div style="background:var(--bg2);border-radius:14px;padding:20px;width:520px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)">
-          <div style="font-size:15px;font-weight:700;margin-bottom:6px">🏷 Barcode / vendor for a part #</div>
+      <div id="rvo-part" onclick="if(event.target===this)rvoPartClose()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
+        <div style="background:var(--bg2);border-radius:14px;padding:0 20px 20px;width:520px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+          <!-- ✕ Owner (2026-10-17): "make sure there's an X so I can close it" — stays at the top while the list scrolls. -->
+          <div style="position:sticky;top:0;z-index:2;background:var(--bg2);display:flex;align-items:center;gap:8px;padding:14px 0 6px;margin-bottom:4px">
+            <div style="flex:1;font-size:15px;font-weight:700">🏷 Barcode / vendor for a part #</div>
+            <button id="rvo-p-x" onclick="rvoPartClose()" title="Close" aria-label="Close" style="flex:none;width:40px;height:40px;border-radius:50%;border:1px solid var(--border);background:var(--bg3, #eee);color:var(--text);font-size:20px;font-weight:700;line-height:1;cursor:pointer">✕</button>
+          </div>
           <div style="display:flex;gap:6px;margin-bottom:8px">
             <input type="text" id="rvo-p-q" placeholder="Part #, e.g. 26-2-6=10XX" onkeydown="if(event.key==='Enter')rvoPartFind()" style="flex:1;font-family:var(--mono);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--border)">
             <button class="btn btn-primary" style="font-size:12px" onclick="rvoPartFind()">🔎 Find</button>
@@ -2216,7 +2220,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             <button class="btn btn-secondary" style="font-size:12px" onclick="rvoUpcCheck()" title="Every part # checked: swapped boxes, typos, no box UPC">🔢 Check every UPC</button>
           </div>
           <div id="rvo-p-body" style="font-size:12px;color:var(--text3)">Type any part # — even one that isn't in the list above.</div>
-          <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" id="rvo-p-save" style="flex:1;display:none" onclick="rvoPartSave()">💾 Save</button><button class="btn btn-secondary" onclick="document.getElementById('rvo-part').style.display='none'">Close</button></div>
+          <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" id="rvo-p-save" style="flex:1;display:none" onclick="rvoPartSave()">💾 Save</button><button class="btn btn-secondary" onclick="rvoPartClose()">Close</button></div>
         </div>
       </div>
       <div id="rvo-edit" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
@@ -5230,6 +5234,8 @@ function rvoVendorCheck() {
 // Saved through ✏️'s own save (/reorder/fix → used by the planner + the CSV), every change in 🕘 History; both
 // UPCs are also linked to the part # so a scan of either finds it in Inventory.
 var RVP = null;
+function rvoPartClose() { document.getElementById('rvo-part').style.display = 'none'; }
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { var m = document.getElementById('rvo-part'); if (m && m.style.display !== 'none') rvoPartClose(); } });
 function rvoPartOpen(part) {
   document.getElementById('rvo-part').style.display = 'flex';
   var q = document.getElementById('rvo-p-q'); if (part) { q.value = part; rvoPartFind(); } else { q.focus(); }
