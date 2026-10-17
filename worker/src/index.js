@@ -13953,6 +13953,28 @@ async function inventorySkuSearch(url, env) {
            ORDER BY m.part_num ${sortDir}, m.location`,
           [q, q + '%']
         );
+        // Owner (2026-10-17): "SKU Mgr → By SKU — also search by the name and the outside box / inside bag UPC". Only when
+        // the part # search finds nothing (a part # search works exactly as before):
+        //   a UPC (8–14 digits) → the part # it is on (same lookup every scan uses, 🔢 UPC codes first) → its SKU Mgr rows;
+        //   words → every row whose name has all the words (any order).
+        if (!rows.length) {
+          const inst = url.searchParams.get('instock') === '1' ? 'AND m.cases > 0' : '';
+          const SEL = `SELECT m.id, m.sku, m.base_sku, COALESCE(NULLIF(m.name,''), (SELECT p.name FROM products p WHERE UPPER(p.sku)=UPPER(m.base_sku) LIMIT 1), '') as name,
+                  m.part_num, m.location, m.cases, m.units_per_case, m.vendor, m.price, m.prev_notes, m.sheet_row FROM master_list m`;
+          const digits = q.replace(/[\s-]/g, '');
+          if (/^\d{8,14}$/.test(digits)) {
+            const part = await upcToPart(env, digits).catch(() => null);
+            const r2 = part ? await d1All(env, `${SEL} WHERE UPPER(TRIM(m.part_num)) = ? ${inst} ORDER BY m.location`, [String(part).toUpperCase()]) : [];
+            return cors(new Response(JSON.stringify({ ok: true, results: r2, source: 'd1', matchedBy: 'upc', upc: digits, upcPart: part || null }), { headers: { 'Content-Type': 'application/json' } }));
+          }
+          const words = q.split(/\s+/).filter(w => w.length > 0).slice(0, 8);
+          if (words.length && /[A-Z]/.test(q)) {
+            const nm = `UPPER(COALESCE(NULLIF(m.name,''), (SELECT p.name FROM products p WHERE UPPER(p.sku)=UPPER(m.base_sku) LIMIT 1), ''))`;
+            const r2 = await d1All(env, `${SEL} WHERE m.part_num != '' AND ${words.map(() => `${nm} LIKE ? ESCAPE '\\'`).join(' AND ')} ${inst} ORDER BY m.part_num ${sortDir}, m.location LIMIT 1000`,
+              words.map(w => '%' + w.replace(/[\\%_]/g, '\\$&') + '%'));
+            return cors(new Response(JSON.stringify({ ok: true, results: r2, source: 'd1', matchedBy: 'name' }), { headers: { 'Content-Type': 'application/json' } }));
+          }
+        }
       }
       return cors(new Response(JSON.stringify({ ok: true, results: rows, source: 'd1' }),
         { headers: { 'Content-Type': 'application/json' } }));
