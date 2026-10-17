@@ -7010,5 +7010,17 @@ console.log('\n🏷 Barcode designer 💾 Save → 🏷 Label Printer: saved lab
   await post('/inventory/barcode-job/printed', { ids: [sv.id] });
 }
 
+// Owner 2026-10-17 (screenshot): Label Printer's Refresh / Sign Out / Apps sat as a column on the LEFT — the page is shown
+// with display:flex (side by side). It must stack: the bar across the top, the page under it, like the other pages.
+console.log('\nLabel Printer: Refresh / Sign Out / Apps bar across the top');
+{
+  const { readFileSync } = await import('node:fs');
+  const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const css = (lp.match(/#labelprint-app \{[\s\S]*?\}/) || [''])[0];
+  check('the page stacks top to bottom (flex-direction: column), the bar first, full width; the page under it full width up to 640 px',
+    /flex-direction:\s*column/.test(css) && /\.lp-body \{[^}]*width:100%/.test(lp) && lp.indexOf('class="lp-header"') < lp.indexOf('class="lp-body"')
+    && /getElementById\('labelprint-app'\)\.style\.display = 'flex'/.test(lp), css);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
