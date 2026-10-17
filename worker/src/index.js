@@ -7646,7 +7646,9 @@ async function recountReport(env) {
   (await d1All(env, `SELECT UPPER(TRIM(location)) AS l, COUNT(*) AS n, MAX(timestamp) AS at, MAX(initials) AS by FROM inventory_log
       WHERE timestamp >= ? AND notes LIKE '%(📋 Recount)%' AND COALESCE(status,'') != 'Rejected' AND cancelled_at IS NULL GROUP BY UPPER(TRIM(location))`, [roundStart]).catch(() => []))
     .forEach(r => { const s0 = started[r.l] || {}; started[r.l] = { by: r.by || s0.by || '', at: r.at > (s0.at || '') ? r.at : s0.at, lines: r.n, stopped: !!s0.stopped }; });
-  const areaOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i); };
+  // FRONT splits into FRONT3 / FRONT4 by the first number (owner 2026-10-17: "start with 3 → FRONT3, with 4 → FRONT4");
+  // any other FRONT spot stays "FRONT" so an odd one stands out.
+  const areaOf = L => { const i = L.indexOf('='); if (i < 0) return L; const a = L.slice(0, i), m = a === 'FRONT' && L.slice(i + 1).match(/^([34])-/); return m ? 'FRONT' + m[1] : a; };
   const areas = {}, spotSet = new Set(spots);
   [...new Set(spots.concat(Object.keys(doneBy), Object.keys(started)))].filter(isSpot).forEach(l => {
     const a = areas[areaOf(l)] = areas[areaOf(l)] || { area: areaOf(l), done: 0, started: 0, notScanned: 0, spots: [] };
@@ -7655,9 +7657,46 @@ async function recountReport(env) {
     a.spots.push({ l, st, by: st === 'done' ? doneBy[l].by : st === 'started' ? started[l].by : '', at: st === 'done' ? doneBy[l].at : st === 'started' ? started[l].at : '',
       lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l) });
   });
+  // ⚠ odd spot: fewer parts than most spots of its area (FRONT=2-6 among FRONT=4-1-2-6) — likely typed wrong; ✕ deletes it.
+  // compared with every spot of the same name before "=" (FRONT3 + FRONT4 + FRONT together, so a lone FRONT=2-6 still shows)
+  { const segs = s => (s.l.slice(s.l.indexOf('=') + 1).match(/-/g) || []).length + 1, pre = s => s.l.split('=')[0], cnt = {};
+    Object.values(areas).forEach(a => a.spots.forEach(s => { const k = pre(s); cnt[k] = cnt[k] || {}; cnt[k][segs(s)] = (cnt[k][segs(s)] || 0) + 1; }));
+    const mode = {}; Object.keys(cnt).forEach(k => { mode[k] = +Object.keys(cnt[k]).sort((x, y) => cnt[k][y] - cnt[k][x] || y - x)[0]; });
+    Object.values(areas).forEach(a => a.spots.forEach(s => { if (s.l.includes('=') && segs(s) < mode[pre(s)]) s.odd = true; })); }
   return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
     areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })), notSpots: Object.values(badSpots),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/spot/delete { location, force } — managers only (Recount report → 🗺 By area → ✕).
+// Owner (2026-10-17): "weird spots like FRONT 2-6 — an ✕ to delete; no inventory in that column → just delete everything; inventory
+// there → warn us: continue deleting, or cancel and keep everything as is". The spot leaves the location list and SKU Mgr. A spot
+// with cases answers needConfirm (part #s + cases) and changes nothing unless sent again with force; then each SKU Mgr row is
+// written to History ([SKU MGR DELETE], Part Total before → after = the cases taken off) — never a silent change.
+async function inventorySpotDelete(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const L = String(b.location || '').trim().toUpperCase();
+  if (!L) return J({ ok: false, error: 'Which spot?' }, 400);
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  const rows = await d1All(env, 'SELECT * FROM master_list WHERE UPPER(TRIM(location)) = ?', [L]);
+  const stock = rows.filter(r => (parseFloat(r.cases) || 0) !== 0);
+  if (stock.length && !b.force) return J({ ok: false, needConfirm: true, location: L, rows: stock.map(r => ({ part: String(r.part_num || '').trim(), cases: parseFloat(r.cases) || 0 })) });
+  await invLogEnsureColumns(env);
+  const wh = await invWarehouseCases(env).catch(() => null);
+  let removed = 0, cases = 0;
+  for (const r of rows) {
+    const part = String(r.part_num || '').trim().toUpperCase(), c = parseFloat(r.cases) || 0;
+    const before = part ? await invPartCases(env, part).catch(() => null) : null;
+    await env.DB.prepare('DELETE FROM master_list WHERE id = ?').bind(r.id).run();
+    if (c > 0) await costSafe(() => costReconcile(env, part, L)); // its cost layers follow the cases (0 now)
+    const keep = ['part_num', 'location', 'cases', 'name', 'units_per_case', 'vendor', 'price', 'prev_notes'].map(k => k + '=' + (r[k] == null ? '' : r[k])).join(' | ');
+    await _skuMgrInsertLog(env, who, r, `[SKU MGR DELETE] Spot ${L} deleted (Recount report ✕)${c ? ` — ${c} cases of ${part} taken off SKU Mgr` : ''} — was: ${keep}`,
+      before == null ? null : { newPart: part, newBefore: before, wh }, null).catch(e => console.error('[spot delete history]', e.message));
+    removed++; cases += c;
+  }
+  await env.DB.prepare('DELETE FROM locations WHERE UPPER(TRIM(location)) = ?').bind(L).run().catch(() => {});
+  if (session && session.userId) await logUserActivity(env, session.userId, 'spot_delete', { location: L, rows: removed, cases }).catch(() => {});
+  return J({ ok: true, location: L, rows: removed, cases });
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
 async function recountNewRound(env, session) {
@@ -9478,6 +9517,10 @@ const _app = {
         // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env);
+      }
+      if (path === '/inventory/spot/delete' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await inventorySpotDelete(request, env, session);
       }
       if (path === '/inventory/recount/new-round' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));

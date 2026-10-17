@@ -14269,10 +14269,30 @@ window.invCredLogin = async function() {
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px">'
       + a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }).map(function(sp) { var c = col[sp.st];
           var sub = sp.st === 'done' ? '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
-          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + '" style="padding:5px 6px;border-radius:7px;background:' + c[0] + ';border:1.5px solid ' + c[1] + ';color:var(--text)">'
-            + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; }).join('')
+          // ✕ delete a spot (owner 2026-10-17: "weird spots like FRONT 2-6"); ⚠ odd = shorter than the other spots of the area
+          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + (sp.odd ? ' — odd spot: shorter than the others here' : '') + '" style="position:relative;padding:5px 18px 5px 6px;border-radius:7px;background:' + c[0] + ';border:1.5px ' + (sp.odd ? 'dashed var(--orange)' : 'solid ' + c[1]) + ';color:var(--text)">'
+            + '<button type="button" onclick="rcSpotDel(this.dataset.l)" data-l="' + ckE(sp.l) + '" title="Delete this spot" style="position:absolute;top:2px;right:2px;border:none;background:none;color:var(--red);font-size:13px;font-weight:800;cursor:pointer;padding:0 3px;line-height:1">✕</button>'
+            + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + (sp.odd ? '⚠ ' : '') + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; }).join('')
       + '</div></div>';
   }
+  // ✕ a spot: empty → deleted at once; cases there → warning (part #s + cases): continue deleting or cancel (nothing changes).
+  window.rcSpotDel = function(L) {
+    if (!confirm('Delete spot ' + L + '?\n\nIt leaves the location list and SKU Mgr. Kept in Inventory → History.')) return;
+    var send = function(force) { return wFetch(W + '/inventory/spot/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: L, force: !!force }) }).then(function(r) { return r.json(); }); };
+    send(false).then(function(d) {
+      if (d && d.needConfirm) {
+        var list = d.rows.map(function(r) { return '  ' + r.part + ' — ' + xfrN(r.cases) + ' cases'; }).join('\n');
+        if (!confirm('⚠ ' + L + ' still has inventory:\n\n' + list + '\n\nOK = delete the spot AND take these cases off SKU Mgr (History keeps it)\nCancel = keep everything as it is')) { invFlash('Kept — nothing changed', 'success'); return null; }
+        return send(true);
+      }
+      return d;
+    }).then(function(d) {
+      if (!d) return;
+      if (!d.ok) { invFlash('✗ ' + (d.error || 'Not deleted (managers only)'), 'error'); return; }
+      invFlash('🗑 ' + d.location + ' deleted' + (d.rows ? ' — ' + d.rows + ' SKU Mgr row' + (d.rows === 1 ? '' : 's') + (d.cases ? ', ' + xfrN(d.cases) + ' cases taken off (History)' : '') : ''), 'success');
+      var keep = RC.area; rcReport(); RC.area = keep;
+    }).catch(function() { invFlash('📶 Not deleted — check WiFi', 'error'); });
+  };
   window.rcArea = function(a) { RC.area = RC.area === a ? '' : a; var gEl = g('rc-area-grid'); if (gEl) gEl.innerHTML = rcAreaGrid();
     document.querySelectorAll('[data-rca]').forEach(function(b) { b.style.borderColor = b.getAttribute('data-rca') === RC.area ? 'var(--accent)' : 'var(--border)'; }); };
   var _rcQr = null, _rcCam = false;
