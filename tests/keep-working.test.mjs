@@ -7543,5 +7543,36 @@ console.log('\n📍 BH → BO everywhere: saved BH= spots renamed once (cases un
   sq.exec("DELETE FROM master_list WHERE base_sku = '941-1-1'; DELETE FROM inventory_log WHERE part_num = '941-1-1=10'; DELETE FROM location_plan WHERE base = '941-1-1'");
 }
 
+// Owner (2026-10-17, Recount report → 🗺 By area): "FRONT: separate into FRONT4 and FRONT3 — starts with 3 → FRONT3, with 4 → FRONT4;
+// a weird spot like FRONT 2-6 that is not a real column — an ✕ to delete it: no inventory → just delete everything; inventory →
+// warn us: continue deleting, or cancel and keep everything as is".
+console.log('\n🗺 FRONT → FRONT3 / FRONT4; ⚠ odd spot (FRONT=2-6); ✕ delete a spot (empty → at once; stock → warning, then History)');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('942-1-1','tee','942-1-1=10','FRONT=3-1-2-6',2,10), ('942-1-1','tee','942-1-1=10','FRONT=4-1-2-6',3,10), ('942-1-1','tee','942-1-1=10','FRONT=4-1-2-7',1,10),
+    ('942-1-1','tee','942-1-1=10','FRONT=2-6',4,10), ('942-1-1','tee','942-1-1=5','FRONT=2-6',0,5), ('942-1-1','tee','942-1-1=5','FRONT=2-7',0,5)`).run();
+  const d = await get('/inventory/recount/report'), A = n => (d.areas || []).find(a => a.area === n) || { spots: [] };
+  const S = (n, l) => A(n).spots.find(x => x.l === l) || {};
+  check('FRONT=3-… → area FRONT3, FRONT=4-… → FRONT4; FRONT=2-6 stays "FRONT" with ⚠ odd (2 parts, the others 4); real spots not odd',
+    S('FRONT3', 'FRONT=3-1-2-6').l && S('FRONT4', 'FRONT=4-1-2-6').l && S('FRONT4', 'FRONT=4-1-2-7').l && S('FRONT', 'FRONT=2-6').odd && !S('FRONT4', 'FRONT=4-1-2-6').odd, (d.areas || []).filter(a => /FRONT/.test(a.area)).map(a => [a.area, a.spots.map(x => x.l + (x.odd ? '⚠' : ''))]));
+  const whB = shelf();
+  const e1 = await post('/inventory/spot/delete', { location: 'front=2-7' });
+  const w1 = await post('/inventory/spot/delete', { location: 'FRONT=2-6' });
+  const still = sq.prepare("SELECT COUNT(*) n FROM master_list WHERE location = 'FRONT=2-6'").get().n;
+  check('✕ FRONT=2-7 (no inventory) → deleted at once; ✕ FRONT=2-6 (4 cases of 942-1-1=10) → ⚠ warning with the part # and cases, NOTHING changed yet',
+    e1.ok && e1.rows === 1 && !sq.prepare("SELECT COUNT(*) n FROM master_list WHERE location = 'FRONT=2-7'").get().n
+    && w1.ok === false && w1.needConfirm && w1.rows.length === 1 && w1.rows[0].part === '942-1-1=10' && w1.rows[0].cases === 4 && still === 2 && shelf() === whB, { e1, w1, still });
+  const f1 = await post('/inventory/spot/delete', { location: 'FRONT=2-6', force: true });
+  const h = sq.prepare("SELECT notes, total_before b, total_after a FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[SKU MGR DELETE] Spot FRONT=2-6%' AND part_num = '942-1-1=10'").get();
+  check('…continue → spot gone from SKU Mgr; History: "4 cases of 942-1-1=10 taken off", Part Total 10 → 6 (2 + 3 + 1 left); warehouse ' + whB + ' → ' + shelf() + ' (−4, on record)',
+    f1.ok && f1.rows === 2 && f1.cases === 4 && !sq.prepare("SELECT COUNT(*) n FROM master_list WHERE location = 'FRONT=2-6'").get().n && h && /4 cases of 942-1-1=10 taken off/.test(h.notes) && h.b === 10 && h.a === 6 && shelf() === whB - 4, { f1, h });
+  const noMgmt = await call('/inventory/spot/delete', { method: 'POST', body: JSON.stringify({ location: 'FRONT=4-1-2-7' }) });
+  const { readFileSync: rfF } = await import('node:fs');
+  const ih = rfF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…not signed in → refused; screen: ✕ on each spot box, ⚠ on odd ones, the warning lists the cases with OK = delete / Cancel = keep everything',
+    noMgmt.status >= 400 && /onclick="rcSpotDel\(this\.dataset\.l\)"/.test(ih) && /Cancel = keep everything as it is/.test(ih) && /\(sp\.odd \? '⚠ ' : ''\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '942-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '942-1-1%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
