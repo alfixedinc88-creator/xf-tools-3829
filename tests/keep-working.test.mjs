@@ -7227,7 +7227,7 @@ console.log('\n🔢 Check every UPC: swapped boxes, wrong last digit, bag with n
   check('vendor file rows: 🔢 saved here first, the vendor box/bag list is compared too (reorderUpcWarn(u, fx, ct, vlUpc[t.sku]))',
     /SELECT part, inside_upc, outside_upc FROM upc_edit'\)\)\.forEach\(r => \{ const k = P\(r\.part\); if \(k\) upc\[k\]/.test(wd) && /const upcW = upcOk && upcOk\.key === upcD\(u\.outside_upc\) \+ '\|' \+ upcD\(u\.inside_upc\) \? '' : reorderUpcWarn\(u, fx, ct, vlUpc\[t\.sku\]\);/.test(wd), null);
   check('page: 🔢 Check every UPC button + list with ✅ Use / ✏️; ✏️ Save also writes our UPC codes; the vendor download warns first about part #s with a UPC problem',
-    /onclick="rvoUpcCheck\(\)"/.test(rh) && /function rvoUpcCheck\(\)/.test(rh) && /onclick="rvoUpcFix\(' \+ i \+ '\)"/.test(rh) && /rvoUpcWriteOurs\(RVP\.part, out, inn\)/.test(rh)
+    /onclick="rvoUpcCheck\(\)"/.test(rh) && /function rvoUpcCheck\(\)/.test(rh) && /onclick="rvoUpcFix\(' \+ i \+ '\)"/.test(rh) && /rvoUpcWriteOurs\(part, out, inn\)/.test(rh)
       && /'\/inventory\/upc-manager\/save'/.test(rh) && /var upcBad = rows\.filter/.test(rh) && /Fix them with 🔢 Check every UPC first/.test(rh), null);
 }
 
@@ -7274,6 +7274,47 @@ console.log('\n✕ Barcode / vendor for a part #: an X at the top that always cl
     /<button id="rvo-p-x" onclick="rvoPartClose\(\)" title="Close" aria-label="Close"[^>]*>✕<\/button>/.test(rh) && /position:sticky;top:0;z-index:2;background:var\(--bg2\)/.test(rh)
       && /<div id="rvo-part" onclick="if\(event\.target===this\)rvoPartClose\(\)"/.test(rh) && /if \(ev\.key === 'Escape'\) \{ var m = document\.getElementById\('rvo-part'\)/.test(rh)
       && /<button class="btn btn-secondary" onclick="rvoPartClose\(\)">Close<\/button>/.test(rh) && /function rvoPartClose\(\) \{ document\.getElementById\('rvo-part'\)\.style\.display = 'none'; \}/.test(rh), null);
+}
+
+// Owner (2026-10-17): "26-3-7=1XX was missing the outside box; I updated it but it was still there — don't think it saved; on Find
+// the box was there. After it saves and the UPC is right, remove it from the list. 23-6-4=25 we don't use anymore (new listing
+// 23-6-4=25XX, no FBA listing), its box code is used for another item — how do we tell the system? Fix every one like these."
+console.log('\n🔢 Check every UPC: ✏️ Save always reaches our codes · 📦 missing box offered · 🚫 not used anymore');
+{
+  const { readFileSync: rfR } = await import('node:fs');
+  const rh = rfR(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const now = new Date().toISOString();
+  // 26-3-7=1XX: our codes have only the bag; the box is in a ✏️ fix saved before (what Find showed in the box).
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '26-3-7=1XX', '26-3-7', '840428990022', '', ?)").run(now);
+  sq.prepare("INSERT INTO reorder_fix (part, outside_upc, updated_at) VALUES ('26-3-7=1XX', '840428990015', ?)").run(now);
+  const R = (d, p) => (d.rows || []).find(r => r.part === p);
+  const info = await get('/reorder/fix/part-info?part=26-3-7=1XX'), c0 = await get('/reorder/fix/upc-check'), r0 = R(c0, '26-3-7=1XX') || {};
+  check('26-3-7=1XX: ✏️ shows box 840428990015 (from the ✏️ fix — NOT in our codes), the 🔢 list says "bag but no box" and offers ✅ Use box 840428990015 · our bag 840428990022 kept',
+    info.now.outside_upc === '840428990015' && !(info.upc || {}).outside_upc && (r0.issues || []).some(x => x.k === 'nobox') && r0.suggest && r0.suggest.outside === '840428990015' && r0.suggest.inside === '840428990022' && /our bag kept/.test(r0.suggest.from), { now: info.now, r0 });
+  check('page: ✏️ says "code below is from another list — NOT in our UPC codes yet. 💾 Save puts it in"; 💾 Save writes our codes whenever the boxes differ from OUR codes (not only from what the box showed) — the old "Nothing changed" trap',
+    /code below is from another list — NOT in our UPC codes yet\. 💾 Save puts it in\./.test(rh) && /var oursNew = \(out \|\| inn\) && \(out !== clean\(ours\.outside_upc\) \|\| inn !== clean\(ours\.inside_upc\)\);/.test(rh)
+      && /if \(!items\.length\) \{ rvoUpcWriteOurs\(part, out, inn\)\.then/.test(rh) && /if \(oursNew \|\| fields\.outside_upc != null \|\| fields\.inside_upc != null\) rvoUpcWriteOurs\(part, out, inn\)/.test(rh), null);
+  check('…✏️ Type them from the 🔢 list goes BACK to the refreshed list after 💾 Save (the saved part # is gone from it)',
+    /', true\)">✏️ Type them<\/button>/.test(rh) && /var done = function \(msg\) \{ if \(RVU_BACK\) \{ rvoUpcCheck\(\);/.test(rh) && /function rvoPartOpen\(part, fromCheck\) \{\n  RVU_BACK = !!fromCheck;/.test(rh), null);
+  // 💾 Save (= the same save as SKU Mgr → 🔢, then ✔) → off the list.
+  const sv = await post('/inventory/upc-manager/save', { rows: [{ part: '26-3-7=1XX', outside: '840428990015', inside: '840428990022' }] });
+  await post('/reorder/fix/upc-ok', { part: '26-3-7=1XX', outside: '840428990015', inside: '840428990022', note: 'saved as our codes' });
+  const c1 = await get('/reorder/fix/upc-check');
+  check('…saved: our codes box 840428990015 / bag 840428990022, and 26-3-7=1XX is off the list', sv.ok && sq.prepare("SELECT outside_upc FROM upc WHERE sku = '26-3-7=1XX'").get().outside_upc === '840428990015' && !R(c1, '26-3-7=1XX'), R(c1, '26-3-7=1XX'));
+  // 23-6-4=25: bag only (the vendor list has no box for it); its old box code now belongs to 23-6-4=99 too → "on 2 part #s".
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '23-6-4=25', '23-6-4', '00810097207561', '', ?), ('', '23-6-4=99', '23-6-4', '', '810097207561', ?)").run(now, now);
+  const c2 = await get('/reorder/fix/upc-check');
+  check('23-6-4=25 listed (bag but no box) and 23-6-4=99 says its code is also on 23-6-4=25', (R(c2, '23-6-4=25') || { issues: [] }).issues.some(x => x.k === 'nobox') && (R(c2, '23-6-4=99') || { issues: [] }).issues.some(x => x.k === 'shared' && /23-6-4=25/.test(x.t)), [R(c2, '23-6-4=25'), R(c2, '23-6-4=99')]);
+  const rt = await post('/reorder/fix/upc-ok', { part: '23-6-4=25', retire: true, note: 'new listing 23-6-4=25XX' });
+  const c3 = await get('/reorder/fix/upc-check'), inf = await get('/reorder/fix/part-info?part=23-6-4=25');
+  const h = sq.prepare("SELECT detail FROM reorder_history WHERE action = 'upc-retired' AND part = '23-6-4=25'").all();
+  check('🚫 Not used anymore → 23-6-4=25 off the list, under "🚫 not used anymore" with the reason + who; 23-6-4=99 no longer "on 2 part #s" (off too); ✏️ shows it; 🕘 History has it; its UPC rows untouched',
+    rt.ok && !R(c3, '23-6-4=25') && !R(c3, '23-6-4=99') && (c3.retired || []).some(r => r.part === '23-6-4=25' && r.note === 'new listing 23-6-4=25XX' && r.by) && inf.retired && inf.retired.note === 'new listing 23-6-4=25XX'
+      && h.length === 1 && /🚫 not used anymore/.test(h[0].detail) && sq.prepare("SELECT inside_upc FROM upc WHERE sku = '23-6-4=25'").get().inside_upc === '00810097207561', { c3: c3.retired, h });
+  const un = await post('/reorder/fix/upc-ok', { part: '23-6-4=25', unretire: true }), c4 = await get('/reorder/fix/upc-check');
+  check('…↩ use again → back on the list (in 🕘 History too)', un.ok && !!R(c4, '23-6-4=25') && !(c4.retired || []).length && sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE action = 'upc-retired' AND part = '23-6-4=25'").get().n === 2, null);
+  check('page: every row has 🚫 Not used anymore (asks why); "🚫 N part # not used anymore" list with ↩ use again; ✏️ shows "🚫 Marked not used anymore"',
+    /onclick="rvoUpcRetire\(' \+ i \+ '\)"[^>]*>🚫 Not used anymore<\/button>/.test(rh) && /part # not used anymore \(not checked\)/.test(rh) && /rvoUpcUnretire\(/.test(rh) && /🚫 Marked not used anymore/.test(rh), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

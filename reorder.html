@@ -5236,7 +5236,9 @@ function rvoVendorCheck() {
 var RVP = null;
 function rvoPartClose() { document.getElementById('rvo-part').style.display = 'none'; }
 document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { var m = document.getElementById('rvo-part'); if (m && m.style.display !== 'none') rvoPartClose(); } });
-function rvoPartOpen(part) {
+var RVU_BACK = false; // ✏️ opened from 🔢 Check every UPC → back to the (refreshed) list after 💾 Save
+function rvoPartOpen(part, fromCheck) {
+  RVU_BACK = !!fromCheck;
   document.getElementById('rvo-part').style.display = 'flex';
   var q = document.getElementById('rvo-p-q'); if (part) { q.value = part; rvoPartFind(); } else { q.focus(); }
 }
@@ -5258,6 +5260,11 @@ function rvoPartFind() {
       + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
       + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
       + (d.upcWarn ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">' + e(d.upcWarn).split(' · ').join('<br>') + '</div>' : '')
+      + (d.retired ? '<div style="margin-bottom:8px;color:var(--orange);font-weight:600">🚫 Marked not used anymore' + (d.retired.note ? ' — ' + e(d.retired.note) : '') + ' (' + e(d.retired.by_user || '') + ' ' + e(String(d.retired.at || '').slice(0, 10)) + ')</div>' : '')
+      + (function () { var o = d.edit || d.upc || {}, c = function (v) { return String(v || '').replace(/\D/g, ''); }, miss = [];
+          if (c(n.outside_upc) && c(n.outside_upc) !== c(o.outside_upc)) miss.push('📦 box');
+          if (c(n.inside_upc) && c(n.inside_upc) !== c(o.inside_upc)) miss.push('🛍 bag');
+          return miss.length ? '<div style="margin-bottom:8px;color:var(--orange)">' + miss.join(' + ') + ' code below is from another list — NOT in our UPC codes yet. 💾 Save puts it in.</div>' : ''; })()
       + '<div style="color:var(--text)">📦 Outside box UPC (used on the vendor CSV)</div>' + inp('rvo-p-out', n.outside_upc, 'e.g. 840428932787')
       + '<div style="color:var(--text)">🛍 Inside bag UPC</div>' + inp('rvo-p-in', n.inside_upc, 'e.g. 840428932756')
       + '<div style="color:var(--text)">🏭 Vendor — this part # shows up only under this vendor</div>'
@@ -5280,7 +5287,14 @@ function rvoPartSave() {
   var items = Object.keys(fields).length ? [{ part: RVP.part, fields: fields, was: n }] : [];
   var allBox = document.getElementById('rvo-p-all');
   if (ven && allBox && allBox.checked) RVP.siblings.forEach(function (sp) { items.push({ part: sp, fields: { vendor: ven } }); });
-  if (!items.length) { showToast('Nothing changed'); return; }
+  // 🔢 Owner (2026-10-17, 26-3-7=1XX: "I updated the outside box UPC, it was still there — don't think it saved"): the box showed
+  // the vendor list's code (ours had none), so the same code looked "not changed" and never reached our UPC codes. Now our
+  // codes always become what is in the two boxes.
+  var ours = RVP.edit || RVP.upc || {}, part = RVP.part;
+  var oursNew = (out || inn) && (out !== clean(ours.outside_upc) || inn !== clean(ours.inside_upc));
+  var done = function (msg) { if (RVU_BACK) { rvoUpcCheck(); if (msg) showToast(msg); } else rvoPartFind(); };
+  if (!items.length && !oursNew) { if (RVU_BACK && (out || inn)) { rvoUpcWriteOurs(part, out, inn).then(done); return; } showToast('Nothing changed'); return; }
+  if (!items.length) { rvoUpcWriteOurs(part, out, inn).then(function (m) { if (m) showToast(m); done(m); }); return; }
   var btn = document.getElementById('rvo-p-save'); btn.disabled = true;
   wFetch(W + '/reorder/fix/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) })
     .then(function (r) { return r.json(); }).then(function (d) {
@@ -5290,9 +5304,9 @@ function rvoPartSave() {
       [out, inn].filter(Boolean).forEach(function (u) { wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: u, part: RVP.part }) }).catch(function () {}); });
       // 🔢 Owner (2026-10-17, 26-4-3=100): our UPC codes (what scans and the vendor file use first) get the new codes too —
       // a ✏️ fix alone could never change them.
-      if (fields.outside_upc != null || fields.inside_upc != null) rvoUpcWriteOurs(RVP.part, out, inn).then(function (m) { if (m) showToast(m); });
-      showToast('💾 Saved ' + RVP.part + (items.length > 1 ? ' + ' + (items.length - 1) + ' other pack size' + (items.length > 2 ? 's' : '') : '') + ' — press Calculate to see it');
-      rvoPartFind();
+      showToast('💾 Saved ' + part + (items.length > 1 ? ' + ' + (items.length - 1) + ' other pack size' + (items.length > 2 ? 's' : '') : '') + ' — press Calculate to see it');
+      if (oursNew || fields.outside_upc != null || fields.inside_upc != null) rvoUpcWriteOurs(part, out, inn).then(function (m) { if (m) showToast(m); done(m); });
+      else done();
     }).catch(function () { btn.disabled = false; alert('Not saved — check WiFi and try again'); });
 }
 // 🔢 Write a part #'s outside box / inside bag UPC into our UPC codes (SKU Mgr → 🔢: Inventory → History has the line).
@@ -5313,8 +5327,8 @@ async function rvoUpcWriteOurs(part, out, inn) {
   } catch (e) { alert('🔢 ' + part + ' NOT saved in our UPC codes — ' + (e.message || 'check WiFi')); return null; }
 }
 // ✔ "These codes are right" — the part # leaves 🔢 Check every UPC until a code changes (owner 2026-10-17). Best effort.
-function rvoUpcOkPost(part, out, inn, note, undo) {
-  return wFetch(W + '/reorder/fix/upc-ok', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, outside: out || '', inside: inn || '', note: note || '', undo: !!undo }) })
+function rvoUpcOkPost(part, out, inn, note, undo, act) {
+  return wFetch(W + '/reorder/fix/upc-ok', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, outside: out || '', inside: inn || '', note: note || '', undo: !!undo, retire: act === 'retire', unretire: act === 'unretire' }) })
     .then(function (r) { return r.json(); }).catch(function () { return { ok: false, error: 'check WiFi' }; });
 }
 async function rvoUpcOk(i) {
@@ -5324,6 +5338,21 @@ async function rvoUpcOk(i) {
   var d = await rvoUpcOkPost(r.part, r.outside, r.inside, r.issues.map(function (x) { return x.k; }).join(', '));
   if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
   showToast('✔ ' + r.part + ' marked right'); rvoUpcCheck();
+}
+// 🚫 Owner (2026-10-17, 23-6-4=25): "we don't use it anymore (new listing 23-6-4=25XX), its box code is used for another item".
+async function rvoUpcRetire(i) {
+  var r = RVU && RVU.rows[i]; if (!r) return;
+  var note = prompt('🚫 ' + r.part + ' — NOT used anymore?\n\nIt leaves 🔢 Check every UPC and its codes no longer count as "on 2 part #s". Stock, SKU Mgr and orders don\'t change. Kept in 🕘 History.\n\nWhy? (e.g. new listing 23-6-4=25XX, box code used for another item)', '');
+  if (note == null) return;
+  var d = await rvoUpcOkPost(r.part, '', '', note, false, 'retire');
+  if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
+  showToast('🚫 ' + r.part + ' — not used anymore'); rvoUpcCheck();
+}
+async function rvoUpcUnretire(part) {
+  if (!confirm('↩ Use ' + part + ' again? It goes back on 🔢 Check every UPC.')) return;
+  var d = await rvoUpcOkPost(part, '', '', '', false, 'unretire');
+  if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
+  rvoUpcCheck();
 }
 async function rvoUpcOkUndo(part) {
   if (!confirm('Put ' + part + ' back on 🔢 Check every UPC?')) return;
@@ -5352,11 +5381,15 @@ function rvoUpcCheck() {
         + '<br>' + r.issues.map(function (x) { return '• ' + e(x.t); }).join('<br>')
         + '<div style="margin-top:4px">' + (r.suggest ? '<button class="btn btn-primary" style="font-size:11px;padding:2px 8px" onclick="rvoUpcFix(' + i + ')">✅ Use 📦 box ' + e(r.suggest.outside || '—') + ' · 🛍 bag ' + e(r.suggest.inside || '—') + ' (' + e(r.suggest.from) + ')</button> ' : '')
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--green)" onclick="rvoUpcOk(' + i + ')" title="You checked the real box / bag: these codes are right">✔ Codes are right</button> '
-        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoPartOpen(\'' + e(r.part).replace(/'/g, '') + '\')">✏️ Type them</button></div></div>';
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoPartOpen(\'' + e(r.part).replace(/'/g, '') + '\', true)">✏️ Type them</button> '
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--orange)" onclick="rvoUpcRetire(' + i + ')" title="We don\'t use this part # anymore (e.g. a new listing replaced it)">🚫 Not used anymore</button></div></div>';
     }).join('')
       + ((d.confirmed || []).length ? '<details style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px"><summary style="cursor:pointer;color:var(--text)">✔ ' + d.confirmed.length + ' part # marked right (hidden until a code changes)</summary>'
         + d.confirmed.map(function (c) { return '<div style="line-height:1.8"><b style="font-family:var(--mono)">' + e(c.part) + '</b> 📦 ' + e(c.outside || '—') + ' · 🛍 ' + e(c.inside || '—') + ' — ' + e(c.by || '') + ' ' + e(String(c.at || '').slice(0, 10))
-          + ' <button class="btn btn-secondary" style="font-size:10px;padding:1px 6px" onclick="rvoUpcOkUndo(\'' + e(c.part).replace(/'/g, '') + '\')">↩ check again</button></div>'; }).join('') + '</details>' : '');
+          + ' <button class="btn btn-secondary" style="font-size:10px;padding:1px 6px" onclick="rvoUpcOkUndo(\'' + e(c.part).replace(/'/g, '') + '\')">↩ check again</button></div>'; }).join('') + '</details>' : '')
+      + ((d.retired || []).length ? '<details style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px"><summary style="cursor:pointer;color:var(--text)">🚫 ' + d.retired.length + ' part # not used anymore (not checked)</summary>'
+        + d.retired.map(function (c) { return '<div style="line-height:1.8"><b style="font-family:var(--mono)">' + e(c.part) + '</b>' + (c.note ? ' — ' + e(c.note) : '') + ' — ' + e(c.by || '') + ' ' + e(String(c.at || '').slice(0, 10))
+          + ' <button class="btn btn-secondary" style="font-size:10px;padding:1px 6px" onclick="rvoUpcUnretire(\'' + e(c.part).replace(/'/g, '') + '\')">↩ use again</button></div>'; }).join('') + '</details>' : '');
   }).catch(function () { body.textContent = '✗ Could not check — try again'; });
 }
 async function rvoUpcFix(i) {
