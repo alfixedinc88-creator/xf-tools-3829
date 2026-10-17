@@ -2150,6 +2150,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <span style="flex:1"></span>
         <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()" title="An Excel file (.xlsx) for the vendor — UPCs as text, every digit">⬇ Download sheet for vendor</button>
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPartOpen()" title="Any part #, even one not in this list: its outside box / inside bag UPC (both on one part #) and the vendor it is ordered from">🏷 Barcode / vendor for a part #</button>
+        <button class="btn btn-secondary" style="font-size:12px" onclick="rvoUpcCheck()" title="Every part #'s outside box / inside bag UPC checked against the vendor's lists: swapped boxes, typos, no box UPC">🔢 Check every UPC</button>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:12px;color:var(--text3)">
         <b style="color:var(--text2)">Vendor sheets:</b> <span id="rvo-cat">—</span>
@@ -2212,6 +2213,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             <input type="text" id="rvo-p-q" placeholder="Part #, e.g. 26-2-6=10XX" onkeydown="if(event.key==='Enter')rvoPartFind()" style="flex:1;font-family:var(--mono);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--border)">
             <button class="btn btn-primary" style="font-size:12px" onclick="rvoPartFind()">🔎 Find</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPartMissing()" title="Part #s in the list now with no outside box UPC">No UPC list</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="rvoUpcCheck()" title="Every part # checked: swapped boxes, typos, no box UPC">🔢 Check every UPC</button>
           </div>
           <div id="rvo-p-body" style="font-size:12px;color:var(--text3)">Type any part # — even one that isn't in the list above.</div>
           <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" id="rvo-p-save" style="flex:1;display:none" onclick="rvoPartSave()">💾 Save</button><button class="btn btn-secondary" onclick="document.getElementById('rvo-part').style.display='none'">Close</button></div>
@@ -5241,6 +5243,7 @@ function rvoPartFind() {
     var src = [];
     if (d.fix) src.push('saved fix: out ' + (d.fix.outside_upc || '—') + ' · in ' + (d.fix.inside_upc || '—') + (d.fix.vendor ? ' · vendor ' + d.fix.vendor : ''));
     (d.catalog || []).forEach(function (c) { src.push(c.vendor + ' sheet: out ' + (c.outside_upc || '—') + ' · in ' + (c.inside_upc || '—') + (c.price > 0 ? ' · $' + c.price + '/pc' : '')); });
+    if (d.edit) src.push('🔢 saved here (what scans + the vendor file use): out ' + (d.edit.outside_upc || '—') + ' · in ' + (d.edit.inside_upc || '—') + (d.edit.by_user ? ' (' + d.edit.by_user + ')' : ''));
     if (d.upc) src.push('UPC list: out ' + (d.upc.outside_upc || '—') + ' · in ' + (d.upc.inside_upc || '—'));
     if (d.builtIn) src.push('vendor box/bag list: out ' + (d.builtIn.outside_upc || '—') + ' · in ' + (d.builtIn.inside_upc || '—'));
     (d.links || []).forEach(function (l) { src.push('scan link: ' + l.upc + (l.by_user ? ' (' + l.by_user + ')' : '')); });
@@ -5248,6 +5251,7 @@ function rvoPartFind() {
     body.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px"><span style="font-family:var(--mono)">' + e(d.part) + '</span>'
       + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
       + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
+      + (d.upcWarn ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">' + e(d.upcWarn).split(' · ').join('<br>') + '</div>' : '')
       + '<div style="color:var(--text)">📦 Outside box UPC (used on the vendor CSV)</div>' + inp('rvo-p-out', n.outside_upc, 'e.g. 840428932787')
       + '<div style="color:var(--text)">🛍 Inside bag UPC</div>' + inp('rvo-p-in', n.inside_upc, 'e.g. 840428932756')
       + '<div style="color:var(--text)">🏭 Vendor — this part # shows up only under this vendor</div>'
@@ -5278,9 +5282,58 @@ function rvoPartSave() {
       if (!d.ok) { alert('Not saved: ' + ((d.results || []).filter(function (x) { return !x.ok; }).map(function (x) { return x.error; }).join('; ') || d.error || 'failed')); return; }
       // a scan of either barcode finds this part # (Stock In / Checking / Transfer) — best effort
       [out, inn].filter(Boolean).forEach(function (u) { wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: u, part: RVP.part }) }).catch(function () {}); });
+      // 🔢 Owner (2026-10-17, 26-4-3=100): our UPC codes (what scans and the vendor file use first) get the new codes too —
+      // a ✏️ fix alone could never change them.
+      if (fields.outside_upc != null || fields.inside_upc != null) rvoUpcWriteOurs(RVP.part, out, inn).then(function (m) { if (m) showToast(m); });
       showToast('💾 Saved ' + RVP.part + (items.length > 1 ? ' + ' + (items.length - 1) + ' other pack size' + (items.length > 2 ? 's' : '') : '') + ' — press Calculate to see it');
       rvoPartFind();
     }).catch(function () { btn.disabled = false; alert('Not saved — check WiFi and try again'); });
+}
+// 🔢 Write a part #'s outside box / inside bag UPC into our UPC codes (SKU Mgr → 🔢: Inventory → History has the line).
+// Checked first; a code already on another part # moves only after OK. Resolves to a message, or null when not saved.
+async function rvoUpcWriteOurs(part, out, inn) {
+  var row = { part: part, outside: out || 'NONE', inside: inn || 'NONE' };
+  var post = function (b) { return wFetch(W + '/inventory/upc-manager/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(function (r) { return r.json(); }); };
+  try {
+    var pv = await post({ rows: [row], dryRun: true }), pr = (pv.rows || [])[0] || {};
+    if (!pv.ok) throw new Error(pv.error || 'not saved');
+    if (pr.status === 'error') { alert('🔢 ' + part + ' NOT saved in our UPC codes: ' + (pr.problems || []).join('; ')); return null; }
+    if (pr.status === 'same') return '🔢 ' + part + ': our UPC codes already match';
+    if ((pr.warn || []).length && !confirm('🔢 ' + part + '\n\n' + pr.warn.join('\n') + '\n\nOK = save it anyway')) return null;
+    var sv = await post({ rows: [row], confirm: pr.needsConfirm ? [part] : [] });
+    if (!sv.ok || !(sv.saved || []).length) { alert('🔢 ' + part + ' NOT saved: ' + (((sv.skipped || [])[0] || {}).problems || [sv.error || 'failed']).join('; ')); return null; }
+    return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History)';
+  } catch (e) { alert('🔢 ' + part + ' NOT saved in our UPC codes — ' + (e.message || 'check WiFi')); return null; }
+}
+// 🔢 Check every UPC (owner 2026-10-17: "please check all other UPC code outside box and inside bag are right").
+var RVU = null;
+function rvoUpcCheck() {
+  document.getElementById('rvo-part').style.display = 'flex';
+  document.getElementById('rvo-p-save').style.display = 'none';
+  var body = document.getElementById('rvo-p-body'); body.textContent = 'Checking every part #…';
+  wFetch(W + '/reorder/fix/upc-check').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { body.textContent = '✗ ' + (d.error || 'Could not check'); return; }
+    RVU = d; var e = escHtml, c = d.counts || {};
+    var bad = d.rows.filter(function (r) { return r.level === 'bad'; }).length;
+    var head = '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">🔢 ' + d.checked + ' part #s checked — '
+      + (d.rows.length ? '<span style="color:var(--red)">' + bad + ' look wrong</span>' + (d.rows.length > bad ? ', ' + (d.rows.length - bad) + ' to look at' : '') : '<span style="color:var(--green)">✅ every outside box / inside bag UPC looks right</span>') + '</div>'
+      + (d.rows.length ? '<div style="margin-bottom:8px">↔ in the wrong box: ' + (c.swapped || 0) + ' · last digit wrong: ' + (c.typo || 0) + ' · bag but no box: ' + (c.nobox || 0) + ' · same code in both: ' + (c.same || 0)
+        + ' · different from the vendor: ' + (c.differs || 0) + ' · code on 2 part #s: ' + (c.shared || 0) + '</div>' : '');
+    body.innerHTML = head + d.rows.map(function (r, i) {
+      return '<div style="border-top:1px solid var(--border);padding:6px 0;line-height:1.5"><b style="font-family:var(--mono);color:var(--text)">' + e(r.part) + '</b>'
+        + (r.level === 'bad' ? ' <span style="color:var(--red);font-weight:700">⚠ wrong</span>' : ' <span style="color:var(--orange)">check</span>')
+        + '<br>Ours: 📦 box <span style="font-family:var(--mono)">' + e(r.outside || '—') + '</span> · 🛍 bag <span style="font-family:var(--mono)">' + e(r.inside || '—') + '</span>'
+        + '<br>' + r.issues.map(function (x) { return '• ' + e(x.t); }).join('<br>')
+        + '<div style="margin-top:4px">' + (r.suggest ? '<button class="btn btn-primary" style="font-size:11px;padding:2px 8px" onclick="rvoUpcFix(' + i + ')">✅ Use 📦 box ' + e(r.suggest.outside || '—') + ' · 🛍 bag ' + e(r.suggest.inside || '—') + ' (' + e(r.suggest.from) + ')</button> ' : '')
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoPartOpen(\'' + e(r.part).replace(/'/g, '') + '\')">✏️ Type them</button></div></div>';
+    }).join('');
+  }).catch(function () { body.textContent = '✗ Could not check — try again'; });
+}
+async function rvoUpcFix(i) {
+  var r = RVU && RVU.rows[i]; if (!r || !r.suggest) return;
+  if (!confirm('🔢 ' + r.part + '\n\n📦 Outside box: ' + (r.outside || '—') + ' → ' + (r.suggest.outside || '—') + '\n🛍 Inside bag: ' + (r.inside || '—') + ' → ' + (r.suggest.inside || '—') + '\n\nFrom: ' + r.suggest.from + '\nOK = save (kept in Inventory → History)')) return;
+  var m = await rvoUpcWriteOurs(r.part, r.suggest.outside, r.suggest.inside);
+  if (m) { showToast(m + ' — press Calculate to see it in the vendor file'); rvoUpcCheck(); }
 }
 function rvoPartMissing() {
   var body = document.getElementById('rvo-p-body');
@@ -5347,6 +5400,11 @@ async function rvoCsv() {
       + noV.slice(0, 30).map(function (r) { return r.sku + ' — ' + rvoQty(r) + ' units'; }).join('\n') + (noV.length > 30 ? '\n…' : '')
       + '\n\nSet their vendor with ✏️ (or pick "(no vendor in SKU Mgr)" to see them).\nOK = download ' + v + '\'s file anyway.')) return;
   }
+  // 🔢 Owner (2026-10-17): "if the UPC codes are not right, we are going to have a lot of issues when we receive" — say which first.
+  var upcBad = rows.filter(function (r) { return /SWAPPED|not a real UPC|NO outside box UPC|are the same code/.test(r.upcWarn || '') || !r.outsideUpc; });
+  if (upcBad.length && !confirm('⚠ ' + upcBad.length + ' part # in this file have a UPC problem:\n\n' + upcBad.slice(0, 25).map(function (r) {
+      return r.sku + ' — ' + (r.outsideUpc ? String(r.upcWarn || '').split(' · ').filter(function (x) { return /SWAPPED|not a real|NO outside|same code/.test(x); }).join('; ').replace(/⚠ /g, '') : 'no outside box UPC'); }).join('\n')
+    + (upcBad.length > 25 ? '\n…' : '') + '\n\nFix them with 🔢 Check every UPC first.\nOK = download anyway.')) return;
   var cell = function (x) { return x == null ? '' : x; };
   // 🔢 UPCs are TEXT cells in the Excel file (owner 2026-10-17: the vendor saw ="810097…" in the CSV) — every digit, no 8.1E+11.
   var upcCell = function (x) { return { upc: String(x || '').replace(/"/g, '').trim() }; };
