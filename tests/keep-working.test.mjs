@@ -7192,5 +7192,44 @@ console.log('\n🏷 Barcode designer: no 🖨 To print tab');
   check('the designer tabs are ✏️ Design and 📍 Where does it go? only — no 🖨 To print', /t\('design', '✏️ Design'\)/.test(tabs) && /t\('where', '📍 Where does it go\?'\)/.test(tabs) && !/t\('print'/.test(tabs) && !/To print/.test(tabs), tabs);
 }
 
+// Owner (2026-10-17, vendor file): "26-4-3=100 the outside box UPC 810097201638 became the inside bag UPC and nothing on the
+// outside box — please check all other UPC codes outside box and inside bag are right".
+console.log('\n🔢 Check every UPC: swapped boxes, wrong last digit, bag with no box');
+{
+  const { readFileSync: rfU } = await import('node:fs');
+  const wd = rfU(workerPath, 'utf8'), rh = rfU(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fx = new Function((wd.match(/function upcCheckOk\(v\) \{[\s\S]*?\n\}/) || [''])[0] + (wd.match(/function upcNear\(a, b\) \{[\s\S]*?\n\}/) || [''])[0] + '; return { upcCheckOk, upcNear };')();
+  check('upcCheckOk: 810097204638 (the vendor\'s box code) ✅ real, 810097201638 ❌ last digit wrong; 00840428929305 / 840428916817 ✅; upcNear: 810097201638 ≈ 810097204638 (one digit), ≠ 810097206021',
+    fx.upcCheckOk('810097204638') && !fx.upcCheckOk('810097201638') && fx.upcCheckOk('00840428929305') && fx.upcCheckOk('840428916817')
+      && fx.upcNear('810097201638', '810097204638') && !fx.upcNear('810097201638', '810097206021'), null);
+  const now = new Date().toISOString();
+  // Our UPC list: 26-4-3=100 bag 810097201638, NO box (what the owner saw). The vendor box/bag list: box 810097204638, bag 810097206021.
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '26-4-3=100', '26-4-3', '810097201638', '', ?)").run(now);
+  const info0 = await get('/reorder/fix/part-info?part=26-4-3=100');
+  check('✏️ part editor shows what the vendor file uses (our codes first: bag 810097201638; our box is empty so the vendor list box shows) and warns: SWAPPED, not a real UPC, NO outside box UPC',
+    info0.ok && info0.now.inside_upc === '810097201638' && info0.now.outside_upc === '810097204638' && /SWAPPED/.test(info0.upcWarn) && /not a real UPC/.test(info0.upcWarn) && /NO outside box UPC/.test(info0.upcWarn), [info0.now, info0.upcWarn]);
+  const c0 = await get('/reorder/fix/upc-check'), r0 = (c0.rows || []).find(r => r.part === '26-4-3=100') || {};
+  const ks = (r0.issues || []).map(x => x.k);
+  check('🔢 Check every UPC: 26-4-3=100 ⚠ wrong — in the wrong box (our bag = the vendor\'s BOX code, one digit off), last digit wrong, bag but no box; suggests box 810097204638 · bag 810097206021 (vendor box/bag list)',
+    c0.ok && c0.checked > 0 && r0.level === 'bad' && ks.includes('swapped') && ks.includes('typo') && ks.includes('nobox') && r0.suggest && r0.suggest.outside === '810097204638' && r0.suggest.inside === '810097206021'
+      && /vendor box\/bag list/.test(r0.suggest.from) && c0.counts.swapped >= 1, r0);
+  // ✅ Use → the same save as SKU Mgr → 🔢 (upc_edit + the upc table, a line in Inventory → History).
+  const sv = await post('/inventory/upc-manager/save', { rows: [{ part: '26-4-3=100', outside: r0.suggest.outside, inside: r0.suggest.inside }], confirm: ['26-4-3=100'] });
+  const t1 = sq.prepare("SELECT inside_upc, outside_upc FROM upc WHERE sku = '26-4-3=100'").get(), e1 = sq.prepare("SELECT inside_upc, outside_upc FROM upc_edit WHERE part = '26-4-3=100'").get();
+  const c1 = await get('/reorder/fix/upc-check'), info1 = await get('/reorder/fix/part-info?part=26-4-3=100');
+  check('…saved: our UPC list + 🔢 saved here = box 810097204638 / bag 810097206021; the check no longer lists 26-4-3=100; the editor (= the vendor file) shows them, no warning',
+    sv.ok && (sv.saved || []).length === 1 && t1.outside_upc === '810097204638' && t1.inside_upc === '810097206021' && e1 && e1.outside_upc === '810097204638'
+      && !(c1.rows || []).some(r => r.part === '26-4-3=100') && info1.now.outside_upc === '810097204638' && info1.now.inside_upc === '810097206021' && !info1.upcWarn, { sv, t1, e1, now: info1.now, w: info1.upcWarn });
+  const pv = await post('/inventory/upc-manager/save', { rows: [{ part: '26-4-3=100', outside: '810097201638', inside: '' }], dryRun: true });
+  check('SKU Mgr → 🔢 check first: typing 810097201638 warns "not a real UPC (last digit wrong)"', /not a real UPC \(last digit wrong/.test(((pv.rows || [])[0] || {}).warn.join(' ')), pv.rows);
+  check('new product set-up: the case / carton UPC goes in the OUTSIDE box (never the inside bag again)',
+    /preview\.upc\.push\(\{ sku: row\.sku, base_sku: row\.base_sku, inside_upc: '', outside_upc: row\.upc \}\)/.test(wd) && !/inside_upc: row\.upc, outside_upc: ''/.test(wd), null);
+  check('vendor file rows: 🔢 saved here first, the vendor box/bag list is compared too (reorderUpcWarn(u, fx, ct, vlUpc[t.sku]))',
+    /SELECT part, inside_upc, outside_upc FROM upc_edit'\)\)\.forEach\(r => \{ const k = P\(r\.part\); if \(k\) upc\[k\]/.test(wd) && /const upcW = reorderUpcWarn\(u, fx, ct, vlUpc\[t\.sku\]\);/.test(wd), null);
+  check('page: 🔢 Check every UPC button + list with ✅ Use / ✏️; ✏️ Save also writes our UPC codes; the vendor download warns first about part #s with a UPC problem',
+    /onclick="rvoUpcCheck\(\)"/.test(rh) && /function rvoUpcCheck\(\)/.test(rh) && /onclick="rvoUpcFix\(' \+ i \+ '\)"/.test(rh) && /rvoUpcWriteOurs\(RVP\.part, out, inn\)/.test(rh)
+      && /'\/inventory\/upc-manager\/save'/.test(rh) && /var upcBad = rows\.filter/.test(rh) && /Fix them with 🔢 Check every UPC first/.test(rh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

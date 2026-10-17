@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v254-bd-no-toprint-20261017';
+const CACHE_VERSION = 'v255-upc-check-20261017';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 

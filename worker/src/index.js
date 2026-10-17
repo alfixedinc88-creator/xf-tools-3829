@@ -1936,6 +1936,7 @@ async function reorderPartInfo(env, raw) {
   const fix = (await all('SELECT * FROM reorder_fix WHERE part = ?', [P]))[0] || null;
   const catalog = (await all('SELECT vendor, part, description, outside_upc, inside_upc, price, price_at FROM reorder_vendor_catalog WHERE UPPER(part) = ?', [P])).map(r => ({ ...r, vendor: reorderVendorName(r.vendor) }));
   const upc = (await all('SELECT outside_upc, inside_upc FROM upc WHERE UPPER(TRIM(sku)) = ?', [P]))[0] || null;
+  const edit = (await all('SELECT outside_upc, inside_upc, by_user, at FROM upc_edit WHERE part = ?', [P]))[0] || null;
   const builtIn = VENDOR_UPC.filter(r => String(r[0]).toUpperCase() === P).map(r => ({ outside_upc: r[1] || '', inside_upc: r[2] || '' }))[0] || null;
   const links = (await all('SELECT upc, by_user, at FROM upc_link WHERE UPPER(part) = ?', [P]));
   const sm = await all('SELECT location, cases, vendor, name FROM master_list WHERE UPPER(TRIM(part_num)) = ?', [P]);
@@ -1947,11 +1948,14 @@ async function reorderPartInfo(env, raw) {
   const vendors = new Set(['JQ', 'EFF', 'YAO']);
   (await all('SELECT DISTINCT vendor FROM reorder_vendor_catalog', [])).forEach(r => { const v = reorderVendorName(r.vendor); if (v) vendors.add(v); });
   const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
-  return { ok: true, part: P, base, known: !!(fix || catalog.length || upc || builtIn || sm.length),
-    now: { outside_upc: pick(fix && fix.outside_upc, ...catalog.map(c => c.outside_upc), upc && upc.outside_upc, builtIn && builtIn.outside_upc),
-      inside_upc: pick(fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), upc && upc.inside_upc, builtIn && builtIn.inside_upc),
+  // 🔢 Owner (2026-10-17, 26-4-3=100): the boxes show what the vendor file uses — our codes (🔢 saved here, else the UPC
+  // list) first, then a ✏️ fix, the vendor's sheet, the vendor box/bag list (the same order as the vendor file's rows).
+  const ours = edit || upc;
+  return { ok: true, part: P, base, known: !!(fix || catalog.length || upc || edit || builtIn || sm.length),
+    now: { outside_upc: pick(ours && ours.outside_upc, fix && fix.outside_upc, ...catalog.map(c => c.outside_upc), builtIn && builtIn.outside_upc),
+      inside_upc: pick(ours && ours.inside_upc, fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), builtIn && builtIn.inside_upc),
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
-    fix, catalog, upc, builtIn, links, skuMgr: sm, siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
+    fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
 }
 // One row's fix. Fields not sent keep what was saved before.
 async function reorderSaveFixOne(env, b, who) {
@@ -2174,16 +2178,84 @@ function reorderVendorName(v) {
   return REORDER_VENDOR_ALIAS[t.toUpperCase()] || t;
 }
 
-// ⚠ The UPC sources of a part # that disagree (ours / ✏️ fix / vendor sheet), in plain words — '' when they agree.
-function reorderUpcWarn(u, fx, ct) {
+// ⚠ The UPC sources of a part # that disagree (ours / ✏️ fix / vendor sheet / vendor box-bag list), in plain words — ''
+// when they agree. Owner (2026-10-17, 26-4-3=100: "the outside box UPC became the inside bag UPC"): also a code typed in
+// the wrong box (our inside bag = the vendor's outside box), a code with a wrong last digit, and an inside bag with no box.
+function reorderUpcWarn(u, fx, ct, vl) {
   const d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
   const out = [];
   for (const [k, lab] of [['outside_upc', 'outside box'], ['inside_upc', 'inside bag']]) {
-    const src = [['our UPC codes', u && u[k]], ['✏️ fix', fx && fx[k]], ["vendor's sheet", ct && ct[k]]].filter(x => d(x[1]));
+    const src = [['our UPC codes', u && u[k]], ['✏️ fix', fx && fx[k]], ["vendor's sheet", ct && ct[k]], ['vendor box/bag list', vl && vl[k]]].filter(x => d(x[1]));
     const vals = [...new Set(src.map(x => d(x[1])))];
     if (vals.length > 1) out.push(`⚠ ${lab} UPC differs: ${src.map(x => x[0] + ' ' + String(x[1]).trim()).join(' / ')} — using ${src[0][0]}`);
   }
+  const ui = d(u && u.inside_upc), uo = d(u && u.outside_upc);
+  const others = [fx, ct, vl].filter(Boolean);
+  if ((ui && others.some(o => upcNear(ui, o.outside_upc))) || (uo && others.some(o => upcNear(uo, o.inside_upc))))
+    out.push('⚠ our outside box / inside bag UPC look SWAPPED (in the wrong box) — Reorder → 🔢 Check every UPC');
+  [[uo, 'outside box'], [ui, 'inside bag']].forEach(([v, lab]) => { if (v && !upcCheckOk(v)) out.push(`⚠ our ${lab} UPC ${v} is not a real UPC (last digit wrong — typo?)`); });
+  if (ui && !uo) out.push('⚠ inside bag UPC but NO outside box UPC');
+  if (ui && ui === uo) out.push('⚠ outside box and inside bag UPC are the same code');
   return out.join(' · ');
+}
+// A real UPC / EAN / GTIN: its last digit is the check digit (leading zeros don't matter).
+function upcCheckOk(v) {
+  const s = String(v == null ? '' : v).replace(/\D/g, '');
+  if (s.length < 8 || s.length > 14) return false;
+  const p = s.padStart(14, '0');
+  let t = 0; for (let i = 0; i < 13; i++) t += (+p[i]) * (i % 2 ? 1 : 3);
+  return (10 - t % 10) % 10 === +p[13];
+}
+// The same code, or one digit off (a typo of it): 810097201638 ≈ 810097204638.
+function upcNear(a, b) {
+  const x = String(a == null ? '' : a).replace(/\D/g, '').replace(/^0+/, ''), y = String(b == null ? '' : b).replace(/\D/g, '').replace(/^0+/, '');
+  if (!x || !y || x.length !== y.length || x.length < 8) return false;
+  let n = 0; for (let i = 0; i < x.length; i++) if (x[i] !== y[i] && ++n > 1) return false;
+  return true;
+}
+// GET /reorder/fix/upc-check — 🔢 Check every UPC (owner 2026-10-17: "please check all other UPC code outside box and inside
+// bag are right, if not right, we going to have a lot issues when we received the inventorys"). Every part # with a UPC in
+// our codes (🔢 saved here, else the D1 upc table — what every scan and the vendor file use), checked against the vendor
+// box/bag list, the vendor sheets and ✏️ fixes: swapped boxes, wrong last digit, inside bag with no box, the same code in
+// both boxes, a different code than the vendor's, one code on two part #s. `suggest` = the codes to put back (from the
+// vendor's list when it has both, else our two codes swapped); nothing is changed here.
+async function reorderUpcCheck(env) {
+  const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  const U = x => String(x || '').trim().toUpperCase(), d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
+  const T = x => String(x == null ? '' : x).replace(/\D/g, '');
+  const ours = new Map();
+  (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => { const p = U(r.sku); if (p && (T(r.inside_upc) || T(r.outside_upc)) && !ours.has(p)) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: 'UPC list' }); });
+  (await all('SELECT part, inside_upc, outside_upc FROM upc_edit')).forEach(r => { const p = U(r.part); if (p) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: '🔢 saved here' }); });
+  const refs = {}, add = (p, name, o, i) => { p = U(p); if (p && (T(o) || T(i))) (refs[p] = refs[p] || []).push({ name, outside: T(o), inside: T(i) }); };
+  for (const [part, o, i] of VENDOR_UPC) add(part, 'vendor box/bag list', o, i);
+  (await all('SELECT vendor, part, outside_upc, inside_upc FROM reorder_vendor_catalog')).forEach(r => add(r.part, "vendor's sheet", r.outside_upc, r.inside_upc));
+  (await all('SELECT part, outside_upc, inside_upc FROM reorder_fix')).forEach(r => add(r.part, '✏️ fix', r.outside_upc, r.inside_upc));
+  const byCode = {};
+  ours.forEach((o, p) => [o.outside, o.inside].forEach(c => { const z = d(c); if (z) (byCode[z] = byCode[z] || new Set()).add(p); }));
+  const rows = [];
+  ours.forEach((o, part) => {
+    const ui = d(o.inside), uo = d(o.outside), rf = refs[part] || [], issues = [];
+    const sw = rf.find(r => (ui && upcNear(ui, r.outside)) || (uo && upcNear(uo, r.inside)));
+    if (sw) issues.push({ k: 'swapped', t: `in the wrong box: ${ui && upcNear(ui, sw.outside) ? `our inside bag ${o.inside} is the ${sw.name}'s OUTSIDE box ${sw.outside}` : `our outside box ${o.outside} is the ${sw.name}'s INSIDE bag ${sw.inside}`}` });
+    [[o.outside, 'outside box'], [o.inside, 'inside bag']].forEach(([v, lab]) => { if (d(v) && !upcCheckOk(v)) issues.push({ k: 'typo', t: `${lab} ${v} is not a real UPC (last digit wrong — a typo?)` }); });
+    if (ui && !uo) issues.push({ k: 'nobox', t: 'inside bag UPC but NO outside box UPC' });
+    if (ui && ui === uo) issues.push({ k: 'same', t: 'outside box and inside bag are the same code' });
+    if (!sw) rf.forEach(r => [['outside', 'outside box'], ['inside', 'inside bag']].forEach(([k, lab]) => {
+      if (d(o[k]) && d(r[k]) && d(o[k]) !== d(r[k])) issues.push({ k: 'differs', t: `${lab}: ours ${o[k]}, ${r.name} ${r[k]}` });
+    }));
+    [uo, ui].forEach(z => { const ps = z && byCode[z]; if (ps && ps.size > 1) issues.push({ k: 'shared', t: `code ${z} is also on ${[...ps].filter(x => x !== part).join(', ')}` }); });
+    if (!issues.length) return;
+    const ref = rf.find(r => r.outside && r.inside && upcCheckOk(r.outside) && upcCheckOk(r.inside) && d(r.outside) !== d(r.inside));
+    let suggest = null;
+    if (ref && (d(ref.outside) !== uo || d(ref.inside) !== ui)) suggest = { outside: ref.outside, inside: ref.inside, from: ref.name };
+    else if (!ref && sw && (o.inside || o.outside)) suggest = { outside: o.inside, inside: o.outside, from: 'our two codes swapped' };
+    const main = issues.some(x => x.k !== 'shared' && x.k !== 'differs');
+    rows.push({ part, outside: o.outside, inside: o.inside, from: o.from, issues, suggest, level: main ? 'bad' : 'check', refs: rf });
+  });
+  const order = { bad: 0, check: 1 };
+  rows.sort((a, b) => order[a.level] - order[b.level] || a.part.localeCompare(b.part, undefined, { numeric: true }));
+  const cnt = k => rows.filter(r => r.issues.some(x => x.k === k)).length;
+  return { ok: true, checked: ours.size, rows, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
 }
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
@@ -2337,6 +2409,9 @@ async function reorderVendorOrder(env, url) {
   }
   const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
   const upc = {}; upcRows.forEach(r => { const k = P(r.sku); if (!upc[k] || U(r.sku) === k) upc[k] = r; }); // the =10X row's own UPCs win over =10-X's
+  // 🔢 Saved here (SKU Mgr → 🔢 / 🔢 Check every UPC) wins — the same codes every scan uses.
+  (await all('SELECT part, inside_upc, outside_upc FROM upc_edit')).forEach(r => { const k = P(r.part); if (k) upc[k] = { sku: r.part, inside_upc: r.inside_upc, outside_upc: r.outside_upc }; });
+  const vlUpc = {}; for (const [part, o, i] of VENDOR_UPC) { const k = N(part); if (k && !vlUpc[k]) vlUpc[k] = { outside_upc: o, inside_upc: i }; }
   const prodRows = await all('SELECT base_sku, name FROM products');
   const prodName = {}; prodRows.forEach(r => { const b = U(r.base_sku); if (b && r.name && !prodName[b]) prodName[b] = r.name; });
 
@@ -2532,7 +2607,8 @@ async function reorderVendorOrder(env, url) {
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
       (t.caseFrom || []).forEach(x => notes.push(`📦 Incl. ${x.sku} (sold as a case of ${t.sku}): ${x.amzPieces} pcs Amazon sales, ${x.fbaPieces} pcs at Amazon — ordered as ${t.sku}`));
-      if (reorderUpcWarn(u, fx, ct)) notes.push(reorderUpcWarn(u, fx, ct));
+      const upcW = reorderUpcWarn(u, fx, ct, vlUpc[t.sku]);
+      if (upcW) notes.push(upcW);
       const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
       const row = {
         sku: t.sku, baseSku: b, fbaSku: t.fbaSku, packSize: ps,
@@ -2546,7 +2622,7 @@ async function reorderVendorOrder(env, url) {
         // 🔢 Owner (2026-10-17, 26-4-3=100: "the sheet's inside bag UPC is not right — the system shows another one"): our
         // UPC codes (SKU Mgr → 🔢, what every scan uses) first, then a ✏️ fix, the vendor's sheet last; any disagreement → ⚠ note.
         outsideUpc: pick(u.outside_upc, fx.outside_upc, ct.outside_upc), insideUpc: pick(u.inside_upc, fx.inside_upc, ct.inside_upc),
-        upcWarn: reorderUpcWarn(u, fx, ct),
+        upcWarn: upcW,
         caseFrom: t.caseFrom || [],
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
         // 💲 Newest price per single piece: the vendor's sheet (latest import), else the latest order / shipment.
@@ -3680,6 +3756,7 @@ async function inventoryUpcManagerSave(request, env, session) {
       const other = await upcToPart(env, v);
       if (other && other !== r.part) { r.moves.push({ upc: v, from: other }); r.warn.push(`${k === 'inside' ? 'inside bag' : 'outside box'} UPC ${v} is on ${other} now — tick to move it to ${r.part}`); }
     }
+    [[r.outside, r.o, 'outside box'], [r.inside, r.i, 'inside bag']].forEach(([v, c, lab]) => { if (v && !c.keep && !upcCheckOk(v)) r.warn.push(`${lab} UPC ${v} is not a real UPC (last digit wrong — check for a typo)`); });
     r.needsConfirm = r.moves.length > 0 && !confirm.has(r.part);
   }
   const view = r => ({ part: r.part, status: r.problems.length ? 'error' : r.status, problems: r.problems, warn: r.warn, needsConfirm: !!r.needsConfirm,
@@ -8847,6 +8924,7 @@ const _app = {
       }
       // 🏷 Barcode / vendor for any part # (owner: "search and add the barcode; merge the outside box and inside bag
       // UPC on one part #; set the vendor so it only shows under that vendor").
+      if (url.pathname === '/reorder/fix/upc-check' && method === 'GET') return _roResp(await reorderUpcCheck(env));
       if (url.pathname === '/reorder/fix/part-info' && method === 'GET') return _roResp(await reorderPartInfo(env, url.searchParams.get('part') || ''));
       // 📊 Sales history stored in PIECES instead of units (owner 2026-10-07: "201-2-12 sold ~7,000 pcs, it says order 2,270,000").
       if (url.pathname === '/reorder/fix/sales-check' && method === 'GET') return _roResp(await reorderSalesCheck(env));
@@ -16095,8 +16173,8 @@ async function importUPC(request, env) {
 //     naming convention, not a separate manufacturer part number)
 //   - cases/vendor/location start blank until stock is physically
 //     received/placed
-//   - upc.inside_upc = product_catalog.upc (case/carton UPC);
-//     outside_upc left blank, not yet tracked per-product
+//   - upc.outside_upc = product_catalog.upc (case/carton UPC = the outside box);
+//     inside_upc left blank, not yet tracked per-product
 //   - cogs.landed_cogs = unit_price * 1.5 (50% markup, confirmed)
 //   - warehouse_name is a manually-provided shipping-label abbreviation
 //     (M/F/X/L/Press/etc.) — NOT auto-generated here, since the full
@@ -16126,7 +16204,8 @@ async function inventorySyncNewProduct(request, env) {
       for (const row of rows) {
         preview.master_list.push({ sku: row.sku, base_sku: row.base_sku, name: row.title || row.title_short || '', part_num: row.sku, location: '', cases: 0, units_per_case: row.pack_qty || 1, vendor: '', price: row.starting_price || 0 });
         preview.products.push({ sku: row.sku, base_sku: row.base_sku, name: (row.title || row.title_short || '').toLowerCase(), warehouse_name: warehouseName, weight: row.weight_lbs || 0 });
-        if (row.upc) preview.upc.push({ sku: row.sku, base_sku: row.base_sku, inside_upc: row.upc, outside_upc: '' });
+        // 🔢 Owner (2026-10-17, 26-4-3=100): the case / carton UPC is the OUTSIDE box code — it was saved as the inside bag.
+        if (row.upc) preview.upc.push({ sku: row.sku, base_sku: row.base_sku, inside_upc: '', outside_upc: row.upc });
       }
       const firstRow = rows[0];
       if (firstRow.cost_per_unit) {
