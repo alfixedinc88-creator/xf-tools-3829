@@ -14269,13 +14269,12 @@ window.invCredLogin = async function() {
     var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0);
     return '<div style="font-size:13px;font-weight:800;margin:4px 0 6px">📍 Where do these stickers go? <span style="font-weight:600;color:var(--text2)">Scan each column</span></div>'
       + '<input id="bd-col" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the column label…" onkeydown="if(event.key===\'Enter\')bdColScan()" onblur="xfrKbOff(this)" style="width:100%;box-sizing:border-box;padding:11px;border:2px dashed var(--accent);border-radius:10px;font-size:16px;font-weight:700;font-family:var(--mono);text-transform:uppercase">'
-      + (BD.spots.length ? '<div style="margin-top:6px">' + BD.spots.map(function(x, i) {
-          return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1.5px solid var(--border);border-radius:9px;margin-bottom:5px">'
-            + '<b style="font-family:var(--mono);font-size:15px;flex:1">📍 ' + xfrEsc(x.loc) + '</b><b style="font-size:15px">' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es') + '</b>'
-            + '<button type="button" onclick="bdSpotDel(' + i + ')" style="border:none;background:none;color:var(--red);font-size:18px;cursor:pointer">✕</button></div>';
+      + (BD.spots.length ? '<div style="margin-top:6px">' + BD.spots.map(function(x) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1.5px solid ' + (x.state === 'err' ? 'var(--red)' : 'var(--border)') + ';border-radius:9px;margin-bottom:5px">'
+            + '<b style="font-family:var(--mono);font-size:15px;flex:1">📍 ' + xfrEsc(x.loc) + ' <span style="font-size:12px;color:var(--text2)">' + xfrEsc(x.sku || '') + '</span></b><b style="font-size:15px">' + x.boxes + ' label' + (x.boxes === 1 ? '' : 's') + '</b>'
+            + '<span style="font-size:12px;font-weight:700;color:' + (x.state === 'err' ? 'var(--red)' : x.state === 'saving' ? 'var(--text3)' : 'var(--green,#16a34a)') + '">' + (x.state === 'err' ? '✗ not saved' : x.state === 'saving' ? '⏳ saving' : x.state === 'phone' ? '📶 on the phone' : '✓ saved') + '</span></div>';
         }).join('') + '</div>' : '')
-      + '<div style="font-size:12px;margin:4px 0 10px;color:' + (BD.spots.length && sum !== BD.copies ? 'var(--orange)' : 'var(--text2)') + '">'
-      + (BD.spots.length ? 'Boxes on the list: <b>' + sum + '</b> · labels: <b>' + BD.copies + '</b>' + (sum !== BD.copies ? ' — not the same' : ' ✓') : 'No column yet.') + '</div>';
+      + '<div style="font-size:12px;margin:4px 0 10px;color:var(--text2)">' + (BD.spots.length ? 'Saved here: <b>' + sum + '</b> label' + (sum === 1 ? '' : 's') + ' — on the 🏷 Label Printer page to print' : 'Scan a column, then how many boxes there — it saves by itself.') + '</div>';
   }
   window.bdOpen = function(restore, tab, loaded) {
     bdLoadLib(function() {});
@@ -14294,13 +14293,9 @@ window.invCredLogin = async function() {
       + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
       + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
       + '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;margin:-4px 0 8px;cursor:pointer"><input type="checkbox" id="bd-pic" style="width:20px;height:20px"' + (BD.withPic ? ' checked' : '') + ' onchange="bdPicToggle(this.checked)"> 📷 Product photo on the label</label>'
-      + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">' + BD.copies + '</span></div>'
-      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
-      + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
-      + '<button type="button" onclick="bdCopies(\'more\')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;font-weight:800;cursor:pointer">More…</button></div>'
+      // Owner (2026-10-17): no label-count buttons and no 💾 Save — scan the column, type how many boxes there, and it is
+      // saved by itself (that many labels, to the 🏷 Label Printer page; who saved it shows there).
       + '<div id="bd-spots">' + bdSpotsHtml() + '</div>'
-      // Owner (2026-10-17): only 💾 Save — it goes to the 🏷 Label Printer page (who saved it shows there; tap to print).
-      + '<button type="button" onclick="bdSave()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--green,#16a34a);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">💾 Save</button>'
       + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
     setTimeout(function() { var x = g('bd-sku'); if (x) { if (BD.sku) { x.value = BD.sku; bdPreview(); } x.focus(); } }, 50);
   };
@@ -14311,30 +14306,28 @@ window.invCredLogin = async function() {
     if (!xfrIsLoc(loc)) { invFlash('"' + loc + '" is not a column label — scan the column', 'error'); return; }
     var sku = bdClean((g('bd-sku') || {}).value); BD.sku = sku;
     if (!sku) { invFlash('Type the part # first', 'error'); return; }
-    var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0), left = BD.copies - sum;
-    xfrKeypad('How many boxes at ' + loc + ' need the ' + sku + ' sticker?', left > 0 ? left : '', function(n) {
-      n = Math.round(n); var had = BD.spots.filter(function(x) { return x.loc === loc; })[0];
-      if (had) had.boxes = n; else BD.spots.push({ loc: loc, boxes: n });
+    var had = BD.spots.filter(function(x) { return x.loc === loc && x.sku === sku && x.state !== 'err'; })[0];
+    if (had && !confirm(had.boxes + ' label(s) of ' + sku + ' for ' + loc + ' are already saved.\n\nSave more for ' + loc + '?')) return;
+    // Owner (2026-10-17): the number typed here IS how many labels — saved right away, no 💾 Save to tap.
+    xfrKeypad('How many boxes at ' + loc + ' need the ' + sku + ' sticker?', '', function(n) {
+      n = Math.max(1, Math.min(200, Math.round(n)));
+      var spot = { loc: loc, boxes: n, sku: sku, state: 'saving' }; BD.spots.push(spot);
       bdOpen(true, 'design');
+      bdSaveSpot(spot, BD.nameFor === sku ? BD.name : '');
       setTimeout(function() { var x = g('bd-col'); if (x) x.focus(); }, 120);
     });
   };
-  window.bdSpotDel = function(i) { BD.spots.splice(i, 1); var e = g('bd-spots'); if (e) e.innerHTML = bdSpotsHtml(); };
-  // 💾 Save: on record right away (WiFi-safe: no WiFi → kept on the phone, sent when WiFi is back).
-  window.bdSave = function() {
-    var sku = bdClean((g('bd-sku') || {}).value);
-    if (!sku) { invFlash('Type the part # first', 'error'); return; }
-    if (!BD.spots.length) { invFlash('Scan the column where the stickers go (📍 below)', 'error'); var c = g('bd-col'); if (c) c.focus(); return; }
-    var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0);
-    if (sum !== BD.copies && !confirm('Labels: ' + BD.copies + ' · boxes on the list: ' + sum + '.\n\nSave it like this anyway?')) return;
-    var nm = BD.nameFor === sku ? BD.name : '', spots = BD.spots.slice(), copies = BD.copies;
-    invPost(W + '/inventory/barcode-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: copies, spots: spots }) })
+  // One column = one saved job (that many labels), on record right away (WiFi-safe: no WiFi → kept on the phone).
+  function bdSaveSpot(spot, nm) {
+    invPost(W + '/inventory/barcode-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: spot.sku, name: nm, copies: spot.boxes, spots: [{ loc: spot.loc, boxes: spot.boxes }] }) })
       .then(function(r) { return r.json(); }).then(function(d) {
-        if (!d || d.ok === false) { invFlash('✗ Not saved: ' + ((d && d.error) || 'error'), 'error'); return; }
-        invFlash(d.queued ? '📶 Saved on this phone — it sends by itself when WiFi is back, then it shows on the 🏷 Label Printer page' : '💾 Saved: ' + copies + ' × ' + sku + ' → it is on the 🏷 Label Printer page to print', 'success');
-        BD.spots = []; BD.copies = 1; BD.sku = ''; xfrPopupClose(); bdQueueLoad();
-      }).catch(function() { invFlash('✗ Not saved — try again', 'error'); });
-  };
+        if (!d || d.ok === false) { spot.state = 'err'; invFlash('✗ Not saved: ' + ((d && d.error) || 'error') + ' — scan the column again', 'error'); }
+        else { spot.state = d.queued ? 'phone' : 'saved'; invFlash(d.queued ? '📶 Saved on this phone — it sends by itself when WiFi is back' : '💾 Saved: ' + spot.boxes + ' × ' + spot.sku + ' for ' + spot.loc + ' → on the 🏷 Label Printer page', d.queued ? 'warn' : 'success'); bdQueueLoad(); }
+        var e = g('bd-spots'); if (e) e.innerHTML = bdSpotsHtml();
+      }).catch(function() { spot.state = 'err'; invFlash('✗ Not saved — scan the column again', 'error'); var e = g('bd-spots'); if (e) e.innerHTML = bdSpotsHtml(); });
+  }
+  window.bdSaveSpot = bdSaveSpot;
+  window.bdSpotDel = function(i) { BD.spots.splice(i, 1); var e = g('bd-spots'); if (e) e.innerHTML = bdSpotsHtml(); };
   // ── 🖨 To print (the office PC) ──
   var _bdQueue = [];
   window.bdQueueLoad = function(redraw) {
@@ -14440,11 +14433,6 @@ window.invCredLogin = async function() {
     else if (k === '=OLD') v = v.replace(/=.*$/, '') + '=OLD'; // =OLD replaces what comes after "="
     else v += k;
     x.value = v; bdPreview();
-  };
-  window.bdCopies = function(n) {
-    if (n === 'more') { BD.sku = bdClean((g('bd-sku') || {}).value); xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(true, 'design'); }); return; }
-    BD.copies = n; var c = g('bd-n'); if (c) c.textContent = n;
-    var sp = g('bd-spots'); if (sp) sp.innerHTML = bdSpotsHtml();
   };
   // Match the part # to its product name (SKU Mgr) — shown here and printed on the label.
   var _bdTimer = null;
