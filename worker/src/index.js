@@ -3241,6 +3241,70 @@ async function productPhotoDailyRefresh(env, days) {
   }
   return { checked: bases.length, updated, added };
 }
+// ── Our photos on Pack & Ship (owner 2026-10-17) ─────────────────────────
+// "Picking / Packing / anything with the product photo: use the one we save in our database (Location Plan → 🖼 Photos,
+// one per parent part #) — each order line has its part #, match it up". Every /ship/ answer that carries lineItems
+// gets our photo for the line's parent part # in `i` (Veeqo's kept in `vi`); a part # we have no photo for keeps Veeqo's.
+function shipPhotoBase(li) {
+  const sku = String((li && li.s) || '').trim().toUpperCase(), bin = String((li && li.b) || '').trim().toUpperCase();
+  return /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+}
+async function shipPhotoResponse(request, env, res) {
+  try {
+    if (!env.DB || !res || !(res.headers.get('Content-Type') || '').includes('application/json')) return res;
+    if (!new URL(request.url).pathname.startsWith('/ship/')) return res;
+    const text = await res.clone().text();
+    if (text.length > 4000000 || !/"lineItems"\s*:\s*\[/.test(text)) return res;
+    let data; try { data = JSON.parse(text); } catch (_) { return res; }
+    const lines = [], walk = (v, d) => { if (!v || typeof v !== 'object' || d > 6) return;
+      if (Array.isArray(v)) { v.forEach(x => walk(x, d + 1)); return; }
+      for (const k of Object.keys(v)) { if (k === 'lineItems' && Array.isArray(v[k])) v[k].forEach(li => { if (li && typeof li === 'object' && 's' in li) lines.push(li); }); else walk(v[k], d + 1); } };
+    walk(data, 0);
+    const bases = [...new Set(lines.map(shipPhotoBase).filter(Boolean))];
+    if (!bases.length) return res;
+    const ours = await productPhotoMap(env, bases);
+    let n = 0;
+    lines.forEach(li => { const u = ours[shipPhotoBase(li)]; if (u && /^https?:\/\//i.test(u)) { if (li.i && li.i !== u) li.vi = li.i; li.i = u; li.ph = 'ours'; n++; } });
+    if (!n) return res;
+    const h = new Headers(res.headers); h.delete('Content-Length');
+    return new Response(JSON.stringify(data), { status: res.status, headers: h });
+  } catch (e) { return res; }
+}
+// ⚠ Wrong photo (picker / packer, one tap) → product_photo_report; open reports show in Location Plan → 🖼 Photos
+// "⚠ Reported wrong" until the office fixes the photo (✏️ new photo / ✓ Confirm / ✓ Fixed) — who / when kept.
+async function photoReportTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_photo_report (id INTEGER PRIMARY KEY AUTOINCREMENT, base_sku TEXT, sku TEXT, url TEXT,
+    order_num TEXT, tracking TEXT, screen TEXT, by_user TEXT, at TEXT, closed_at TEXT, closed_by TEXT, closed_how TEXT)`).run();
+}
+async function photoReportClose(env, base, who, how) {
+  await photoReportTable(env);
+  await env.DB.prepare('UPDATE product_photo_report SET closed_at = ?, closed_by = ?, closed_how = ? WHERE base_sku = ? AND closed_at IS NULL')
+    .bind(new Date().toISOString(), String(who || '').slice(0, 40), how, base).run();
+}
+// POST /ship/photo-report { sku, bin, url, orderNum, tracking, screen } — anyone signed in.
+async function shipPhotoReport(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const base = shipPhotoBase({ s: b.sku, b: b.bin });
+  if (!base) return J({ ok: false, error: 'No part # on this line' }, 400);
+  await photoReportTable(env);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), url = String(b.url || '').slice(0, 600), now = new Date().toISOString();
+  const had = await d1First(env, 'SELECT id FROM product_photo_report WHERE base_sku = ? AND url = ? AND by_user = ? AND closed_at IS NULL', [base, url, who]).catch(() => null);
+  if (had) return J({ ok: true, id: had.id, base, duplicate: true });
+  const ins = await env.DB.prepare('INSERT INTO product_photo_report (base_sku, sku, url, order_num, tracking, screen, by_user, at) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(base, String(b.sku || '').slice(0, 60), url, String(b.orderNum || '').slice(0, 40), String(b.tracking || '').slice(0, 60), String(b.screen || '').slice(0, 20), who, now).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'photo_report', { base, screen: b.screen || '' }).catch(() => {});
+  return J({ ok: true, id: ins.meta.last_row_id, base });
+}
+// POST /inventory/photo-report/close { base } — ✓ Fixed (management).
+async function photoReportCloseReq(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || session.pin_level !== 'mgmt') return J({ ok: false, error: 'Management access required' }, 403);
+  const b = await request.json().catch(() => ({})), base = parentOf(String(b.base || '').trim().toUpperCase());
+  if (!base) return J({ ok: false, error: 'Which part #?' }, 400);
+  await photoReportClose(env, base, session.displayName || session.username, 'fixed');
+  return J({ ok: true, base });
+}
 // GET /inventory/photo-review — every parent part # with the photo the
 // Inventory screens use, where it came from, and ✓ confirmed by / when.
 async function productPhotoReview(env) {
@@ -3255,13 +3319,16 @@ async function productPhotoReview(env) {
   const rows = {}; (await d1All(env, 'SELECT * FROM product_photo')).forEach(r => { rows[String(r.base_sku).toUpperCase()] = r; });
   const cat = {}; try { (await d1All(env, "SELECT UPPER(base_sku) b, image_url_1 u FROM product_catalog WHERE TRIM(COALESCE(image_url_1,'')) != '' ORDER BY pack_qty ASC")).forEach(r => { if (!cat[r.b]) cat[r.b] = r.u; }); } catch (_) {}
   const last = {}; (await d1All(env, 'SELECT base_sku, old_url, action, by_user, at FROM product_photo_log ORDER BY id')).forEach(r => { last[String(r.base_sku).toUpperCase()] = r; });
-  Object.keys(rows).forEach(b => { if (!P[b]) P[b] = { base: b, name: '', cases: 0 }; });
+  await photoReportTable(env);
+  const rep = {}; (await d1All(env, 'SELECT * FROM product_photo_report WHERE closed_at IS NULL ORDER BY id DESC')).forEach(r => { const b = String(r.base_sku).toUpperCase();
+    (rep[b] = rep[b] || []).push({ sku: r.sku || '', url: r.url || '', orderNum: r.order_num || '', tracking: r.tracking || '', screen: r.screen || '', by: r.by_user || '', at: r.at || '' }); });
+  Object.keys(rows).concat(Object.keys(rep)).forEach(b => { if (!P[b]) P[b] = { base: b, name: '', cases: 0 }; });
   const items = Object.values(P).map(p => {
     const r = rows[p.base], url = r ? (r.url || '') : (cat[p.base] || '');
     const src = r ? (r.source === 'manual' ? 'set by hand' + (r.set_by ? ' (' + r.set_by + ')' : '') : r.source === 'veeqo' ? 'Veeqo' : 'Pack & Ship order') : url ? 'listing photo' : '';
     const l = last[p.base];
     return { base: p.base, name: p.name, cases: Math.round(p.cases * 100) / 100, url, source: src, at: r ? r.updated_at : '', confirmedBy: (r && r.confirmed_by) || '', confirmedAt: (r && r.confirmed_at) || '',
-      lastChange: l && l.action === 'auto' ? { from: l.old_url || '', at: l.at } : null };
+      lastChange: l && l.action === 'auto' ? { from: l.old_url || '', at: l.at } : null, reports: rep[p.base] || [] };
   });
   return cors(new Response(JSON.stringify({ ok: true, items }), { headers: { 'Content-Type': 'application/json' } }));
 }
@@ -3287,6 +3354,7 @@ async function productPhotoConfirm(request, env, session) {
   if (cur) await env.DB.prepare('UPDATE product_photo SET confirmed_by = ?, confirmed_at = ? WHERE base_sku = ?').bind(who, now, base).run();
   else await env.DB.prepare('INSERT INTO product_photo (base_sku, url, source, set_by, updated_at, confirmed_by, confirmed_at) VALUES (?,?,?,?,?,?,?)').bind(base, url, 'listing', 'listing', now, who, now).run();
   await productPhotoLog(env, base, url, url, 'confirm', who);
+  await photoReportClose(env, base, who, 'confirmed'); // ✓ Confirm = this photo is right → its ⚠ reports are answered
   return J({ ok: true, base, confirmed: true, confirmedBy: who, confirmedAt: now });
 }
 async function productPhotoMap(env, bases) {
@@ -3356,6 +3424,7 @@ async function productPhotoSave(request, env) {
       confirmed_at = CASE WHEN product_photo.url = excluded.url THEN product_photo.confirmed_at END`)
     .bind(base, url, 'manual', String(b.editedBy || '').slice(0, 40), new Date().toISOString()).run();
   await productPhotoLog(env, base, before && before.url, url, 'manual', b.editedBy);
+  if ((before && before.url || '') !== url) await photoReportClose(env, base, b.editedBy, 'new photo').catch(() => {}); // a new photo answers its ⚠ reports
   return cors(new Response(JSON.stringify({ ok: true, baseSku: base, photo: url }), { headers: { 'Content-Type': 'application/json' } }));
 }
 async function productPhotoSearch(url, env) {
@@ -9087,6 +9156,7 @@ const _app = {
         return await productPhotoReview(env);
       }
       if (path === '/inventory/photo-confirm' && method === 'POST') return await productPhotoConfirm(request, env, session);
+      if (path === '/inventory/photo-report/close' && method === 'POST') return await photoReportCloseReq(request, env, session);
       if (path === '/inventory/photo-refresh' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return cors(new Response(JSON.stringify({ ok: true, ...(await productPhotoDailyRefresh(env, 7)) }), { headers: { 'Content-Type': 'application/json' } }));
@@ -20376,6 +20446,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/batch-close'  && method === 'POST') return await shipBatchClose(request, env);
     if (path === '/ship/lookup'       && method === 'GET')  return await shipLookup(url, env);
     if (path === '/ship/order-lookup' && method === 'GET')  return await shipOrderLookup(url, env);
+    if (path === '/ship/photo-report' && method === 'POST') return await shipPhotoReport(request, env, session); // ⚠ Wrong photo (Picking / Packing)
     if (path === '/ship/tracking-history' && method === 'GET') return await shipTrackingHistory(url, env);
     if (path === '/ship/carrier-tracking' && method === 'GET') return await shipCarrierTracking(url, env);
     if (path === '/ship/package' && method === 'GET') return await shipPackageCheck(url, env);
@@ -31703,6 +31774,6 @@ async function soldoutAddListing(request, env) {
 
 // Every reply goes through the vendor-code mask (owner sees real names).
 export default {
-  async fetch(request, env, ctx) { request = await locAliasRequest(request); request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
+  async fetch(request, env, ctx) { request = await locAliasRequest(request); request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await shipPhotoResponse(request, env, await _app.fetch(request, env, ctx))); },
   async scheduled(event, env, ctx) { return await _app.scheduled(event, env, ctx); },
 };

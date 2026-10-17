@@ -7090,5 +7090,40 @@ console.log('\n🏷 Barcode designer keypad: FIRST');
     !!keys && /'FIRST'/.test(keys) && /'=OLD'/.test(keys) && /'W\.2C'/.test(keys) && el.value === '8-8-8=10FIRST' && /k === 'FIRST' \? ';grid-column:1 \/ -1/.test(ih), { keys, v: el.value });
 }
 
+// Owner (2026-10-17): "Picking / Packing / anything with the product photo: use the one we save in our database (each parent part #)
+// — match each order line's part #; and one click on the photo if it's not right → reported to a tab so we fix it".
+console.log('\n🖼 Pick / Pack photos: our saved photo per parent part #; ⚠ Wrong photo → reported in Location Plan → 🖼 Photos');
+{
+  const nyT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  await get('/inventory/photo-review'); // tables
+  sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url, source, set_by, updated_at) VALUES ('934-1-1', 'https://ours.example/934-1-1.jpg', 'manual', 'KL', ?)").run(new Date().toISOString());
+  sq.prepare('INSERT INTO ship_manifest_log (date, tracking, line_items) VALUES (?,?,?)').run(nyT, '1ZPHOTOOURS00001', JSON.stringify([
+    { s: '934-1-1=10', q: 2, b: '', i: 'https://veeqo.example/wrong.jpg' }, { s: '935-9-9=1', q: 1, b: '', i: 'https://veeqo.example/keep.jpg' }]));
+  const lk = await get('/ship/order-lookup?q=1ZPHOTOOURS00001&days=7');
+  const li = ((lk.results || [])[0] || {}).lineItems || [];
+  const a = li.find(x => x.s === '934-1-1=10') || {}, b = li.find(x => x.s === '935-9-9=1') || {};
+  check('order line 934-1-1=10 → OUR saved photo for parent 934-1-1 (Veeqo\'s kept aside); 935-9-9=1 (no photo of ours) keeps Veeqo\'s',
+    a.i === 'https://ours.example/934-1-1.jpg' && a.vi === 'https://veeqo.example/wrong.jpg' && a.ph === 'ours' && b.i === 'https://veeqo.example/keep.jpg' && !b.ph, li);
+  const r1 = await post('/ship/photo-report', { sku: '934-1-1=10', url: a.i, tracking: '1ZPHOTOOURS00001', orderNum: 'ORD-934', screen: 'picking' });
+  const r2 = await post('/ship/photo-report', { sku: '934-1-1=10', url: a.i, tracking: '1ZPHOTOOURS00001', orderNum: 'ORD-934', screen: 'picking' });
+  const pr = await get('/inventory/photo-review'), it = (pr.items || []).find(x => x.base === '934-1-1') || {};
+  check('⚠ Wrong photo (one tap) → on record: part #, photo, order, Picking, who / when; tapped twice → once; shows in 🖼 Photos with the report',
+    r1.ok && r1.base === '934-1-1' && r2.duplicate && (it.reports || []).length === 1 && it.reports[0].screen === 'picking' && it.reports[0].orderNum === 'ORD-934' && it.reports[0].by && it.reports[0].at, it);
+  await call('/inventory/product-photo', { method: 'POST', headers: H, body: JSON.stringify({ baseSku: '934-1-1', imageUrl: 'https://ours.example/934-1-1-new.jpg', editedBy: 'KL' }) });
+  const it2 = ((await get('/inventory/photo-review')).items || []).find(x => x.base === '934-1-1') || {};
+  const cl = sq.prepare("SELECT closed_by, closed_how FROM product_photo_report WHERE base_sku = '934-1-1'").get();
+  const li2 = (((await get('/ship/order-lookup?q=1ZPHOTOOURS00001&days=7')).results || [])[0] || {}).lineItems || [];
+  check('…office ✏️ changes the photo → the report is answered (closed, who / how kept) and Picking / Packing show the new photo right away',
+    !(it2.reports || []).length && cl.closed_how === 'new photo' && cl.closed_by === 'KL' && (li2.find(x => x.s === '934-1-1=10') || {}).i === 'https://ours.example/934-1-1-new.jpg', [it2.reports, cl]);
+  await post('/ship/photo-report', { sku: '934-1-1=10', url: 'https://ours.example/934-1-1-new.jpg', screen: 'packing' });
+  const fx = await post('/inventory/photo-report/close', { base: '934-1-1' });
+  check('…✓ Fixed / photo is right → closed', fx.ok && !sq.prepare("SELECT COUNT(*) n FROM product_photo_report WHERE base_sku = '934-1-1' AND closed_at IS NULL").get().n, fx);
+  const { readFileSync: rfP } = await import('node:fs');
+  const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ih = rfP(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screens: every Pick / Pack item card has "⚠ Wrong photo" (one tap → /ship/photo-report); 🖼 Photos has "⚠ Reported wrong (N)" with ✓ Fixed',
+    /onclick="psPhotoReport\(' \+ repIdx \+ ', this\)"[^>]*>⚠ Wrong photo<\/button>/.test(ph) && /\/ship\/photo-report', \{ method: 'POST'/.test(ph) && /chip\('reported', '⚠ Reported wrong \(' \+ reported\.length \+ '\)'\)/.test(ih) && /window\.lpPhRepClose = function/.test(ih), null);
+  sq.exec("DELETE FROM product_photo WHERE base_sku = '934-1-1'; DELETE FROM product_photo_report WHERE base_sku = '934-1-1'; DELETE FROM ship_manifest_log WHERE tracking = '1ZPHOTOOURS00001'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

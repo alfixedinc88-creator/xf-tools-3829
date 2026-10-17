@@ -9198,7 +9198,9 @@ window.invCredLogin = async function() {
     g('lp-ph-list').innerHTML = "<div class='iempty'>Loading…</div>";
     wFetch(W + '/inventory/photo-review').then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) { g('lp-ph-list').innerHTML = "<div class='iempty'>Load failed: " + lpE(d.error || '') + "</div>"; return; }
-      LPH.items = d.items || []; lpPhRender();
+      LPH.items = d.items || [];
+      if (!LPH.seen) { LPH.seen = 1; if (LPH.items.some(function(p) { return (p.reports || []).length; })) LPH.view = 'reported'; } // ⚠ reports first when there are any
+      lpPhRender();
     }).catch(function() { g('lp-ph-list').innerHTML = "<div class='iempty'>Load failed</div>"; });
   };
   window.lpPhView = function(v) { LPH.view = v; LPH.max = 60; lpPhRender(); };
@@ -9208,10 +9210,13 @@ window.invCredLogin = async function() {
     var all = LPH.items || [], q = String((g('lp-ph-q') || {}).value || '').trim().toUpperCase(), stockOnly = (g('lp-ph-stock') || {}).checked;
     var base = all.filter(function(p) { return (!stockOnly || p.cases > 0 || p.confirmedAt) && (!q || p.base.indexOf(q) >= 0 || String(p.name || '').toUpperCase().indexOf(q) >= 0); });
     var todo = base.filter(function(p) { return !p.confirmedAt; }), done = base.filter(function(p) { return p.confirmedAt; });
+    // ⚠ Reported wrong by a picker / packer (owner 2026-10-17) — every one, in stock or not
+    var reported = all.filter(function(p) { return (p.reports || []).length && (!q || p.base.indexOf(q) >= 0 || String(p.name || '').toUpperCase().indexOf(q) >= 0); });
     var chip = function(v, label) { var on = LPH.view === v;
       return '<button type="button" onclick="lpPhView(\'' + v + '\')" style="padding:7px 12px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;border:1.5px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (on ? 'var(--accent)' : 'var(--bg)') + ';color:' + (on ? '#fff' : 'var(--text)') + '">' + label + '</button>'; };
-    g('lp-ph-chips').innerHTML = chip('todo', 'Not confirmed (' + todo.length + ')') + chip('done', '✓ Confirmed (' + done.length + ')');
-    var rows = LPH.view === 'done' ? done.sort(function(a, b) { return String(b.confirmedAt).localeCompare(String(a.confirmedAt)); })
+    g('lp-ph-chips').innerHTML = chip('reported', '⚠ Reported wrong (' + reported.length + ')') + chip('todo', 'Not confirmed (' + todo.length + ')') + chip('done', '✓ Confirmed (' + done.length + ')');
+    var rows = LPH.view === 'reported' ? reported.sort(function(a, b) { return String(b.reports[0].at).localeCompare(String(a.reports[0].at)); })
+      : LPH.view === 'done' ? done.sort(function(a, b) { return String(b.confirmedAt).localeCompare(String(a.confirmedAt)); })
       : todo.sort(function(a, b) { return (!!b.url - !!a.url) || b.cases - a.cases || a.base.localeCompare(b.base); });
     g('lp-ph-count').textContent = rows.length + ' parent part #' + (rows.length === 1 ? '' : 's') + (rows.length > LPH.max ? ' · showing ' + LPH.max : '');
     var admin = xfrIsAdmin();
@@ -9224,6 +9229,10 @@ window.invCredLogin = async function() {
         + '<div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + lpE(p.name) + '">' + lpE(p.name || '') + '</div>'
         + '<div style="font-size:10px;color:var(--text3)">' + lpE(p.source || '') + (p.at ? ' · ' + lpE(lpPhT(p.at)) : '') + (p.cases ? ' · ' + lpN(p.cases) + ' cases' : '') + '</div>'
         + (p.lastChange && !p.confirmedAt ? '<div style="font-size:10px;color:var(--orange);font-weight:700">↻ updated from Pack &amp; Ship ' + lpE(lpPhT(p.lastChange.at)) + '</div>' : '')
+        + ((p.reports || []).length ? '<div style="margin-top:4px;padding:5px 6px;border-radius:7px;background:var(--red-bg,#fdf0ee);border:1px solid var(--red);font-size:10.5px;color:var(--red)"><b>⚠ Wrong photo × ' + p.reports.length + '</b>'
+          + p.reports.slice(0, 4).map(function(r) { return '<div style="color:var(--text2)">' + lpE(r.by) + ' · ' + lpE(r.screen || '') + ' · ' + lpE(lpPhT(r.at)) + (r.sku ? ' · ' + lpE(r.sku) : '') + (r.orderNum ? ' · #' + lpE(r.orderNum) : '') + '</div>'; }).join('')
+          + '<div style="color:var(--text3)">✏️ Change photo or ✓ Confirm answers it</div>'
+          + '<button type="button" onclick="lpPhRepClose(' + B + ')" style="width:100%;margin-top:4px;padding:5px;border-radius:7px;border:1px solid var(--red);background:var(--bg);color:var(--red);font-size:11px;font-weight:700;cursor:pointer">✓ Fixed / photo is right</button></div>' : '')
         + (p.confirmedAt
           ? '<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:4px">✓ ' + lpE(p.confirmedBy || '') + ' · ' + lpE(lpPhT(p.confirmedAt)) + '</div>'
             + '<a href="#" onclick="lpPhConfirm(' + B + ', true);return false" style="font-size:11px">undo</a>'
@@ -9231,19 +9240,27 @@ window.invCredLogin = async function() {
         + (admin ? '<button type="button" onclick="xfrPhotoEdit(' + B + ')" style="width:100%;margin-top:4px;padding:5px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-size:11px;cursor:pointer">✏️ Change photo</button>' : '')
         + '</div>'; }).join('') + '</div>'
       + (rows.length > LPH.max ? '<button type="button" class="isearch-btn" style="width:100%;margin-top:8px" onclick="lpPhMore()">Show more</button>' : '')
-      : '<div class="iempty">' + (LPH.view === 'done' ? 'Nothing confirmed yet' : '✓ Every photo here is confirmed') + '</div>';
+      : '<div class="iempty">' + (LPH.view === 'reported' ? '✓ No photo reported wrong' : LPH.view === 'done' ? 'Nothing confirmed yet' : '✓ Every photo here is confirmed') + '</div>';
   };
   window.lpPhConfirm = function(base, undo) {
     var p = (LPH.items || []).filter(function(x) { return x.base === base; })[0]; if (!p) return;
     wFetch(W + '/inventory/photo-confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base: base, url: p.url, undo: !!undo }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Not saved', 'error'); if (d.current != null) { p.url = d.current; lpPhRender(); } return; }
-        p.confirmedAt = d.confirmed ? d.confirmedAt : ''; p.confirmedBy = d.confirmed ? d.confirmedBy : '';
+        p.confirmedAt = d.confirmed ? d.confirmedAt : ''; p.confirmedBy = d.confirmed ? d.confirmedBy : ''; if (d.confirmed) p.reports = [];
         invFlash(d.confirmed ? '✓ ' + base + ' photo confirmed — kept forever' : base + ' back to Not confirmed', 'success');
         lpPhRender();
       }).catch(function() { invFlash('Not saved — network error', 'error'); });
   };
-  window.lpPhAfterEdit = function(base, url) { var p = (LPH.items || []).filter(function(x) { return x.base === base; })[0]; if (!p) return; if (p.url !== url) { p.confirmedAt = ''; p.confirmedBy = ''; } p.url = url; p.source = 'set by hand'; p.at = new Date().toISOString(); lpPhRender(); };
+  window.lpPhRepClose = function(base) {
+    var p = (LPH.items || []).filter(function(x) { return x.base === base; })[0]; if (!p) return;
+    wFetch(W + '/inventory/photo-report/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base: base }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) { invFlash(d.error || 'Not saved', 'error'); return; }
+        p.reports = []; invFlash('✓ ' + base + ' — wrong-photo reports closed', 'success'); lpPhRender();
+      }).catch(function() { invFlash('Not saved — network error', 'error'); });
+  };
+  window.lpPhAfterEdit = function(base, url) { var p = (LPH.items || []).filter(function(x) { return x.base === base; })[0]; if (!p) return; if (p.url !== url) { p.confirmedAt = ''; p.confirmedBy = ''; p.reports = []; } p.url = url; p.source = 'set by hand'; p.at = new Date().toISOString(); lpPhRender(); };
   window.lpPhRefresh = function() {
     invFlash('Checking Pack & Ship orders…', 'success');
     wFetch(W + '/inventory/photo-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); }).then(function(d) {
