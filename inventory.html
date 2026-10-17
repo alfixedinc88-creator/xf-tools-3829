@@ -14227,7 +14227,10 @@ window.invCredLogin = async function() {
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">🗺 By area — tap one to see every spot</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
         + (d.areas || []).map(function(a) { var on = RC.area === a.area, all = a.done + a.started + a.notScanned;
             return '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="' + ckE(a.area) + '" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (a.notScanned || a.started ? 'var(--bg)' : 'var(--green-bg,#e8f7ee)') + ';color:var(--text)">'
-              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + '</span></button>'; }).join('') + '</div>'
+              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + '</span></button>'; }).join('')
+        // Owner (2026-10-17): "why '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?" — SKU Mgr Locations that are not spots.
+        + ((d.notSpots || []).length ? '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="__bad" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (RC.area === '__bad' ? 'var(--accent)' : 'var(--orange)') + ';background:var(--orange-bg,#fff7ed);color:var(--text)"><b>⚠ ' + d.notSpots.length + ' not real spots</b><br><span style="font-size:11px">a note / barcode / container in SKU Mgr Location</span></button>' : '')
+        + '</div>'
         + '<div id="rc-area-grid">' + rcAreaGrid() + '</div>';
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
         + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
@@ -14249,7 +14252,13 @@ window.invCredLogin = async function() {
   };
 
   function rcAreaGrid() {
-    var d = RC.rep, a = d && RC.area && (d.areas || []).filter(function(x) { return x.area === RC.area; })[0];
+    var d = RC.rep;
+    if (d && RC.area === '__bad') return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--orange);border-radius:10px;background:var(--bg2);color:var(--text)">'
+      + '<div style="margin-bottom:6px"><b>⚠ Not real spots</b> — these SKU Mgr rows have a note, a barcode or a container name in <b>Location</b> instead of a spot (like C1=11-2-3), so nobody can recount them and they are not counted as spots. '
+      + 'Fix: SKU Mgr → <b>By Location</b> → search the text → ✏ Edit the Location to where the boxes really are (or 🔁 Transfer them). <a href="#" onclick="rcArea(\'__bad\');return false">close</a></div>'
+      + d.notSpots.map(function(b) { return '<div style="padding:4px 0;border-top:1px solid var(--border)"><b style="font-family:var(--mono);color:var(--orange)">' + ckE(b.loc) + '</b> — '
+          + b.parts.map(function(p) { return '<span style="font-family:var(--mono)">' + ckE(p.part) + '</span> ' + ckE(xfrN(p.cases)) + ' cs'; }).join(' · ') + '</div>'; }).join('') + '</div>';
+    var a = d && RC.area && (d.areas || []).filter(function(x) { return x.area === RC.area; })[0];
     if (!a) return '';
     var col = { done: ['var(--green-bg,#e8f7ee)', 'var(--green)'], started: ['#fef9c3', '#ca8a04'], none: ['var(--red-bg,#fdf0ee)', 'var(--red)'] };
     var T = function(x) { return x ? xfrFmtT(x) : ''; };

@@ -7588,7 +7588,14 @@ async function recountReport(env) {
     .sort((a, b) => b.columns - a.columns);
   // Not done yet: every spot with stock (SKU Mgr) that no one finished in this round, by aisle (C1=11-2-3 → C1=11).
   const doneSet = new Set(cols.filter(c => !c.stopped).map(c => String(c.location).toUpperCase()));
-  const spots = (await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`)).map(x => x.l);
+  // Owner (2026-10-17: "why do we have '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?"): SKU Mgr rows whose
+  // Location holds a note, a barcode or a container name are not spots — nobody can recount them. They're listed apart (with
+  // their part #s and cases, to fix in SKU Mgr) instead of as areas / spots to do.
+  const isSpot = L => /^GARAGE$/.test(L) || /^[A-Z0-9]{1,10}=[A-Z0-9][A-Z0-9.\-]*$/.test(L);
+  const allLocs = (await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`)).map(x => x.l);
+  const spots = allLocs.filter(isSpot), notSpots = allLocs.filter(l => !isSpot(l));
+  const notSpotRows = notSpots.length ? await d1All(env, `SELECT UPPER(TRIM(location)) AS l, part_num, cases FROM master_list WHERE cases > 0 AND UPPER(TRIM(location)) IN (${notSpots.slice(0, 300).map(() => '?').join(',')}) ORDER BY 1, 2`, notSpots.slice(0, 300)) : [];
+  const badSpots = {}; notSpotRows.forEach(r => { (badSpots[r.l] = badSpots[r.l] || { loc: r.l, parts: [] }).parts.push({ part: String(r.part_num || '').trim(), cases: parseFloat(r.cases) || 0 }); });
   const aisleOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i + 1) + L.slice(i + 1).split('-')[0]; };
   const aisles = {};
   spots.forEach(l => { const a = aisles[aisleOf(l)] = aisles[aisleOf(l)] || { aisle: aisleOf(l), total: 0, done: 0, notDone: [] }; a.total++; if (doneSet.has(l)) a.done++; else a.notDone.push(l); });
@@ -7602,7 +7609,7 @@ async function recountReport(env) {
     .forEach(r => { const s0 = started[r.l] || {}; started[r.l] = { by: r.by || s0.by || '', at: r.at > (s0.at || '') ? r.at : s0.at, lines: r.n, stopped: !!s0.stopped }; });
   const areaOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i); };
   const areas = {}, spotSet = new Set(spots);
-  [...new Set(spots.concat(Object.keys(doneBy), Object.keys(started)))].forEach(l => {
+  [...new Set(spots.concat(Object.keys(doneBy), Object.keys(started)))].filter(isSpot).forEach(l => {
     const a = areas[areaOf(l)] = areas[areaOf(l)] || { area: areaOf(l), done: 0, started: 0, notScanned: 0, spots: [] };
     const st = doneBy[l] ? 'done' : started[l] ? 'started' : 'none';
     a[st === 'done' ? 'done' : st === 'started' ? 'started' : 'notScanned']++;
@@ -7610,7 +7617,7 @@ async function recountReport(env) {
       lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l) });
   });
   return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
-    areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })),
+    areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })), notSpots: Object.values(badSpots),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
