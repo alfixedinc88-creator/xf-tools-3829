@@ -167,7 +167,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
-  if (path.indexOf('recount/column-done') >= 0) return '📋 Recount: column ' + (b.location || '') + ' done (' + (b.items || 0) + ' item(s))';
+  if (path.indexOf('recount/column-done') >= 0) return '📋 Recount: column ' + (b.location || '') + (b.stopped ? ' stopped (not done)' : ' done') + ' (' + (b.items || 0) + ' item(s))';
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
@@ -1160,6 +1160,12 @@ window.invCredLogin = async function() {
     </div>
   </div>
 
+  <!-- 📊 Owner (2026-10-17): managers see who did which column, start → done, how long, boxes, lines skipped (not scanned),
+       and the spots still not done. -->
+  <details class="icard" id="rc-report" style="display:none" ontoggle="if(this.open)rcReport()">
+    <summary style="cursor:pointer;font-size:14px;font-weight:800;color:var(--accent)">📊 Recount report — who did which column, how long, what's not done</summary>
+    <div id="rc-report-body" style="margin-top:8px;font-size:12px;color:var(--text3)">Loading…</div>
+  </details>
   <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
   <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
   <!-- Search card -->
@@ -13848,14 +13854,14 @@ window.invCredLogin = async function() {
   function rcSaveState() {
     try {
       if (!RC.loc) { localStorage.removeItem(rcStateKey()); return; }
-      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, at: Date.now() }));
+      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, startedAt: RC.startedAt || '', at: Date.now() }));
     } catch (e) {}
   }
   window.rcRestore = function() {
     if (RC.loc) return;
     var st = null; try { st = JSON.parse(localStorage.getItem(rcStateKey()) || 'null'); } catch (e) {}
     if (!st || !st.loc || st.done) return;
-    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null;
+    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null; RC.startedAt = st.startedAt || '';
     // A save that was still going when the page closed went through the phone outbox — it is not lost.
     RC.rows.forEach(function(r) { if (r._rc) r._rc.saving = false; }); RC.extra.forEach(function(x) { x.saving = false; });
     rcRender(); rcStatus(rcAisleOf(RC.loc));
@@ -13889,6 +13895,7 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/recount/status' + (aisle ? '?aisle=' + encodeURIComponent(aisle) : '')).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) return;
       RC.status = d; if (aisle) RC.aisle = d;
+      var rep = g('rc-report'); if (rep) rep.style.display = invUnlocked ? '' : 'none';
       var p = g('rc-progress');
       if (p) p.innerHTML = 'This recount (since ' + ckE(xfrFmtT(d.roundStart).split(',')[0]) + '): <b>' + d.doneCount + '</b> column(s) done'
         + (d.spotsWithStock ? ' of about <b>' + d.spotsWithStock + '</b> spots with stock' : '') + '. ' + (RC.loc ? '' : 'Scan the column label to start.')
@@ -13933,7 +13940,7 @@ window.invCredLogin = async function() {
     var waiting = rcWaitingFor(loc), doneAt = rcDoneGet()[loc];
     if (waiting) { invFlash('📶 ' + loc + ' has ' + waiting + ' count(s) still waiting on this phone for WiFi — recount it after they are sent', 'error'); return; }
     if (doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
-    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null };
+    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null, startedAt: new Date().toISOString() }; // 📊 start time for the report
     rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
     rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
       RC.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
@@ -14019,15 +14026,15 @@ window.invCredLogin = async function() {
     var loc = c.found ? c.found.location : RC.loc;
     RC.cur = null;
     if (row && Math.abs(ckNum(row.eachQty) - pcs) < 1e-9) {
-      row._rc = { n: n, pcs: pcs, saving: true }; rcRender();
+      row._rc = { n: n, pcs: pcs, saving: true, how: c.found ? 'found' : 'scan' }; rcRender();
       rcCountRow(row, n).then(function(d) { row._rc.saving = false; if (!rcDone(d, 'Counted ' + row.partNum + ': ' + xfrN(n) + ' case(s) × ' + xfrN(pcs) + ' pcs')) row._rc = null; rcRender(); rcAfter(); })
         .catch(function(e) { row._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
       return;
     }
     // "Found" with a different box size than on record: the old line → 0, the boxes as a new line.
-    var x = { k: k, part: c.part, name: c.name, n: n, pcs: pcs, saving: true };
+    var x = { k: k, part: c.part, name: c.name, n: n, pcs: pcs, saving: true, how: c.found ? 'found' : 'scan' };
     RC.extra.push(x);
-    if (row) row._rc = { n: 0, pcs: ckNum(row.eachQty), saving: true, moved: pcs };
+    if (row) row._rc = { n: 0, pcs: ckNum(row.eachQty), saving: true, moved: pcs, how: c.found ? 'found' : 'scan' };
     rcRender();
     var first = row ? rcCountRow(row, 0, '[RECOUNT] different box size (' + xfrN(row.eachQty) + ' → ' + xfrN(pcs) + ' pcs) ') : Promise.resolve({ ok: true });
     first.then(function(d0) {
@@ -14050,17 +14057,21 @@ window.invCredLogin = async function() {
   };
   window.rcNone = function(i) {
     var r = RC.rows[i]; if (!r || r._rc) return;
-    r._rc = { n: 0, pcs: ckNum(r.eachQty), saving: true }; rcRender();
+    r._rc = { n: 0, pcs: ckNum(r.eachQty), saving: true, how: 'none' }; rcRender();
     rcCountRow(r, 0, '[NONE FOUND] ').then(function(d) { r._rc.saving = false; if (!rcDone(d, 'None found: ' + r.partNum + ' → 0')) r._rc = null; rcRender(); rcAfter(); })
       .catch(function(e) { r._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
   };
+  // What was counted on this column (how: scan = scanned, found / none = not scanned, then ✓ Found / ✗ None found).
+  function rcDetail() {
+    return RC.rows.filter(function(r) { return r._rc; }).map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n, how: r._rc.how || 'scan' }; })
+      .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true, how: x.how || 'scan' }; }));
+  }
   function rcFinish() {
     var counted = RC.rows.filter(function(r) { return r._rc; }), changed = counted.filter(function(r) { return Math.abs(r._rc.n - ckNow(r)) > 1e-9; }).length + RC.extra.length;
-    var detail = counted.map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n }; })
-      .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true }; }));
+    var detail = rcDetail();
     // Through the phone outbox: no WiFi → saved on the phone and sent by itself later (only once).
     invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString() }) })
+      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
         RC.done = true; RC.checking = false; rcDoneMark(RC.loc); rcRender(); rcStatus(rcAisleOf(RC.loc));
@@ -14070,6 +14081,10 @@ window.invCredLogin = async function() {
   }
   window.rcStop = function() {
     if (!confirm('Stop ' + RC.loc + ' without finishing? What you counted is saved, but the column is NOT marked done.')) return;
+    // 📊 Kept for the report: who stopped which column, when, and what was counted before (not marked done).
+    var det = rcDetail();
+    invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: RC.loc, items: det.length, changed: 0, detail: det, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null, stopped: true }) }).catch(function() {});
     RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus();
   };
   window.rcRender = function() {
@@ -14137,6 +14152,34 @@ window.invCredLogin = async function() {
     if (!RC.done && !RC.cur && !RC.checking) h += '<button type="button" onclick="rcCheck()" style="width:100%;padding:16px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:17px;font-weight:800;cursor:pointer">✅ Done with this column</button>';
     h += aisleH;
     rcOut(h);
+  };
+
+  // 📊 Recount report (managers): per person, per column (start → done, minutes, boxes, lines skipped), and not done yet.
+  window.rcReport = function() {
+    var box = g('rc-report-body'); if (!box) return;
+    box.textContent = 'Loading…';
+    wFetch(W + '/inventory/recount/report').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { box.innerHTML = '<span style="color:var(--red)">' + ckE((d && d.error) || 'Could not load') + '</span>'; return; }
+      var T = function(x) { return x ? xfrFmtT(x) : '—'; }, M = function(m) { return m == null ? '—' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
+      var th = 'style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
+      var h = '<div style="color:var(--text2);margin-bottom:6px">This recount (since ' + ckE(T(d.roundStart)) + '): <b>' + d.spotsDone + ' of ' + d.spotsWithStock + '</b> spots with stock done. <a href="#" onclick="rcReport();return false">↻ Refresh</a></div>';
+      h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
+        + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
+        + (d.people.length ? d.people.map(function(p) { return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
+          : '<tr><td ' + td + ' colspan="9">No column done yet in this recount.</td></tr>') + '</table></div>';
+      h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first)</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
+        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
+        + d.columns.map(function(c) {
+            var sk = !c.howKnown && !c.skipped.length ? '<span style="color:var(--text3)">not recorded (before 10-17)</span>' : c.skipped.length ? c.skipped.map(function(x) { return '<div>' + (x.how === 'none' ? '✗ None found: ' : '✓ Found: ') + ckE(x.part) + ' × ' + ckE(xfrN(x.pcs)) + ' pcs (system ' + ckE(xfrN(x.system)) + ' → ' + ckE(xfrN(x.counted)) + ')</div>'; }).join('') : '<span style="color:var(--green)">none — every line scanned</span>';
+            return '<tr' + (c.stopped ? ' style="background:var(--orange-bg,#fff7ed)"' : '') + '><td ' + td + '><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + M(c.minutes) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td></tr>';
+          }).join('') + '</table></div>';
+      var nd = d.aisles.filter(function(a) { return a.notDone.length; });
+      h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">⬜ Not done yet (' + (d.spotsWithStock - d.spotsDone) + ' spots with stock)</div>'
+        + (nd.length ? nd.map(function(a) { return '<details style="margin-bottom:4px"><summary style="cursor:pointer;color:var(--text)"><b style="font-family:var(--mono)">' + ckE(a.aisle) + '</b>: ' + a.done + ' of ' + a.total + ' done — ' + a.notDone.length + ' not done</summary><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'
+            + a.notDone.slice().sort(invPullWalkCompare).map(function(l) { return '<span style="font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:6px;background:var(--bg3);color:var(--text2)">' + ckE(l) + '</span>'; }).join('') + '</div></details>'; }).join('')
+          : '<div style="color:var(--green);font-weight:700">✅ Every spot with stock is done</div>');
+      box.innerHTML = h;
+    }).catch(function() { box.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
 
   var _rcQr = null, _rcCam = false;
