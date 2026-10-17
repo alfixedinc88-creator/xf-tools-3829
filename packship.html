@@ -2979,6 +2979,16 @@ function _psSkuMultiplier(sku) {
   return m ? (parseInt(m[1], 10) || 1) : 1;
 }
 
+// ⚠ Wrong photo: one tap → on record (part #, photo, order, Picking / Packing, who / when) → Location Plan → 🖼 Photos.
+window.psPhotoReport = function(i, btn) {
+  var r = (window._psPhotoRep || [])[i]; if (!r || (btn && btn.disabled)) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  fetch(PS_WORKER + '/ship/photo-report', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken }, body: JSON.stringify(r) })
+    .then(function(x) { return x.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'not sent');
+      if (btn) { btn.textContent = '✓ Reported'; btn.style.color = 'var(--green,#0e7f3e)'; btn.style.borderColor = 'var(--green,#0e7f3e)'; }
+    }).catch(function(e) { if (btn) { btn.disabled = false; btn.textContent = '⚠ Wrong photo'; } alert('Not sent — ' + ((e && e.message) || 'no WiFi') + '. Try again.'); });
+};
 window.psScanImgFallback = function(img) {
   var div = document.createElement('div');
   div.className = 'ps-scan-product-img-placeholder';
@@ -3012,6 +3022,11 @@ function _psScanProductCardHtml(li, ctx) {
   var imgHtml = li.i
     ? '<img class="ps-scan-product-img" src="' + li.i + '" onerror="psScanImgFallback(this)">'
     : '<div class="ps-scan-product-img-placeholder">📦</div>';
+  // Owner (2026-10-17): the photo is our own saved one for the part # (Location Plan → 🖼 Photos; the server puts it in);
+  // photo not right → one tap ⚠ Wrong photo → reported to 🖼 Photos "⚠ Reported wrong" so the office fixes it.
+  var repIdx = (window._psPhotoRep = window._psPhotoRep || []).push({ sku: li.s || '', bin: li.b || '', url: li.i || '', tracking: (ctx && ctx.tracking) || ((document.getElementById('ps-scan-product-tracking') || {}).textContent || ''),
+    orderNum: (ctx && ctx.orderNum) || '', screen: ctx ? 'picking' : 'packing' }) - 1;
+  imgHtml += '<button type="button" class="ps-photo-rep" onclick="psPhotoReport(' + repIdx + ', this)" title="This photo is not this item — tell the office (one tap)" style="margin-top:-4px;font-size:10.5px;font-weight:700;padding:3px 7px;border-radius:6px;border:1px solid var(--orange,#b45309);background:var(--bg2);color:var(--orange,#b45309);cursor:pointer;white-space:nowrap">⚠ Wrong photo</button>'; // the card is a column: photo, then this, then the part #
   // Bin location intentionally not shown here — this card only surfaces
   // SKU / Qty / Total Qty. `bin` is still captured above (not displayed)
   // because the "No Stock" stockout-report context below still records it.
