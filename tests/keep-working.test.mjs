@@ -3404,7 +3404,7 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
   check('the name of a SKU: from SKU Mgr by its part # or its parent (26-3-6 → 3/4" PEX Female Tee); unknown → empty', n1.name === '3/4" PEX Female Tee' && n2.name === '3/4" PEX Female Tee' && n3.ok && n3.name === '', [n1, n2, n3]);
   sq.prepare("DELETE FROM master_list WHERE part_num = '26-3-6=10X'").run();
   const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
-  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies(?:, pic)?\) \{[\s\S]*?\n  \}/) || [''])[0]; // (2026-10-17: + optional photo)
   const gen = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }));
   const z = gen('26-3-6', '3/4" PEX Female Tee', 2);
   const ts = +((z.match(/\^A0N,(\d+),\d+\^FD26-3-6\^FS/) || [])[1] || 0), by = +((z.match(/\^BY(\d),3,/) || [])[1] || 0);
@@ -3417,7 +3417,7 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
   const q1 = nm(gen('26-3-6', '3/4" PEX Female Tee', 1)), q2 = nm(gen('30-3-4', '1/2" PEX Brass Ball Valve Full Port', 1)), q3 = nm(gen('26-6-6=10XX', '3/8" Compression x 1/2" FIP Angle Stop Valve Quarter Turn Lead Free', 1));
   check('…the item name prints bigger (was 22 dots): short name ≥ 32 on 1 line, longer name ≥ 28 on 2 lines, very long never smaller than 22; barcode ≥ 60 dots tall; everything inside the 203-dot label',
     q1.sz >= 32 && q1.ln === 1 && q2.sz >= 28 && q2.ln === 2 && q3.sz >= 22 && [q1, q2, q3].every(q => q.bar >= 60 && q.y + q.ln * (q.sz + 2) <= 203), [q1, q2, q3]);
-  check('…only SKUs (start with a number) use it; locations (BARN=…, C1=…) print exactly as before', /var isSku = \/\^\\d\/\.test\(loc\.replace\(\/\^'\/, ''\)\)/.test(lp) && /isSku \? lpGenSkuZPL\(loc, name, n\) : zpl \}/.test(lp)
+  check('…only SKUs (start with a number) use it; locations (BARN=…, C1=…) print exactly as before', /var isSku = \/\^\\d\/\.test\(loc\.replace\(\/\^'\/, ''\)\)/.test(lp) && /isSku \? lpGenSkuZPL\(loc, name, n(?:, pic)?\) : zpl \}/.test(lp)
     && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ ts/.test(lp), null); // location labels: own layout (big word, owner 2026-10-07), checked above
 }
 
@@ -4982,7 +4982,7 @@ console.log('\n🏷️ Label Printer: every label stops at the gap between label
 {
   const { readFileSync } = await import('node:fs');
   const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
-  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies(?:, pic)?\) \{[\s\S]*?\n  \}/) || [''])[0]; // (2026-10-17: + optional photo)
   const z = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }))('201-2-14=OLD', '1 ff960 ring', 1);
   const y = (z.match(/\^FO\d+,(\d+)/g) || []).map(m => +m.split(',')[1]), bh = +((z.match(/\^BCN,(\d+)/) || [])[1] || 0);
   check('201-2-14=OLD + "1 ff960 ring": part #, barcode and name all inside one 203-dot label; gap sensing (^MNY) on SKU and location labels',
@@ -7009,7 +7009,7 @@ console.log('\n🏷 Barcode designer 💾 Save → 🏷 Label Printer: saved lab
   check('saved 3 × 933-1-1=10 in Audit → on the Label Printer list with "Saved by <name>" and a 🖨️ Print (tap the row)',
     sv.ok && j.by_user && /933-1-1=10/.test(h) && new RegExp('Saved by <b>' + j.by_user + '</b>').test(h) && /onclick="lpSavedPrint\(\[\d+\]\)"/.test(h) && /🖨️ Print/.test(h), h.slice(0, 600));
   check('…tap → Zebra prints the part # label (lpGenSkuZPL) → "printed OK?" → off the list (/inventory/barcode-job/printed, who printed kept)',
-    /window\.lpSavedPrint = function\(which\)/.test(lp) && /lpGenSkuZPL\(j\.sku, j\.name \|\| '', j\.copies\)/.test(lp) && /\/inventory\/barcode-job\/printed', \{ method: 'POST'/.test(lp) && /if \(window\.lpSavedLoad\) lpSavedLoad\(\);/.test(lp), null);
+    /window\.lpSavedPrint = function\(which\)/.test(lp) && /lpGenSkuZPL\(j\.sku, j\.name \|\| '', j\.copies(?:, pics\[k\])?\)/.test(lp) && /\/inventory\/barcode-job\/printed', \{ method: 'POST'/.test(lp) && /if \(window\.lpSavedLoad\) lpSavedLoad\(\);/.test(lp), null);
   check('…Label Printer top bar like the other pages: white bar, title left, 🔄 Refresh / 🚪 Sign Out / ← Apps on the right, wraps on a phone',
     /#labelprint-app \.lp-header \{\n  background:var\(--bg2\);[\s\S]*?flex-wrap:wrap;/.test(lp) && /<div class="lp-header">[\s\S]{0,400}🔄 Refresh[\s\S]{0,200}🚪 Sign Out[\s\S]{0,200}← Apps/.test(lp), null);
   await post('/inventory/barcode-job/printed', { ids: [sv.id] });
@@ -7051,6 +7051,43 @@ console.log('\n🏷 Barcode designer: scan the column → how many → saved by 
   check('scan the column → "How many boxes at C1=5-2-3 …" → 4 → saved at once: 4 labels of 8-8-8=8 for C1=5-2-3 (no Save tap); shows ✓ saved',
     !!pad && /How many boxes at C1=5-2-3/.test(pad.title) && posts.length === 1 && /\/inventory\/barcode-job$/.test(p.u) && p.body.sku === '8-8-8=8' && p.body.copies === 4
     && p.body.spots.length === 1 && p.body.spots[0].loc === 'C1=5-2-3' && p.body.spots[0].boxes === 4 && p.body.name === 'Plug' && ctx.BD.spots[0].state === 'saved' && /✓ saved/.test(els['bd-spots'].innerHTML), { pad: pad && pad.title, posts, spots: ctx.BD.spots });
+}
+
+// Owner 2026-10-17: "the Barcode designer shows the product photo, but printed at the Label Printer there is no photo — I want it".
+console.log('\n🏷 Label Printer: the product photo on the part # label (Zebra), like the Barcode designer');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const a = lp.indexOf('  function lpGenSkuZPL(sku, name, copies, pic) {'), b = lp.indexOf('  function lpPicGF(sku) {');
+  const ctx = { Math, String, Uint8Array, Float32Array, parseInt, window: {}, lpGetSettings: () => ({ width: 406, height: 203, barShift: 0, darkness: 10 }) };
+  vm.createContext(ctx); vm.runInContext(lp.slice(a, b) + '\nthis.Z = lpGenSkuZPL; this.D = lpDither; this.G = lpBitsToGF;', ctx);
+  // a tiny 8×2 "photo": left half black, right half white
+  const gf = ctx.G(ctx.D(new Float32Array([0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255]), 8, 2), 8, 2);
+  const pic = { gf: ctx.G(new Uint8Array(122 * 122), 122, 122), w: 122, h: 122 };
+  const withPic = ctx.Z('8-8-8=10X', 'Brass ball valve', 3, pic), noPic = ctx.Z('8-8-8=10X', 'Brass ball valve', 3, null), tooLong = ctx.Z('123-45-678=100XXOLDFIRST', 'x', 1, pic);
+  check('photo → black / white dots for the Zebra (^GFA, black = 1): 8×2 test picture = F0 F0',
+    gf === '^GFA,2,2,1,F0F0', gf);
+  check('…the label: photo on the left (^FO4,…^GFA), part # / barcode / name moved right of it; no photo → exactly as before; a part # too long for the barcode next to the photo → printed without it',
+    /\^FO4,41\^GFA,1952,1952,16,/.test(withPic) && /\^FO130,4\^FB276,1,0,C,0/.test(withPic) && /\^FO201,\d+\^BY1/.test(withPic) && /\^PQ3/.test(withPic)
+    && !/\^GFA/.test(noPic) && /\^FO0,4\^FB406,1,0,C,0/.test(noPic) && !/\^GFA/.test(tooLong), { withPic: withPic.replace(/\^GFA[^^]*/, '^GFA…'), noPic });
+  check('…saved labels and a single part # both print with the photo (fetched from our photo list, never holds the print more than 6 s)',
+    /Promise\.all\(list\.map\(function\(j\) \{ return lpPicGF\(j\.sku\); \}\)\)/.test(lp) && /lpGenSkuZPL\(j\.sku, j\.name \|\| '', j\.copies, pics\[k\]\)/.test(lp)
+    && /return isSku \? lpPicGF\(loc\) : null;/.test(lp) && /\/inventory\/photo-file\?base='/.test(lp) && /setTimeout\(function\(\) \{ r\(null\); \}, 6000\)/.test(lp), null);
+}
+
+// Owner 2026-10-17: "Barcode designer keyboard — add FIRST, we will use it a lot".
+console.log('\n🏷 Barcode designer keypad: FIRST');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const keys = (ih.match(/var keys = (\['1', '2', '3', '-'[^\]]*\]);/) || [])[1];
+  const fn = (ih.match(/window\.bdKey = function\(k\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const el = { value: '8-8-8=10' }, ctx = { g: () => el, bdPreview: () => {}, window: {} };
+  new Function('g', 'bdPreview', 'window', fn)(ctx.g, ctx.bdPreview, ctx.window);
+  ctx.window.bdKey('FIRST');
+  check('the keypad has FIRST (full-width, orange); tapping it adds FIRST: 8-8-8=10 → 8-8-8=10FIRST; the other keys stay',
+    !!keys && /'FIRST'/.test(keys) && /'=OLD'/.test(keys) && /'W\.2C'/.test(keys) && el.value === '8-8-8=10FIRST' && /k === 'FIRST' \? ';grid-column:1 \/ -1/.test(ih), { keys, v: el.value });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

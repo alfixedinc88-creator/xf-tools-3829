@@ -14418,10 +14418,11 @@ window.invCredLogin = async function() {
   // the phone keyboard stays hidden; ⌨ More opens it only for anything else.
   function bdPad() {
     var b = 'padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation;font-family:var(--mono)';
-    var keys = ['1', '2', '3', '-', '4', '5', '6', '=', '7', '8', '9', 'X', '=OLD', '0', '⌫', 'CLR', '&', 'C', 'K', 'W', 'W.1C', 'W.2C', 'J', 'N'];
+    // FIRST (owner 2026-10-17: "we will use it a lot") — an open / damaged box, e.g. 8-8-8=10FIRST, used first on Shelving
+    var keys = ['1', '2', '3', '-', '4', '5', '6', '=', '7', '8', '9', 'X', '=OLD', '0', '⌫', 'CLR', '&', 'C', 'K', 'W', 'W.1C', 'W.2C', 'J', 'N', 'FIRST'];
     return '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">'
       + keys.map(function(k) {
-          var st = k === 'CLR' ? ';color:var(--red);font-size:14px' : (k === '=OLD' || k.length > 2) ? ';font-size:15px' : (k === '-' || k === '=' || k === 'X') ? ';background:var(--accent-bg,#e8efff);color:var(--accent)' : '';
+          var st = k === 'FIRST' ? ';grid-column:1 / -1;font-size:16px;background:var(--orange-bg,#fff7ed);color:var(--orange,#c2410c);border-color:var(--orange,#c2410c)' : k === 'CLR' ? ';color:var(--red);font-size:14px' : (k === '=OLD' || k.length > 2) ? ';font-size:15px' : (k === '-' || k === '=' || k === 'X') ? ';background:var(--accent-bg,#e8efff);color:var(--accent)' : '';
           return '<button type="button" onmousedown="event.preventDefault()" onclick="bdKey(\'' + k + '\')" style="' + b + st + '">' + (k === 'CLR' ? 'Clear' : k) + '</button>';
         }).join('')
       + '</div><button type="button" onclick="xfrKbOn(\'bd-sku\')" style="' + b + ';width:100%;margin-top:6px;font-size:14px;font-family:inherit">⌨ More (other letters)</button>';
