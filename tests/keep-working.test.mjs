@@ -6728,7 +6728,7 @@ console.log('\n🔢 SKU Mgr → UPC codes: upload / fix outside box + inside bag
     sv2.saved.length === 1 && e10.o === '' && e10.i === '850031110002' && await L('10850031110008') === '931-1-2=1', [sv2, e10]);
   const h = sq.prepare("SELECT part_num, initials, notes FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[SKU MGR UPC] 931-%' ORDER BY id").all();
   check('…History: who + old → new for each (=10 bag 850031110001 → 850031110002; =5 new; the move both ways); cases untouched (' + whB + ' → ' + shelf() + ')',
-    h.length === 4 && h.every(x => x.initials === 'TS') && /inside bag 850031110001 → 850031110002/.test(h[0].notes) && /moved to 931-1-2=1/.test(h[2].notes) && /moved from 931-1-1=10/.test(h[3].notes) && shelf() === whB, h.map(x => x.notes));
+    h.length === 4 && h.every(x => x.initials === 'TS') && /inside bag 850031110001 → 850031110002/.test(h[0].notes) && /outside box 10850031110008 → 10850031110008 · inside bag/.test(h[0].notes) && /moved to 931-1-2=1/.test(h[2].notes) && /moved from 931-1-1=10/.test(h[3].notes) && shelf() === whB, h.map(x => x.notes));
   const ul = await get('/inventory/upc-list');
   const U2 = k => (ul.rows || []).find(x => x.part === k) || {};
   check('Item Search reads the UPC list from the database (/inventory/upc-list): 931-1-1=10 bag 850031110002, 931-1-2=1 box 10850031110008',
@@ -6901,6 +6901,18 @@ console.log('\nReorder vendor sheet: =10-X is =10X · 📦 sold as a case of · 
   check('…the .xlsx: 26-4-3=100 box 810097204638 / bag 810097206021 are TEXT cells with every digit (no ="…", no 8.1E+11); Line Total a number 72.00',
     res.ext === '.xlsx' && ws.C2.t === 's' && ws.C2.v === '810097204638' && ws.D2.t === 's' && ws.D2.v === '810097206021' && ws.J2.t === 'n' && ws.J2.v === 72 && ws.J2.z === '0.00' && !/=""/.test(JSON.stringify(ws)), [ws.C2, ws.D2, ws.J2]);
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'; DELETE FROM upc WHERE base_sku = '${F}'; DELETE FROM reorder_vendor_catalog WHERE part LIKE '${F}%'; DELETE FROM reorder_case_of WHERE part LIKE '${F}%'`);
+}
+
+// Owner (2026-10-17): "under UPC codes I want the outside box UPC first, always outside box first, then inside bag — easy to check".
+console.log('\n🔢 UPC codes: outside box UPC always first (look up, upload list, check, History)');
+{
+  const { readFileSync: rfO } = await import('node:fs');
+  const ih = rfO(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const parse = new Function((ih.match(/function upcParse\(text\) \{[\s\S]*?\n  \}/) || [''])[0] + '; return upcParse;')();
+  const r = parse('Part #, outside, inside\n30-3-4=10X\t10850012345675\t850012345678');
+  check('pasted list = part #, OUTSIDE box, inside bag (header skipped); look-up and check tables show Outside box UPC before Inside bag UPC; the help says so',
+    r.length === 1 && r[0].outside === '10850012345675' && r[0].inside === '850012345678' && (ih.match(/<th>Outside box UPC<\/th><th>Inside bag UPC<\/th>/g) || []).length === 2
+    && !/<th>Inside bag UPC<\/th><th>Outside box UPC<\/th>/.test(ih) && /part #, outside box UPC, inside bag UPC<\/b> \(outside box always first\)/.test(ih), r);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
