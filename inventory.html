@@ -2712,6 +2712,8 @@ window.invCredLogin = async function() {
     var rankedAll = invPickForShelving(locs), takes = [], left = need;
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; l._left -= n; left = Math.round((left - n) * 100) / 100;
       var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, pallet: !!l._pick.pallet }); };
+    // FIRST boxes (open / damaged), then =OLD: always used up first, even when that means more than one spot (owner).
+    rankedAll.forEach(function(l) { if (left > 0 && l._pick.first < 2) take(l, Math.min(l._left, left)); });
     // Shelf spots first (all the rules below), then spots still on pallets (same rules).
     [false, true].forEach(function(onPal) {
     if (left <= 0) return;
@@ -3180,14 +3182,19 @@ window.invCredLogin = async function() {
     var keepPack = {};
     Object.keys(fba).forEach(function(f) { if ((stockOf[f] || 0) <= INV_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
     function tierOf(pn) { return fba[pn] ? 2 : (keepPack[packOf(pn)] ? 1 : 0); }
+    // Owner (2026-10-17): "an open / damaged box — or any box that must go first — gets FIRST after the part #
+    // (8-8-8=OLDFIRST, 8-8-8=10FIRST): always use it first", then =OLD ("=OLD always first"), then the rules below.
+    function firstOf(pn) { return /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2; }
     locs.forEach(function(l) {
-      var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l);
-      l._pick = { tier: t, pallet: pal, why: (t === 2 ? 'FBA bag — kept for FBA'
+      var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn);
+      l._pick = { tier: t, pallet: pal, first: f, why: f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
+        : f === 1 ? '=OLD — always used first (after FIRST boxes)' + (pal ? ' · 🚢 on a pallet' : '') : ((t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
-        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
+        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '')) };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b);
+      if (a._pick.first !== b._pick.first) return a._pick.first - b._pick.first; // FIRST boxes, then =OLD, before everything
       if (a._pick.pallet !== b._pick.pallet) return a._pick.pallet ? 1 : -1; // shelves (even FBA bags) before pallets
       if (a._pick.tier !== b._pick.tier) return a._pick.tier - b._pick.tier;
       if (ageOf(pa) !== ageOf(pb)) return ageOf(pa) - ageOf(pb);
@@ -6264,10 +6271,11 @@ window.invCredLogin = async function() {
     // older/discontinued stock that should get grabbed and worked through
     // before anything else. Stable sort, so everything else keeps its
     // existing relative order.
+    // Owner (2026-10-17): part #s ending in FIRST (open / damaged boxes) come before =OLD.
     if (invStockOutDest === 'shelving') {
       invPullList.sort(function(a, b) {
-        var aOld = /=OLD$/i.test(a.partNum || '') ? 0 : 1;
-        var bOld = /=OLD$/i.test(b.partNum || '') ? 0 : 1;
+        var aOld = /FIRST\s*$/i.test(a.partNum || '') ? -1 : /=OLD$/i.test(a.partNum || '') ? 0 : 1;
+        var bOld = /FIRST\s*$/i.test(b.partNum || '') ? -1 : /=OLD$/i.test(b.partNum || '') ? 0 : 1;
         return aOld - bOld;
       });
     }

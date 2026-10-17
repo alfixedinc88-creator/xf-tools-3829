@@ -6943,7 +6943,7 @@ function partnumWhy(raw) {
   else if (eq > 1 || /=$/.test(Pn) || /^=/.test(Pn) || /^-|--|-=/.test(Pn)) why.push('twoeq');
   else {
     const suf = Pn.split('=')[1];
-    if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)$/.test(suf)) why.push('suffix');
+    if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)(FIRST)?$/.test(suf)) why.push('suffix'); // FIRST = use this box first (owner 2026-10-17)
     // Our part #s are #-#-#=# (owner) — three numbers before "=" (an "&2" or a "C" at the end is OK, e.g. 28-2-1&2C).
     if (!/^\d+-\d+-\d+(&\d+)?C?$/.test(Pn.split('=')[0])) why.push('base');
   }

@@ -6935,5 +6935,37 @@ console.log('\n🔎 SKU Mgr → By SKU: also by product name and by outside box 
   sq.exec("DELETE FROM master_list WHERE base_sku LIKE '932-%'; DELETE FROM upc WHERE sku LIKE '932-%'");
 }
 
+// Owner (2026-10-17): "Stock Out Shelving: =OLD always first, and we do FIFO. Open / damaged boxes (or any box that must be used
+// first) get FIRST after the part # — 8-8-8=OLDFIRST, 8-8-8=10FIRST — use those first, always."
+console.log('\n📤 Stock Out Shelving: FIRST boxes (open / damaged) always first, then =OLD, then the usual rules');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const mk = (locs, fbaParts) => new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return { pick: invPickForShelving, plan: invPlanShelvingPull };')({ partNum: '8-8-8', locations: locs, fbaParts: fbaParts || [] }, []);
+  const tk = p => p.takes.map(t => t.partNum + ' ' + t.cases);
+  const L1 = [{ partNum: '8-8-8=10', location: 'C1=1-1-1', cases: '10' }, { partNum: '8-8-8=OLD', location: 'C1=1-1-2', cases: '2' }, { partNum: '8-8-8=10FIRST', location: 'C2=1-1-1', cases: '1' }];
+  const p1 = mk(L1).plan(3);
+  check('need 3: 8-8-8=10FIRST 1 case, then 8-8-8=OLD 2 cases — not all 3 from the =10 spot that has them all', tk(p1).join() === '8-8-8=10FIRST 1,8-8-8=OLD 2' && p1.short === 0, tk(p1));
+  const p2 = mk(L1).plan(5);
+  check('…need 5: FIRST 1 + OLD 2 + =10 2 = 5 (every case once, nothing short)', tk(p2).join() === '8-8-8=10FIRST 1,8-8-8=OLD 2,8-8-8=10 2' && p2.takes.reduce((a, t) => a + t.cases, 0) === 5 && p2.short === 0, tk(p2));
+  const p3 = mk([{ partNum: '8-8-8=10', location: 'C1=1-1-1', cases: '10' }, { partNum: '8-8-8=OLD', location: 'C1=1-1-2', cases: '5' }]).plan(1);
+  check('…no FIRST box: =OLD first (1 from =OLD, not from =10)', tk(p3).join() === '8-8-8=OLD 1', tk(p3));
+  const p4 = mk([{ partNum: '8-8-8=OLD', location: 'C1=1-1-2', cases: '5' }, { partNum: '8-8-8=OLDFIRST', location: 'C1=1-1-3', cases: '1' }]).plan(2);
+  check('…=OLDFIRST before =OLD', tk(p4).join() === '8-8-8=OLDFIRST 1,8-8-8=OLD 1', tk(p4));
+  // Rule #1 still holds for the rest: FIRST box of an FBA bag size first, then non-FBA =10, the FBA =10X bags last.
+  const L5 = [{ partNum: '8-8-8=10X', location: 'C1=1-1-1', cases: '5' }, { partNum: '8-8-8=10XFIRST', location: 'C1=1-1-4', cases: '1' }, { partNum: '8-8-8=10', location: 'C1=1-1-5', cases: '3' }];
+  const p5 = mk(L5, [{ part: '8-8-8=10X', sold90: 90 }]).plan(2);
+  check('…a FIRST box of the FBA bag (=10XFIRST) is used first; the rest still keeps the FBA =10X bags (takes =10)', tk(p5).join() === '8-8-8=10XFIRST 1,8-8-8=10 1', tk(p5));
+  const r = mk(L1).pick(L1.map(l => ({ ...l })));
+  check('…the Stock Out list shows FIRST at the top ("⚠ FIRST — open / damaged box, always used first"), then =OLD',
+    r[0].partNum === '8-8-8=10FIRST' && /⚠ FIRST — open \/ damaged box, always used first/.test(r[0]._pick.why) && r[1].partNum === '8-8-8=OLD' && /=OLD — always used first/.test(r[1]._pick.why), r.map(l => l.partNum));
+  check('…Pull List (Shelving): FIRST rows above =OLD rows', /var aOld = \/FIRST\\s\*\$\/i\.test\(a\.partNum \|\| ''\) \? -1 : \/=OLD\$\/i\.test/.test(ih), null);
+  const wd = readFileSync(workerPath, 'utf8');
+  const pw = new Function(wd.slice(wd.indexOf('function partnumWhy('), wd.indexOf('\n}\n', wd.indexOf('function partnumWhy(')) + 3) + '; return partnumWhy;')();
+  check('…Part # check: 8-8-8=10FIRST / =OLDFIRST / =10XFIRST are normal part #s (not "unusual ending"); =10FIRSTX still is',
+    !pw('8-8-8=10FIRST').length && !pw('8-8-8=OLDFIRST').length && !pw('8-8-8=10XFIRST').length && pw('8-8-8=10FIRSTX').includes('suffix'), [pw('8-8-8=10FIRST'), pw('8-8-8=10FIRSTX')]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
