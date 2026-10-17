@@ -5317,15 +5317,26 @@ async function rvoUpcWriteOurs(part, out, inn) {
   var row = { part: part, outside: out || 'NONE', inside: inn || 'NONE' };
   var post = function (b) { return wFetch(W + '/inventory/upc-manager/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(function (r) { return r.json(); }); };
   try {
-    var pv = await post({ rows: [row], dryRun: true }), pr = (pv.rows || [])[0] || {};
+    var pv = await post({ rows: [row], dryRun: true }), pr = (pv.rows || [])[0] || {}, added = '';
     if (!pv.ok) throw new Error(pv.error || 'not saved');
+    // ➕ Owner (2026-10-17, 23-2-9=100XX): a new part # saved here goes into SKU Mgr too (0 cases, no spot yet; History keeps it).
+    if (pr.status === 'error' && (pr.problems || []).length === 1 && /is not in SKU Mgr/.test(pr.problems[0])) {
+      var sibs = (RVP && RVP.part === part && RVP.siblings) || null;
+      if (sibs && !sibs.length && !confirm('➕ ' + part + ' is a NEW part # — nothing else of ' + String(part).split('=')[0] + ' is in SKU Mgr.\n\nCheck the spelling. OK = add it to SKU Mgr (0 cases, no spot yet) and save its UPCs.')) return null;
+      var venEl = document.getElementById('rvo-p-vendor');
+      var ad = await wFetch(W + '/inventory/sku-mgr/add-part', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, vendor: venEl ? venEl.value : '' }) }).then(function (r) { return r.json(); });
+      if (!ad || !ad.ok) { alert('➕ ' + part + ' NOT added to SKU Mgr: ' + ((ad && ad.error) || 'managers only')); return null; }
+      added = ad.added ? ' · ➕ added to SKU Mgr (0 cases, no spot yet)' : '';
+      pv = await post({ rows: [row], dryRun: true }); pr = (pv.rows || [])[0] || {};
+      if (!pv.ok) throw new Error(pv.error || 'not saved');
+    }
     if (pr.status === 'error') { alert('🔢 ' + part + ' NOT saved in our UPC codes: ' + (pr.problems || []).join('; ')); return null; }
-    if (pr.status === 'same') { await rvoUpcOkPost(part, out, inn, 'saved with ✏️ — already our codes'); return '🔢 ' + part + ': our UPC codes already match — ✔ marked right'; }
+    if (pr.status === 'same') { await rvoUpcOkPost(part, out, inn, 'saved with ✏️ — already our codes'); return '🔢 ' + part + ': our UPC codes already match — ✔ marked right' + added; }
     if ((pr.warn || []).length && !confirm('🔢 ' + part + '\n\n' + pr.warn.join('\n') + '\n\nOK = save it anyway')) return null;
     var sv = await post({ rows: [row], confirm: pr.needsConfirm ? [part] : [] });
     if (!sv.ok || !(sv.saved || []).length) { alert('🔢 ' + part + ' NOT saved: ' + (((sv.skipped || [])[0] || {}).problems || [sv.error || 'failed']).join('; ')); return null; }
     await rvoUpcOkPost(part, out, inn, 'saved as our codes');
-    return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History) — ✔ marked right';
+    return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History) — ✔ marked right' + added;
   } catch (e) { alert('🔢 ' + part + ' NOT saved in our UPC codes — ' + (e.message || 'check WiFi')); return null; }
 }
 // ✔ "These codes are right" — the part # leaves 🔢 Check every UPC until a code changes (owner 2026-10-17). Best effort.

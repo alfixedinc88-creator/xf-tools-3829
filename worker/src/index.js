@@ -9325,6 +9325,10 @@ const _app = {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await invParentMismatch(request, env, session);
       }
+      if (path === '/inventory/sku-mgr/add-part' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
+        return await skuMgrAddPart(request, env, session);
+      }
       if (path === '/inventory/sku-row' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventorySkuRow(request, env, session);
@@ -13940,6 +13944,30 @@ async function cleanProcessedRequests(env) {
   }
 }
 
+// POST /inventory/sku-mgr/add-part { part, vendor } — managers only.
+// Owner (2026-10-17, Reorder → 🏷 Barcode / vendor for 23-2-9=100XX: "NOT saved in our UPC codes: not in SKU Mgr"): "if we add a new
+// part # there, also add it to SKU Mgr". One SKU Mgr row: 0 cases, no spot yet (Stock In puts it on a shelf), the name of its
+// other pack sizes (or Products), the vendor picked; an ADD line in Inventory → History. Only a real part # shape with "=";
+// a part # SKU Mgr already has is left as it is. Cases never change (0 → 0).
+async function skuMgrAddPart(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const part = reorderCleanPart(String(b.part || '').trim().toUpperCase());
+  if (!/^\d+(-\d+){1,3}(&\d+)?C?=[A-Z0-9.]+$/.test(part)) return J({ ok: false, error: `"${part}" is not a part # (like 23-2-9=100XX)` }, 400);
+  const had = await d1First(env, 'SELECT id FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [part]).catch(() => null);
+  if (had) return J({ ok: true, part, existed: true });
+  const base = part.split('=')[0];
+  const sib = await d1First(env, `SELECT name, vendor FROM master_list WHERE (UPPER(TRIM(base_sku)) = ? OR UPPER(TRIM(part_num)) LIKE ?) AND COALESCE(name,'') != '' LIMIT 1`, [base, base + '=%']).catch(() => null);
+  const prod = sib ? null : await d1First(env, 'SELECT name FROM products WHERE UPPER(TRIM(sku)) = ? LIMIT 1', [base]).catch(() => null);
+  const name = String((sib && sib.name) || (prod && prod.name) || '').trim();
+  const vendor = String(reorderVendorName(vendorUnmask(String(b.vendor || '').trim())) || (sib && sib.vendor) || '').trim().slice(0, 40);
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  const tot = await skuMgrTotalsBefore(env, null, null, part);
+  await d1InsertMasterRow(env, { sku: base, base_sku: base, name, part_num: part, location: '', cases: 0, units_per_case: 0, vendor, price: 0,
+    prev_notes: 'Added from Reorder 🏷 Barcode / vendor by ' + who + ' — no stock yet' });
+  await skuMgrLogAdd(env, who, { partNum: part, location: '', cases: 0, name }, tot).catch(e => console.error('[sku add-part history]', e.message));
+  return J({ ok: true, part, added: true, name, vendor, newParent: !sib && !prod });
+}
 async function d1InsertMasterRow(env, row) {
   return d1Run(env,
     `INSERT INTO master_list (sku,base_sku,name,part_num,location,cases,units_per_case,vendor,price,prev_notes,sheet_row,updated_at)

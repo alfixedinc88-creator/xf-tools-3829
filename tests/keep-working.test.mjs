@@ -7425,5 +7425,30 @@ console.log('\n🧩 Pages & Tabs: every tab and card has a check mark (new ones 
   check('CLAUDE.md says it: every new page / tab / section gets its 🧩 Pages & Tabs check mark', /Pages & Tabs/.test(cm) && /check mark/.test(cm) && /xf-access\.js/.test(cm), null);
 }
 
+// Owner (2026-10-17, Reorder → 🏷 Barcode / vendor for 23-2-9=100XX: "NOT saved in our UPC codes: part # is not in SKU Mgr"):
+// "if we add a new part # there, also add it to SKU Mgr".
+console.log('\n➕ Reorder 🏷 Barcode / vendor: a new part # goes into SKU Mgr too (0 cases, no spot), then its UPCs save');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor) VALUES ('937-2-9','1/2 ball valve','937-2-9=11','C1=7-1-1',2,10,'JQ')").run();
+  const whB = shelf();
+  const pv0 = await post('/inventory/upc-manager/save', { rows: [{ part: '937-2-9=100XX', outside: '840499900011', inside: '840499900028' }], dryRun: true });
+  const noMgmt = await call('/inventory/sku-mgr/add-part', { method: 'POST', body: JSON.stringify({ part: '937-2-9=100XX' }) });
+  const ad = await post('/inventory/sku-mgr/add-part', { part: '937-2-9=100xx', vendor: '#2' });
+  const row = sq.prepare("SELECT * FROM master_list WHERE part_num = '937-2-9=100XX'").all();
+  const h = sq.prepare("SELECT initials, notes, total_before b, total_after a FROM inventory_log WHERE type = 'EDIT' AND part_num = '937-2-9=100XX'").all();
+  check('before: "not in SKU Mgr" (the reported error); not signed in → refused; ➕ add → one SKU Mgr row 937-2-9=100XX: 0 cases, no spot, name of its other pack size, vendor EFF; History ADD line (who, 0 → 0); warehouse cases unchanged',
+    /is not in SKU Mgr/.test((pv0.rows[0].problems || [])[0] || '') && noMgmt.status >= 400 && ad.ok && ad.added && row.length === 1 && row[0].cases === 0 && row[0].location === '' && row[0].name === '1/2 ball valve'
+    && row[0].vendor === 'EFF' && h.length === 1 && /\[SKU MGR ADD\]/.test(h[0].notes) && h[0].initials === 'TS' && shelf() === whB, { ad, row, h });
+  const sv = await post('/inventory/upc-manager/save', { rows: [{ part: '937-2-9=100XX', outside: '840499900011', inside: '840499900028' }] });
+  const again = await post('/inventory/sku-mgr/add-part', { part: '937-2-9=100XX' }), bad = await post('/inventory/sku-mgr/add-part', { part: '840499900011' });
+  check('…then its UPCs save (box 840499900011, bag 840499900028); adding it again changes nothing (already there, still 1 row); a barcode typed as the part # is refused',
+    sv.ok && sv.saved.length === 1 && again.existed && sq.prepare("SELECT COUNT(*) n FROM master_list WHERE part_num = '937-2-9=100XX'").get().n === 1 && bad.ok === false, [sv, again, bad]);
+  const { readFileSync: rfR } = await import('node:fs');
+  const rh = rfR(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('…Reorder window: "not in SKU Mgr" → /inventory/sku-mgr/add-part (with the vendor picked; a brand-new parent asks first) → UPCs saved, says "➕ added to SKU Mgr"',
+    /\/is not in SKU Mgr\/\.test\(pr\.problems\[0\]\)/.test(rh) && /\/inventory\/sku-mgr\/add-part', \{ method: 'POST'/.test(rh) && /➕ added to SKU Mgr \(0 cases, no spot yet\)/.test(rh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '937-2-9'; DELETE FROM upc WHERE sku LIKE '937-2-9%'; DELETE FROM upc_edit WHERE part LIKE '937-2-9%'; DELETE FROM inventory_log WHERE part_num LIKE '937-2-9%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
