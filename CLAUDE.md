@@ -59,6 +59,10 @@ Two Stock Out tabs, Shelving first:
   listing. Search the WHOLE part # (e.g. 30-3-4=10X). Part # and bag count
   matter: least packing / rebagging, none is best.
 
+**Shelving only, before everything (owner 2026-10-17):** a part # ending in
+FIRST (an open / damaged box, e.g. 8-8-8=10FIRST, 8-8-8=OLDFIRST) is always
+used first, then =OLD — even if that means more than one spot. Then:
+
 **Rule #1, always first, on BOTH tabs, before any other rule or example:**
 save FBA bags for their own FBA listing.
 - Finish the bags with no FBA listing first.
