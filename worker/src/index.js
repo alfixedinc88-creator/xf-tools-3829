@@ -7218,6 +7218,8 @@ async function recountTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_columns (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, round_start TEXT,
     location TEXT, by_user TEXT, items INTEGER, changed INTEGER, detail TEXT)`).run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS recount_meta (key TEXT PRIMARY KEY, value TEXT)').run();
+  // 📊 Owner (2026-10-17): when each column was started, and columns stopped without finishing (✕ Stop).
+  for (const c of ['started_at TEXT', 'stopped INTEGER DEFAULT 0']) await env.DB.prepare('ALTER TABLE recount_columns ADD COLUMN ' + c).run().catch(() => {});
 }
 async function recountRoundStart(env) {
   const r = await d1First(env, "SELECT value FROM recount_meta WHERE key = 'round_start'");
@@ -7234,7 +7236,7 @@ async function recountStatus(url, env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   const roundStart = await recountRoundStart(env);
   const aisle = String(url.searchParams.get('aisle') || '').trim().toUpperCase();
-  const done = await d1All(env, 'SELECT location, MAX(ts) AS ts, by_user FROM recount_columns WHERE ts >= ? GROUP BY UPPER(location)', [roundStart]);
+  const done = await d1All(env, 'SELECT location, MAX(ts) AS ts, by_user FROM recount_columns WHERE ts >= ? AND COALESCE(stopped, 0) = 0 GROUP BY UPPER(location)', [roundStart]);
   const doneMap = {}; for (const d of done) doneMap[String(d.location).toUpperCase()] = { ts: d.ts, by: d.by_user };
   const allSpots = await d1All(env, `SELECT COUNT(DISTINCT UPPER(TRIM(location))) AS n FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`);
   let spots = [];
@@ -7257,12 +7259,49 @@ async function recountColumnDone(request, env, session) {
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
   if (rid) { const claim = await claimRequestId(env, rid, 'inventory/recount/column-done'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
   const ts = b.doneAt && !isNaN(Date.parse(b.doneAt)) ? new Date(b.doneAt).toISOString() : new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
-  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail) VALUES (?,?,?,?,?,?,?)')
-    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000)).run();
-  if (session && session.userId) await logUserActivity(env, session.userId, 'recount_column', { location: loc, items: b.items, changed: b.changed });
+  const started = b.startedAt && !isNaN(Date.parse(b.startedAt)) ? new Date(b.startedAt).toISOString() : null, stopped = b.stopped ? 1 : 0;
+  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail, started_at, stopped) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000), started, stopped).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, stopped ? 'recount_column_stopped' : 'recount_column', { location: loc, items: b.items, changed: b.changed });
   const res = { ok: true, ts, by, columnId: ins.meta.last_row_id };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
+}
+// 📊 GET /inventory/recount/report (mgmt) — owner (2026-10-17): "a tab to see what columns he or she has done, how long
+// each column took, when they started and finished it, how many boxes, and what is still not done; skipped to scan".
+// This recount round: every column finished (or ✕ stopped) with who, start → done, minutes, boxes counted, the lines
+// on record nobody scanned (✓ Found / ✗ None found after "look again"); each person's totals; spots not done yet by aisle.
+async function recountReport(env) {
+  await recountTables(env);
+  const roundStart = await recountRoundStart(env);
+  const rows = await d1All(env, 'SELECT id, ts, started_at, location, by_user, items, changed, detail, COALESCE(stopped, 0) AS stopped FROM recount_columns WHERE ts >= ? ORDER BY ts DESC', [roundStart]);
+  const cols = rows.map(r => {
+    let d = []; try { d = JSON.parse(r.detail || '[]') || []; } catch (e) { d = []; }
+    const mins = r.started_at ? Math.max(0, Math.round((Date.parse(r.ts) - Date.parse(r.started_at)) / 6000) / 10) : null;
+    const boxes = Math.round(d.reduce((a, x) => a + (parseFloat(x.counted) || 0), 0) * 100) / 100;
+    const skipped = d.filter(x => x.how === 'none' || x.how === 'found').map(x => ({ part: x.part, pcs: x.pcs, how: x.how, system: x.system, counted: x.counted }));
+    return { id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
+      boxes, skipped, howKnown: d.some(x => x.how), stopped: !!r.stopped };
+  });
+  const people = {};
+  cols.forEach(c => {
+    const p = people[c.by] = people[c.by] || { by: c.by, columns: 0, stopped: 0, boxes: 0, minutes: 0, timed: 0, skipped: 0, first: c.startedAt || c.doneAt, last: c.doneAt };
+    if (c.stopped) p.stopped++; else p.columns++;
+    p.boxes += c.boxes; p.skipped += c.skipped.length;
+    if (c.minutes != null && !c.stopped) { p.minutes += c.minutes; p.timed++; }
+    if ((c.startedAt || c.doneAt) < p.first) p.first = c.startedAt || c.doneAt;
+    if (c.doneAt > p.last) p.last = c.doneAt;
+  });
+  const ppl = Object.values(people).map(p => ({ ...p, boxes: Math.round(p.boxes * 100) / 100, minutes: Math.round(p.minutes * 10) / 10, avgMinutes: p.timed ? Math.round(p.minutes / p.timed * 10) / 10 : null }))
+    .sort((a, b) => b.columns - a.columns);
+  // Not done yet: every spot with stock (SKU Mgr) that no one finished in this round, by aisle (C1=11-2-3 → C1=11).
+  const doneSet = new Set(cols.filter(c => !c.stopped).map(c => String(c.location).toUpperCase()));
+  const spots = (await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`)).map(x => x.l);
+  const aisleOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i + 1) + L.slice(i + 1).split('-')[0]; };
+  const aisles = {};
+  spots.forEach(l => { const a = aisles[aisleOf(l)] = aisles[aisleOf(l)] || { aisle: aisleOf(l), total: 0, done: 0, notDone: [] }; a.total++; if (doneSet.has(l)) a.done++; else a.notDone.push(l); });
+  return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
+    spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
 async function recountNewRound(env, session) {
@@ -9067,6 +9106,10 @@ const _app = {
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
       if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
+      if (path === '/inventory/recount/report' && method === 'GET') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountReport(env);
+      }
       if (path === '/inventory/recount/new-round' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountNewRound(env, session);
