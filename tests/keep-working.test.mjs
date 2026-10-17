@@ -7514,5 +7514,34 @@ console.log('\n⚠ Recount report: SKU Mgr Locations that are a note / barcode /
   sq.exec("DELETE FROM master_list WHERE base_sku = '940-1-1'");
 }
 
+// Owner (2026-10-17): "BH is BO now — no more BH; if you still see BH anywhere change it to BO; our spots still have the BH= sticker:
+// when they scan BH=, treat it as BO=, so we don't have to change the labels".
+console.log('\n📍 BH → BO everywhere: saved BH= spots renamed once (cases unchanged), a BH= sticker still scans as BO=, area lists say BO=');
+{
+  const now = new Date().toISOString();
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('941-1-1','elbow','941-1-1=10','BH=2-1-1-3',4,10), ('941-1-1','elbow','941-1-1=5','bh=2-1-1-4',2,5)").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, paired_location) VALUES (?, 'TRANSFER_IN', '941-1-1=10', 'BH=2-1-1-3', 4, 'TS', 'moved', 'Verified', 'C1=1-1-1')").run(now);
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, paired_location) VALUES (?, 'TRANSFER_OUT', '941-1-1=10', 'C1=1-1-1', 4, 'TS', 'moved', 'Verified', 'BH=2-1-1-3')").run(now);
+  await get('/inventory/location-plan'); // tables
+  sq.prepare("INSERT OR REPLACE INTO location_plan (base, plan, updated_by, updated_at) VALUES ('941-1-1', 'BH', 'TS', ?)").run(now);
+  sq.prepare("DELETE FROM app_config WHERE key = 'loc_bh_fix_20261017'").run();
+  const casesBefore = sq.prepare("SELECT SUM(cases) n FROM master_list").get().n;
+  const fresh = (await import(workerPath + '?bhfix=1')).default;
+  const r = await (await fresh.fetch(new Request('https://w/inventory/location-search?loc=BH=2-1-1-3', { headers: H }), env, { waitUntil() {} })).json();
+  const casesAfter = sq.prepare("SELECT SUM(cases) n FROM master_list").get().n;
+  const left = sq.prepare("SELECT COUNT(*) n FROM master_list WHERE UPPER(location) LIKE 'BH%'").get().n + sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE UPPER(location) LIKE 'BH%' OR UPPER(paired_location) LIKE 'BH%'").get().n;
+  const plan = sq.prepare("SELECT plan FROM location_plan WHERE base = '941-1-1'").get().plan;
+  const rec = JSON.parse((sq.prepare("SELECT value FROM app_config WHERE key = 'loc_bh_fix_20261017'").get() || {}).value || '{}');
+  check('saved BH=… spots → BO=… once (SKU Mgr 2 rows, History location + "moved from/to", location plan BH → BO, on record); no BH left; total cases the same; a scan of the BH=2-1-1-3 sticker finds 941-1-1=10 at BO=2-1-1-3',
+    left === 0 && casesBefore === casesAfter && rec.master === 2 && rec.log === 2 && rec.plans === 1 && plan === 'BO' && rec.changed['BH=2-1-1-3'] === 'BO=2-1-1-3'
+    && r.ok && (r.results || []).some(x => x.partNum === '941-1-1=10' && x.location === 'BO=2-1-1-3'), { left, casesBefore, casesAfter, rec, plan, res: r.results });
+  const pf = await get('/inventory/prefixes');
+  const { readFileSync: rfH } = await import('node:fs');
+  const ph = rfH(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wd = rfH(workerPath, 'utf8');
+  check('…area lists say BO= (never BH=): the prefixes list, its default and Pack & Ship\'s spot list',
+    !(pf.prefixes || []).includes('BH=') && (pf.prefixes || []).includes('BO=') && !/'BH='/.test(ph) && /'BO=','C1='/.test(ph) && /DEFAULT_PREFIXES = \['2FL=','BARN=','BASEMENT=','BO=',/.test(wd), pf.prefixes);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '941-1-1'; DELETE FROM inventory_log WHERE part_num = '941-1-1=10'; DELETE FROM location_plan WHERE base = '941-1-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
