@@ -7317,5 +7317,49 @@ console.log('\n🔢 Check every UPC: ✏️ Save always reaches our codes · �
     /onclick="rvoUpcRetire\(' \+ i \+ '\)"[^>]*>🚫 Not used anymore<\/button>/.test(rh) && /part # not used anymore \(not checked\)/.test(rh) && /rvoUpcUnretire\(/.test(rh) && /🚫 Marked not used anymore/.test(rh), null);
 }
 
+// Owner (2026-10-17): "30-4-6=100X is a case — if people or we ship to the Amazon warehouse and they order 30-4-6=100X we just ship
+// a whole case of 30-4-6=10X; how do we let the system know?"
+console.log('\n📦 Sold as a whole case of: Stock Out Big Company ships whole cases · 🔢 uses that box · set from ✏️ / 🔢');
+{
+  const { readFileSync: rfC } = await import('node:fs');
+  const ih = rfC(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), rh = rfC(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fnSrc = name => { const i = ih.indexOf('  function ' + name + '('); const j = ih.indexOf('\n  }\n', i); return i < 0 || j < 0 ? '' : ih.slice(i, j + 4); };
+  const mk = new Function('ctx', 'var invPart = ctx.part, invPullList = [], INV_FBA_LOW_CASES = 2; function invOnPallet() { return false; } function invFifoBoxSize() { return 0; }\n'
+    + fnSrc('invRankForCompany') + fnSrc('invPlanCompanyPull') + '; return invPlanCompanyPull;');
+  // Shelf: 30-4-6=10X 3 cases @ C1-1 + 2 cases @ C2-2 (100 pcs a case = 10 bags of 10) → 5 cases, 500 pcs. No =100X on the shelf.
+  const locs = [{ partNum: '30-4-6=10X', location: 'C1=1-1-1', cases: 3, eachQty: 100 }, { partNum: '30-4-6=10X', location: 'C2=2-2-2', cases: 2, eachQty: 100 }];
+  const plan = mk({ part: { partNum: '30-4-6=10X', locations: locs, fbaParts: [] } });
+  const before = locs.reduce((a, l) => a + l.cases, 0);
+  const p1 = plan('30-4-6=100X', 2);  // old way: =100X asked for, nothing understands it
+  const p2 = plan('30-4-6=10X', 2);   // 📦 =100X = a whole case of =10X → 2 whole cases of =10X
+  const took = p2.takes.reduce((a, t) => a + t.cases, 0), pcs = p2.takes.reduce((a, t) => a + t.pieces, 0);
+  check('Big Company 30-4-6=100X × 2 (📦 a whole case of =10X): 2 WHOLE cases of 30-4-6=10X from one spot (C2=2-2-2 has exactly 2), nothing short, no rebag — before: nothing picked',
+    p1.takes.length === 0 && p2.takes.length === 1 && p2.takes[0].partNum === '30-4-6=10X' && p2.takes[0].loc.location === 'C2=2-2-2' && took === 2 && p2.short === 0 && !p2.takes[0].how, { p1: p1.takes.length, p2: p2.takes.map(t => [t.partNum, t.loc.location, t.cases, t.how]) });
+  check('…inventory adds up: 5 cases (500 pcs) − 2 whole cases (200 pcs = 2 × 30-4-6=100X of 100 pcs) = 3 cases (300 pcs) left; nothing counted twice',
+    before === 5 && took === 2 && pcs === 200 && before - took === 3 && (before - took) * 100 === 300, { before, took, pcs });
+  check('page: Stock Out uses the 📦 setting (caseOf from the lookup) — plans whole cases of that part #, the Pull List row says "BIG CO → 30-4-6=100X (📦 whole case)", the record says "= whole case of …"; None Found / 🔁 Replace look for that part #',
+    /var caseTo = company && d\.caseOf && d\.caseOf\[target\] \? String\(d\.caseOf\[target\]\)\.toUpperCase\(\) : null;/.test(ih) && /plan = company \? invPlanCompanyPull\(caseTo \|\| target, need\)/.test(ih)
+      && /x\.how = 'a whole case of ' \+ caseTo \+ ' = 1 × ' \+ target \+ ' — ship the case as it is'/.test(ih) && /\(item\.caseOf \? ' \(📦 whole case\)' : ''\)/.test(ih) && /\(item\.caseOf \? ' = whole case of ' \+ item\.caseOf : ''\)/.test(ih)
+      && /U\(it\.caseOf \|\| it\.forPart \|\| it\.partNum\)/.test(ih) && /pn !== U\(it\.caseOf\) && !confirm\('Big Company asked for '/.test(ih), null);
+  // Worker: the lookup carries it; 🔢 Check every UPC uses the case's box codes.
+  const now = new Date().toISOString();
+  await post('/reorder/fix/case-of', { part: '30-4-6=100X', target: '30-4-6=10X' });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, updated_at) VALUES ('30-4-6', 'x', '30-4-6=10X', 'C1=1-1-1', 3, 100, ?)").run(now);
+  const lk = await get('/inventory/lookup?code=' + encodeURIComponent('30-4-6=100X'));
+  check('lookup of 30-4-6=100X says 📦 caseOf { 30-4-6=100X: 30-4-6=10X }', lk.caseOf && lk.caseOf['30-4-6=100X'] === '30-4-6=10X', lk.caseOf);
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '30-4-6=10X', '30-4-6', '00810139934004', '00810139933984', ?), ('', '30-4-6=100X', '30-4-6', '00810139934004', '', ?)").run(now, now);
+  const R = (d, p) => (d.rows || []).find(r => r.part === p);
+  const c0 = await get('/reorder/fix/upc-check'), r0 = R(c0, '30-4-6=100X') || {};
+  check('🔢 30-4-6=100X (no box yet): "📦 sold as a whole case of 30-4-6=10X — its box is 30-4-6=10X\'s box", ✅ Use offers 30-4-6=10X\'s codes; 30-4-6=10X not flagged "on 2 part #s"',
+    r0.caseOf === '30-4-6=10X' && (r0.issues || []).some(x => x.k === 'caseof') && r0.suggest && r0.suggest.outside === '00810139933984' && r0.suggest.inside === '00810139934004' && !R(c0, '30-4-6=10X'), [r0, R(c0, '30-4-6=10X')]);
+  sq.prepare("UPDATE upc SET outside_upc = '00810139933984' WHERE sku = '30-4-6=100X'").run();
+  const c1 = await get('/reorder/fix/upc-check');
+  check('…with the case\'s codes → off the list, shown as "📦 sold as a whole case of another"', !R(c1, '30-4-6=100X') && !R(c1, '30-4-6=10X') && (c1.caseOf || []).some(x => x.part === '30-4-6=100X' && x.target === '30-4-6=10X'), c1.caseOf);
+  const inf = await get('/reorder/fix/part-info?part=30-4-6=100X');
+  check('✏️ window shows "📦 Sold as a whole case of 30-4-6=10X"; 📦 button on ✏️ and on every 🔢 row (same setting as the Reorder row button, kept in 🕘 History)',
+    inf.caseOf === '30-4-6=10X' && /function rvoCaseOfPart\(part, cur, fromList\)/.test(rh) && /📦 Sold as a whole case of <span/.test(rh) && /'\\', 1\)" title="We ship a whole case of another part #/.test(rh) && /📦 Whole case of…<\/button>/.test(rh)
+      && /wFetch\(W \+ '\/reorder\/fix\/case-of', \{ method: 'POST'/.test(rh), inf.caseOf);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

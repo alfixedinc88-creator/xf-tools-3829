@@ -1956,6 +1956,7 @@ async function reorderPartInfo(env, raw) {
       inside_upc: pick(ours && ours.inside_upc, fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), builtIn && builtIn.inside_upc),
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
     retired: (await upcRetiredMap(env)).get(P) || null,
+    caseOf: ((await all('SELECT target FROM reorder_case_of WHERE part = ?', [P]))[0] || {}).target || '',
     fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
 }
 // One row's fix. Fields not sent keep what was saved before.
@@ -2290,11 +2291,27 @@ async function reorderUpcCheck(env) {
   retMap.forEach((r, p) => ours.delete(p)); // 🚫 not used anymore: not checked, and its codes are free for another item
   const byCode = {};
   ours.forEach((o, p) => [o.outside, o.inside].forEach(c => { const z = d(c); if (z) (byCode[z] = byCode[z] || new Set()).add(p); }));
+  // 📦 Sold as a whole case of another part # (Reorder 📦, owner 2026-10-17: 30-4-6=100X = a whole case of 30-4-6=10X): it IS
+  // that part #'s case, so it carries that part #'s box / bag codes — the same codes on both is right, not "on 2 part #s".
+  const caseOf = {}; (await all('SELECT part, target FROM reorder_case_of')).forEach(r => { caseOf[U(r.part)] = U(r.target); });
+  const casePair = (a, b) => caseOf[a] === b || caseOf[b] === a;
+  const caseRows = [];
   const rows = [];
   ours.forEach((o, part) => {
     const ui = d(o.inside), uo = d(o.outside), rf = refs[part] || [], issues = [];
     const okd = okMap.get(part);
     if (okd && okd.key === uo + '|' + ui) { okList.push({ part, outside: o.outside, inside: o.inside, by: okd.by_user, at: okd.at }); return; } // ✔ confirmed, codes unchanged
+    const ct = caseOf[part];
+    if (ct) {
+      const t = ours.get(ct) || {}, to = d(t.outside), ti = d(t.inside);
+      if (!uo && !ui) return;
+      if ((!to || uo === to) && (!ti || !ui || ui === ti) && uo) { caseRows.push({ part, target: ct }); return; } // the case's own codes → right
+      caseRows.push({ part, target: ct });
+      rows.push({ part, outside: o.outside, inside: o.inside, from: o.from, level: uo ? 'check' : 'bad', refs: rf, caseOf: ct,
+        issues: [{ k: 'caseof', t: `📦 sold as a whole case of ${ct} — its box is ${ct}'s box: ${t.outside || '—'} (bag ${t.inside || '—'})${uo ? '' : '; NO outside box UPC here'}` }],
+        suggest: to ? { outside: t.outside, inside: t.inside || '', from: `${ct}'s codes (a whole case of ${ct})` } : null });
+      return;
+    }
     const sw = rf.find(r => upcInWrongBox(ui, r.outside, r.inside) || upcInWrongBox(uo, r.inside, r.outside));
     if (sw) issues.push({ k: 'swapped', t: `in the wrong box: ${upcInWrongBox(ui, sw.outside, sw.inside) ? `our inside bag ${o.inside} is the ${sw.name}'s OUTSIDE box ${sw.outside}` : `our outside box ${o.outside} is the ${sw.name}'s INSIDE bag ${sw.inside}`}` });
     [[o.outside, 'outside box'], [o.inside, 'inside bag']].forEach(([v, lab]) => { if (d(v) && !upcCheckOk(v)) issues.push({ k: 'typo', t: `${lab} ${v} is not a real UPC (last digit wrong — a typo?)` }); });
@@ -2303,7 +2320,7 @@ async function reorderUpcCheck(env) {
     if (!sw) rf.forEach(r => [['outside', 'outside box'], ['inside', 'inside bag']].forEach(([k, lab]) => {
       if (d(o[k]) && d(r[k]) && d(o[k]) !== d(r[k])) issues.push({ k: 'differs', t: `${lab}: ours ${o[k]}, ${r.name} ${r[k]}` });
     }));
-    [uo, ui].forEach(z => { const ps = z && byCode[z]; if (ps && ps.size > 1) issues.push({ k: 'shared', t: `code ${z} is also on ${[...ps].filter(x => x !== part).join(', ')}` }); });
+    [uo, ui].forEach(z => { const ps = z && byCode[z], oth = ps ? [...ps].filter(x => x !== part && !casePair(x, part)) : []; if (oth.length) issues.push({ k: 'shared', t: `code ${z} is also on ${oth.join(', ')}` }); });
     if (!issues.length) return;
     const ref = rf.find(r => r.outside && r.inside && upcCheckOk(r.outside) && upcCheckOk(r.inside) && d(r.outside) !== d(r.inside));
     let suggest = null;
@@ -2318,7 +2335,7 @@ async function reorderUpcCheck(env) {
   rows.sort((a, b) => order[a.level] - order[b.level] || a.part.localeCompare(b.part, undefined, { numeric: true }));
   const cnt = k => rows.filter(r => r.issues.some(x => x.k === k)).length;
   okList.sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }));
-  return { ok: true, checked: ours.size, rows, confirmed: okList, retired: retList, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
+  return { ok: true, checked: ours.size, rows, confirmed: okList, retired: retList, caseOf: caseRows, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
 }
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
@@ -4152,11 +4169,21 @@ async function inventoryLookup(url, env) {
     } catch (_) {}
   }
 
+  // 📦 Owner (2026-10-17, 30-4-6=100X: "that's a case — when Amazon / we order 30-4-6=100X we just ship a whole case of
+  // 30-4-6=10X"): this item's part #s sold as a whole case of another (Reorder 📦) → Stock Out Big Company takes whole cases of it.
+  const caseOf = {};
+  if (env.DB && baseSku) {
+    try {
+      const B = String(baseSku).toUpperCase(), like = B.replace(/[\\%_]/g, '\\$&') + '=%';
+      ((await env.DB.prepare(`SELECT part, target FROM reorder_case_of WHERE UPPER(part) LIKE ? ESCAPE '\\'`).bind(like).all()).results || [])
+        .forEach(r => { caseOf[String(r.part).toUpperCase()] = String(r.target).toUpperCase(); });
+    } catch (_) {}
+  }
   let photo = '';
   try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked, caseOf
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 

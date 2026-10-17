@@ -5260,6 +5260,8 @@ function rvoPartFind() {
       + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
       + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
       + (d.upcWarn ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">' + e(d.upcWarn).split(' · ').join('<br>') + '</div>' : '')
+      + '<div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + (d.caseOf ? '<span style="color:var(--text);font-weight:600">📦 Sold as a whole case of <span style="font-family:var(--mono)">' + e(d.caseOf) + '</span> (Big Company ships a whole case; Reorder orders it as ' + e(d.caseOf) + ')</span>' : '')
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoCaseOfPart(\'' + e(d.part).replace(/'/g, '') + '\', \'' + e(d.caseOf || '').replace(/'/g, '') + '\')">📦 ' + (d.caseOf ? 'Change / undo' : 'Sold as a whole case of…') + '</button></div>'
       + (d.retired ? '<div style="margin-bottom:8px;color:var(--orange);font-weight:600">🚫 Marked not used anymore' + (d.retired.note ? ' — ' + e(d.retired.note) : '') + ' (' + e(d.retired.by_user || '') + ' ' + e(String(d.retired.at || '').slice(0, 10)) + ')</div>' : '')
       + (function () { var o = d.edit || d.upc || {}, c = function (v) { return String(v || '').replace(/\D/g, ''); }, miss = [];
           if (c(n.outside_upc) && c(n.outside_upc) !== c(o.outside_upc)) miss.push('📦 box');
@@ -5339,6 +5341,20 @@ async function rvoUpcOk(i) {
   if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
   showToast('✔ ' + r.part + ' marked right'); rvoUpcCheck();
 }
+// 📦 Owner (2026-10-17): "30-4-6=100X is a case — when they order 30-4-6=100X we just ship a whole case of 30-4-6=10X, how do we
+// let the system know?" — the same 📦 setting as the Reorder row button, for any part # (✏️ window and 🔢 list).
+async function rvoCaseOfPart(part, cur, fromList) {
+  var a = prompt('📦 ' + part + ' — sold as a WHOLE CASE of which part #?\n\nType the part # whose whole case is shipped for it (same part, e.g. ' + String(part).split('=')[0] + '=10X).\n'
+    + '• Stock Out Big Company: asking for ' + part + ' × 2 → 2 whole cases of that part #\n• Reorder: ' + part + ' is not ordered — its sales go to that part #\n• 🔢 Check every UPC: it uses that part #\'s box code\n\nEmpty = not sold as a case any more.', cur || '');
+  if (a == null) return;
+  try {
+    var r = await wFetch(W + '/reorder/fix/case-of', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, target: a.trim() }) });
+    var d = await r.json(); if (!d.ok) throw new Error(d.error || 'Not saved');
+    showToast(d.target ? '📦 ' + d.part + ' = a whole case of ' + d.target : '↩ ' + d.part + ' is not a case any more');
+    if (fromList) rvoUpcCheck(); else rvoPartFind();
+    if (RVO.loaded) rvoLoad();
+  } catch (e) { alert('Not saved: ' + e.message); }
+}
 // 🚫 Owner (2026-10-17, 23-6-4=25): "we don't use it anymore (new listing 23-6-4=25XX), its box code is used for another item".
 async function rvoUpcRetire(i) {
   var r = RVU && RVU.rows[i]; if (!r) return;
@@ -5372,6 +5388,7 @@ function rvoUpcCheck() {
     var bad = d.rows.filter(function (r) { return r.level === 'bad'; }).length;
     var head = '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">🔢 ' + d.checked + ' part #s checked — '
       + (d.rows.length ? '<span style="color:var(--red)">' + bad + ' look wrong</span>' + (d.rows.length > bad ? ', ' + (d.rows.length - bad) + ' to look at' : '') : '<span style="color:var(--green)">✅ every outside box / inside bag UPC looks right</span>') + '</div>'
+      + ((d.caseOf || []).length ? '<div style="margin-bottom:6px">📦 ' + d.caseOf.length + ' part # sold as a whole case of another (use that part #\'s box): ' + d.caseOf.map(function (c) { return e(c.part) + ' = ' + e(c.target); }).join(', ') + '</div>' : '')
       + (d.rows.length ? '<div style="margin-bottom:8px">↔ in the wrong box: ' + (c.swapped || 0) + ' · last digit wrong: ' + (c.typo || 0) + ' · bag but no box: ' + (c.nobox || 0) + ' · same code in both: ' + (c.same || 0)
         + ' · different from the vendor: ' + (c.differs || 0) + ' · code on 2 part #s: ' + (c.shared || 0) + '</div>' : '');
     body.innerHTML = head + d.rows.map(function (r, i) {
@@ -5382,7 +5399,8 @@ function rvoUpcCheck() {
         + '<div style="margin-top:4px">' + (r.suggest ? '<button class="btn btn-primary" style="font-size:11px;padding:2px 8px" onclick="rvoUpcFix(' + i + ')">✅ Use 📦 box ' + e(r.suggest.outside || '—') + ' · 🛍 bag ' + e(r.suggest.inside || '—') + ' (' + e(r.suggest.from) + ')</button> ' : '')
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--green)" onclick="rvoUpcOk(' + i + ')" title="You checked the real box / bag: these codes are right">✔ Codes are right</button> '
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoPartOpen(\'' + e(r.part).replace(/'/g, '') + '\', true)">✏️ Type them</button> '
-        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--orange)" onclick="rvoUpcRetire(' + i + ')" title="We don\'t use this part # anymore (e.g. a new listing replaced it)">🚫 Not used anymore</button></div></div>';
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--orange)" onclick="rvoUpcRetire(' + i + ')" title="We don\'t use this part # anymore (e.g. a new listing replaced it)">🚫 Not used anymore</button> '
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoCaseOfPart(\'' + e(r.part).replace(/'/g, '') + '\', \'' + e(r.caseOf || '').replace(/'/g, '') + '\', 1)" title="We ship a whole case of another part # for this one (e.g. 30-4-6=100X = a whole case of 30-4-6=10X)">📦 Whole case of…</button></div></div>';
     }).join('')
       + ((d.confirmed || []).length ? '<details style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px"><summary style="cursor:pointer;color:var(--text)">✔ ' + d.confirmed.length + ' part # marked right (hidden until a code changes)</summary>'
         + d.confirmed.map(function (c) { return '<div style="line-height:1.8"><b style="font-family:var(--mono)">' + e(c.part) + '</b> 📦 ' + e(c.outside || '—') + ' · 🛍 ' + e(c.inside || '—') + ' — ' + e(c.by || '') + ' ' + e(String(c.at || '').slice(0, 10))
