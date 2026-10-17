@@ -1955,6 +1955,7 @@ async function reorderPartInfo(env, raw) {
     now: { outside_upc: pick(ours && ours.outside_upc, fix && fix.outside_upc, ...catalog.map(c => c.outside_upc), builtIn && builtIn.outside_upc),
       inside_upc: pick(ours && ours.inside_upc, fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), builtIn && builtIn.inside_upc),
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
+    retired: (await upcRetiredMap(env)).get(P) || null,
     fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
 }
 // One row's fix. Fields not sent keep what was saved before.
@@ -2235,13 +2236,31 @@ async function upcCheckOkMap(env) {
   try { ((await env.DB.prepare('SELECT * FROM upc_check_ok').all()).results || []).forEach(r => m.set(String(r.part || '').trim().toUpperCase(), { ...r, key: d(r.outside_upc) + '|' + d(r.inside_upc) })); } catch (_) {}
   return m;
 }
+// 🚫 Owner (2026-10-17, 23-6-4=25: "we don't use it anymore — the new listing is 23-6-4=25XX, no FBA listing, its outside box
+// code is used for another item — how do we let the system know?"): a part # marked not used anymore leaves 🔢 Check every
+// UPC (and its codes no longer count as "on 2 part #s") until ↩ use again. Nothing else changes (stock, SKU Mgr, scans).
+const UPC_RETIRED_TABLE = 'CREATE TABLE IF NOT EXISTS upc_retired (part TEXT PRIMARY KEY, note TEXT, by_user TEXT, at TEXT)';
+async function upcRetiredMap(env) {
+  const m = new Map();
+  try { ((await env.DB.prepare('SELECT * FROM upc_retired').all()).results || []).forEach(r => m.set(String(r.part || '').trim().toUpperCase(), r)); } catch (_) {}
+  return m;
+}
 // POST /reorder/fix/upc-ok { part, outside, inside, undo } — ✔ these codes are right (kept in Reorder 🕘 History).
+//   { part, retire: true, note } — 🚫 not used anymore · { part, unretire: true } — ↩ use again.
 async function reorderUpcOk(request, env, session) {
   const b = await request.json().catch(() => ({}));
   const part = String(b.part || '').trim().toUpperCase(), T = x => String(x == null ? '' : x).replace(/\D/g, '');
   if (!part) return { ok: false, error: 'Part # required' };
   await env.DB.prepare(UPC_OK_TABLE).run();
   const who = _roWho(session) || 'MGMT', now = new Date().toISOString();
+  if (b.retire || b.unretire) {
+    await env.DB.prepare(UPC_RETIRED_TABLE).run();
+    const note = String(b.note || '').trim().slice(0, 200);
+    if (b.unretire) await env.DB.prepare('DELETE FROM upc_retired WHERE part = ?').bind(part).run();
+    else await env.DB.prepare('INSERT INTO upc_retired (part, note, by_user, at) VALUES (?,?,?,?) ON CONFLICT(part) DO UPDATE SET note = excluded.note, by_user = excluded.by_user, at = excluded.at').bind(part, note, who, now).run();
+    await reorderLog(env, who, 'upc-retired', part, b.unretire ? `🔢 ${part}: ↩ used again — back on 🔢 Check every UPC` : `🔢 ${part}: 🚫 not used anymore — off 🔢 Check every UPC${note ? ' (' + note + ')' : ''}`);
+    return { ok: true, part, retired: !b.unretire, note, by: who, at: now };
+  }
   if (b.undo) {
     await env.DB.prepare('DELETE FROM upc_check_ok WHERE part = ?').bind(part).run();
     await reorderLog(env, who, 'upc-ok', part, `🔢 ${part}: ✔ "codes are right" taken back — back on 🔢 Check every UPC`);
@@ -2257,7 +2276,7 @@ async function reorderUpcOk(request, env, session) {
 async function reorderUpcCheck(env) {
   const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
   const U = x => String(x || '').trim().toUpperCase(), d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
-  const okMap = await upcCheckOkMap(env), okList = [];
+  const okMap = await upcCheckOkMap(env), okList = [], retMap = await upcRetiredMap(env);
   const T = x => String(x == null ? '' : x).replace(/\D/g, '');
   const ours = new Map();
   (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => { const p = U(r.sku); if (p && (T(r.inside_upc) || T(r.outside_upc)) && !ours.has(p)) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: 'UPC list' }); });
@@ -2266,6 +2285,9 @@ async function reorderUpcCheck(env) {
   for (const [part, o, i] of VENDOR_UPC) add(part, 'vendor box/bag list', o, i);
   (await all('SELECT vendor, part, outside_upc, inside_upc FROM reorder_vendor_catalog')).forEach(r => add(r.part, "vendor's sheet", r.outside_upc, r.inside_upc));
   (await all('SELECT part, outside_upc, inside_upc FROM reorder_fix')).forEach(r => add(r.part, '✏️ fix', r.outside_upc, r.inside_upc));
+  const retList = [...retMap.values()].map(r => ({ part: String(r.part).toUpperCase(), note: r.note || '', by: r.by_user, at: r.at, outside: (ours.get(String(r.part).toUpperCase()) || {}).outside || '', inside: (ours.get(String(r.part).toUpperCase()) || {}).inside || '' }))
+    .sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }));
+  retMap.forEach((r, p) => ours.delete(p)); // 🚫 not used anymore: not checked, and its codes are free for another item
   const byCode = {};
   ours.forEach((o, p) => [o.outside, o.inside].forEach(c => { const z = d(c); if (z) (byCode[z] = byCode[z] || new Set()).add(p); }));
   const rows = [];
@@ -2287,6 +2309,8 @@ async function reorderUpcCheck(env) {
     let suggest = null;
     if (ref && (d(ref.outside) !== uo || d(ref.inside) !== ui)) suggest = { outside: ref.outside, inside: ref.inside, from: ref.name };
     else if (!ref && sw && (o.inside || o.outside)) suggest = { outside: o.inside, inside: o.outside, from: 'our two codes swapped' };
+    // 📦 Only the outside box is missing (owner 2026-10-17, 26-3-7=1XX): a list that has a real box code, not our bag's → offer it, keep our bag.
+    if (!suggest && !uo && ui) { const bx = rf.find(r => r.outside && upcCheckOk(r.outside) && d(r.outside) !== ui); if (bx) suggest = { outside: bx.outside, inside: o.inside, from: bx.name + ' (box) · our bag kept' }; }
     const main = issues.some(x => x.k !== 'shared' && x.k !== 'differs');
     rows.push({ part, outside: o.outside, inside: o.inside, from: o.from, issues, suggest, level: main ? 'bad' : 'check', refs: rf });
   });
@@ -2294,7 +2318,7 @@ async function reorderUpcCheck(env) {
   rows.sort((a, b) => order[a.level] - order[b.level] || a.part.localeCompare(b.part, undefined, { numeric: true }));
   const cnt = k => rows.filter(r => r.issues.some(x => x.k === k)).length;
   okList.sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }));
-  return { ok: true, checked: ours.size, rows, confirmed: okList, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
+  return { ok: true, checked: ours.size, rows, confirmed: okList, retired: retList, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
 }
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
@@ -3789,7 +3813,10 @@ async function inventoryUpcManagerSave(request, env, session) {
     const cur = upcInUse(src[r.part]);
     r.old = { inside: cur.inside, outside: cur.outside };
     r.inside = r.i.keep ? cur.inside : r.i.v; r.outside = r.o.keep ? cur.outside : r.o.v;
-    r.status = upcZ(r.inside) === upcZ(cur.inside) && upcZ(r.outside) === upcZ(cur.outside) ? 'same' : (cur.inside || cur.outside) ? 'change' : 'new';
+    // 🔢 Owner (2026-10-17, 26-3-7=1XX: "I updated the outside box UPC, it was still there — don't think it saved"): a code that is
+    // only on another list (✏️ fix, vendor sheet / box-bag list) is NOT ours yet — saving it is a change, never "no change".
+    const oursHas = k => !cur[k] || cur[k + 'From'] === 'edit' || cur[k + 'From'] === 'table';
+    r.status = upcZ(r.inside) === upcZ(cur.inside) && upcZ(r.outside) === upcZ(cur.outside) && oursHas('inside') && oursHas('outside') ? 'same' : (cur.inside || cur.outside) ? 'change' : 'new';
     if (r.inside && upcZ(r.inside) === upcZ(r.outside)) r.warn.push('inside bag and outside box UPC are the same');
     r.moves = [];
     for (const [k, v] of [['outside', r.outside], ['inside', r.inside]]) {
