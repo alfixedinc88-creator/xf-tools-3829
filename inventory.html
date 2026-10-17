@@ -8031,6 +8031,7 @@ window.invCredLogin = async function() {
       + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'part_num\')" title="Click to sort — default is warehouse order">Part # ' + (_skumgrSortField === 'custom' ? '📋' : skumgrSortIcon('part_num')) + '</th>'
       + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'name\')">Name' + skumgrSortIcon('name') + '</th>'
       + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'location\')">Location' + skumgrSortIcon('location') + '</th>'
+      + '<th style="' + thS + '" title="When the cases at this spot got here and from where (container 📦 Received, Receive PO, moved from another spot, Stock In) — from History. Taken out oldest first, so this is the oldest still here. Below: the last time any was taken out.">📅 Got here</th>'
       + '<th style="' + sortableThS + ';text-align:right" onclick="skumgrSortBy(\'cases\')">Cases' + skumgrSortIcon('cases') + '</th>'
       + '<th style="' + thS + ';text-align:right">Ea/Case</th>'
       + '<th style="' + thS + ';text-align:right">Price</th>'
@@ -8046,6 +8047,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'font-family:var(--mono);font-weight:700;white-space:nowrap">' + (row.part_num||'') + '</td>'
         + '<td style="' + td + 'color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (row.name||'—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap">' + (row.location||'—') + '</td>'
+        + '<td id="skumgr-got-' + idx + '" style="' + td + 'font-size:11px;color:var(--text3);min-width:130px">…</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (row.cases !== undefined && row.cases !== null ? row.cases : '—') + skumgrCostHtml(row) + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.units_per_case||'—') + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.price ? '$' + parseFloat(row.price).toFixed(2) : '—') + '</td>'
@@ -8054,7 +8056,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'white-space:nowrap"><button onclick="skumgrStartEdit(' + globalIdx + ')" style="padding:5px 12px;background:var(--bg3);border:1.5px solid var(--accent);color:var(--accent);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✏ Edit</button></td>'
         + '</tr>';
       // Edit row — expands inline below the row
-      html += '<tr id="skumgr-edit-row-' + idx + '" style="display:none"><td colspan="9" style="padding:12px 10px;background:var(--bg2);border-bottom:1px solid var(--border)">';
+      html += '<tr id="skumgr-edit-row-' + idx + '" style="display:none"><td colspan="10" style="padding:12px 10px;background:var(--bg2);border-bottom:1px solid var(--border)">';
       html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">';
       html += skumgrInlineField('Part #',    'skumgr-f-partnum-'  + idx, row.part_num||'',     'text',   true);
       html += skumgrInlineField('Name',      'skumgr-f-name-'     + idx, row.name||'',         'text',   false);
@@ -8076,7 +8078,40 @@ window.invCredLogin = async function() {
     // to the next page.
     html += '<div style="margin-top:10px">' + pageBarHtml + '</div>';
     res.innerHTML = html;
+    skumgrLoadArrivals(pageRows);
   }
+  // 📅 Got here (owner 2026-10-17: "inventory still in the GARAGE we already moved — when did it get here, which container,
+  // why is it still there"): one call per page → when the oldest cases still at the spot arrived, from where, by whom;
+  // the last time any was taken out. Older than 14 days shows orange.
+  var _skumgrGot = {};
+  function skumgrGotHtml(a) {
+    if (!a) return '<span style="color:var(--text3)">—</span>';
+    var d = function(iso) { try { return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: '2-digit' }); } catch (e) { return ''; } };
+    var days = function(iso) { var t = Date.parse(iso); return isFinite(t) ? Math.floor((Date.now() - t) / 864e5) : null; };
+    var e = invEsc, h = '';
+    if (a.since) { var n = days(a.since.at);
+      h += '<div style="font-weight:700;color:' + (n != null && n >= 14 ? 'var(--orange)' : 'var(--text)') + ';white-space:nowrap">' + e(d(a.since.at)) + (n != null ? ' · ' + n + ' d' : '') + '</div>'
+        + '<div style="color:var(--text2)">' + e(a.since.from) + (a.since.by ? ' · ' + e(a.since.by) : '') + '</div>'; }
+    if (a.noRecordCases) h += '<div style="color:var(--orange)">' + a.noRecordCases + ' cs: no record of getting here (older, or an SKU Mgr edit)</div>';
+    if (!a.since && !a.noRecordCases) h += a.lastIn ? '<div>last in ' + e(d(a.lastIn.at)) + ' · ' + e(a.lastIn.from) + '</div>' : '<div>no record</div>';
+    if (a.lastOut) h += '<div style="color:var(--text3)">last out ' + e(d(a.lastOut.at)) + (a.lastOut.by ? ' · ' + e(a.lastOut.by) : '') + (a.lastOut.to ? ' → ' + e(a.lastOut.to) : '') + '</div>';
+    else if (a.since) h += '<div style="color:var(--text3)">none taken out since</div>';
+    return h;
+  }
+  window.skumgrLoadArrivals = function(pageRows) {
+    var key = function(r) { return String(r.part_num || '').trim().toUpperCase() + '|' + String(r.location || '').trim().toUpperCase(); };
+    var tot = {}; _skumgrRows.forEach(function(r) { var c = parseFloat(r.cases); tot[key(r)] = (tot[key(r)] || 0) + (c > 0 ? c : 0); }); // same part # + spot on 2 rows = one spot
+    var ck = function(r) { return key(r) + '|' + (tot[key(r)] || 0); };
+    var fill = function() { pageRows.forEach(function(r, i) { var c = g('skumgr-got-' + i); if (c && ck(r) in _skumgrGot) c.innerHTML = skumgrGotHtml(_skumgrGot[ck(r)]); }); };
+    var seen = {}, need = pageRows.filter(function(r) { var k = ck(r); if (!r.part_num || !r.location || k in _skumgrGot || seen[k]) return false; seen[k] = 1; return true; });
+    fill(); if (!need.length) return;
+    wFetch(W + '/inventory/arrivals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: need.map(function(r) { return { part: r.part_num, loc: r.location, cases: tot[key(r)] || 0 }; }) }) })
+      .then(function(x) { return x.json(); }).then(function(d) {
+        if (!d || !d.ok) return;
+        need.forEach(function(r) { _skumgrGot[ck(r)] = (d.rows || {})[key(r)] || null; });
+        fill();
+      }).catch(function() {});
+  };
 
   window.skumgrToggleInStock = function() {
     _skumgrInStockOnly = !_skumgrInStockOnly;

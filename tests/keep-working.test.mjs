@@ -7157,5 +7157,31 @@ console.log('\n📍 Locations with spaces (PR=1 - 1 - 7) → PR=1-1-7: found by 
   sq.prepare("DELETE FROM master_list WHERE base_sku = '924-3-1'").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '924-3-1=%'").run();
 }
 
+// Owner (2026-10-17): "a lot of inventory still in the GARAGE that we already moved — SKU Mgr: a column showing when it got here,
+// like the container we received into the garage, so we know when it got there and why it's still there".
+console.log('\n📅 SKU Mgr "Got here": when the cases at a spot arrived (container / PO / move / Stock In), from History; last taken out');
+{
+  const ago = d => new Date(Date.now() - d * 864e5).toISOString();
+  const L = (ts, type, loc, cases, ini, notes, status, extra) => sq.prepare(`INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status, paired_location${extra ? ', cancelled_at' : ''}) VALUES (0,?,?,?,?,?,?,?,?,?${extra ? ',?' : ''})`)
+    .run(...[ts, type, '936-1-1=10', loc, cases, ini, notes, status, type === 'TRANSFER_OUT' ? 'C1=1-1-1' : '', ...(extra ? [extra] : [])]);
+  L(ago(20), 'IN', 'GARAGE', 5, 'KL', '[RECEIVED] CT-936 9/30 — 50 units', 'Verified');
+  L(ago(5), 'IN', 'GARAGE', 3, 'MK', 'found 3 more', 'Verified');
+  L(ago(4), 'IN', 'GARAGE', 9, 'ZZ', 'wrong', 'Rejected');               // rejected → not counted
+  L(ago(2), 'TRANSFER_OUT', 'GARAGE', 4, 'AB', 'move', 'Verified');
+  L(ago(1), 'OUT', 'GARAGE', 2, 'QQ', 'cancelled one', 'Verified', ago(1)); // cancelled → not counted
+  const d = await post('/inventory/arrivals', { rows: [{ part: '936-1-1=10', loc: 'garage', cases: 3 }, { part: '936-1-1=10', loc: 'GARAGE', cases: 1 }] }); // 2 SKU Mgr rows, same spot → 4 cases
+  const a = (d.rows || {})['936-1-1=10|GARAGE'] || {};
+  check('GARAGE 4 cases left (5 from container CT-936 20 d ago + 3 Stock In 5 d ago − 4 moved out): the oldest still there = 📦 container CT-936, by KL; last out = moved to C1=1-1-1 by AB (rejected / cancelled rows ignored)',
+    a.since && /📦 container CT-936 9\/30/.test(a.since.from) && a.since.by === 'KL' && a.lastOut && a.lastOut.by === 'AB' && a.lastOut.to === 'C1=1-1-1' && a.arrivals === 2 && !a.noRecordCases, a);
+  const d2 = await post('/inventory/arrivals', { rows: [{ part: '936-1-1=10', loc: 'GARAGE', cases: 10 }, { part: '936-1-1=10', loc: 'C2=9-9-9', cases: 1 }] });
+  const b = (d2.rows || {})['936-1-1=10|GARAGE'] || {}, c = (d2.rows || {})['936-1-1=10|C2=9-9-9'] || {};
+  check('…SKU Mgr says 10 there but History only shows 8 in → "2 cs: no record of getting here"; a spot with no History at all → no record', b.noRecordCases === 2 && c.noRecordCases === 1 && !c.since, [b, c]);
+  const { readFileSync: rfG } = await import('node:fs');
+  const ih = rfG(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…SKU Mgr table: "📅 Got here" column next to Location (date · days, from where, who; last out), filled for the page shown',
+    /📅 Got here<\/th>/.test(ih) && /id="skumgr-got-' \+ idx \+ '"/.test(ih) && /skumgrLoadArrivals\(pageRows\);/.test(ih) && /\/inventory\/arrivals', \{ method: 'POST'/.test(ih) && /colspan="10"/.test(ih), null);
+  sq.exec("DELETE FROM inventory_log WHERE part_num = '936-1-1=10'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

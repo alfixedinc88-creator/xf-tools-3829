@@ -9142,6 +9142,7 @@ const _app = {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventoryHistorySummary(url, env, request);
       }
+      if (path === '/inventory/arrivals' && method === 'POST') return await inventoryArrivals(request, env);
       if (path === '/inventory/sku-search' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventorySkuSearch(url, env);
@@ -14040,6 +14041,53 @@ async function inventoryEditRow(request, env) {
 
 // GET /inventory/sku-search?q=BASE_SKU
 // Returns all D1 master_list rows matching the base_sku (with Sheets fallback)
+// POST /inventory/arrivals { rows: [{ part, loc, cases }] } — SKU Mgr "Got here" column.
+// Owner (2026-10-17): "a lot of inventory still in the GARAGE that we already moved — give a column showing when it got
+// here, like the container we received into the garage, so we know when it got in and why it's still there". From
+// History (approved Stock In / Receive PO / 📦 Received / Transfer, never cancelled): the boxes taken out go oldest
+// first, so the cases still at the spot are the newest arrivals — "here since" is the oldest arrival still there (and
+// where it came from); cases older than any record say so. Plus the last time any was taken out of that spot.
+async function inventoryArrivals(request, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const U = x => String(x || '').trim().toUpperCase();
+  // Two SKU Mgr rows of the same part # at the same spot = one spot: their cases are added together.
+  const byKey = {};
+  (Array.isArray(b.rows) ? b.rows : []).slice(0, 1000).forEach(r => { const part = U(r.part), loc = U(r.loc); if (!part || !loc) return;
+    const k = part + '|' + loc; (byKey[k] = byKey[k] || { part, loc, cases: 0 }).cases += parseFloat(r.cases) > 0 ? parseFloat(r.cases) : 0; });
+  const want = Object.values(byKey);
+  if (!want.length) return J({ ok: true, rows: {} });
+  await invLogEnsureColumns(env);
+  const parts = [...new Set(want.map(r => r.part))], log = {};
+  for (let i = 0; i < parts.length; i += 80) {
+    const ch = parts.slice(i, i + 80);
+    (await d1All(env, `SELECT id, timestamp ts, type, UPPER(TRIM(part_num)) p, UPPER(TRIM(location)) l, cases, initials, notes, paired_location FROM inventory_log
+      WHERE UPPER(TRIM(part_num)) IN (${ch.map(() => '?').join(',')}) AND type IN ('IN','OUT','TRANSFER_IN','TRANSFER_OUT')
+        AND COALESCE(status,'') NOT IN ('Rejected','Pending') AND cancelled_at IS NULL ORDER BY id`, ch)).forEach(r => { (log[r.p + '|' + r.l] = log[r.p + '|' + r.l] || []).push(r); });
+  }
+  const src = r => {
+    const n = String(r.notes || '');
+    const m = n.match(/^\[RECEIVED\] (.*?) — /);
+    if (m) return '📦 container ' + m[1];
+    if (r.type === 'TRANSFER_IN') return '🔁 moved from ' + (r.paired_location || '?');
+    if (/receive ?po|\[PO\b|purchase order/i.test(n)) return '🧾 Receive PO';
+    return '➕ Stock In';
+  };
+  const out = {};
+  for (const w of want) {
+    const L = log[w.part + '|' + w.loc] || [], ins = L.filter(r => (r.type === 'IN' || r.type === 'TRANSFER_IN') && (parseFloat(r.cases) || 0) > 0);
+    const outs = L.filter(r => r.type === 'OUT' || r.type === 'TRANSFER_OUT');
+    const res = { arrivals: ins.length };
+    let left = w.cases, oldest = null;
+    for (let i = ins.length - 1; i >= 0 && left > 1e-9; i--) { oldest = ins[i]; left -= parseFloat(ins[i].cases) || 0; }
+    if (oldest) res.since = { at: oldest.ts, from: src(oldest), by: oldest.initials || '', cases: parseFloat(oldest.cases) || 0 };
+    if (w.cases > 0 && left > 1e-9) res.noRecordCases = Math.round(left * 1000) / 1000; // here before any record (or put in by an SKU Mgr edit)
+    const li = ins[ins.length - 1]; if (li) res.lastIn = { at: li.ts, from: src(li), by: li.initials || '', cases: parseFloat(li.cases) || 0 };
+    const lo = outs[outs.length - 1]; if (lo) res.lastOut = { at: lo.ts, by: lo.initials || '', cases: parseFloat(lo.cases) || 0, to: lo.type === 'TRANSFER_OUT' ? (lo.paired_location || '') : '' };
+    out[w.part + '|' + w.loc] = res;
+  }
+  return J({ ok: true, rows: out });
+}
 async function inventorySkuSearch(url, env) {
   const q        = (url.searchParams.get('q') || '').trim().toUpperCase();
   const locQ     = (url.searchParams.get('location') || '').trim().toUpperCase();
