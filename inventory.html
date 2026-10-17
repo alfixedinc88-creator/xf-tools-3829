@@ -2650,7 +2650,10 @@ window.invCredLogin = async function() {
     var typed = need > 0; if (!typed) need = 1;
     var srcId = fromReport ? fromReport.id : null;
     var plan;
-    try { plan = company ? invPlanCompanyPull(target, need) : invPlanShelvingPull(need); }
+    // 📦 Owner (2026-10-17): "30-4-6=100X is a case — when they order 30-4-6=100X we ship a whole case of 30-4-6=10X". A part #
+    // set as "sold as a whole case of" (Reorder 📦) → each one asked for = 1 whole case of that part #, picked by the same rules.
+    var caseTo = company && d.caseOf && d.caseOf[target] ? String(d.caseOf[target]).toUpperCase() : null;
+    try { plan = company ? invPlanCompanyPull(caseTo || target, need) : invPlanShelvingPull(need); }
     catch (e) { invFlash('Could not pick a spot (' + e.message + ') — choose one below', 'error'); return; }
     if (!plan.takes.length) {
       // Nothing free to take: say exactly why (on the shelves, waiting for
@@ -2667,7 +2670,8 @@ window.invCredLogin = async function() {
       return;
     }
     var dest = invStockOutDest;
-    var tag = function(x, t) { x.dest = dest; if (company) { x.forPart = target; x.how = t.how; } };
+    var tag = function(x, t) { x.dest = dest; if (company) { x.forPart = target; x.how = t.how;
+      if (caseTo) { x.caseOf = caseTo; if (!t.how) x.how = 'a whole case of ' + caseTo + ' = 1 × ' + target + ' — ship the case as it is'; } } };
     plan.takes.forEach(function(t) {
       var key = invPullItemKey(t.partNum, t.loc), ex = null;
       // Shelving and Big Company rows never merge — they go different places.
@@ -2693,7 +2697,8 @@ window.invCredLogin = async function() {
     });
     invRenderPullList();
     var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
-    var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + (company ? ' for Big Company ' + target + ' × ' + need : '') + ': '
+    var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + (company ? ' for Big Company ' + target + ' × ' + need : '')
+      + (caseTo ? ' (📦 ' + target + ' = a whole case of ' + caseTo + ' → ' + need + ' whole case' + (need === 1 ? '' : 's') + ' of ' + caseTo + ')' : '') + ': '
       + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location + (company && t.how ? ' (' + t.how + ')' : ''); }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
     if (company) {
       if (plan.short > 0.001) invFlash(msg + ' — ⚠ ' + plan.short + (plan.byPieces ? ' pcs' : ' cases') + ' short' + (plan.noSize.length ? ' (Each/Case not on file for ' + plan.noSize.join(', ') + ')' : ''), 'warn');
@@ -4521,7 +4526,7 @@ window.invCredLogin = async function() {
       var at = locs.filter(function(l) { return U(l.partNum) === pn && U(l.location) === L; })[0]
         || locs.filter(function(l) { return U(l.partNum) === pn && (parseFloat(l.palletBoxes) || 0) > 0; })[0];
       if (!at) { invFlash(pn + ' is not on record at ' + it.location + ' — log it with Stock In / Found on Shelf first', 'error'); return; }
-      if (it.dest === 'company' && !confirm('Big Company asked for ' + (it.forPart || it.partNum) + '.\nUse ' + pn + ' instead?')) return;
+      if (it.dest === 'company' && pn !== U(it.caseOf) && !confirm('Big Company asked for ' + (it.forPart || it.partNum) + '.\nUse ' + pn + ' instead?')) return;
       var was = it.partNum + ' @ ' + it.location, n = parseFloat(it.cases) || 1, have = avail(at);
       if (n > have) { invFlash('Only ' + have + ' case(s) of ' + pn + ' at ' + at.location + ' — set to ' + have, 'warn'); n = have; }
       it.key = pn + '|' + at.location; it.partNum = pn; it.sku = d.sku || pn; if (d.name) it.name = d.name;
@@ -5736,7 +5741,7 @@ window.invCredLogin = async function() {
     // Found (see invTogglePullCheck / invMarkNoneFound), so this badge is
     // the visible reminder of that connection while it's still sitting
     // here ungrabbed.
-    var coBadge = item.dest === 'company' ? " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + "</span>"
+    var coBadge = item.dest === 'company' ? " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + (item.caseOf ? ' (📦 whole case)' : '') + "</span>"
       + (item.how ? "<div style='font-size:11px;font-weight:600;color:var(--purple,var(--accent));font-family:var(--sans);margin-top:2px'>" + item.how + "</div>" : "") : "";
     var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "";
     var sysCasesHtml = item.systemCases !== undefined
@@ -6506,10 +6511,10 @@ window.invCredLogin = async function() {
         var k = U(l.partNum) + '|' + U(l.location);
         return !l.isPlaceholder && U(l.location) !== U(it.location) && !tried[k] && avail(l) - (onList[k] || 0) > 0;
       });
-      if (it.dest === 'company') locs = locs.filter(function(l) { return U(l.partNum) === U(it.forPart || it.partNum); }); // Big Company: the same part #
+      if (it.dest === 'company') locs = locs.filter(function(l) { return U(l.partNum) === U(it.caseOf || it.forPart || it.partNum); }); // Big Company: the same part # (📦 a whole case of: that part #)
       if (!locs.length) { invNoneFoundNow(i); return; }
       var keep = invPart; invPart = d; var ranked;
-      try { ranked = it.dest === 'company' ? invRankForCompany(locs, it.forPart || it.partNum) : invPickForShelving(locs); } finally { invPart = keep; }
+      try { ranked = it.dest === 'company' ? invRankForCompany(locs, it.caseOf || it.forPart || it.partNum) : invPickForShelving(locs); } finally { invPart = keep; }
       var best = ranked[0], k = U(best.partNum) + '|' + U(best.location);
       var left = Math.round((avail(best) - (onList[k] || 0)) * 100) / 100, n = Math.min(parseFloat(it.cases) || 1, left);
       _invNfAlt = { i: i, loc: best, d: d, n: n };
@@ -6530,7 +6535,7 @@ window.invCredLogin = async function() {
     var it = invPullList[a.i], l = a.loc;
     var add = { key: l.partNum + '|' + l.location, partNum: l.partNum, sku: (a.d && a.d.sku) || l.partNum, name: (a.d && a.d.name) || it.name || '', location: l.location, cases: String(a.n),
       systemCases: l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0), rowIndex: l.rowIndex, isPlaceholder: false, masterRowIndex: l.rowIndex, masterId: l.masterId || null,
-      addedAt: new Date().toISOString(), sourceStockoutId: it.sourceStockoutId || null, dest: it.dest || 'shelving', forPart: it.forPart, how: it.how,
+      addedAt: new Date().toISOString(), sourceStockoutId: it.sourceStockoutId || null, dest: it.dest || 'shelving', forPart: it.forPart, how: it.how, caseOf: it.caseOf,
       scanNote: '[NONE FOUND AT ' + it.location + ' — grabbed here instead]' };
     invNoneFoundNow(a.i, true);
     invPullList.push(add);
@@ -6881,7 +6886,7 @@ window.invCredLogin = async function() {
       : item.foundOnShelf
         ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
-    var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + '] ' : '[SHELVING] ';
+    var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + (item.caseOf ? ' = whole case of ' + item.caseOf : '') + '] ' : '[SHELVING] ';
     itemNotes = (destTag + itemNotes + (item.scanNote ? ' ' + item.scanNote : '')).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
 
