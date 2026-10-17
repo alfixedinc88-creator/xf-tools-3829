@@ -2851,9 +2851,12 @@ console.log('\n🏷 Barcode designer: 💾 save on the phone → 🖨 print on t
   const ih2 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   // Owner (2026-10-17): "take off 'Print label here' and 'Save — print it on the computer'; only Save, to the Label Printer page" —
   // the 🖨 Print here button is gone on purpose (was checked here before).
-  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); only 💾 Save (WiFi-safe, no 🖨 Print here); the office PC sees "🏷 Barcode labels to print"',
+  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); the boxes typed = the labels, saved by itself (no How many labels / 💾 Save, WiFi-safe, no 🖨 Print here); the office PC sees "🏷 Barcode labels to print"',
     /t\('design', '✏️ Design'\)/.test(ih2) && /t\('where', '📍 Where does it go\?'\)/.test(ih2) && /onkeydown="if\(event\.key===\\'Enter\\'\)bdColScan\(\)"/.test(ih2)
-    && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && /onclick="bdSave\(\)"[^>]*>💾 Save<\/button>/.test(ih2) && !/Print label here/.test(ih2) && !/print it on the computer/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
+    // Owner (2026-10-17, later): "remove 'how many labels'; after the column label and the quantity, save by itself — no Save"
+    // → the 💾 Save button is gone on purpose (it was checked here before); the number of boxes is the number of labels.
+    && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && !/onclick="bdSave\(\)"/.test(ih2) && /bdSaveSpot\(spot, BD\.nameFor === sku \? BD\.name : ''\)/.test(ih2)
+    && !/How many labels\?/.test(ih2) && !/Print label here/.test(ih2) && !/print it on the computer/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
 }
 
 // Owner: "Last run wider on the PC, each column smaller / wider" + "product photo on the shipping label" + "photo on the barcode label".
@@ -7022,6 +7025,32 @@ console.log('\nLabel Printer: Refresh / Sign Out / Apps bar across the top');
   check('the page stacks top to bottom (flex-direction: column), the bar first, full width; the page under it full width up to 640 px',
     /flex-direction:\s*column/.test(css) && /\.lp-body \{[^}]*width:100%/.test(lp) && lp.indexOf('class="lp-header"') < lp.indexOf('class="lp-body"')
     && /getElementById\('labelprint-app'\)\.style\.display = 'flex'/.test(lp), css);
+}
+
+// Owner 2026-10-17: "Barcode designer — remove 'How many labels'; after we scan the column label it asks how many,
+// after we put the quantity just auto save, don't need to click Save".
+console.log('\n🏷 Barcode designer: scan the column → how many → saved by itself');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const a = ih.indexOf('  window.bdColScan = function() {'), b = ih.indexOf('  window.bdSpotDel = function(i)');
+  const posts = [], flashes = [], els = { 'bd-col': { value: 'c1=5-2-3', focus() {} }, 'bd-sku': { value: '8-8-8=8' }, 'bd-spots': { innerHTML: '' } };
+  let pad = null;
+  const ctx = { BD: { spots: [], copies: 1, name: 'Plug', nameFor: '8-8-8=8' }, W: '', setTimeout: () => {}, confirm: () => true, Math, JSON, String, Promise,
+    g: id => els[id] || null, invFlash: (m, k) => flashes.push(m), xfrIsLoc: v => /=/.test(v), xfrEsc: x => String(x),
+    bdClean: v => String(v || '').trim().toUpperCase().replace(/\s+/g, ''), bdOpen: () => {}, bdQueueLoad: () => {},
+    xfrKeypad: (title, start, cb) => { pad = { title, start, cb }; },
+    invPost: async (u, o) => { posts.push({ u, body: JSON.parse(o.body) }); return { json: async () => ({ ok: true, id: 7 }) }; } };
+  ctx.window = ctx; vm.createContext(ctx);
+  vm.runInContext(ih.slice(ih.indexOf('  function bdSpotsHtml() {'), ih.indexOf('  window.bdOpen = function(restore, tab, loaded) {')) + ih.slice(a, b), ctx);
+  ctx.bdColScan();
+  pad && pad.cb(4);
+  await new Promise(r => setTimeout(r, 20));
+  const p = posts[0] || {};
+  check('scan the column → "How many boxes at C1=5-2-3 …" → 4 → saved at once: 4 labels of 8-8-8=8 for C1=5-2-3 (no Save tap); shows ✓ saved',
+    !!pad && /How many boxes at C1=5-2-3/.test(pad.title) && posts.length === 1 && /\/inventory\/barcode-job$/.test(p.u) && p.body.sku === '8-8-8=8' && p.body.copies === 4
+    && p.body.spots.length === 1 && p.body.spots[0].loc === 'C1=5-2-3' && p.body.spots[0].boxes === 4 && p.body.name === 'Plug' && ctx.BD.spots[0].state === 'saved' && /✓ saved/.test(els['bd-spots'].innerHTML), { pad: pad && pad.title, posts, spots: ctx.BD.spots });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
