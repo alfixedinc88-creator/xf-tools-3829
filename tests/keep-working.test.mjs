@@ -7125,5 +7125,37 @@ console.log('\n🖼 Pick / Pack photos: our saved photo per parent part #; ⚠ W
   sq.exec("DELETE FROM product_photo WHERE base_sku = '934-1-1'; DELETE FROM product_photo_report WHERE base_sku = '934-1-1'; DELETE FROM ship_manifest_log WHERE tracking = '1ZPHOTOOURS00001'");
 }
 
+// Owner 2026-10-17 (SKU Mgr screenshot): "why do some locations have that many spaces (PR=1 - 1 - 7)? will that cause issues?"
+// Yes — a scan of the label PR=1-1-7 never found them. Spots are read / saved without the spaces, and the saved ones are fixed once.
+console.log('\n📍 Locations with spaces (PR=1 - 1 - 7) → PR=1-1-7: found by a scan, cases unchanged');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8');
+  const src = ['LOC_BH_RE', 'LOC_SPACED_RE'].map(n => (ws.match(new RegExp('const ' + n + ' = [^\\n]*')) || [''])[0]).join('\n')
+    + '\n' + (ws.match(/function locTight\(v\) \{[^\n]*\}/) || [''])[0] + '\n' + (ws.match(/async function locAliasRequest\(request\) \{[\s\S]*?\n\}/) || [''])[0];
+  const { locTight, locAliasRequest } = new Function(src + '; return { locTight, locAliasRequest };')();
+  const tight = { pr: locTight('PR=1 - 1 - 7'), c1: locTight('C1 = 5-2-3'), part: locTight('8-8-8=10X'), word: locTight('BACK ROOM'), ok: locTight('PR=1-1-7') };
+  const req = await locAliasRequest(new Request('https://w/inventory/log?loc=PR%3D2%20-%202%20-%202', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'PR=1 - 1 - 7', partNum: '24-3-1=10', notes: 'moved 2 - 3 boxes', toLocation: 'BSMT = 3 - 1 - 2' }) }));
+  const rb = JSON.parse(await req.text()), rq = new URL(req.url).searchParams.get('loc');
+  check('a spot with spaces is read without them (PR=1 - 1 - 7 → PR=1-1-7, C1 = 5-2-3 → C1=5-2-3); part #s, words and notes are never changed',
+    tight.pr === 'PR=1-1-7' && tight.c1 === 'C1=5-2-3' && tight.part === '8-8-8=10X' && tight.word === 'BACK ROOM' && tight.ok === 'PR=1-1-7'
+    && rb.location === 'PR=1-1-7' && rb.toLocation === 'BSMT=3-1-2' && rb.partNum === '24-3-1=10' && rb.notes === 'moved 2 - 3 boxes' && rq === 'PR=2-2-2', { tight, rb, rq });
+  // the saved ones: fixed once on a fresh server start (cases stay the same)
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('924-3-1','straight valve','924-3-1=10','PR=1 - 1 - 4',3,10), ('924-3-1','straight valve','924-3-1=5','PR=1 - 1 - 5',2,5)").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'IN', '924-3-1=10', 'PR=1 - 1 - 4', 3, 'TS', 'spaced', 'Approved')").run(new Date().toISOString());
+  sq.prepare("DELETE FROM app_config WHERE key = 'loc_space_fix_20261017'").run();
+  const casesBefore = sq.prepare("SELECT SUM(cases) n FROM master_list").get().n;
+  const fresh = (await import(workerPath + '?locfix=1')).default;
+  const r = await (await fresh.fetch(new Request('https://w/inventory/location-search?loc=PR=1-1-4', { headers: H }), env, { waitUntil() {} })).json();
+  const casesAfter = sq.prepare("SELECT SUM(cases) n FROM master_list").get().n;
+  const left = sq.prepare("SELECT COUNT(*) n FROM master_list WHERE location LIKE 'PR=1 - %'").get().n + sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE location LIKE 'PR=1 - %'").get().n;
+  const rec = JSON.parse((sq.prepare("SELECT value FROM app_config WHERE key = 'loc_space_fix_20261017'").get() || {}).value || '{}');
+  check('…saved spots with spaces fixed once (SKU Mgr + History, on record); a scan of PR=1-1-4 now finds 924-3-1=10 (3 cases); total cases the same before / after',
+    r.ok && (r.results || []).some(x => x.partNum === '924-3-1=10' && x.location === 'PR=1-1-4' && x.casesNum === 3) && left === 0 && casesBefore === casesAfter
+    && rec.master >= 2 && rec.log >= 1 && rec.changed['PR=1 - 1 - 4'] === 'PR=1-1-4', { r: r.results, left, casesBefore, casesAfter, rec });
+  sq.prepare("DELETE FROM master_list WHERE base_sku = '924-3-1'").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '924-3-1=%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
