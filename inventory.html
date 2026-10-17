@@ -14310,12 +14310,13 @@ window.invCredLogin = async function() {
     if (el && st) el.setAttribute('style', (el.getAttribute('style') || '') + ';' + st);
   }
   // Tabs (owner): ✏️ Design → 💾 Save (the office PC prints it) ·
-  // 🖨 To print (the office PC) · 📍 Where does it go? (scan a printed sticker).
+  // ✏️ Design · 📍 Where does it go? (scan a printed sticker). No 🖨 To print tab (owner 2026-10-17: saved labels print on the
+  // 🏷 Label Printer page).
   // BD.spots = [{ loc, boxes }] — each column the stickers go to, how many boxes.
   BD.spots = []; BD.tab = 'design'; BD.sku = '';
   function bdTabs() {
     var t = function(k, txt) { var on = BD.tab === k; return '<button type="button" onclick="bdOpen(true, \'' + k + '\')" style="flex:1;padding:9px 4px;border-radius:9px;border:1.5px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (on ? 'var(--accent)' : 'var(--bg3)') + ';color:' + (on ? '#fff' : 'var(--text)') + ';font-size:13px;font-weight:800;cursor:pointer">' + txt + '</button>'; };
-    return '<div style="display:flex;gap:6px;margin-bottom:10px">' + t('design', '✏️ Design') + t('print', '🖨 To print' + (_bdQueue.length ? ' (' + _bdQueue.length + ')' : '')) + t('where', '📍 Where does it go?') + '</div>';
+    return '<div style="display:flex;gap:6px;margin-bottom:10px">' + t('design', '✏️ Design') + t('where', '📍 Where does it go?') + '</div>';
   }
   function bdSpotsHtml() {
     var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0);
