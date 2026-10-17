@@ -6,6 +6,7 @@
 | N77 | "Setting" (Test Scan / Setting / about) | Output Mode = Keyboard Mode, Handle Key = Only Scan | post-scan action = **Carriage Return** |
 | Farset R20H | Scanner Settings | **Send Mode = EMUKEY** | End Char = ENTER |
 | Svantto MC002 | **iScanPlus** | **Scan result sending mode = HID** | (HID sends it) |
+| Svantto AS04 | **Scan Tools** (tabs Content / Barcode / Settings) | **Output Mode = the keyboard mode** (not Broadcast Mode) | **Terminator = Enter** |
 | Zebra DS2278 (Bluetooth) | — | charged, paired to its cradle | — |
 
 New scanner that beeps but types nothing? It's almost always the send / output
@@ -166,3 +167,20 @@ by itself — nothing else to change.
 ### Problem: screen keeps rotating
 - Phone: quick settings → Auto-rotate OFF. Our installed app stays upright
   (manifest "portrait") — reinstall the app icon if it still turns.
+
+## Svantto AS04 (Android, built-in scanner, app "Scan Tools")
+**Working (confirmed by the owner 2026-10-17):** Scan Tools → **Settings** tab →
+**Output Mode = the keyboard mode** (keystroke / keyboard, NOT "Broadcast Mode") and
+**Terminator = Enter** (was None). Everything else as it came: Scan Switch ON,
+Handle button ON, Continuous scan OFF, Decode mode UTF-8, Delete Invisible Char ON,
+Add Prefix / Add Suffix empty. The Broadcast name (scan.rcv.message), Jumping Web and
+Camera App Switch don't matter.
+
+### Problem: beep + light, but nothing shows in our app (part # labels or UPCs)
+- Cause: **Output Mode = Broadcast Mode** (out of the box). Broadcast only reaches
+  Android apps, never Chrome — same as the R20H's BROADCAST and the MC002's Focus.
+- Fix: Output Mode → the keyboard mode. Don't pick Broadcast / Focus / Clipboard.
+- Terminator **None** → the number shows but the app doesn't search / save by
+  itself: set **Enter** (not "CR+LF", not Tab).
+- Part # labels still not read after that: Barcode tab → **Code 128** ON (our
+  part # labels are Code 128; box UPCs are UPC-A).

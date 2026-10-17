@@ -3063,6 +3063,8 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
   check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
+  // Owner (2026-10-17): new Svantto AS04 beeped but typed nothing — Output Mode was Broadcast Mode; keyboard mode + Terminator Enter fixed it.
+  check('docs/SCANNERS.md keeps the Svantto AS04 fix (Scan Tools: Output Mode = keyboard, not Broadcast Mode; Terminator = Enter)', /Svantto AS04/.test(sc) && /Broadcast Mode/.test(sc) && /Terminator = Enter/.test(sc), null);
   check('…and the Svantto MC002 fix (iScanPlus → sending mode HID) and the R20H EMUKEY setting', /Svantto MC002/.test(sc) && /sending mode = HID/.test(sc) && /Send Mode = EMUKEY/.test(sc), null);
 }
 
