@@ -7592,7 +7592,25 @@ async function recountReport(env) {
   const aisleOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i + 1) + L.slice(i + 1).split('-')[0]; };
   const aisles = {};
   spots.forEach(l => { const a = aisles[aisleOf(l)] = aisles[aisleOf(l)] || { aisle: aisleOf(l), total: 0, done: 0, notDone: [] }; a.total++; if (doneSet.has(l)) a.done++; else a.notDone.push(l); });
+  // 🗺 By area (owner 2026-10-17: "he was working on C1 — let me click C1 and see every C1 spot: green done, red not scanned,
+  // yellow scanned but not done"). Every spot of the area (with stock, or done / started in this round), its state and who / when.
+  const doneBy = {}; cols.filter(c => !c.stopped).forEach(c => { const L = String(c.location).toUpperCase(); if (!doneBy[L] || c.doneAt > doneBy[L].at) doneBy[L] = { by: c.by, at: c.doneAt }; });
+  const started = {};
+  cols.filter(c => c.stopped).forEach(c => { const L = String(c.location).toUpperCase(); started[L] = started[L] || { by: c.by, at: c.doneAt, lines: 0, stopped: true }; });
+  (await d1All(env, `SELECT UPPER(TRIM(location)) AS l, COUNT(*) AS n, MAX(timestamp) AS at, MAX(initials) AS by FROM inventory_log
+      WHERE timestamp >= ? AND notes LIKE '%(📋 Recount)%' AND COALESCE(status,'') != 'Rejected' AND cancelled_at IS NULL GROUP BY UPPER(TRIM(location))`, [roundStart]).catch(() => []))
+    .forEach(r => { const s0 = started[r.l] || {}; started[r.l] = { by: r.by || s0.by || '', at: r.at > (s0.at || '') ? r.at : s0.at, lines: r.n, stopped: !!s0.stopped }; });
+  const areaOf = L => { const i = L.indexOf('='); return i < 0 ? L : L.slice(0, i); };
+  const areas = {}, spotSet = new Set(spots);
+  [...new Set(spots.concat(Object.keys(doneBy), Object.keys(started)))].forEach(l => {
+    const a = areas[areaOf(l)] = areas[areaOf(l)] || { area: areaOf(l), done: 0, started: 0, notScanned: 0, spots: [] };
+    const st = doneBy[l] ? 'done' : started[l] ? 'started' : 'none';
+    a[st === 'done' ? 'done' : st === 'started' ? 'started' : 'notScanned']++;
+    a.spots.push({ l, st, by: st === 'done' ? doneBy[l].by : st === 'started' ? started[l].by : '', at: st === 'done' ? doneBy[l].at : st === 'started' ? started[l].at : '',
+      lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l) });
+  });
   return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
+    areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
