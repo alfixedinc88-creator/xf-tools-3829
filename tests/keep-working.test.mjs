@@ -3543,11 +3543,11 @@ console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is
   check('…a part # with a vendor sheet price keeps it (88-4-4=10 $0.11, not SKU Mgr $0.99)', a.price === 0.11 && a.priceSrc === 'vendor sheet', [a.price, a.priceSrc]);
   check('…order quantities do not depend on price: same sales (40 × 10 pcs) → same order for both (88-4-4=10 in cases of 10 = 100 pcs ÷ 10; 88-3-3=10 in cases of 20 = 200 pcs ÷ 10)', a.caseQty === 10 && a.orderUnits % 10 === 0 && a.orderUnits === c.orderUnits && c.caseQty === 20 && c.orderUnits % 20 === 0, [a.orderUnits, c.caseQty, c.orderUnits]);
   const rh = rf3(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
-  const csv = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  const csv = (rh.match(/async function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0] + '\n' + (rh.match(/async function rvoSheetBlob\(lines\) \{[\s\S]*?\n\}/) || [''])[0] + '\nfunction rvoLoadXlsx() { return Promise.reject(new Error("no Excel in the test")); }';
   const head = (csv.match(/var head = (\[[^\]]*\])/) || [])[1];
   const H2 = head ? JSON.parse(head.replace(/'/g, '"')) : [];
-  const total = (csv.match(/lines\.push\(\[cell\('TOTAL'\)[\s\S]*?\]\.join\(','\)\);/) || [''])[0];
-  const totalCells = total ? (total.match(/\]\.join/) ? total.slice(total.indexOf('[') + 1, total.lastIndexOf(']')) : '') : '';
+  const total = (csv.match(/lines\.push\(\[cell\('TOTAL'\)[\s\S]*?\[\]\)\)\);/) || [''])[0];
+  const totalCells = total ? total.slice(total.indexOf('[') + 1, total.lastIndexOf(']')) : '';
   // Owner (2026-10-07, later): pieces + cases only (replaces the old "Qty per Case / Pieces" column checks).
   check('CSV: Order Qty (pieces) · Cases · Pieces per Case (original box) — SKU Mgr box 200 pcs for 88-3-3=10 (20 × 10)',
     H2[5] === 'Order Qty (pieces)' && H2[6] === 'Cases' && H2[7] === 'Pieces per Case (original box)' && H2[8] === 'Price per Piece' && c.caseQty * c.packSize === 200 && c.casePcs === 200, H2);
@@ -3665,7 +3665,7 @@ console.log('\nReorder vendor CSV: pieces and cases add up on every line');
 {
   const { readFileSync: rf6 } = await import('node:fs');
   const rh = rf6(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
-  const fn = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  const fn = (rh.match(/async function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0] + '\n' + (rh.match(/async function rvoSheetBlob\(lines\) \{[\s\S]*?\n\}/) || [''])[0] + '\nfunction rvoLoadXlsx() { return Promise.reject(new Error("no Excel in the test")); }';
   let out = '';
   const RVOx = { loaded: true, off: {}, edits: { '24-9-9=10': 31 }, meta: {} };
   const rowsX = [
@@ -3677,7 +3677,7 @@ console.log('\nReorder vendor CSV: pieces and cases add up on every line');
     { sku: '24-8-8=5', packSize: 5, caseQty: 0, casePcs: null, needUnits: 7, orderUnits: 7, price: 0.1, vendor: 'JQ' } ];
   const docX = { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } };
   const BlobX = function (parts) { out = parts.join(''); };
-  new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
+  await new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; return rvoCsv();')(
     docX, RVOx, () => rowsX, () => ({ ok: true, dup: [], text: '' }), BlobX, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
   const parse = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { r.push(cur); cur = ''; } else cur += ch; } r.push(cur); return r; };
   const L = out.replace(/^﻿/, '').split('\r\n').map(parse), H = L[0], col = n => H.indexOf(n);
@@ -3837,9 +3837,9 @@ console.log('\nReorder: 30 / 90 day sales per channel per part # (rows, 🔍, CS
     fs.length === 2 && fs.some(x => x.sku === F + '=1000' && x.ch === 'eBay' && x.u90 === 3 && x.p90 === 3000 && x.p30 === 0) && fs.some(x => x.sku === F + '=10' && x.ch === 'Amazon' && x.p90 === 300), fs);
   const { readFileSync: rf9 } = await import('node:fs');
   const rh = rf9(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
-  const fn = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  const fn = (rh.match(/async function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0] + '\n' + (rh.match(/async function rvoSheetBlob\(lines\) \{[\s\S]*?\n\}/) || [''])[0] + '\nfunction rvoLoadXlsx() { return Promise.reject(new Error("no Excel in the test")); }';
   let out = '';
-  new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
+  await new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; return rvoCsv();')(
     { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } }, { loaded: true, off: {}, edits: {}, meta: {} },
     () => [{ ...a, vendor: 'JQ', orderUnits: a.orderUnits || 10 }], () => ({ ok: true, dup: [], text: '' }), function (p) { out = p.join(''); }, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
   const pc = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { r.push(cur); cur = ''; } else cur += ch; } r.push(cur); return r; };
@@ -6839,6 +6839,68 @@ console.log('\n🖨 Print Log: scans saved on the station until recorded, never 
   check('…every Print Log scan goes through that list (never a single send that can be lost); the window-not-in-front warning; unsent scans stay on the list after a reload',
     /psPlQueueAdd\(\{ id: _psPlNewId\(\), tracking: clean, at: ts \}, entry\);/.test(ph) && !/fetch\(PS_WORKER \+ '\/ship\/print-log', \{\n    method: 'POST'/.test(ph)
       && /The scanner is NOT typing into the Print Log/.test(ph) && /var nf = !document\.hasFocus\(\);/.test(ph) && /psPlQueueRead\(\)\.forEach\(function\(q\) \{ if \(!psPlScans\.some/.test(ph), null);
+}
+
+// Owner (2026-10-17): "24-2-1&2=10-X / =10X- … our vendor only knows =10X — put it as =10X on the sheet"; "=100X we sell as a
+// whole case of =10X — add its quantities to =10X, give a button"; "26-4-3=100 inside bag UPC on the sheet is not right".
+console.log('\nReorder vendor sheet: =10-X is =10X · 📦 sold as a case of · our UPC codes first');
+{
+  const F = '77-2-1&2', wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const { readFileSync: rf0 } = await import('node:fs');
+  const wd = rf0(workerPath, 'utf8');
+  const dash = new Function((wd.match(/function reorderDashFix\(s\) \{[^\n]*\}/) || [''])[0] + '; return reorderDashFix;')();
+  check('reorderDashFix: 24-2-1&2=10-X / =10X- / =2-X → =10X / =10X / =2X; dashes before "=" kept (24-2-1&2=10X stays)',
+    dash('24-2-1&2=10-X') === '24-2-1&2=10X' && dash('24-2-1&2=10X-') === '24-2-1&2=10X' && dash('24-2-5&6=2-X') === '24-2-5&6=2X' && dash('24-2-1&2=10X') === '24-2-1&2=10X' && dash('24-2-1') === '24-2-1', null);
+  // Sales: Amazon =10X 30 bags (300 pcs), =100X 3 cases (300 pcs); eBay sold as "=10-X" 20 bags (200 pcs) → 800 pcs.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES (?,'B0T77211',' x',5), (?,'B0T77212',' x',2)").run(F + '=10X', F + '=100X');
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES (?,?,30,'B0T77211'), (?,?,3,'B0T77212')").run(F + '=10X', wk, F + '=100X', wk);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,20)").run(F + '=10-X', wk);
+  // Shelf: =10X 1 case of 100 pcs, =100X 1 case of 100 pcs.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, updated_at) VALUES (?,'cap',?,'C1=7-7-1',1,100,'2026-09-01'), (?,'cap',?,'C1=7-7-2',1,100,'2026-09-01')").run(F, F + '=10X', F, F + '=100X');
+  // UPCs: our table has =10X (box …017, bag …024) and an old "=10-X" row (box …999); the vendor's sheet says bag …099.
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES (?,?,'810000000024','810000000017'), (?,?,'','899999999999')").run(F + '=10X', F, F + '=10-X', F);
+  sq.prepare("INSERT INTO reorder_vendor_catalog (vendor, part, inside_upc, outside_upc, updated_at) VALUES ('JQ',?,'810000000099','810000000017',?)").run(F + '=10X', wk);
+  const Q = '/reorder/vendor-order?days=90&lead=3&cover=3';
+  const fam = d => (d.rows || []).filter(r => r.baseSku === F);
+  const d1 = await get(Q), r1 = fam(d1), a1 = r1.find(r => r.sku === F + '=10X') || {}, c1 = r1.find(r => r.sku === F + '=100X') || {};
+  // The eBay 200 pcs are shared out by Amazon sales (=10X 30 : =100X 3): =10X 300 + 182 = 482, =100X 300 + 18 = 318 → 800.
+  check('"=10-X" eBay sales count as =10X (no "=10-X" row): =10X 482 + =100X 318 = 800 pcs, every piece once', !r1.some(r => /-X$/.test(r.sku)) && a1.soldPcs === 482 && c1.soldPcs === 318 && (a1.from || []).includes(F + '=10-X'), r1.map(r => [r.sku, r.soldPcs, r.from]));
+  check('🔢 =10X uses OUR UPC codes (box 810000000017, bag 810000000024 — not the old =10-X row, not the vendor sheet\'s bag …099) and says the sheet differs',
+    a1.outsideUpc === '810000000017' && a1.insideUpc === '810000000024' && /⚠ inside bag UPC differs: our UPC codes 810000000024 .*vendor's sheet 810000000099 — using our UPC codes/.test(a1.upcWarn) && /⚠ inside bag UPC differs/.test(a1.note), [a1.outsideUpc, a1.insideUpc, a1.upcWarn]);
+  const before = { sold: (a1.calc || {}).famSoldPcs, have: (a1.calc || {}).famHave };
+  // 📦 =100X is sold as a whole case of =10X.
+  const bad = await post('/reorder/fix/case-of', { part: F + '=100X', target: '99-9-9=10X' });
+  const ok = await post('/reorder/fix/case-of', { part: F + '=100X', target: F + '=10-X' });
+  const hist = sq.prepare("SELECT * FROM reorder_history WHERE action = 'case-of' AND part = ? ORDER BY ts DESC").all(F + '=100X');
+  check('📦 POST /reorder/fix/case-of: another part ❌ refused; =100X → "=10-X" saved as =10X and kept in 🕘 History (who + what)',
+    bad.ok === false && ok.ok === true && ok.target === F + '=10X' && hist.length === 1 && hist[0].by_user && /sold as a case of 77-2-1&2=10X/.test(hist[0].detail), [bad, ok, hist]);
+  const d2 = await get(Q), r2 = fam(d2), a2 = r2.find(r => r.sku === F + '=10X') || {};
+  check('…=100X is not ordered (no row); its Amazon sales 300 pcs and Amazon stock 200 pcs are on the =10X row: sold 500 + 300 = 800, at Amazon 50 + 200 = 250 pcs',
+    !r2.some(r => r.sku === F + '=100X') && a2.soldPcs === 800 && a2.fbaPcs === 250 && (a2.caseFrom || []).some(x => x.sku === F + '=100X' && x.amzPieces === 300 && x.fbaPieces === 200) && /📦 Incl\. 77-2-1&2=100X/.test(a2.note), [r2.map(r => r.sku), a2.soldPcs, a2.fbaPcs, a2.caseFrom]);
+  // Every piece once: family sold 300 + 300 + 200 = 800 pcs; family has shelf 100 + 100 + Amazon 50 + 200 = 450 pcs — before and after.
+  const after = { sold: (a2.calc || {}).famSoldPcs, have: (a2.calc || {}).famHave };
+  console.log('    totals            expected   before   after');
+  console.log('    family sold pcs   800        ' + before.sold + '      ' + after.sold);
+  console.log('    family have pcs   450        ' + before.have + '      ' + after.have);
+  check('…inventory adds up: family sold 800 pcs and family stock 450 pcs (shelf 100 + 100, Amazon 50 + 200) the same before and after — nothing twice, nothing dropped',
+    before.sold === 800 && after.sold === 800 && before.have === 450 && after.have === 450 && (a2.otherPacks || []).some(o => o.sku === F + '=100X' && o.pcs === 100), [before, after, a2.otherPacks]);
+  const und = await post('/reorder/fix/case-of', { part: F + '=100X', target: '' });
+  const d3 = await get(Q), r3 = fam(d3);
+  check('…undo (empty target): =100X is a row of its own again, logged', und.ok && r3.some(r => r.sku === F + '=100X') && sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE action = 'case-of' AND part = ?").get(F + '=100X').n === 2, r3.map(r => r.sku));
+  // The page: 📦 button per row; the sheet is an .xlsx with the UPCs as text (no ="…"); CSV only if Excel support can't load.
+  const rh = rf0(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  // A small stand-in for SheetJS: numbers → number cells, everything else → text cells (as SheetJS does).
+  const enc = ({ r, c }) => String.fromCharCode(65 + c) + (r + 1);
+  const XLs = { utils: { encode_cell: enc, aoa_to_sheet: aoa => { const ws = {}; aoa.forEach((l, r) => l.forEach((v, c) => { if (v != null) ws[enc({ r, c })] = { t: typeof v === 'number' ? 'n' : 's', v }; })); return ws; },
+    book_new: () => ({ s: {} }), book_append_sheet: (wb, ws, n) => { wb.s[n] = ws; } }, write: wb => wb };
+  let wbOut = null;
+  const sb = new Function('XLSX', 'Blob', (rh.match(/async function rvoSheetBlob\(lines\) \{[\s\S]*?\n\}/) || [''])[0] + '\nfunction rvoLoadXlsx() { return Promise.resolve(); } return rvoSheetBlob;')(XLs, function (p) { wbOut = p[0]; });
+  const res = await sb([['Priority', 'Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty (pieces)', 'Cases', 'P', 'Price per Piece', 'Line Total', 'D', 'Note', 'A'],
+    ['', '26-4-3=100', { upc: '810097204638' }, { upc: '810097206021' }, 'x', 1440, 10, 144, 0.05, '72.00', '', '', '']]);
+  const ws = (wbOut && wbOut.s.Order) || {};
+  check('…the .xlsx: 26-4-3=100 box 810097204638 / bag 810097206021 are TEXT cells with every digit (no ="…", no 8.1E+11); Line Total a number 72.00',
+    res.ext === '.xlsx' && ws.C2.t === 's' && ws.C2.v === '810097204638' && ws.D2.t === 's' && ws.D2.v === '810097206021' && ws.J2.t === 'n' && ws.J2.v === 72 && ws.J2.z === '0.00' && !/=""/.test(JSON.stringify(ws)), [ws.C2, ws.D2, ws.J2]);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'; DELETE FROM upc WHERE base_sku = '${F}'; DELETE FROM reorder_vendor_catalog WHERE part LIKE '${F}%'; DELETE FROM reorder_case_of WHERE part LIKE '${F}%'`);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

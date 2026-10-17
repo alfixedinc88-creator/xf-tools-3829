@@ -1171,6 +1171,9 @@ function mlParent(p) { return String(p || '').split('=')[0].trim().toUpperCase()
 
 // Real, established part-number format: digits-digits-digits(&digits)=qty
 // Distinguishes real SKUs from randomized legacy Amazon MSKU codes.
+// Owner (2026-10-17): "24-2-1&2=10-X / =10X- are the same as =10X — our vendor only knows =10X". Dashes after the last
+// "=" are dropped, so every such part # is the same part # (sales, stock, UPCs, the vendor's sheet).
+function reorderDashFix(s) { return String(s || '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')); }
 function reorderIsProperFormat(sku) {
   return /^\d+(-\d+){1,3}(&\d+)?=\d+/.test(sku) || /^\d+(-\d+){1,3}$/.test(sku);
 }
@@ -2132,6 +2135,17 @@ function reorderVendorName(v) {
   return REORDER_VENDOR_ALIAS[t.toUpperCase()] || t;
 }
 
+// ⚠ The UPC sources of a part # that disagree (ours / ✏️ fix / vendor sheet), in plain words — '' when they agree.
+function reorderUpcWarn(u, fx, ct) {
+  const d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
+  const out = [];
+  for (const [k, lab] of [['outside_upc', 'outside box'], ['inside_upc', 'inside bag']]) {
+    const src = [['our UPC codes', u && u[k]], ['✏️ fix', fx && fx[k]], ["vendor's sheet", ct && ct[k]]].filter(x => d(x[1]));
+    const vals = [...new Set(src.map(x => d(x[1])))];
+    if (vals.length > 1) out.push(`⚠ ${lab} UPC differs: ${src.map(x => x[0] + ' ' + String(x[1]).trim()).join(' / ')} — using ${src[0][0]}`);
+  }
+  return out.join(' · ');
+}
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   const days = Math.round(num('days', 90, 7, 730));
@@ -2154,15 +2168,16 @@ async function reorderVendorOrder(env, url) {
   await reorderFixTables(env);
   const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
   const fromMap = {};
+  const N = raw => reorderDashFix(reorderCleanPart(U(raw))); // the part # we and the vendor use (=10-X → =10X)
   const P = raw => {
-    const r = U(raw), c = reorderCleanPart(r);
-    const out = alias[r] || alias[c] || c;
+    const r = U(raw), c0 = reorderCleanPart(r), c = reorderDashFix(c0);
+    const out = alias[r] || alias[c0] || alias[c] || c;
     if (r && out !== r) (fromMap[out] = fromMap[out] || new Set()).add(r);
     return out;
   };
-  const cat = {}, catAll = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; (catAll[k] = catAll[k] || []).push(r); });
+  const cat = {}, catAll = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = N(r.part); if (!cat[k] || U(r.part) === k) cat[k] = r; (catAll[k] = catAll[k] || []).push(r); });
   // 💲 Newest price per piece paid on an order / shipment (on the way), when the vendor sheet has none.
-  const incPrice = {}; (await all('SELECT part, price, updated_at, title, vendor FROM reorder_incoming WHERE price > 0 ORDER BY updated_at').catch(() => [])).forEach(r => { incPrice[U(r.part)] = r; });
+  const incPrice = {}; (await all('SELECT part, price, updated_at, title, vendor FROM reorder_incoming WHERE price > 0 ORDER BY updated_at').catch(() => [])).forEach(r => { incPrice[N(r.part)] = r; });
   // 💲 Owner: "a lot of them have no price — get it from SKU Mgr, the newest one": the price per piece on the
   // part #'s most recently updated SKU Mgr row (dated by the 💲 price history when that price is in it), used
   // only when neither the vendor sheet nor an order / shipment has one.
@@ -2187,7 +2202,10 @@ async function reorderVendorOrder(env, url) {
     }).filter(Boolean).sort((x, y) => (y.same - x.same) || String(y.at).localeCompare(String(x.at)));
     return c.length ? { price: c[0].price, priceAt: c[0].at, priceSrc: c[0].src + ' of ' + c[0].k + ' (same item)' } : { price: null, priceAt: '', priceSrc: '' };
   };
-  const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
+  const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { const k = N(r.part); if (!fixes[k] || U(r.part) === k) fixes[k] = r; });
+  // 📦 Owner (2026-10-17): "=100X we sell as a whole case of =10X — don't order =100X, add its quantity to =10X". Saved per part #.
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS reorder_case_of (part TEXT PRIMARY KEY, target TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
+  const caseOf = {}; (await all('SELECT part, target FROM reorder_case_of')).forEach(r => { caseOf[N(r.part)] = N(r.target); });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
   // link to the listing too. Keyed by the raw SKU and by the corrected part #.
@@ -2279,7 +2297,7 @@ async function reorderVendorOrder(env, url) {
     if (r.vendor) vendors.add(reorderVendorName(r.vendor));
   }
   const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
-  const upc = {}; upcRows.forEach(r => { upc[P(r.sku)] = r; });
+  const upc = {}; upcRows.forEach(r => { const k = P(r.sku); if (!upc[k] || U(r.sku) === k) upc[k] = r; }); // the =10X row's own UPCs win over =10-X's
   const prodRows = await all('SELECT base_sku, name FROM products');
   const prodName = {}; prodRows.forEach(r => { const b = U(r.base_sku); if (b && r.name && !prodName[b]) prodName[b] = r.name; });
 
@@ -2295,6 +2313,20 @@ async function reorderVendorOrder(env, url) {
     g.forEach(r => { claimed.add(U(r.sku)); });
     const fbaAvail = g.reduce((a, r) => a + Math.max(0, parseFloat(r.available) || 0), 0);
     (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: pick.asin || '', amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: fbaAvail * pack(sku), fbaName: pick.product_name || '' });
+  }
+  // 📦 Sold as a case of another part # (=100X → =10X): its Amazon sales (pieces) and FBA stock go on that part #'s row; it
+  // gets no row of its own, and its shelf / on-the-way stock count as another pack of the part — every piece once.
+  for (const b in fbaByBase) {
+    const l = fbaByBase[b], out = [];
+    for (const x of l) {
+      const t = caseOf[x.sku];
+      if (!t || t === x.sku || U(reorderGetBaseSku(t)) !== b) { out.push(x); continue; }
+      let y = l.find(z => z.sku === t) || out.find(z => z.sku === t);
+      if (!y) { y = { sku: t, asin: '', amzUnits: 0, amzPieces: 0, fbaAvailPieces: 0, fbaName: x.fbaName }; out.push(y); }
+      y.amzPieces += x.amzPieces; y.amzUnits += x.amzPieces / pack(t); y.fbaAvailPieces += x.fbaAvailPieces;
+      (y.caseFrom = y.caseFrom || []).push({ sku: x.sku, amzPieces: Math.round(x.amzPieces), fbaPieces: Math.round(x.fbaAvailPieces) });
+    }
+    fbaByBase[b] = out.filter((z, i, a) => a.indexOf(z) === i);
   }
   const fbaSkuSet = new Set(); Object.values(fbaByBase).forEach(l => l.forEach(v => fbaSkuSet.add(v.sku)));
 
@@ -2460,6 +2492,8 @@ async function reorderVendorOrder(env, url) {
       if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
+      (t.caseFrom || []).forEach(x => notes.push(`📦 Incl. ${x.sku} (sold as a case of ${t.sku}): ${x.amzPieces} pcs Amazon sales, ${x.fbaPieces} pcs at Amazon — ordered as ${t.sku}`));
+      if (reorderUpcWarn(u, fx, ct)) notes.push(reorderUpcWarn(u, fx, ct));
       const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
       const row = {
         sku: t.sku, baseSku: b, fbaSku: t.fbaSku, packSize: ps,
@@ -2470,7 +2504,11 @@ async function reorderVendorOrder(env, url) {
         sameAsin: Object.entries(sameAsin[t.sku] || {}).map(([sku, x]) => ({ sku, units: Math.round(x.units), asin: x.asin })),
         amazonCode: /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(t.sku),
         vendor, vendorSrc, vendors: [...vendors].sort(), lastVendor: lv ? lv.v : '',
-        outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
+        // 🔢 Owner (2026-10-17, 26-4-3=100: "the sheet's inside bag UPC is not right — the system shows another one"): our
+        // UPC codes (SKU Mgr → 🔢, what every scan uses) first, then a ✏️ fix, the vendor's sheet last; any disagreement → ⚠ note.
+        outsideUpc: pick(u.outside_upc, fx.outside_upc, ct.outside_upc), insideUpc: pick(u.inside_upc, fx.inside_upc, ct.inside_upc),
+        upcWarn: reorderUpcWarn(u, fx, ct),
+        caseFrom: t.caseFrom || [],
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
         // 💲 Newest price per single piece: the vendor's sheet (latest import), else the latest order / shipment.
         // (No vendor names / file titles in the text — only owners see vendor names.)
@@ -8637,6 +8675,28 @@ const _app = {
       }
       if (url.pathname === '/reorder/fix' && method === 'POST') {
         return await reorderSaveFix(request, env, roCs || session);
+      }
+      // 📦 Owner (2026-10-17): "=100X we sell as a whole case of =10X — give a button so I can tell the system". POST
+      // { part, target } (target '' = undo). Same part (before "=") only; every change is kept in Reorder History.
+      if (url.pathname === '/reorder/fix/case-of' && method === 'POST') {
+        const b = await request.json().catch(() => ({}));
+        const N = x => reorderDashFix(reorderCleanPart(String(x || '').trim().toUpperCase()));
+        const part = N(b.part), target = N(b.target);
+        if (!part || !/=/.test(part)) return _roResp({ ok: false, error: 'Part # needed' }, 400);
+        if (target && (target === part || reorderGetBaseSku(target).toUpperCase() !== reorderGetBaseSku(part).toUpperCase()))
+          return _roResp({ ok: false, error: 'Pick another part # of the same part (' + reorderGetBaseSku(part) + ')' }, 400);
+        await env.DB.prepare('CREATE TABLE IF NOT EXISTS reorder_case_of (part TEXT PRIMARY KEY, target TEXT NOT NULL, by_user TEXT, at TEXT)').run();
+        const before = await env.DB.prepare('SELECT target FROM reorder_case_of WHERE part = ?').bind(part).first().catch(() => null);
+        const who = _roWho(roCs || session), now = new Date().toISOString();
+        if (target) await env.DB.prepare('INSERT INTO reorder_case_of (part, target, by_user, at) VALUES (?,?,?,?) ON CONFLICT(part) DO UPDATE SET target = excluded.target, by_user = excluded.by_user, at = excluded.at')
+          .bind(part, target, who, now).run();
+        else await env.DB.prepare('DELETE FROM reorder_case_of WHERE part = ?').bind(part).run();
+        await reorderLog(env, who, 'case-of', part, target ? `sold as a case of ${target} (ordered as ${target})` + (before ? ` — was ${before.target}` : '') : `not sold as a case any more` + (before ? ` (was ${before.target})` : ''));
+        return _roResp({ ok: true, part, target: target || '' });
+      }
+      if (url.pathname === '/reorder/fix/case-of' && method === 'GET') {
+        await env.DB.prepare('CREATE TABLE IF NOT EXISTS reorder_case_of (part TEXT PRIMARY KEY, target TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
+        return _roResp({ ok: true, list: ((await env.DB.prepare('SELECT part, target, by_user, at FROM reorder_case_of ORDER BY part').all()).results || []) });
       }
       // 🏷 Barcode / vendor for any part # (owner: "search and add the barcode; merge the outside box and inside bag
       // UPC on one part #; set the vendor so it only shows under that vendor").

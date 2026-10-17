@@ -2148,7 +2148,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCopy()" title="Copy every weird part # with its listing title(s) — paste into Excel / Google Sheets">📋 Copy weird list</button>
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCsv()" title="Same list as a CSV file">⬇ Weird list CSV</button>
         <span style="flex:1"></span>
-        <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()">⬇ Download CSV for vendor</button>
+        <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()" title="An Excel file (.xlsx) for the vendor — UPCs as text, every digit">⬇ Download sheet for vendor</button>
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPartOpen()" title="Any part #, even one not in this list: its outside box / inside bag UPC (both on one part #) and the vendor it is ordered from">🏷 Barcode / vendor for a part #</button>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:12px;color:var(--text3)">
@@ -3983,6 +3983,7 @@ function rvoDaysSel() {
 }
 async function rvoLoad() {
   var g = function (id) { return document.getElementById(id); };
+  rvoLoadXlsx().catch(function () {}); // ready before ⬇ Download sheet for vendor
   if (!RVO.inlInit) { RVO.inlInit = 1; try { if (localStorage.getItem('rvo_inline') === '1') g('rvo-inline').checked = true; } catch (e) {} }
   if (Object.keys(RVO.pend).length && !confirm('You have unsaved changes in the table. Recalculate anyway and lose them?\n(Cancel, then 💾 Save all first.)')) return;
   RVO.pend = {}; rvoInlBar();
@@ -4087,7 +4088,8 @@ function rvoCols() {
   var miss = function (v) { return v ? escHtml(v) : '<span style="color:var(--red)">—</span>'; };
   var cols = [
     { k: 'chk', label: '<input type="checkbox" checked onchange="rvoAll(this.checked)">', w: 44, cell: function (r) { return '<input type="checkbox" ' + (RVO.off[r.sku] ? '' : 'checked') + ' onchange="rvoToggle(\'' + escHtml(r.sku) + '\',this.checked)">'; } },
-    { k: 'edit', label: '', w: 56, cell: function (r) { return '<button onclick="rvoOpenEdit(' + RVO.rows.indexOf(r) + ')" title="Fix part #, UPC, description, vendor, ASIN, case qty" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">✏️</button>'; } },
+    { k: 'edit', label: '', w: 84, cell: function (r) { return '<button onclick="rvoOpenEdit(' + RVO.rows.indexOf(r) + ')" title="Fix part #, UPC, description, vendor, ASIN, case qty" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">✏️</button>'
+      + ' <button onclick="rvoCaseOf(' + RVO.rows.indexOf(r) + ')" title="📦 Sold as a whole case of another part # (e.g. =100X is a case of =10X): don\'t order it, add its sales to that part #' + ((r.caseFrom || []).length ? ' — incl. ' + r.caseFrom.map(function (x) { return x.sku; }).join(', ') : '') + '" style="border:1px solid ' + ((r.caseFrom || []).length ? '#15803d' : 'var(--border)') + ';background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">📦</button>'; } },
     { k: 'sku', label: 'Part #', w: 190, sort: function (r) { return r.sku; }, cell: function (r) { var iss = r.issues || [];
       return (rvoInlOn() ? rvoInlBox(r, 'part', '150px') : '<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>') + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
         + (r.urgent ? ' <span title="Runs out in ' + r.daysLeft + ' days — before this order can get here. The vendor CSV says: URGENT — ship in the FIRST container." style="font-size:10px;font-weight:800;color:#fff;background:var(--red);border-radius:4px;padding:0 4px">🔥 URGENT · ' + r.daysLeft + 'd</span>' : '')
@@ -5289,7 +5291,45 @@ function rvoPartMissing() {
     : '✅ Every part # in the list now has an outside box UPC.';
   document.getElementById('rvo-p-save').style.display = 'none';
 }
-function rvoCsv() {
+// 📦 Owner (2026-10-17): "24-2-1&2=100X we sell as a whole case of =10X — we don't order =100X, add its quantities to =10X;
+// give a button so I can let the system know which one we sell as a case". Saved on the server (Reorder 🕘 History).
+async function rvoCaseOf(i) {
+  var r = RVO.rows[i]; if (!r) return;
+  var fam = (RVO.rows || []).filter(function (x) { return x.baseSku === r.baseSku && x.sku !== r.sku; }).map(function (x) { return x.sku; });
+  var has = (r.caseFrom || []).map(function (x) { return x.sku; });
+  var a = prompt('📦 Sold as a whole case\n\nIs ' + r.sku + ' sold as a whole case of another part #? Type that part # (same part ' + r.baseSku + ', e.g. ' + (fam[0] || r.baseSku + '=10X') + ').\n'
+    + r.sku + ' is then not ordered — its Amazon sales and Amazon stock are added to that part #, and the vendor gets that part #.'
+    + (fam.length ? '\n\nThis part\'s other part #s: ' + fam.join(', ') : '')
+    + (has.length ? '\n\nAlready on this row (sold as a case of ' + r.sku + '): ' + has.join(', ') + '\nTo undo one, type: undo ' + has[0] : ''), '');
+  if (a == null || !(a = a.trim())) return;
+  var undo = /^undo\s+/i.test(a), part = undo ? a.replace(/^undo\s+/i, '') : r.sku, target = undo ? '' : a;
+  try {
+    var res = await wFetch(W + '/reorder/fix/case-of', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, target: target }) });
+    var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Not saved');
+    showToast(target ? '📦 ' + d.part + ' = a case of ' + d.target + ' — recalculating' : '↩ ' + d.part + ' is ordered on its own again — recalculating');
+    rvoLoad();
+  } catch (e) { alert('Not saved: ' + e.message); }
+}
+// Rows (arrays; a UPC is { upc }) → { blob, ext }: .xlsx with the UPCs as text cells, or .csv if Excel support can't load.
+async function rvoSheetBlob(lines) {
+  try {
+    await rvoLoadXlsx();
+    var aoa = lines.map(function (l) { return l.map(function (c) { return c && typeof c === 'object' ? c.upc : c; }); });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    lines.forEach(function (l, ri) { l.forEach(function (c, ci) { if (c && typeof c === 'object') { var ad = XLSX.utils.encode_cell({ r: ri, c: ci }); if (c.upc) ws[ad] = { t: 's', v: c.upc, z: '@' }; else delete ws[ad]; } }); });
+    // Line Total ("72.00") as a number shown 0.00, so the vendor's Excel can add it up.
+    for (var ri = 1; ri < lines.length; ri++) { var ad9 = XLSX.utils.encode_cell({ r: ri, c: 9 }), lt = ws[ad9]; if (lt && lt.t === 's' && /^-?\d+\.\d\d$/.test(lt.v) && lines[ri].length > 12) ws[ad9] = { t: 'n', v: parseFloat(lt.v), z: '0.00' }; }
+    ws['!cols'] = (lines[0] || []).map(function (h, ci) { return { wch: ci === 4 || ci === 11 ? 40 : Math.max(10, Math.min(30, String(h).length + 2)) }; });
+    var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Order');
+    var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return { blob: new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), ext: '.xlsx' };
+  } catch (e) {
+    var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+    var csv = lines.map(function (l) { return l.map(function (c) { return c && typeof c === 'object' ? (c.upc ? '"=""' + c.upc + '"""' : '') : cell(c); }).join(','); }).join('\r\n');
+    return { blob: new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), ext: '.csv' };
+  }
+}
+async function rvoCsv() {
   if (!RVO.loaded) { alert('Press Calculate first.'); return; }
   var v = document.getElementById('rvo-vendor').value;
   var rows = rvoVisible().filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
@@ -5307,8 +5347,9 @@ function rvoCsv() {
       + noV.slice(0, 30).map(function (r) { return r.sku + ' — ' + rvoQty(r) + ' units'; }).join('\n') + (noV.length > 30 ? '\n…' : '')
       + '\n\nSet their vendor with ✏️ (or pick "(no vendor in SKU Mgr)" to see them).\nOK = download ' + v + '\'s file anyway.')) return;
   }
-  var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
-  var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
+  var cell = function (x) { return x == null ? '' : x; };
+  // 🔢 UPCs are TEXT cells in the Excel file (owner 2026-10-17: the vendor saw ="810097…" in the CSV) — every digit, no 8.1E+11.
+  var upcCell = function (x) { return { upc: String(x || '').replace(/"/g, '').trim() }; };
   // Owner: "the CSV for the vendor needs the newest price of each item and what this order will cost in total".
   // Cost = pieces × newest price per single piece (vendor sheet, else the latest order, else SKU Mgr's newest
   // price, else the same item's).
@@ -5325,7 +5366,7 @@ function rvoCsv() {
   var CH = ['Amazon', 'eBay', 'Walmart', 'Shopify'], chTot = {};
   CH.forEach(function (c) { head.push(c + ' 30d (pcs)', c + ' 90d (pcs)'); chTot[c] = [0, 0]; });
   var chCells = function (r) { return CH.reduce(function (a, c) { var x = (r.sales || {})[c] || {}; chTot[c][0] += x.p30 || 0; chTot[c][1] += x.p90 || 0; return a.concat([x.p30 || 0, x.p90 || 0]); }, []); };
-  var lines = [head.join(',')], money = 0, pcsTot = 0, casesTot = 0, unpriced = [];
+  var lines = [head], money = 0, pcsTot = 0, casesTot = 0, unpriced = [];
   rows.forEach(function (r) {
     var ps = r.packSize || 1, q = rvoQty(r);
     var box = r.casePcs > 0 ? r.casePcs : r.caseQty ? Math.round(r.caseQty * ps * 1000) / 1000 : 0;
@@ -5342,28 +5383,31 @@ function rvoCsv() {
     // Owner: "we sold ~7,000, have 1,000,000+, still says buy a lot" — the whole family's math on every line, and the server's ⚠ warnings.
     if (r.calc) notes.push('Family ' + r.baseSku + ': sold ' + r.calc.famSoldPcs + ' pcs in ' + Math.round(r.calc.months * 30) + ' d, needs ' + r.calc.famTarget + ' for ' + r.calc.horizon + ' mo, has ' + r.calc.famHave + ' -> family order ' + r.calc.famNeed + ' pcs'
       + ((r.calc.famSales || [])[0] ? ' (biggest seller: ' + r.calc.famSales[0].sku + ' ' + r.calc.famSales[0].ch + ' ' + r.calc.famSales[0].u90 + ' units = ' + r.calc.famSales[0].p90 + ' pcs in 90 d)' : ''));
+    (r.caseFrom || []).forEach(function (x) { notes.push('Incl. ' + x.sku + ' (we sell it as a whole case of ' + r.sku + ')'); });
     String(r.note || '').split(' · ').filter(function (x) { return /^⚠/.test(x); }).forEach(function (x) { notes.push(x); });
     lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), pcs, cases, box || '',
-      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].concat(chCells(r)).join(','));
+      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].concat(chCells(r)));
   });
   money = Math.round(money * 100) / 100;
-  lines.push('');
+  lines.push([]);
   lines.push([cell('TOTAL'), cell(urgentN ? urgentN + ' URGENT - ship in the FIRST container' : ''), '', '', cell(rows.length + ' part #s'), Math.round(pcsTot * 1000) / 1000, casesTot, '', '', money.toFixed(2), '',
-    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), ''].concat(CH.reduce(function (a, c) { return a.concat(chTot[c]); }, [])).join(','));
+    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), ''].concat(CH.reduce(function (a, c) { return a.concat(chTot[c]); }, [])));
   // Every part # of each family on this order that sold (=OLD, bulk packs, eBay-only SKUs …), so a wrong sales number shows.
   var seenFam = {}, famLines = [];
   rows.forEach(function (r) { if (!r.calc || seenFam[r.baseSku]) return; seenFam[r.baseSku] = 1;
-    (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.p30, x.p90].join(',')); }); });
+    (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.p30, x.p90]); }); });
   if (famLines.length) {
-    lines.push('');
+    lines.push([]);
     // Owner (2026-10-07): "the report in PIECES only — boxes hold different counts, I don't want to convert packs myself".
-    lines.push(cell('SALES BY PART # - whole family, 30 / 90 days, in PIECES'));
-    lines.push(['Parent', 'Part #', 'Channel', 'Pieces 30d', 'Pieces 90d'].join(','));
+    lines.push([cell('SALES BY PART # - whole family, 30 / 90 days, in PIECES')]);
+    lines.push(['Parent', 'Part #', 'Channel', 'Pieces 30d', 'Pieces 90d']);
     lines = lines.concat(famLines);
   }
-  var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
-  var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  // 📗 An Excel file (.xlsx): UPCs as text, numbers as numbers. Only if Excel support can't load: the old .csv.
+  var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10);
+  var sheet = await rvoSheetBlob(lines);
+  name += sheet.ext;
+  var a = document.createElement('a'); a.href = URL.createObjectURL(sheet.blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers' + (urgentN ? ', 🔥 ' + urgentN + ' URGENT at the top' : '') + ') · 💲 $' + money.toFixed(2) + (unpriced.length ? ' (+' + unpriced.length + ' with no price)' : '') + ' · ✓ totals match: ' + ck.text);
   // Remember the vendor each part # was ordered from — next time a part #
