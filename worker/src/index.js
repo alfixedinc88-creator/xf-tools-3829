@@ -1935,7 +1935,10 @@ async function reorderPartInfo(env, raw) {
   const base = reorderGetBaseSku(P), all = async (sql, b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
   const fix = (await all('SELECT * FROM reorder_fix WHERE part = ?', [P]))[0] || null;
   const catalog = (await all('SELECT vendor, part, description, outside_upc, inside_upc, price, price_at FROM reorder_vendor_catalog WHERE UPPER(part) = ?', [P])).map(r => ({ ...r, vendor: reorderVendorName(r.vendor) }));
-  const upc = (await all('SELECT outside_upc, inside_upc FROM upc WHERE UPPER(TRIM(sku)) = ?', [P]))[0] || null;
+  const upcAll = await all("SELECT outside_upc, inside_upc FROM upc WHERE UPPER(TRIM(sku)) = ? ORDER BY COALESCE(updated_at, '') DESC, id DESC", [P]);
+  const upc = upcAll[0] || null; // newest row (the one the vendor file uses)
+  const D = x => String(x == null ? '' : x).replace(/\D/g, '');
+  const upcDup = [...new Set(upcAll.map(r => D(r.outside_upc) + '|' + D(r.inside_upc)).filter(x => x !== '|'))].map(x => { const [o, i] = x.split('|'); return { outside_upc: o, inside_upc: i }; });
   const edit = (await all('SELECT outside_upc, inside_upc, by_user, at FROM upc_edit WHERE part = ?', [P]))[0] || null;
   const builtIn = VENDOR_UPC.filter(r => String(r[0]).toUpperCase() === P).map(r => ({ outside_upc: r[1] || '', inside_upc: r[2] || '' }))[0] || null;
   const links = (await all('SELECT upc, by_user, at FROM upc_link WHERE UPPER(part) = ?', [P]));
@@ -1957,7 +1960,7 @@ async function reorderPartInfo(env, raw) {
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
     retired: (await upcRetiredMap(env)).get(P) || null,
     caseOf: ((await all('SELECT target FROM reorder_case_of WHERE part = ?', [P]))[0] || {}).target || '',
-    fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
+    fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcDup: upcDup.length > 1 && !edit ? upcDup : [], upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
 }
 // One row's fix. Fields not sent keep what was saved before.
 async function reorderSaveFixOne(env, b, who) {
@@ -2280,7 +2283,10 @@ async function reorderUpcCheck(env) {
   const okMap = await upcCheckOkMap(env), okList = [], retMap = await upcRetiredMap(env);
   const T = x => String(x == null ? '' : x).replace(/\D/g, '');
   const ours = new Map();
-  (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => { const p = U(r.sku); if (p && (T(r.inside_upc) || T(r.outside_upc)) && !ours.has(p)) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: 'UPC list' }); });
+  const dupRows = {}; // a part # on 2+ rows of our UPC list with different codes
+  (await all("SELECT sku, inside_upc, outside_upc FROM upc ORDER BY COALESCE(updated_at, ''), id")).forEach(r => { const p = U(r.sku); if (!p || !(T(r.inside_upc) || T(r.outside_upc))) return;
+    const pair = T(r.outside_upc) + '|' + T(r.inside_upc); (dupRows[p] = dupRows[p] || new Set()).add(pair);
+    ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: 'UPC list' }); }); // newest row wins (same as the vendor file)
   (await all('SELECT part, inside_upc, outside_upc FROM upc_edit')).forEach(r => { const p = U(r.part); if (p) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: '🔢 saved here' }); });
   const refs = {}, add = (p, name, o, i) => { p = U(p); if (p && (T(o) || T(i))) (refs[p] = refs[p] || []).push({ name, outside: T(o), inside: T(i) }); };
   for (const [part, o, i] of VENDOR_UPC) add(part, 'vendor box/bag list', o, i);
@@ -2316,6 +2322,7 @@ async function reorderUpcCheck(env) {
     if (sw) issues.push({ k: 'swapped', t: `in the wrong box: ${upcInWrongBox(ui, sw.outside, sw.inside) ? `our inside bag ${o.inside} is the ${sw.name}'s OUTSIDE box ${sw.outside}` : `our outside box ${o.outside} is the ${sw.name}'s INSIDE bag ${sw.inside}`}` });
     [[o.outside, 'outside box'], [o.inside, 'inside bag']].forEach(([v, lab]) => { if (d(v) && !upcCheckOk(v)) issues.push({ k: 'typo', t: `${lab} ${v} is not a real UPC (last digit wrong — a typo?)` }); });
     if (ui && !uo) issues.push({ k: 'nobox', t: 'inside bag UPC but NO outside box UPC' });
+    if (o.from === 'UPC list' && dupRows[part] && dupRows[part].size > 1) issues.push({ k: 'dup', t: `on ${dupRows[part].size} rows of our UPC list with different codes (${[...dupRows[part]].map(x => { const [bo, bi] = x.split('|'); return 'box ' + (bo || '—') + ' · bag ' + (bi || '—'); }).join(' / ')}) — save the right ones once (✏️ Type them or ✔)` });
     if (ui && ui === uo) issues.push({ k: 'same', t: 'outside box and inside bag are the same code' });
     if (!sw) rf.forEach(r => [['outside', 'outside box'], ['inside', 'inside bag']].forEach(([k, lab]) => {
       if (d(o[k]) && d(r[k]) && d(o[k]) !== d(r[k])) issues.push({ k: 'differs', t: `${lab}: ours ${o[k]}, ${r.name} ${r[k]}` });
@@ -2487,8 +2494,10 @@ async function reorderVendorOrder(env, url) {
     bo.skus.add(s);
     if (r.vendor) vendors.add(reorderVendorName(r.vendor));
   }
-  const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
-  const upc = {}; upcRows.forEach(r => { const k = P(r.sku); if (!upc[k] || U(r.sku) === k) upc[k] = r; }); // the =10X row's own UPCs win over =10-X's
+  // Owner (2026-10-17, 26-4-3=100 "we already fixed it, the sheet still shows 810097201638"): a part # on 2 rows of our UPC list —
+  // the ✏️ window showed one, the vendor file used the other. Now everywhere: the exact part # row first, then the NEWEST one.
+  const upcRows = await all("SELECT sku, inside_upc, outside_upc FROM upc ORDER BY COALESCE(updated_at, ''), id");
+  const upc = {}; upcRows.forEach(r => { const k = P(r.sku), x = U(r.sku) === k; if (!upc[k] || x || !upc[k]._x) upc[k] = { ...r, _x: x }; }); // the =10X row's own UPCs win over =10-X's
   // 🔢 Saved here (SKU Mgr → 🔢 / 🔢 Check every UPC) wins — the same codes every scan uses.
   (await all('SELECT part, inside_upc, outside_upc FROM upc_edit')).forEach(r => { const k = P(r.part); if (k) upc[k] = { sku: r.part, inside_upc: r.inside_upc, outside_upc: r.outside_upc }; });
   const upcOkMap = await upcCheckOkMap(env);
@@ -3747,7 +3756,7 @@ async function upcSources(env, parts) {
   ed.byPart.forEach((e, p) => add(p, 'edit', e.inside, e.outside, { by: e.by, at: e.at }));
   const sh = await invUpcSheetCached(env); (sh.values || []).forEach((r, i) => add(r[1], 'sheet', r[2], r[3], { row: i + 2 }));
   const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
-  (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => add(r.sku, 'table', r.inside_upc, r.outside_upc));
+  (await all("SELECT sku, inside_upc, outside_upc FROM upc ORDER BY COALESCE(updated_at, '') DESC, id DESC")).forEach(r => add(r.sku, 'table', r.inside_upc, r.outside_upc)); // newest first (= what the vendor file uses)
   for (const [part, o, i] of VENDOR_UPC) add(part, 'vendor', i, o);
   (await all('SELECT upc, part FROM upc_link')).forEach(r => add(r.part, 'link', '', r.upc));
   (await all('SELECT part, inside_upc, outside_upc FROM reorder_fix')).forEach(r => add(r.part, 'fix', r.inside_upc, r.outside_upc));
@@ -3835,6 +3844,9 @@ async function inventoryUpcManagerSave(request, env, session) {
     const oursHas = k => !cur[k] || cur[k + 'From'] === 'edit' || cur[k + 'From'] === 'table';
     r.status = upcZ(r.inside) === upcZ(cur.inside) && upcZ(r.outside) === upcZ(cur.outside) && oursHas('inside') && oursHas('outside') ? 'same' : (cur.inside || cur.outside) ? 'change' : 'new';
     if (r.inside && upcZ(r.inside) === upcZ(r.outside)) r.warn.push('inside bag and outside box UPC are the same');
+    // 2+ rows of our UPC list that disagree (owner 2026-10-17, 26-4-3=100) → saving writes every row, even if the newest already matches.
+    const tblPairs = new Set(src[r.part].filter(x => x.from === 'table').map(x => upcZ(x.outside) + '|' + upcZ(x.inside)));
+    if (r.status === 'same' && tblPairs.size > 1 && !src[r.part].some(x => x.from === 'edit')) { r.status = 'change'; r.warn.push(`was on ${tblPairs.size} rows of our UPC list with different codes — every row gets these`); }
     r.moves = [];
     for (const [k, v] of [['outside', r.outside], ['inside', r.inside]]) {
       if (!v || (k === 'inside' ? r.i.keep : r.o.keep)) continue;

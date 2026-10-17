@@ -7450,5 +7450,31 @@ console.log('\n➕ Reorder 🏷 Barcode / vendor: a new part # goes into SKU Mgr
   sq.exec("DELETE FROM master_list WHERE base_sku = '937-2-9'; DELETE FROM upc WHERE sku LIKE '937-2-9%'; DELETE FROM upc_edit WHERE part LIKE '937-2-9%'; DELETE FROM inventory_log WHERE part_num LIKE '937-2-9%'");
 }
 
+// Owner (2026-10-17, vendor file row "26-4-3=100 | (no box) | 810097201638 | 3/4 jclamp"): "we already fixed it, but our sheet
+// still shows it like that". Our UPC list had the part # on 2 rows: the ✏️ window showed one (right), the vendor file used the
+// other (old), and 💾 Save said "nothing changed".
+console.log('\n🔢 A part # on 2 rows of our UPC list: window, vendor file and checks use the same (newest) row; Save fixes every row');
+{
+  const P = '938-4-3=100', ago = d => new Date(Date.now() - d * 864e5).toISOString();
+  await get('/inventory/upc-manager');
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', ?, '938-4-3', '850093801638', '', ?), ('', ?, '938-4-3', '850093806021', '1850093804638', ?)").run(P, ago(3), P, ago(1));
+  const info = await get('/reorder/fix/part-info?part=' + encodeURIComponent(P));
+  const chk = await get('/reorder/fix/upc-check'), cr = (chk.rows || []).find(r => r.part === P) || {};
+  check('window shows the NEWEST row (box 1850093804638 · bag 850093806021) and warns "on 2 rows of our UPC list with different codes"; 🔢 Check every UPC lists it the same way',
+    info.now.outside_upc === '1850093804638' && info.now.inside_upc === '850093806021' && (info.upcDup || []).length === 2 && (cr.issues || []).some(x => x.k === 'dup') && cr.outside === '1850093804638', [info.now, info.upcDup, cr]);
+  const pv = await post('/inventory/upc-manager/save', { rows: [{ part: P, outside: '1850093804638', inside: '850093806021' }], dryRun: true });
+  check('…💾 Save with the right codes is NOT "nothing changed" any more (was the bug): it will fix every row', pv.rows[0].status === 'change' && /every row gets these/.test(pv.rows[0].warn.join(' ')), pv.rows[0]);
+  const sv = await post('/inventory/upc-manager/save', { rows: [{ part: P, outside: '1850093804638', inside: '850093806021' }] });
+  const rows = sq.prepare('SELECT outside_upc o, inside_upc i FROM upc WHERE sku = ?').all(P), info2 = await get('/reorder/fix/part-info?part=' + encodeURIComponent(P));
+  check('…saved: BOTH rows box 1850093804638 · bag 850093806021 (the old 850093801638 gone), 🔢 saved here, no more warning',
+    sv.ok && sv.saved.length === 1 && rows.length === 2 && rows.every(r => r.o === '1850093804638' && r.i === '850093806021') && !(info2.upcDup || []).length, { rows, dup: info2.upcDup });
+  const { readFileSync: rfD2 } = await import('node:fs');
+  const wd = rfD2(workerPath, 'utf8'), rh = rfD2(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('…vendor file picks the same row (exact part #, newest) as the window; the window warns + Save always writes when rows disagree',
+    /SELECT sku, inside_upc, outside_upc FROM upc ORDER BY COALESCE\(updated_at, ''\), id"\);\n  const upc = \{\}; upcRows\.forEach\(r => \{ const k = P\(r\.sku\), x = U\(r\.sku\) === k; if \(!upc\[k\] \|\| x \|\| !upc\[k\]\._x\)/.test(wd)
+    && /rows of our UPC list with different codes: /.test(rh) && /if \(\(out \|\| inn\) && \(RVP\.upcDup \|\| \[\]\)\.length > 1\) oursNew = true;/.test(rh), null);
+  sq.exec(`DELETE FROM upc WHERE sku = '${P}'; DELETE FROM upc_edit WHERE part = '${P}'; DELETE FROM inventory_log WHERE part_num = '${P}'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

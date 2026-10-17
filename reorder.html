@@ -5260,6 +5260,9 @@ function rvoPartFind() {
       + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
       + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
       + (d.upcWarn ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">' + e(d.upcWarn).split(' · ').join('<br>') + '</div>' : '')
+      // Owner (2026-10-17, 26-4-3=100 "already fixed, the sheet still shows 810097201638"): 2 rows in our UPC list with different codes.
+      + ((d.upcDup || []).length > 1 ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">⚠ ' + e(d.part) + ' is on ' + d.upcDup.length + ' rows of our UPC list with different codes: '
+        + d.upcDup.map(function (x) { return 'box ' + e(x.outside_upc || '—') + ' · bag ' + e(x.inside_upc || '—'); }).join(' / ') + ' — check the boxes below and 💾 Save once: every row and the vendor file get them.</div>' : '')
       + '<div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + (d.caseOf ? '<span style="color:var(--text);font-weight:600">📦 Sold as a whole case of <span style="font-family:var(--mono)">' + e(d.caseOf) + '</span> (Big Company ships a whole case; Reorder orders it as ' + e(d.caseOf) + ')</span>' : '')
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoCaseOfPart(\'' + e(d.part).replace(/'/g, '') + '\', \'' + e(d.caseOf || '').replace(/'/g, '') + '\')">📦 ' + (d.caseOf ? 'Change / undo' : 'Sold as a whole case of…') + '</button></div>'
       + (d.retired ? '<div style="margin-bottom:8px;color:var(--orange);font-weight:600">🚫 Marked not used anymore' + (d.retired.note ? ' — ' + e(d.retired.note) : '') + ' (' + e(d.retired.by_user || '') + ' ' + e(String(d.retired.at || '').slice(0, 10)) + ')</div>' : '')
@@ -5294,6 +5297,7 @@ function rvoPartSave() {
   // codes always become what is in the two boxes.
   var ours = RVP.edit || RVP.upc || {}, part = RVP.part;
   var oursNew = (out || inn) && (out !== clean(ours.outside_upc) || inn !== clean(ours.inside_upc));
+  if ((out || inn) && (RVP.upcDup || []).length > 1) oursNew = true; // 2 rows of our UPC list that disagree → always write (26-4-3=100)
   var done = function (msg) { if (RVU_BACK) { rvoUpcCheck(); if (msg) showToast(msg); } else rvoPartFind(); };
   if (!items.length && !oursNew) { if (RVU_BACK && (out || inn)) { rvoUpcWriteOurs(part, out, inn).then(done); return; } showToast('Nothing changed'); return; }
   if (!items.length) { rvoUpcWriteOurs(part, out, inn).then(function (m) { if (m) showToast(m); done(m); }); return; }
