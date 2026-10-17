@@ -2191,7 +2191,7 @@ function reorderUpcWarn(u, fx, ct, vl) {
   }
   const ui = d(u && u.inside_upc), uo = d(u && u.outside_upc);
   const others = [fx, ct, vl].filter(Boolean);
-  if ((ui && others.some(o => upcNear(ui, o.outside_upc))) || (uo && others.some(o => upcNear(uo, o.inside_upc))))
+  if (others.some(o => upcInWrongBox(ui, o.outside_upc, o.inside_upc) || upcInWrongBox(uo, o.inside_upc, o.outside_upc)))
     out.push('⚠ our outside box / inside bag UPC look SWAPPED (in the wrong box) — Reorder → 🔢 Check every UPC');
   [[uo, 'outside box'], [ui, 'inside bag']].forEach(([v, lab]) => { if (v && !upcCheckOk(v)) out.push(`⚠ our ${lab} UPC ${v} is not a real UPC (last digit wrong — typo?)`); });
   if (ui && !uo) out.push('⚠ inside bag UPC but NO outside box UPC');
@@ -2206,6 +2206,14 @@ function upcCheckOk(v) {
   let t = 0; for (let i = 0; i < 13; i++) t += (+p[i]) * (i % 2 ? 1 : 3);
   return (10 - t % 10) % 10 === +p[13];
 }
+// Our code is the OTHER box's code (or one digit off it) — and not this box's own code. A box and its bag are often numbered
+// one apart (23-6-2=5: box …601, bag …604), so a code that matches (or is one off) its own box is never called swapped.
+function upcInWrongBox(ours, otherBox, ownBox) {
+  const d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, ''), u = d(ours);
+  if (!u || !d(otherBox)) return false;
+  if (u === d(otherBox)) return u !== d(ownBox);
+  return upcNear(u, otherBox) && !upcNear(u, ownBox) && u !== d(ownBox);
+}
 // The same code, or one digit off (a typo of it): 810097201638 ≈ 810097204638.
 function upcNear(a, b) {
   const x = String(a == null ? '' : a).replace(/\D/g, '').replace(/^0+/, ''), y = String(b == null ? '' : b).replace(/\D/g, '').replace(/^0+/, '');
@@ -2219,9 +2227,37 @@ function upcNear(a, b) {
 // box/bag list, the vendor sheets and ✏️ fixes: swapped boxes, wrong last digit, inside bag with no box, the same code in
 // both boxes, a different code than the vendor's, one code on two part #s. `suggest` = the codes to put back (from the
 // vendor's list when it has both, else our two codes swapped); nothing is changed here.
+// ✔ Owner (2026-10-17): "how do I confirm a UPC is correct so it doesn't show up anymore? I confirmed 3-2-1=1 and 23-6-2=5 but
+// they still show". A part # confirmed with its box + bag codes (who, when) leaves the list until either code changes.
+const UPC_OK_TABLE = 'CREATE TABLE IF NOT EXISTS upc_check_ok (part TEXT PRIMARY KEY, outside_upc TEXT, inside_upc TEXT, by_user TEXT, at TEXT)';
+async function upcCheckOkMap(env) {
+  const m = new Map(), d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
+  try { ((await env.DB.prepare('SELECT * FROM upc_check_ok').all()).results || []).forEach(r => m.set(String(r.part || '').trim().toUpperCase(), { ...r, key: d(r.outside_upc) + '|' + d(r.inside_upc) })); } catch (_) {}
+  return m;
+}
+// POST /reorder/fix/upc-ok { part, outside, inside, undo } — ✔ these codes are right (kept in Reorder 🕘 History).
+async function reorderUpcOk(request, env, session) {
+  const b = await request.json().catch(() => ({}));
+  const part = String(b.part || '').trim().toUpperCase(), T = x => String(x == null ? '' : x).replace(/\D/g, '');
+  if (!part) return { ok: false, error: 'Part # required' };
+  await env.DB.prepare(UPC_OK_TABLE).run();
+  const who = _roWho(session) || 'MGMT', now = new Date().toISOString();
+  if (b.undo) {
+    await env.DB.prepare('DELETE FROM upc_check_ok WHERE part = ?').bind(part).run();
+    await reorderLog(env, who, 'upc-ok', part, `🔢 ${part}: ✔ "codes are right" taken back — back on 🔢 Check every UPC`);
+    return { ok: true, part, undone: true };
+  }
+  const o = T(b.outside), i = T(b.inside);
+  if (!o && !i) return { ok: false, error: 'No UPC to confirm' };
+  await env.DB.prepare('INSERT INTO upc_check_ok (part, outside_upc, inside_upc, by_user, at) VALUES (?,?,?,?,?) ON CONFLICT(part) DO UPDATE SET outside_upc = excluded.outside_upc, inside_upc = excluded.inside_upc, by_user = excluded.by_user, at = excluded.at')
+    .bind(part, o, i, who, now).run();
+  await reorderLog(env, who, 'upc-ok', part, `🔢 ${part}: ✔ codes are right — outside box ${o || '—'} · inside bag ${i || '—'}${b.note ? ' (' + String(b.note).slice(0, 120) + ')' : ''}`);
+  return { ok: true, part, outside: o, inside: i, by: who, at: now };
+}
 async function reorderUpcCheck(env) {
   const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
   const U = x => String(x || '').trim().toUpperCase(), d = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
+  const okMap = await upcCheckOkMap(env), okList = [];
   const T = x => String(x == null ? '' : x).replace(/\D/g, '');
   const ours = new Map();
   (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => { const p = U(r.sku); if (p && (T(r.inside_upc) || T(r.outside_upc)) && !ours.has(p)) ours.set(p, { inside: T(r.inside_upc), outside: T(r.outside_upc), from: 'UPC list' }); });
@@ -2235,8 +2271,10 @@ async function reorderUpcCheck(env) {
   const rows = [];
   ours.forEach((o, part) => {
     const ui = d(o.inside), uo = d(o.outside), rf = refs[part] || [], issues = [];
-    const sw = rf.find(r => (ui && upcNear(ui, r.outside)) || (uo && upcNear(uo, r.inside)));
-    if (sw) issues.push({ k: 'swapped', t: `in the wrong box: ${ui && upcNear(ui, sw.outside) ? `our inside bag ${o.inside} is the ${sw.name}'s OUTSIDE box ${sw.outside}` : `our outside box ${o.outside} is the ${sw.name}'s INSIDE bag ${sw.inside}`}` });
+    const okd = okMap.get(part);
+    if (okd && okd.key === uo + '|' + ui) { okList.push({ part, outside: o.outside, inside: o.inside, by: okd.by_user, at: okd.at }); return; } // ✔ confirmed, codes unchanged
+    const sw = rf.find(r => upcInWrongBox(ui, r.outside, r.inside) || upcInWrongBox(uo, r.inside, r.outside));
+    if (sw) issues.push({ k: 'swapped', t: `in the wrong box: ${upcInWrongBox(ui, sw.outside, sw.inside) ? `our inside bag ${o.inside} is the ${sw.name}'s OUTSIDE box ${sw.outside}` : `our outside box ${o.outside} is the ${sw.name}'s INSIDE bag ${sw.inside}`}` });
     [[o.outside, 'outside box'], [o.inside, 'inside bag']].forEach(([v, lab]) => { if (d(v) && !upcCheckOk(v)) issues.push({ k: 'typo', t: `${lab} ${v} is not a real UPC (last digit wrong — a typo?)` }); });
     if (ui && !uo) issues.push({ k: 'nobox', t: 'inside bag UPC but NO outside box UPC' });
     if (ui && ui === uo) issues.push({ k: 'same', t: 'outside box and inside bag are the same code' });
@@ -2255,7 +2293,8 @@ async function reorderUpcCheck(env) {
   const order = { bad: 0, check: 1 };
   rows.sort((a, b) => order[a.level] - order[b.level] || a.part.localeCompare(b.part, undefined, { numeric: true }));
   const cnt = k => rows.filter(r => r.issues.some(x => x.k === k)).length;
-  return { ok: true, checked: ours.size, rows, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
+  okList.sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }));
+  return { ok: true, checked: ours.size, rows, confirmed: okList, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
 }
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
@@ -2411,6 +2450,7 @@ async function reorderVendorOrder(env, url) {
   const upc = {}; upcRows.forEach(r => { const k = P(r.sku); if (!upc[k] || U(r.sku) === k) upc[k] = r; }); // the =10X row's own UPCs win over =10-X's
   // 🔢 Saved here (SKU Mgr → 🔢 / 🔢 Check every UPC) wins — the same codes every scan uses.
   (await all('SELECT part, inside_upc, outside_upc FROM upc_edit')).forEach(r => { const k = P(r.part); if (k) upc[k] = { sku: r.part, inside_upc: r.inside_upc, outside_upc: r.outside_upc }; });
+  const upcOkMap = await upcCheckOkMap(env);
   const vlUpc = {}; for (const [part, o, i] of VENDOR_UPC) { const k = N(part); if (k && !vlUpc[k]) vlUpc[k] = { outside_upc: o, inside_upc: i }; }
   const prodRows = await all('SELECT base_sku, name FROM products');
   const prodName = {}; prodRows.forEach(r => { const b = U(r.base_sku); if (b && r.name && !prodName[b]) prodName[b] = r.name; });
@@ -2607,7 +2647,8 @@ async function reorderVendorOrder(env, url) {
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
       (t.caseFrom || []).forEach(x => notes.push(`📦 Incl. ${x.sku} (sold as a case of ${t.sku}): ${x.amzPieces} pcs Amazon sales, ${x.fbaPieces} pcs at Amazon — ordered as ${t.sku}`));
-      const upcW = reorderUpcWarn(u, fx, ct, vlUpc[t.sku]);
+      const upcOk = upcOkMap.get(t.sku), upcD = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
+      const upcW = upcOk && upcOk.key === upcD(u.outside_upc) + '|' + upcD(u.inside_upc) ? '' : reorderUpcWarn(u, fx, ct, vlUpc[t.sku]); // ✔ confirmed right
       if (upcW) notes.push(upcW);
       const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
       const row = {
@@ -8925,6 +8966,7 @@ const _app = {
       // 🏷 Barcode / vendor for any part # (owner: "search and add the barcode; merge the outside box and inside bag
       // UPC on one part #; set the vendor so it only shows under that vendor").
       if (url.pathname === '/reorder/fix/upc-check' && method === 'GET') return _roResp(await reorderUpcCheck(env));
+      if (url.pathname === '/reorder/fix/upc-ok' && method === 'POST') return _roResp(await reorderUpcOk(request, env, roCs || session));
       if (url.pathname === '/reorder/fix/part-info' && method === 'GET') return _roResp(await reorderPartInfo(env, url.searchParams.get('part') || ''));
       // 📊 Sales history stored in PIECES instead of units (owner 2026-10-07: "201-2-12 sold ~7,000 pcs, it says order 2,270,000").
       if (url.pathname === '/reorder/fix/sales-check' && method === 'GET') return _roResp(await reorderSalesCheck(env));
