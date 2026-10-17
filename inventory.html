@@ -14246,7 +14246,7 @@ window.invCredLogin = async function() {
       return; }
     xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>' + bdTabs()
       + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Type or scan the part # — prints a 2" × 1" label on the thermal printer.</div>'
-      + '<input id="bd-sku" type="text" inputmode="none" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onblur="xfrKbOff(this)" onkeydown="if(event.key===\'Enter\')bdPrint()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
+      + '<input id="bd-sku" type="text" inputmode="none" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onblur="xfrKbOff(this)" onkeydown="if(event.key===\'Enter\')bdPreview()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
       + bdPad()
       + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
       + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
@@ -14256,8 +14256,8 @@ window.invCredLogin = async function() {
       + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
       + '<button type="button" onclick="bdCopies(\'more\')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;font-weight:800;cursor:pointer">More…</button></div>'
       + '<div id="bd-spots">' + bdSpotsHtml() + '</div>'
-      + '<button type="button" onclick="bdSave()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--green,#16a34a);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">💾 Save — print it on the computer</button>'
-      + '<button type="button" onclick="bdPrint()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px">🖨 Print label here</button>'
+      // Owner (2026-10-17): only 💾 Save — it goes to the 🏷 Label Printer page (who saved it shows there; tap to print).
+      + '<button type="button" onclick="bdSave()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--green,#16a34a);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">💾 Save</button>'
       + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
     setTimeout(function() { var x = g('bd-sku'); if (x) { if (BD.sku) { x.value = BD.sku; bdPreview(); } x.focus(); } }, 50);
   };
@@ -14288,7 +14288,7 @@ window.invCredLogin = async function() {
     invPost(W + '/inventory/barcode-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: copies, spots: spots }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || d.ok === false) { invFlash('✗ Not saved: ' + ((d && d.error) || 'error'), 'error'); return; }
-        invFlash(d.queued ? '📶 Saved on this phone — it sends by itself when WiFi is back, then print it on the computer' : '💾 Saved: ' + copies + ' × ' + sku + ' → print it on the computer (Audit → 🏷 Barcode designer → 🖨 To print)', 'success');
+        invFlash(d.queued ? '📶 Saved on this phone — it sends by itself when WiFi is back, then it shows on the 🏷 Label Printer page' : '💾 Saved: ' + copies + ' × ' + sku + ' → it is on the 🏷 Label Printer page to print', 'success');
         BD.spots = []; BD.copies = 1; BD.sku = ''; xfrPopupClose(); bdQueueLoad();
       }).catch(function() { invFlash('✗ Not saved — try again', 'error'); });
   };
