@@ -5298,12 +5298,32 @@ async function rvoUpcWriteOurs(part, out, inn) {
     var pv = await post({ rows: [row], dryRun: true }), pr = (pv.rows || [])[0] || {};
     if (!pv.ok) throw new Error(pv.error || 'not saved');
     if (pr.status === 'error') { alert('🔢 ' + part + ' NOT saved in our UPC codes: ' + (pr.problems || []).join('; ')); return null; }
-    if (pr.status === 'same') return '🔢 ' + part + ': our UPC codes already match';
+    if (pr.status === 'same') { await rvoUpcOkPost(part, out, inn, 'saved with ✏️ — already our codes'); return '🔢 ' + part + ': our UPC codes already match — ✔ marked right'; }
     if ((pr.warn || []).length && !confirm('🔢 ' + part + '\n\n' + pr.warn.join('\n') + '\n\nOK = save it anyway')) return null;
     var sv = await post({ rows: [row], confirm: pr.needsConfirm ? [part] : [] });
     if (!sv.ok || !(sv.saved || []).length) { alert('🔢 ' + part + ' NOT saved: ' + (((sv.skipped || [])[0] || {}).problems || [sv.error || 'failed']).join('; ')); return null; }
-    return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History)';
+    await rvoUpcOkPost(part, out, inn, 'saved as our codes');
+    return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History) — ✔ marked right';
   } catch (e) { alert('🔢 ' + part + ' NOT saved in our UPC codes — ' + (e.message || 'check WiFi')); return null; }
+}
+// ✔ "These codes are right" — the part # leaves 🔢 Check every UPC until a code changes (owner 2026-10-17). Best effort.
+function rvoUpcOkPost(part, out, inn, note, undo) {
+  return wFetch(W + '/reorder/fix/upc-ok', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, outside: out || '', inside: inn || '', note: note || '', undo: !!undo }) })
+    .then(function (r) { return r.json(); }).catch(function () { return { ok: false, error: 'check WiFi' }; });
+}
+async function rvoUpcOk(i) {
+  var r = RVU && RVU.rows[i]; if (!r) return;
+  if (!confirm('✔ ' + r.part + ' — these codes are RIGHT (you checked the real box / bag):\n\n📦 Outside box: ' + (r.outside || '—') + '\n🛍 Inside bag: ' + (r.inside || '—')
+    + '\n\nIt leaves this list (until a code changes). Kept in 🕘 History with your name.')) return;
+  var d = await rvoUpcOkPost(r.part, r.outside, r.inside, r.issues.map(function (x) { return x.k; }).join(', '));
+  if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
+  showToast('✔ ' + r.part + ' marked right'); rvoUpcCheck();
+}
+async function rvoUpcOkUndo(part) {
+  if (!confirm('Put ' + part + ' back on 🔢 Check every UPC?')) return;
+  var d = await rvoUpcOkPost(part, '', '', '', true);
+  if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return; }
+  rvoUpcCheck();
 }
 // 🔢 Check every UPC (owner 2026-10-17: "please check all other UPC code outside box and inside bag are right").
 var RVU = null;
@@ -5325,8 +5345,12 @@ function rvoUpcCheck() {
         + '<br>Ours: 📦 box <span style="font-family:var(--mono)">' + e(r.outside || '—') + '</span> · 🛍 bag <span style="font-family:var(--mono)">' + e(r.inside || '—') + '</span>'
         + '<br>' + r.issues.map(function (x) { return '• ' + e(x.t); }).join('<br>')
         + '<div style="margin-top:4px">' + (r.suggest ? '<button class="btn btn-primary" style="font-size:11px;padding:2px 8px" onclick="rvoUpcFix(' + i + ')">✅ Use 📦 box ' + e(r.suggest.outside || '—') + ' · 🛍 bag ' + e(r.suggest.inside || '—') + ' (' + e(r.suggest.from) + ')</button> ' : '')
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--green)" onclick="rvoUpcOk(' + i + ')" title="You checked the real box / bag: these codes are right">✔ Codes are right</button> '
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoPartOpen(\'' + e(r.part).replace(/'/g, '') + '\')">✏️ Type them</button></div></div>';
-    }).join('');
+    }).join('')
+      + ((d.confirmed || []).length ? '<details style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px"><summary style="cursor:pointer;color:var(--text)">✔ ' + d.confirmed.length + ' part # marked right (hidden until a code changes)</summary>'
+        + d.confirmed.map(function (c) { return '<div style="line-height:1.8"><b style="font-family:var(--mono)">' + e(c.part) + '</b> 📦 ' + e(c.outside || '—') + ' · 🛍 ' + e(c.inside || '—') + ' — ' + e(c.by || '') + ' ' + e(String(c.at || '').slice(0, 10))
+          + ' <button class="btn btn-secondary" style="font-size:10px;padding:1px 6px" onclick="rvoUpcOkUndo(\'' + e(c.part).replace(/'/g, '') + '\')">↩ check again</button></div>'; }).join('') + '</details>' : '');
   }).catch(function () { body.textContent = '✗ Could not check — try again'; });
 }
 async function rvoUpcFix(i) {

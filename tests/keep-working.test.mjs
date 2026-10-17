@@ -7225,10 +7225,44 @@ console.log('\n🔢 Check every UPC: swapped boxes, wrong last digit, bag with n
   check('new product set-up: the case / carton UPC goes in the OUTSIDE box (never the inside bag again)',
     /preview\.upc\.push\(\{ sku: row\.sku, base_sku: row\.base_sku, inside_upc: '', outside_upc: row\.upc \}\)/.test(wd) && !/inside_upc: row\.upc, outside_upc: ''/.test(wd), null);
   check('vendor file rows: 🔢 saved here first, the vendor box/bag list is compared too (reorderUpcWarn(u, fx, ct, vlUpc[t.sku]))',
-    /SELECT part, inside_upc, outside_upc FROM upc_edit'\)\)\.forEach\(r => \{ const k = P\(r\.part\); if \(k\) upc\[k\]/.test(wd) && /const upcW = reorderUpcWarn\(u, fx, ct, vlUpc\[t\.sku\]\);/.test(wd), null);
+    /SELECT part, inside_upc, outside_upc FROM upc_edit'\)\)\.forEach\(r => \{ const k = P\(r\.part\); if \(k\) upc\[k\]/.test(wd) && /const upcW = upcOk && upcOk\.key === upcD\(u\.outside_upc\) \+ '\|' \+ upcD\(u\.inside_upc\) \? '' : reorderUpcWarn\(u, fx, ct, vlUpc\[t\.sku\]\);/.test(wd), null);
   check('page: 🔢 Check every UPC button + list with ✅ Use / ✏️; ✏️ Save also writes our UPC codes; the vendor download warns first about part #s with a UPC problem',
     /onclick="rvoUpcCheck\(\)"/.test(rh) && /function rvoUpcCheck\(\)/.test(rh) && /onclick="rvoUpcFix\(' \+ i \+ '\)"/.test(rh) && /rvoUpcWriteOurs\(RVP\.part, out, inn\)/.test(rh)
       && /'\/inventory\/upc-manager\/save'/.test(rh) && /var upcBad = rows\.filter/.test(rh) && /Fix them with 🔢 Check every UPC first/.test(rh), null);
+}
+
+// Owner (2026-10-17): "Check every UPC — how do I confirm a UPC is correct so it won't show up anymore? I tried to confirm
+// 3-2-1=1 and 23-6-2=5 but they still show".
+console.log('\n✔ Check every UPC: "Codes are right" takes a part # off the list until a code changes');
+{
+  const { readFileSync: rfK } = await import('node:fs');
+  const rh = rfK(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const now = new Date().toISOString();
+  // 23-6-2=5: the vendor's own list has box 840428941601 (last digit doesn't fit) — the real box says so; ours = the same.
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '23-6-2=5', '23-6-2', '840428941604', '840428941601', ?)").run(now);
+  const R = d => (d.rows || []).find(r => r.part === '23-6-2=5');
+  const c0 = await get('/reorder/fix/upc-check');
+  const iw = new Function((rfK(workerPath, 'utf8').match(/function upcNear\(a, b\) \{[\s\S]*?\n\}/) || [''])[0] + (rfK(workerPath, 'utf8').match(/function upcInWrongBox\(ours, otherBox, ownBox\) \{[\s\S]*?\n\}/) || [''])[0] + '; return upcInWrongBox;')();
+  check('"in the wrong box" only when our code is the OTHER box\'s code: bag …604 next to box …601 (one apart, its own bag) ✅ not swapped; 26-4-3=100 bag 810097201638 ≈ box 810097204638 ↔ swapped; exact box code in the bag ↔ swapped',
+    !iw('840428941604', '840428941601', '840428941604') && iw('810097201638', '810097204638', '810097206021') && iw('810097204638', '810097204638', '810097206021') && !iw('', '1', '2'), null);
+  check('23-6-2=5 is listed (box 840428941601: last digit wrong) with no ✅ Use (the vendor list has the same code) — before, nothing could take it off',
+    R(c0) && R(c0).issues.some(x => x.k === 'typo') && !R(c0).suggest, R(c0));
+  const ok = await post('/reorder/fix/upc-ok', { part: '23-6-2=5', outside: '840428941601', inside: '840428941604', note: 'typo' });
+  const c1 = await get('/reorder/fix/upc-check'), cf = (c1.confirmed || []).find(r => r.part === '23-6-2=5');
+  const h = sq.prepare("SELECT * FROM reorder_history WHERE action = 'upc-ok' AND part = '23-6-2=5' ORDER BY ts DESC").all();
+  check('✔ Codes are right → gone from the list, shown under "✔ marked right" with who + when; the line is in Reorder 🕘 History',
+    ok.ok && !R(c1) && cf && cf.outside === '840428941601' && cf.by && h.length === 1 && /✔ codes are right — outside box 840428941601 · inside bag 840428941604/.test(h[0].detail), { ok, cf, h });
+  sq.prepare("UPDATE upc SET outside_upc = '840428941618' WHERE sku = '23-6-2=5'").run();
+  const c2 = await get('/reorder/fix/upc-check');
+  check('…a code changes later (box → 840428941618) → back on the list to check again', !!R(c2) && !(c2.confirmed || []).some(r => r.part === '23-6-2=5'), R(c2));
+  sq.prepare("UPDATE upc SET outside_upc = '840428941601' WHERE sku = '23-6-2=5'").run();
+  const c3 = await get('/reorder/fix/upc-check');
+  const un = await post('/reorder/fix/upc-ok', { part: '23-6-2=5', undo: true }), c4 = await get('/reorder/fix/upc-check');
+  check('…the same codes again → hidden again; ↩ check again → back on the list (in 🕘 History too)', !R(c3) && un.ok && !!R(c4)
+    && sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE action = 'upc-ok' AND part = '23-6-2=5'").get().n === 2, null);
+  check('page: every row has ✔ Codes are right (asks first); ✅ Use / ✏️ Save mark the saved codes right too; "✔ marked right" list with ↩ check again',
+    /onclick="rvoUpcOk\(' \+ i \+ '\)"/.test(rh) && /✔ Codes are right<\/button>/.test(rh) && /await rvoUpcOkPost\(part, out, inn, 'saved as our codes'\);/.test(rh)
+      && /await rvoUpcOkPost\(part, out, inn, 'saved with ✏️ — already our codes'\);/.test(rh) && /rvoUpcOkUndo\(/.test(rh) && /part # marked right \(hidden until a code changes\)/.test(rh), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
