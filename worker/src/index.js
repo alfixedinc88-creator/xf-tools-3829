@@ -2091,19 +2091,58 @@ async function vendorUnmaskTitle(env, t, cache) {
 // location sent to the worker (a ?location= / ?loc= …, or a JSON field whose name has "loc" / spot / shelf / column / from /
 // to) that starts with "BH=" is read as "BO=" — whatever screen it came from. Nothing else in the request changes.
 const LOC_BH_RE = /^\s*B\s*H\s*=/i;
+// 📍 Owner (2026-10-17): SKU Mgr had spots like "PR=1 - 1 - 7" (spaces) — a scan of the label PR=1-1-7 never found them.
+// A location with spaces around its "=" / "-" (AREA=1 - 1 - 7) is read without them (PR=1-1-7). Only that shape:
+// a part # (8-8-8=10X) or any other text is never changed.
+const LOC_SPACED_RE = /^\s*[A-Za-z0-9]+\s*=\s*[A-Za-z0-9]+(?:\s*-\s*[A-Za-z0-9]+)+\s*$/;
+function locTight(v) { return typeof v === 'string' && /\s/.test(v) && LOC_SPACED_RE.test(v) ? v.replace(/\s+/g, '') : v; }
+// One time (owner 2026-10-17): spots already saved with spaces ("PR=1 - 1 - 7") → without (PR=1-1-7), in SKU Mgr
+// (master_list), every Stock In / Out / Transfer line (inventory_log: location, paired / overwrite location) and the
+// location list. Only the spelling of the spot changes — cases stay exactly the same. On record (app_config + log).
+const LOC_SPACE_FIX_KEY = 'loc_space_fix_20261017';
+let _locSpaceFixDone = false;
+async function locSpaceFix(env) {
+  if (_locSpaceFixDone || !env.DB) return null; _locSpaceFixDone = true;
+  try {
+    const seen = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(LOC_SPACE_FIX_KEY).first().catch(() => null);
+    if (seen) return null;
+    const out = { at: new Date().toISOString(), changed: {} };
+    const fixCol = async (table, col) => {
+      const rows = (await env.DB.prepare(`SELECT id, ${col} AS v FROM ${table} WHERE ${col} LIKE '% %'`).all().catch(() => ({ results: [] }))).results || [];
+      let n = 0;
+      for (const r of rows) { const t = locTight(r.v); if (t !== r.v) { await env.DB.prepare(`UPDATE ${table} SET ${col} = ? WHERE id = ?`).bind(t, r.id).run(); n++; if (!out.changed[r.v]) out.changed[r.v] = t; } }
+      return n;
+    };
+    out.master = await fixCol('master_list', 'location');
+    out.log = (await fixCol('inventory_log', 'location')) + (await fixCol('inventory_log', 'paired_location')) + (await fixCol('inventory_log', 'overwrite_loc'));
+    // the location list is keyed by the spot itself: a spaced one whose tight spelling is already there is just dropped
+    const locs = (await env.DB.prepare(`SELECT location FROM locations WHERE location LIKE '% %'`).all().catch(() => ({ results: [] }))).results || [];
+    out.locations = 0;
+    for (const r of locs) { const t = locTight(r.location); if (t === r.location) continue;
+      await env.DB.prepare('UPDATE OR IGNORE locations SET location = ? WHERE location = ?').bind(t, r.location).run().catch(() => {});
+      await env.DB.prepare('DELETE FROM locations WHERE location = ?').bind(r.location).run().catch(() => {}); out.locations++; if (!out.changed[r.location]) out.changed[r.location] = t; }
+    await env.DB.prepare('INSERT INTO app_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(LOC_SPACE_FIX_KEY, JSON.stringify(out).slice(0, 20000)).run();
+    console.log('[loc space fix]', JSON.stringify(out).slice(0, 500));
+    return out;
+  } catch (e) { console.error('[loc space fix]', e.message); _locSpaceFixDone = false; return null; }
+}
 async function locAliasRequest(request) {
   try {
     const url = new URL(request.url);
     let changedUrl = false;
     for (const [k, v] of [...url.searchParams.entries()]) if (/loc|spot|shelf|column|^q$/i.test(k) && LOC_BH_RE.test(v)) { url.searchParams.set(k, v.replace(LOC_BH_RE, 'BO=')); changedUrl = true; }
+    for (const [k, v] of [...url.searchParams.entries()]) if (/loc|spot|shelf|column|^q$/i.test(k) && locTight(v) !== v) { url.searchParams.set(k, locTight(v)); changedUrl = true; }
     let body = null;
     if (request.method === 'POST' && /json/i.test(request.headers.get('Content-Type') || '')) {
       const text = await request.clone().text();
+      let fixed = text;
       if (/"\s*B\s*H\s*=/i.test(text)) {
-        const fixed = text.replace(/("(?:[A-Za-z_]*[Ll]oc[A-Za-z_]*|spot|shelf|column|from|to|fromSpot|toSpot)"\s*:\s*")\s*B\s*H\s*=/g, '$1BO=')
+        fixed = fixed.replace(/("(?:[A-Za-z_]*[Ll]oc[A-Za-z_]*|spot|shelf|column|from|to|fromSpot|toSpot)"\s*:\s*")\s*B\s*H\s*=/g, '$1BO=')
           .replace(/("(?:locations|locs|spots)"\s*:\s*\[[^\]]*)/g, m => m.replace(/"\s*B\s*H\s*=/gi, '"BO='));
-        if (fixed !== text) body = fixed;
       }
+      if (/=\s*[A-Za-z0-9]+\s+-|-\s+[A-Za-z0-9]|\s=/.test(fixed)) // a spaced location somewhere → tighten the location fields
+        fixed = fixed.replace(/("(?:[A-Za-z_]*[Ll]oc[A-Za-z_]*|spot|shelf|column|from|to|fromSpot|toSpot)"\s*:\s*")([^"\\]*)"/g, (m, k, v) => k + locTight(v) + '"');
+      if (fixed !== text) body = fixed;
     }
     if (!changedUrl && body == null) return request;
     return new Request(url.toString(), { method: request.method, headers: request.headers, body: body != null ? body : (request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.clone().arrayBuffer()) });
@@ -8872,6 +8911,7 @@ const _app = {
     // ── Inventory routes /inventory/* ──
     if (url.pathname.startsWith('/inventory/')) {
       const path = url.pathname;
+      if (!_locSpaceFixDone) await locSpaceFix(env); // 📍 once: spots saved with spaces → without (see locSpaceFix)
       // lookup + log: any valid session
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
       // 🏷 Label Printer (owner: "when we type our SKU, also give the name of the SKU"): the item name for a part #,
