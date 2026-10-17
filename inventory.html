@@ -14222,6 +14222,13 @@ window.invCredLogin = async function() {
       var T = function(x) { return x ? xfrFmtT(x) : '—'; }, M = function(m) { return m == null ? '—' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
       var th = 'style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
       var h = '<div style="color:var(--text2);margin-bottom:6px">This recount (since ' + ckE(T(d.roundStart)) + '): <b>' + d.spotsDone + ' of ' + d.spotsWithStock + '</b> spots with stock done. <a href="#" onclick="rcReport();return false">↻ Refresh</a></div>';
+      // 🗺 By area (owner 2026-10-17): tap C1 → every C1 spot: 🟩 done · 🟨 scanned / started, not done · 🟥 not scanned.
+      RC.rep = d;
+      h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">🗺 By area — tap one to see every spot</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
+        + (d.areas || []).map(function(a) { var on = RC.area === a.area, all = a.done + a.started + a.notScanned;
+            return '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="' + ckE(a.area) + '" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (a.notScanned || a.started ? 'var(--bg)' : 'var(--green-bg,#e8f7ee)') + ';color:var(--text)">'
+              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + '</span></button>'; }).join('') + '</div>'
+        + '<div id="rc-area-grid">' + rcAreaGrid() + '</div>';
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
         + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
         + (d.people.length ? d.people.map(function(p) { return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
@@ -14241,6 +14248,24 @@ window.invCredLogin = async function() {
     }).catch(function() { box.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
 
+  function rcAreaGrid() {
+    var d = RC.rep, a = d && RC.area && (d.areas || []).filter(function(x) { return x.area === RC.area; })[0];
+    if (!a) return '';
+    var col = { done: ['var(--green-bg,#e8f7ee)', 'var(--green)'], started: ['#fef9c3', '#ca8a04'], none: ['var(--red-bg,#fdf0ee)', 'var(--red)'] };
+    var T = function(x) { return x ? xfrFmtT(x) : ''; };
+    return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
+      + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
+      + '<span>🟩 done ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
+      + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px">'
+      + a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }).map(function(sp) { var c = col[sp.st];
+          var sub = sp.st === 'done' ? '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
+          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + '" style="padding:5px 6px;border-radius:7px;background:' + c[0] + ';border:1.5px solid ' + c[1] + ';color:var(--text)">'
+            + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; }).join('')
+      + '</div></div>';
+  }
+  window.rcArea = function(a) { RC.area = RC.area === a ? '' : a; var gEl = g('rc-area-grid'); if (gEl) gEl.innerHTML = rcAreaGrid();
+    document.querySelectorAll('[data-rca]').forEach(function(b) { b.style.borderColor = b.getAttribute('data-rca') === RC.area ? 'var(--accent)' : 'var(--border)'; }); };
   var _rcQr = null, _rcCam = false;
   window.rcToggleCam = function() {
     var btn = g('rc-cam-btn');

@@ -7476,5 +7476,27 @@ console.log('\n🔢 A part # on 2 rows of our UPC list: window, vendor file and 
   sq.exec(`DELETE FROM upc WHERE sku = '${P}'; DELETE FROM upc_edit WHERE part = '${P}'; DELETE FROM inventory_log WHERE part_num = '${P}'`);
 }
 
+// Owner (2026-10-17): "Audit → Recount report: if he was working on C1, most likely he does the whole container — let me click C1 and
+// see every C1 spot, which is done and which is not; colors: green done, red not scanned, yellow scanned but not done".
+console.log('\n🗺 Recount report by area: tap an area → every spot 🟩 done · 🟨 scanned / started, not done · 🟥 not scanned');
+{
+  const now = new Date().toISOString();
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('939-1-1','tee','939-1-1=10','Q9=11-1-1',2,10), ('939-1-1','tee','939-1-1=10','Q9=11-1-2',1,10), ('939-1-1','tee','939-1-1=10','Q9=11-2-1',3,10), ('939-1-1','tee','939-1-1=10','Q9=12-1-1',1,10)`).run();
+  await post('/inventory/recount/column-done', { location: 'Q9=11-1-1', items: 1, changed: 0, startedAt: new Date(Date.now() - 6e5).toISOString(), detail: [] });
+  sq.prepare("INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status) VALUES (0,?, 'IN', '939-1-1=10', 'Q9=11-1-2', 0, 'MK', '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', 'Verified')").run(now);
+  await post('/inventory/recount/column-done', { location: 'Q9=11-2-1', items: 0, changed: 0, stopped: true, detail: [] });
+  const d = await get('/inventory/recount/report'), a = (d.areas || []).find(x => x.area === 'Q9') || {};
+  const st = Object.fromEntries((a.spots || []).map(x => [x.l, x]));
+  check('area Q9: 🟩 Q9=11-1-1 done (who / when) · 🟨 Q9=11-1-2 scanned 1 line by MK, not done · 🟨 Q9=11-2-1 ✕ stopped · 🟥 Q9=12-1-1 not scanned; counts 1 / 2 / 1',
+    a.done === 1 && a.started === 2 && a.notScanned === 1 && st['Q9=11-1-1'].st === 'done' && st['Q9=11-1-1'].by && st['Q9=11-1-2'].st === 'started' && st['Q9=11-1-2'].lines === 1 && st['Q9=11-1-2'].by === 'MK'
+    && st['Q9=11-2-1'].st === 'started' && st['Q9=11-2-1'].stopped && st['Q9=12-1-1'].st === 'none', a);
+  const { readFileSync: rfA } = await import('node:fs');
+  const ih = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…report screen: "🗺 By area" chips (🟩 / 🟨 / 🟥 counts) → tap → a colored box per spot in walking order',
+    /🗺 By area — tap one to see every spot/.test(ih) && /onclick="rcArea\(this\.dataset\.rca\)"/.test(ih) && /function rcAreaGrid\(\)/.test(ih) && /🟨 scanned \/ started, not done/.test(ih) && /invPullWalkCompare\(x\.l, y\.l\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '939-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q9=%'; DELETE FROM inventory_log WHERE part_num = '939-1-1=10'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
