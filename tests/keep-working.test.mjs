@@ -2830,9 +2830,11 @@ console.log('\n🏷 Barcode designer: 💾 save on the phone → 🖨 print on t
   check('…✓ Done at a column → on record (who / when), the other column still to do', st.ok && f2.jobs[0].spots[0].doneAt && f2.jobs[0].spots[0].doneBy && !f2.jobs[0].spots[1].doneAt, f2.jobs[0].spots);
   const { readFileSync } = await import('node:fs');
   const ih2 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); 💾 Save (WiFi-safe); 🖨 Print here still there; the office PC sees "🏷 Barcode labels to print"',
+  // Owner (2026-10-17): "take off 'Print label here' and 'Save — print it on the computer'; only Save, to the Label Printer page" —
+  // the 🖨 Print here button is gone on purpose (was checked here before).
+  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); only 💾 Save (WiFi-safe, no 🖨 Print here); the office PC sees "🏷 Barcode labels to print"',
     /t\('design', '✏️ Design'\)/.test(ih2) && /t\('where', '📍 Where does it go\?'\)/.test(ih2) && /onkeydown="if\(event\.key===\\'Enter\\'\)bdColScan\(\)"/.test(ih2)
-    && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && /onclick="bdPrint\(\)"[^>]*>🖨 Print label here/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
+    && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && /onclick="bdSave\(\)"[^>]*>💾 Save<\/button>/.test(ih2) && !/Print label here/.test(ih2) && !/print it on the computer/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
 }
 
 // Owner: "Last run wider on the PC, each column smaller / wider" + "product photo on the shipping label" + "photo on the barcode label".
@@ -6965,6 +6967,28 @@ console.log('\n📤 Stock Out Shelving: FIRST boxes (open / damaged) always firs
   const pw = new Function(wd.slice(wd.indexOf('function partnumWhy('), wd.indexOf('\n}\n', wd.indexOf('function partnumWhy(')) + 3) + '; return partnumWhy;')();
   check('…Part # check: 8-8-8=10FIRST / =OLDFIRST / =10XFIRST are normal part #s (not "unusual ending"); =10FIRSTX still is',
     !pw('8-8-8=10FIRST').length && !pw('8-8-8=OLDFIRST').length && !pw('8-8-8=10XFIRST').length && pw('8-8-8=10FIRSTX').includes('suffix'), [pw('8-8-8=10FIRST'), pw('8-8-8=10FIRSTX')]);
+}
+
+// Owner (2026-10-17): "Barcode Designer — only Save; it goes to the Label Printer page; whoever logs in there sees the name of the
+// person who saved it and taps it to print" + "Label Printer: Refresh / Sign out / Apps at the top like the other pages".
+console.log('\n🏷 Barcode designer 💾 Save → 🏷 Label Printer: saved labels with who saved them, tap to print; top bar like the other pages');
+{
+  const sv = await post('/inventory/barcode-job', { sku: '933-1-1=10', name: 'Tee', copies: 3, spots: [{ loc: 'C1=6-1-1', boxes: 3 }] });
+  const q = await get('/inventory/barcode-job/queue'), j = (q.jobs || []).find(x => x.id === sv.id) || {};
+  const { readFileSync: rfL } = await import('node:fs');
+  const lp = rfL(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const fn = (lp.match(/window\.lpSavedLoad = function\(\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const els = { 'lp-saved-list': { innerHTML: '' }, 'lp-saved-badge': { style: {}, textContent: '' }, 'labelprint-app': { style: { display: 'block' } } };
+  const run = new Function('g', 'wFetch', 'lpEsc', 'lpWhen', fn.replace('window.lpSavedLoad = ', 'return ').replace(/\n  \};$/, '\n  }'))(id => els[id], () => Promise.resolve({ json: () => q }), v => String(v), () => 'Oct 17');
+  await run();
+  const h = els['lp-saved-list'].innerHTML;
+  check('saved 3 × 933-1-1=10 in Audit → on the Label Printer list with "Saved by <name>" and a 🖨️ Print (tap the row)',
+    sv.ok && j.by_user && /933-1-1=10/.test(h) && new RegExp('Saved by <b>' + j.by_user + '</b>').test(h) && /onclick="lpSavedPrint\(\[\d+\]\)"/.test(h) && /🖨️ Print/.test(h), h.slice(0, 600));
+  check('…tap → Zebra prints the part # label (lpGenSkuZPL) → "printed OK?" → off the list (/inventory/barcode-job/printed, who printed kept)',
+    /window\.lpSavedPrint = function\(which\)/.test(lp) && /lpGenSkuZPL\(j\.sku, j\.name \|\| '', j\.copies\)/.test(lp) && /\/inventory\/barcode-job\/printed', \{ method: 'POST'/.test(lp) && /if \(window\.lpSavedLoad\) lpSavedLoad\(\);/.test(lp), null);
+  check('…Label Printer top bar like the other pages: white bar, title left, 🔄 Refresh / 🚪 Sign Out / ← Apps on the right, wraps on a phone',
+    /#labelprint-app \.lp-header \{\n  background:var\(--bg2\);[\s\S]*?flex-wrap:wrap;/.test(lp) && /<div class="lp-header">[\s\S]{0,400}🔄 Refresh[\s\S]{0,200}🚪 Sign Out[\s\S]{0,200}← Apps/.test(lp), null);
+  await post('/inventory/barcode-job/printed', { ids: [sv.id] });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

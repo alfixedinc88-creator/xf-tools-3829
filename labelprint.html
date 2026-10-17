@@ -95,6 +95,7 @@ window.lpCredLogin = async function() {
     localStorage.setItem('xf_cred_user', JSON.stringify(LP_CRED_USER));
     document.getElementById('lp-cred-gate').style.display = 'none';
     document.getElementById('labelprint-app').style.display = 'flex';
+    setTimeout(function () { if (window.lpSavedLoad) lpSavedLoad(); }, 50); // 🏷 Saved labels
   } catch(e) {
     err.textContent = 'Connection error — try again.';
   } finally {
@@ -121,6 +122,7 @@ window.lpCredLogin = async function() {
   if (document.readyState === 'loading') await new Promise(function (ok) { document.addEventListener('DOMContentLoaded', ok); });
   document.getElementById('lp-cred-gate').style.display = 'none';
   document.getElementById('labelprint-app').style.display = 'flex';
+  setTimeout(function () { if (window.lpSavedLoad) lpSavedLoad(); }, 50); // 🏷 Saved labels
 })();
 </script>
 
@@ -145,19 +147,24 @@ window.lpCredLogin = async function() {
   --lp-cyan-bg: #E0F2FE;
   --lp-border: #CBD5E1;
 }
+/* Top bar like the other pages (owner 2026-10-17): title left; Refresh / Sign Out / Apps right, wrapping on a phone (never cut off). */
 #labelprint-app .lp-header {
-  background:#0891B2;
-  color:#fff;
-  padding:14px 16px;
+  background:var(--bg2);
+  color:var(--text);
+  border-bottom:1px solid var(--border);
+  padding:12px 16px;
   display:flex;
   align-items:center;
-  gap:12px;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:8px 12px;
   position:sticky;
   top:0;
-  z-index:10;
+  z-index:100;
 }
-#labelprint-app .lp-header-title { font-size:17px;font-weight:700;flex:1 }
-#labelprint-app .lp-back { background:rgba(255,255,255,0.2);border:none;color:#fff;padding:6px 12px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer }
+#labelprint-app .lp-header-title { font-size:17px;font-weight:700 }
+#labelprint-app .lp-back { background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:var(--sans);min-height:36px }
+#labelprint-app .lp-back:hover { background:var(--bg3);color:var(--text) }
 #labelprint-app .lp-body { padding:16px;max-width:640px;margin:0 auto }
 #labelprint-app .lp-card { background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px }
 #labelprint-app .lp-card-title { font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px }
@@ -187,9 +194,8 @@ window.lpCredLogin = async function() {
 </style>
 
 <div class="lp-header">
-  <div class="lp-header-title">🏷️ Label Printer</div>
-  <div style="font-size:12px;opacity:.8">ZP 450</div>
-  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+  <div class="lp-header-title">🏷️ Label Printer <span style="font-size:12px;font-weight:500;color:var(--text3)">ZP 450</span></div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
     <button class="lp-back" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
     <button class="lp-back" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
     <button class="lp-back" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
@@ -215,6 +221,15 @@ window.lpCredLogin = async function() {
     <div id="lp-zbp-help" style="display:none;margin-top:10px;padding:10px;background:var(--orange-bg);border-radius:8px;font-size:12px;color:var(--text2)">
       ⚠️ Zebra Browser Print not detected. <a href="https://www.zebra.com/us/en/support-downloads/software/printer-software/browser-print.html" target="_blank" style="color:#0891B2;font-weight:700">Download here</a> — install and restart this page.
     </div>
+  </div>
+
+  <!-- 🏷 Saved labels (owner 2026-10-17): Audit → Barcode designer → 💾 Save lands here — who saved it, tap to print. -->
+  <div class="lp-card" id="lp-saved-card">
+    <div class="lp-card-title" style="display:flex;align-items:center;gap:8px">🏷 Saved labels to print <span id="lp-saved-badge" class="lp-count-badge" style="display:none">0</span>
+      <button class="lp-btn lp-btn-secondary" style="margin-left:auto;padding:4px 10px;font-size:11px;text-transform:none;letter-spacing:0" onclick="lpSavedLoad()">↻</button></div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Saved in Audit → 🏷 Barcode designer. Tap one to print it; after it prints it comes off the list (who printed it is kept).</div>
+    <div id="lp-saved-list" style="font-size:13px;color:var(--text3)">Loading…</div>
+    <div id="lp-saved-status" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
   </div>
 
   <!-- Load locations -->
@@ -487,6 +502,46 @@ window.lpCredLogin = async function() {
     };
   }
 
+  // ── 🏷 Saved labels (Audit → Barcode designer → 💾 Save) ──────────────────
+  var lpSaved = [];
+  function lpEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+  function lpWhen(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
+  window.lpSavedLoad = function() {
+    var box = g('lp-saved-list'), app = g('labelprint-app'); if (!box || !app || app.style.display === 'none') return; // not signed in yet
+    return wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/barcode-job/queue').then(function(r) { return r.json(); }).then(function(d) {
+      lpSaved = (d && d.jobs) || [];
+      var b = g('lp-saved-badge'); if (b) { b.style.display = lpSaved.length ? '' : 'none'; b.textContent = lpSaved.length; }
+      if (!lpSaved.length) { box.innerHTML = 'Nothing saved to print right now.'; return; }
+      box.innerHTML = lpSaved.map(function(j, i) {
+        return '<div onclick="lpSavedPrint([' + i + '])" title="Tap to print" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg)">'
+          + '<div style="flex:1;min-width:0"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b style="font-family:var(--mono);font-size:15px;color:var(--text)">' + lpEsc(j.sku) + '</b><b style="color:var(--text)">× ' + j.copies + '</b>'
+          + (j.name ? '<span style="font-size:12px;color:var(--text2)">' + lpEsc(j.name) + '</span>' : '') + '</div>'
+          + '<div style="font-size:12px;color:var(--text);margin-top:2px">👤 Saved by <b>' + lpEsc(j.by_user || '?') + '</b> · ' + lpEsc(lpWhen(j.ts)) + '</div>'
+          + ((j.spots || []).length ? '<div style="font-size:11px;color:var(--text3)">' + j.spots.map(function(x) { return '📍 ' + lpEsc(x.loc) + ' ' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es'); }).join(' · ') + '</div>' : '') + '</div>'
+          + '<span class="lp-btn lp-btn-primary" style="padding:8px 14px">🖨️ Print</span></div>';
+      }).join('') + (lpSaved.length > 1 ? '<button class="lp-btn lp-btn-green" onclick="lpSavedPrint(\'all\')">🖨️ Print all (' + lpSaved.reduce(function(n, j) { return n + j.copies; }, 0) + ' labels)</button>' : '');
+    }).catch(function() { box.innerHTML = '<span style="color:var(--red)">Could not load — tap ↻</span>'; });
+  };
+  // Tap → the labels go to the Zebra (same label as Print Single for a SKU: part #, barcode, name) → "did they print OK?" → off the list.
+  window.lpSavedPrint = function(which) {
+    var list = which === 'all' ? lpSaved.slice() : which.map(function(i) { return lpSaved[i]; }).filter(Boolean), st = g('lp-saved-status');
+    if (!list.length) return;
+    if (!lpConnected) { st.style.color = 'var(--red)'; st.textContent = 'Connect to the printer first (🔌 Connect above)'; return; }
+    var dd = g('lp-printer-dropdown'), printer = lpPrinters[parseInt(dd ? dd.value : '0') || 0];
+    if (!printer) { st.style.color = 'var(--red)'; st.textContent = 'No printer selected'; return; }
+    var n = list.reduce(function(k, j) { return k + j.copies; }, 0);
+    st.style.color = 'var(--text2)'; st.textContent = 'Printing ' + n + ' label' + (n === 1 ? '' : 's') + '…';
+    fetch(LP_ZBP_URL + '/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: printer, data: list.map(function(j) { return lpGenSkuZPL(j.sku, j.name || '', j.copies); }).join('') }) })
+      .then(function() {
+        if (!confirm('Did the ' + n + ' label' + (n === 1 ? '' : 's') + ' print OK?\n\n' + list.map(function(j) { return j.copies + ' × ' + j.sku + ' (saved by ' + (j.by_user || '?') + ')'; }).join('\n') + '\n\nOK = take them off the list · Cancel = keep them to print again')) { st.textContent = 'Kept on the list'; return; }
+        return wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/barcode-job/printed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list.map(function(j) { return j.id; }) }) })
+          .then(function(r) { return r.json(); }).then(function(d) { st.style.color = 'var(--green)'; st.textContent = '✓ Printed ' + n + ' — off the list'; lpSavedLoad(); });
+      })
+      .catch(function() { st.style.color = 'var(--red)'; st.textContent = '✗ Could not reach the printer — check Zebra Browser Print'; });
+  };
+  setTimeout(lpSavedLoad, 300);
+  setInterval(function() { if (document.visibilityState === 'visible') lpSavedLoad(); }, 60000);
+
   window.lpPrintSingle = function() {
     var inp    = g('lp-single-input');
     var status = g('lp-single-status');
@@ -734,6 +789,7 @@ window.lpCredLogin = async function() {
   window.lpLaunchFromOperator = function() {
     document.getElementById('launcher').style.display = 'none';
     document.getElementById('labelprint-app').style.display = 'block';
+    setTimeout(function () { if (window.lpSavedLoad) lpSavedLoad(); }, 50); // 🏷 Saved labels
     lpLaunch();
   };
 
