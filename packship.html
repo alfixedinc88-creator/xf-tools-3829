@@ -7620,7 +7620,7 @@ window._psNostockResolveModalShowFound = function() {
   // Inventory's "Log Found Location" panel) so the dropdown pre-selects the
   // right prefix and the number field just gets the rest — pickers only
   // have to type the shelf/bin number, same as they already do in Inventory.
-  var _psLocPrefixes = ['2FL=','BARN=','BASEMENT=','BH=','C1=','C2=','C3=','C4=','C5=','FRONT='];
+  var _psLocPrefixes = ['2FL=','BARN=','BASEMENT=','BO=','C1=','C2=','C3=','C4=','C5=','FRONT=']; // BH= is BO= now (owner 2026-10-17)
   var suggestedPrefix = _psLocPrefixes[0], suggestedShelf = suggestedLoc;
   for (var _pi = 0; _pi < _psLocPrefixes.length; _pi++) {
     if (suggestedLoc.toUpperCase().indexOf(_psLocPrefixes[_pi]) === 0) {

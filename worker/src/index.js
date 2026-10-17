@@ -2135,6 +2135,45 @@ async function locSpaceFix(env) {
     return out;
   } catch (e) { console.error('[loc space fix]', e.message); _locSpaceFixDone = false; return null; }
 }
+// One time (owner 2026-10-17: "BH is BO now — no more BH; if you still see BH anywhere change it to BO; the stickers still say
+// BH=, a scan of BH= is BO="): every spot saved as BH=… → BO=… — SKU Mgr, every History line (location / paired / overwrite),
+// the location list, cost layers, recount columns, sold-out label log, pallet checks and the location plan. Only the spelling of
+// the spot changes; cases stay exactly the same. On record (app_config + log). Scans keep turning BH= into BO= (locAliasRequest).
+const LOC_BH_FIX_KEY = 'loc_bh_fix_20261017';
+let _locBhFixDone = false;
+async function locBhFix(env) {
+  if (_locBhFixDone || !env.DB) return null; _locBhFixDone = true;
+  try {
+    const seen = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(LOC_BH_FIX_KEY).first().catch(() => null);
+    if (seen) return null;
+    const out = { at: new Date().toISOString(), changed: {} };
+    const fixCol = async (table, col) => {
+      const rows = (await env.DB.prepare(`SELECT rowid AS rid, ${col} AS v FROM ${table} WHERE UPPER(TRIM(${col})) LIKE 'BH%'`).all().catch(() => ({ results: [] }))).results || [];
+      let n = 0;
+      for (const r of rows) { if (!LOC_BH_RE.test(r.v || '')) continue; const t = String(r.v).replace(LOC_BH_RE, 'BO=');
+        await env.DB.prepare(`UPDATE ${table} SET ${col} = ? WHERE rowid = ?`).bind(t, r.rid).run(); n++; if (!out.changed[r.v]) out.changed[r.v] = t; }
+      return n;
+    };
+    out.master = await fixCol('master_list', 'location');
+    out.log = (await fixCol('inventory_log', 'location')) + (await fixCol('inventory_log', 'paired_location')) + (await fixCol('inventory_log', 'overwrite_loc'));
+    out.cost = await fixCol('cost_layer', 'location');
+    out.other = (await fixCol('recount_columns', 'location')) + (await fixCol('soldout_label_log', 'location')) + (await fixCol('pallet_pcs_check', 'sku_loc')) + (await fixCol('pack_change_log', 'location'));
+    // the location list is keyed by the spot: BH=… → BO=… (dropped when BO=… is already there)
+    const locs = (await env.DB.prepare(`SELECT location FROM locations WHERE UPPER(TRIM(location)) LIKE 'BH%'`).all().catch(() => ({ results: [] }))).results || [];
+    out.locations = 0;
+    for (const r of locs) { if (!LOC_BH_RE.test(r.location || '')) continue; const t = String(r.location).replace(LOC_BH_RE, 'BO=');
+      await env.DB.prepare('UPDATE OR IGNORE locations SET location = ? WHERE location = ?').bind(t, r.location).run().catch(() => {});
+      await env.DB.prepare('DELETE FROM locations WHERE location = ?').bind(r.location).run().catch(() => {}); out.locations++; }
+    // location plan: an area "BH" → "BO", a spot BH=… → BO=…
+    const plans = (await env.DB.prepare(`SELECT base, plan FROM location_plan WHERE UPPER(TRIM(plan)) = 'BH' OR UPPER(TRIM(plan)) LIKE 'BH=%'`).all().catch(() => ({ results: [] }))).results || [];
+    out.plans = 0;
+    for (const r of plans) { const t = /^\s*BH\s*$/i.test(r.plan) ? 'BO' : String(r.plan).replace(LOC_BH_RE, 'BO=');
+      await env.DB.prepare('UPDATE location_plan SET plan = ? WHERE base = ?').bind(t, r.base).run(); out.plans++; }
+    await env.DB.prepare('INSERT INTO app_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(LOC_BH_FIX_KEY, JSON.stringify(out).slice(0, 20000)).run();
+    console.log('[loc BH→BO fix]', JSON.stringify(out).slice(0, 500));
+    return out;
+  } catch (e) { console.error('[loc BH→BO fix]', e.message); _locBhFixDone = false; return null; }
+}
 async function locAliasRequest(request) {
   try {
     const url = new URL(request.url);
@@ -7833,7 +7872,7 @@ async function inventoryLocationPrefixes(env) {
   }
 }
 
-const DEFAULT_PREFIXES = ['2FL=','BARN=','BASEMENT=','BH=','C1=','C2=','C3=','C4=','C5=','FRONT='];
+const DEFAULT_PREFIXES = ['2FL=','BARN=','BASEMENT=','BO=','C1=','C2=','C3=','C4=','C5=','FRONT=']; // BH= is BO= now (owner 2026-10-17)
 
 // GET /inventory/prefixes — reads from the Prefixes Google Sheets tab.
 // Reverted from a D1-backed version after two rounds of D1 fixes didn't
@@ -7851,7 +7890,8 @@ async function inventoryGetPrefixes(env) {
       return cors(new Response(JSON.stringify({ ok: false, error: 'Sheets read failed: ' + (data.error.message || 'unknown') }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }));
     }
-    const prefixes = (data.values || []).map(r => String(r[0]||'').trim()).filter(Boolean);
+    // BH= is BO= now (owner 2026-10-17) — the Prefixes sheet may still say BH=: shown as BO= (once).
+    const prefixes = [...new Set((data.values || []).map(r => String(r[0]||'').trim()).filter(Boolean).map(p => LOC_BH_RE.test(p) ? p.replace(LOC_BH_RE, 'BO=') : p))];
     return cors(new Response(JSON.stringify({ ok: true, prefixes: prefixes.length ? prefixes : DEFAULT_PREFIXES, source: 'sheets' }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     console.error('[Prefixes] GET failed:', e.message);
@@ -9123,6 +9163,7 @@ const _app = {
     if (url.pathname.startsWith('/inventory/')) {
       const path = url.pathname;
       if (!_locSpaceFixDone) await locSpaceFix(env); // 📍 once: spots saved with spaces → without (see locSpaceFix)
+      if (!_locBhFixDone) await locBhFix(env); // 📍 once: spots saved as BH=… → BO=… (see locBhFix)
       // lookup + log: any valid session
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
       // 🏷 Label Printer (owner: "when we type our SKU, also give the name of the SKU"): the item name for a part #,
