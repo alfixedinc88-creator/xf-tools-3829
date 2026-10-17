@@ -1496,6 +1496,18 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   ho = el('rc-out').innerHTML;
   check('the last one resolved → the column is done by itself (who / when kept), "✅ C3=4-1-1 done — scan the next column"', col && col.location === 'C3=4-1-1' && col.by_user === 'TS' && col.items === 7 && /✅ C3=4-1-1 done — scan the next column/.test(ho), col);
   check('numbers add up: 237 pcs + 10 (5→6 ×10) + 12 (new 6×2) − 20 (None found 4×5) − 50 (×50 → 0) + 40 (new 1×40) = 229 pcs', r0 === 237 && r1 === 229, { r0, r1 });
+  // 📊 Owner (2026-10-17): "a tab to see what columns he or she has done, how long it took, when they started / finished,
+  // how many boxes, what is still not done; skip to scan".
+  const colR = sq.prepare("SELECT started_at, ts, detail, stopped FROM recount_columns WHERE location = 'C3=4-1-1' ORDER BY id DESC").get();
+  const detR = JSON.parse(colR.detail || '[]');
+  check('📊 the column keeps its start time (before done) and how each line was counted: =5 ✗ None found, =50 ✓ Found (not scanned), the rest scanned',
+    colR.started_at && colR.started_at <= colR.ts && !colR.stopped && detR.find(x => x.part === '88-8-1=5').how === 'none' && detR.filter(x => /=50$/.test(x.part)).every(x => x.how === 'found')
+      && detR.filter(x => !/=50?$/.test(x.part) || /=10$|=20$|=2$/.test(x.part)).filter(x => !/=5$|=50$/.test(x.part)).every(x => x.how === 'scan'), detR);
+  const repT = await get('/inventory/recount/report'), rc1 = (repT.columns || []).find(c => c.location === 'C3=4-1-1') || {};
+  // Boxes counted on C3=4-1-1: =10×10 6 + =10×25 3 + =2 6 (new) + =20 2 + =5 0 + =50 0 + =50×40 1 (new) = 18.
+  check('📊 report: C3=4-1-1 by TS, start → done, minutes, 18 boxes, 7 lines, skipped to scan = =5 (none found) + =50 (found: the ×50 line → 0 and its ×40 boxes); TS has 1 column, 18 boxes; C3=4-1-2 still not done in aisle C3=4',
+    repT.ok && rc1.by === 'TS' && rc1.startedAt && rc1.minutes != null && rc1.boxes === 18 && rc1.items === 7 && rc1.skipped.length === 3 && rc1.skipped.some(x => x.part === '88-8-1=5' && x.how === 'none') && rc1.skipped.filter(x => /=50$/.test(x.part) && x.how === 'found').length === 2
+      && (repT.people.find(p => p.by === 'TS') || {}).columns >= 1 && (repT.aisles.find(a => a.aisle === 'C3=4') || { notDone: [] }).notDone.includes('C3=4-1-2') === false, { rc1, people: repT.people });
   const st = await get('/inventory/recount/status?aisle=C3=4');
   check('aisle C3=4: C3=4-1-1 done (who / when), C3=4-1-2 not yet; the next column can start now', st.ok && st.spots.length === 2 && st.spots.find(x => x.location === 'C3=4-1-1').done.by === 'TS' && !st.spots.find(x => x.location === 'C3=4-1-2').done && st.doneCount >= 1, st);
   w.rcGo('C3=4-1-2'); await settle(); await settle(); await settle();
@@ -1505,6 +1517,10 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const p2 = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE part_num LIKE '88-8-2=%'").get().p;
   const q0 = p2(); // 4×10 + 2×20 = 80
   globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; // ✕ Stop the open column C3=4-1-2 first (a new one can't start while one is open)
+  await settle(); await settle();
+  const stopR = sq.prepare("SELECT stopped, started_at FROM recount_columns WHERE location = 'C3=4-1-2' ORDER BY id DESC").get();
+  const stS = await get('/inventory/recount/status?aisle=C3=4');
+  check('📊 ✕ Stop is kept for the report (C3=4-1-2 stopped, with its start time) but the column is still NOT done', stopR && stopR.stopped === 1 && stopR.started_at && !stS.spots.find(x => x.location === 'C3=4-1-2').done, { stopR });
   w.rcGo('C3=4-2-1'); await settle(); await settle(); await settle(); await settle(); // opened with WiFi: the column + its boxes are kept on the phone
   wifi = false;
   w.rcGo('88-8-2=10'); await settle(); await settle(); w.rcCases(5); w.rcPcs(10); await settle();
@@ -1538,6 +1554,9 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const nrW = await call('/inventory/recount/new-round', { method: 'POST', headers: { 'X-Cred-Token': pkt3, 'Content-Type': 'application/json' }, body: '{}' });
   const nrM = await post('/inventory/recount/new-round', {}), st2 = await get('/inventory/recount/status?aisle=C3=4');
   check('only a manager can start a new recount; after it every column shows "not done" again', nrW.status === 403 && nrM.ok && st2.spots.every(x => !x.done), { w: nrW.status, nrM });
+  const repW = await call('/inventory/recount/report', { headers: { 'X-Cred-Token': pkt3 } });
+  check('📊 the recount report is for managers only (a picker gets 403); on the Audit tab it is folded and hidden until a manager signs in',
+    repW.status === 403 && /<details class="icard" id="rc-report" style="display:none" ontoggle="if\(this\.open\)rcReport\(\)">/.test(ckSrc + rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')) && /rep\.style\.display = invUnlocked \? '' : 'none'/.test(rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), repW.status);
   const { readFileSync: rfs } = await import('node:fs');
   const ihA = rfs(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('Audit tab: the recount card first; the old part # / location audit tools kept, folded under "🔧 Other audit tools"',
