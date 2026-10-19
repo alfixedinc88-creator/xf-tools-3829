@@ -8684,6 +8684,24 @@ const _app = {
     if (url.pathname === '/auth/logout' && method === 'POST') {
       return await credLogout(request, env);
     }
+    // 📴 Owner (2026-10-19): "4 scanners, 6 people — someone signs out and in on the same scanner" with no internet. A scanner
+    // checks the password itself (only for people who signed in on it with internet before) and keeps a list; when the
+    // internet is back it sends that list here → each one is in Admin → 🔑 Log in as an offline sign-in, with its real time.
+    if (url.pathname === '/auth/offline-signins' && method === 'POST') {
+      const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      const b = await request.json().catch(() => ({}));
+      let n = 0;
+      for (const it of (Array.isArray(b.items) ? b.items : []).slice(0, 200)) {
+        const u = await env.DB.prepare('SELECT id, username, display_name, active FROM cred_users WHERE id = ?').bind(parseInt(it.userId, 10) || 0).first().catch(() => null);
+        if (!u) continue;
+        const at = /^\d{4}-\d\d-\d\dT/.test(String(it.at || '')) ? String(it.at) : '';
+        await credLoginLog(env, it.kind === 'signout' ? 'signout' : 'signin', u,
+          `📴 ${it.kind === 'signout' ? 'signed out' : 'signed in'} with NO internet on a scanner${at ? ' at ' + at : ''} (the scanner checked the password; sent by ${s.displayName || s.username || 'someone'} when the internet was back)${u.active ? '' : ' — ⚠ this account is disabled now'}`, request);
+        n++;
+      }
+      return cors(new Response(JSON.stringify({ ok: true, logged: n }), { headers: { 'Content-Type': 'application/json' } }));
+    }
     // What this signed-in person may not see (xf-access.js on every page).
     // 📱 Scanner check-in / ✅ Found it (any signed-in device)
     if ((url.pathname === '/auth/ping' && method === 'GET') || (url.pathname === '/auth/device-found' && method === 'POST')) {

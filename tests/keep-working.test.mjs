@@ -7620,14 +7620,40 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
       && /Promise\.all\(OFFLINE_PAGES\.map\(f =>\s*fetch\(BASE \+ f, \{ cache: 'no-cache' \}\)\.then\(r => \{ if \(r\.ok\) return cache\.put\(BASE \+ f, r\); \}\)\.catch\(\(\) => \{\}\)\)\)/.test(sw), missing);
   check('offline: page.html?tab=… / file.js?v=… open from the saved copy (ignoreSearch); fonts + libraries (cdnjs, jsdelivr, unpkg, Google fonts) saved after first use',
     /caches\.match\(e\.request, \{ ignoreSearch: true \}\)/.test(sw) && /const LIB_HOSTS = \['fonts\.googleapis\.com', 'fonts\.gstatic\.com', 'cdn\.jsdelivr\.net', 'cdnjs\.cloudflare\.com', 'unpkg\.com'\];/.test(sw), null);
-  check('data: live from the server when it answers; the last saved answer only when it can\'t be reached, marked X-XF-Offline; never for sign-in calls or a request with no sign-in; kept across updates; wiped on sign out',
+  check('data: live from the server when it answers; the last saved answer only when it can\'t be reached, marked X-XF-Offline; never for sign-in calls or a request with no sign-in; kept across updates',
     /if \(\/\^\\\/auth\\\/\/\.test\(url\.pathname\)\) return false;\s*return !!req\.headers\.get\('X-Cred-Token'\);/.test(sw) && /h\.set\('X-XF-Offline', '1'\)/.test(sw)
-      && /k !== LIB_CACHE && k !== DATA_CACHE/.test(sw) && /if \(e\.data\?\.type === 'CLEAR_DATA'\)\s+caches\.delete\(DATA_CACHE\);/.test(sw) && /postMessage\(\{ type: 'CLEAR_DATA' \}\)/.test(so), null);
+      && /k !== LIB_CACHE && k !== DATA_CACHE/.test(sw) && /if \(e\.data\?\.type === 'CLEAR_DATA'\)\s+caches\.delete\(DATA_CACHE\);/.test(sw), null);
   check('POST outbox kept as it was (Inventory outbox requests not queued twice; queued ones keep their _requestId so a replay is never counted twice)',
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
-    /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019a/.test(R(f))), null);
+    /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019b/.test(R(f))), null);
+}
+
+// Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
+console.log('\n📴 Offline step 2a: shared scanners — sign in with no internet, saved work goes as the person who did it');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const R = f => rfS(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const sw = R('sw.js'), xa = R('xf-access.js'), so = R('xf-signout.js');
+  check('a scanner keeps a password check (PBKDF2, its own salt — never the password) for each person who signs in on it WITH internet; with no internet the same person signs in there (30 days), wrong password / never on this scanner → refused',
+    /if \(isLogin && res\.ok\) rememberLogin\(loginCopy, res\.clone\(\)\)/.test(sw) && /if \(isLogin\) return offlineLogin\(loginCopy\);/.test(sw) && /iterations: 100000, hash: 'SHA-256'/.test(sw)
+      && /const LOGIN_DAYS = 30;/.test(sw) && /has not signed in on THIS scanner with internet/.test(sw) && /return J\(\{ error: 'Invalid username or password', offline: true \}, 401\);/.test(sw) && !/password: b\.password/.test(sw), null);
+  check('saved for later works (fetch uses up the body even offline — a separate copy is queued; found 2026-10-19), and an entry made after an offline sign-in is sent later with a real sign-in, still recorded as the person who made it (_outbox + _byUserId), once',
+    /const forQueue = request\.clone\(\);/.test(sw) && /const queueItem = await queueRequest\(forQueue\);/.test(sw) && /if \(offTok\) \{ parsed\._outbox = true; parsed\._byUserId = offTok; \}/.test(sw)
+      && /if \(hk && offlineTokenUser\(headers\[hk\]\)\) \{ if \(!token\) \{ remaining\.push\(item\); continue; \} headers\[hk\] = token; \}/.test(sw), null);
+  check('sign out on a shared scanner keeps the saved data and everyone\'s saved work for the next person; an offline sign out is on record',
+    !/CLEAR_DATA/.test(so) && /if \(url\.pathname === '\/auth\/logout'\) \{/.test(sw) && /kind: 'signout'/.test(sw), null);
+  check('internet back: any page that reaches the server with a real sign-in sends what this device saved; signed in offline → "sign in again" (green bar, English + 中文)',
+    /if \(r\.ok && !\/\^offline\\\.\/\.test\(t\)\) \{ try \{ if \(navigator\.serviceWorker && navigator\.serviceWorker\.controller\) navigator\.serviceWorker\.controller\.postMessage\(\{ type: 'ONLINE', token: t \}\);/.test(xa)
+      && /localStorage\.setItem\('xf_back_online', '1'\)/.test(xa) && /The internet is back — sign in again/.test(xa) && /网络已恢复/.test(xa), null);
+  // Worker: the offline sign-ins list → Admin → 🔑 Log in.
+  const no = await call('/auth/offline-signins', { method: 'POST', body: JSON.stringify({ items: [] }) });
+  const uid = sq.prepare("SELECT id FROM cred_users WHERE username = 'manager1'").get().id;
+  const ok = await post('/auth/offline-signins', { items: [{ userId: uid, at: '2026-10-19T13:05:00.000Z', kind: 'signin' }, { userId: uid, at: '2026-10-19T15:10:00.000Z', kind: 'signout' }, { userId: 999999, kind: 'signin' }] });
+  const rows = sq.prepare("SELECT kind, detail FROM cred_login_log WHERE user_id = ? AND detail LIKE '%NO internet%' ORDER BY id").all(uid);
+  check('POST /auth/offline-signins needs a sign-in; each offline sign in / out lands in Admin → 🔑 Log in with its real time and who sent it (unknown user skipped)',
+    no.status === 401 && ok.ok && ok.logged === 2 && rows.length === 2 && rows[0].kind === 'signin' && /signed in with NO internet on a scanner at 2026-10-19T13:05/.test(rows[0].detail) && rows[1].kind === 'signout', { st: no.status, ok, rows });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
