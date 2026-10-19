@@ -30540,7 +30540,10 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     if (!printed && url.searchParams.has('after')) await autolabelSetKey(env, 'label_station_seen', JSON.stringify({ at: new Date().toISOString(), by: String((session && (session.displayName || session.username)) || '').slice(0, 40) })).catch(() => {});
     let stationSeen = null; try { stationSeen = JSON.parse(await autolabelGetKey(env, 'label_station_seen') || 'null'); } catch (_) {}
     const orig = await labelOrigins(env, rows.map(r => r.tracking));
-    return veeqoResp({ ok: true, stationSeen, held, nextDay, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
+    // Owner (2026-10-19): "Print new labels now — more than 199 not showing? it stays at 199 waiting for a long time": the list
+    // is at most 200, so the page's count stopped there. The real number waiting (and the oldest) goes with it.
+    const tot = !printed && q.length < 3 ? await d1First(env, 'SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM label_print_queue WHERE printed_at IS NULL AND cancel_hold IS NULL').catch(() => null) : null;
+    return veeqoResp({ ok: true, stationSeen, held, nextDay, total: tot ? tot.n : undefined, oldest: tot ? tot.oldest : undefined, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
       const t = String(r.tracking || ''); return { ...r, items, origin: labelOrigin(orig.get(t), orig.has(t)) }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.

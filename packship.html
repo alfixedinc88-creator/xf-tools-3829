@@ -11057,7 +11057,11 @@ window.psAlLoadLabels = async function() {
   var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30')]);
   var fresh = (all[0] && all[0].labels) || [];
   var nAuto = fresh.filter(function(l) { return l.origin && l.origin.kind === 'auto'; }).length;
-  document.getElementById('ps-al-label-count').textContent = fresh.length ? '(' + fresh.length + ' waiting · 🤖 ' + nAuto + ' auto · 👤 ' + (fresh.length - nAuto) + ' by hand)' : '';
+  // Owner (2026-10-19): "stays at 199 waiting for a long time" — the list holds 200 at most; the count is the real total now.
+  var tot = all[0] && all[0].total != null ? all[0].total : fresh.length, nd = ((all[0] && all[0].nextDay) || []).length;
+  var more = tot > fresh.length ? ' — list shows the first ' + fresh.length + (nd ? ', ' + nd + ' for the next ship day' : '') : '';
+  document.getElementById('ps-al-label-count').textContent = tot ? '(' + tot.toLocaleString() + more + ' waiting · 🤖 ' + nAuto + ' auto · 👤 ' + (fresh.length - nAuto) + ' by hand'
+    + (all[0] && all[0].oldest ? ' · oldest ' + new Date(all[0].oldest).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '') + ')' : '';
   // Owner: "why still waiting for us to print?" — waiting labels print only on a computer with Pack & Ship open and
   // 🖨 Printer station ticked. Say so when none has asked for new labels lately.
   var seen = all[0] && all[0].stationSeen, ago = seen && seen.at ? (Date.now() - Date.parse(seen.at)) / 60000 : null;
