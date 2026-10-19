@@ -1136,6 +1136,8 @@ window.invCredLogin = async function() {
   <!-- 📋 Full recount (owner): about once a year, column by column — scan the column,
        scan each box type, tap cases + pieces (saves), ✅ Done → anything not scanned:
        Found / None found. A column must be finished before the next one. -->
+  <!-- 📋 For you (owner 2026-10-19): spots a manager sent this person to go back over (Recount report → 📤). -->
+  <div id="rc-mine"></div>
   <div class="icard" id="rc-card" style="border:2px solid var(--accent)">
     <div class="icard-label">📋 Full recount — column by column</div>
     <div id="rc-progress" style="font-size:12px;color:var(--text2);margin-bottom:8px">Scan the column label to start.</div>
@@ -13961,6 +13963,23 @@ window.invCredLogin = async function() {
         + (invUnlocked ? ' <a href="#" onclick="rcNewRound();return false" style="font-size:11px;color:var(--text3)">Start a new recount (managers)</a>' : '');
       if (RC.loc) rcRender();
     }).catch(function() {});
+    rcMine();
+  };
+  // 📋 For you: the lists sent to me — each spot's state now (🟩 done · 🟨 started · 🟥 not scanned); tap one to start it.
+  window.rcMine = function() {
+    var box = g('rc-mine'); if (!box) return;
+    wFetch(W + '/inventory/recount/assigned').then(function(r) { return r.json(); }).then(function(d) {
+      var L = (d && d.ok && d.lists) || [];
+      if (!L.length) { box.innerHTML = ''; return; }
+      var col = { done: ['var(--green-bg,#e8f7ee)', 'var(--green)'], started: ['#fef9c3', '#ca8a04'], none: ['var(--red-bg,#fdf0ee)', 'var(--red)'] };
+      box.innerHTML = L.map(function(a) {
+        return '<div class="icard" style="border:2px solid var(--orange)"><div class="icard-label">📋 For you: ' + ckE(a.area || '') + ' — ' + (a.total - a.done) + ' spot' + (a.total - a.done === 1 ? '' : 's') + ' to finish</div>'
+          + '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Sent by ' + ckE(a.by) + ' · ' + ckE(xfrFmtT(a.at)) + (a.note ? ' · “' + ckE(a.note) + '”' : '') + ' · ' + a.done + ' of ' + a.total + ' done. Tap a spot to start it (or scan its label).</div>'
+          + '<div style="display:flex;flex-wrap:wrap;gap:4px">' + a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }).map(function(sp) { var c = col[sp.st] || col.none;
+              return '<button type="button" ' + (sp.st === 'done' ? 'disabled ' : 'onclick="rcGo(this.dataset.l)" ') + 'data-l="' + ckE(sp.l) + '" style="padding:6px 8px;border-radius:7px;font-family:var(--mono);font-size:12px;font-weight:800;cursor:' + (sp.st === 'done' ? 'default' : 'pointer') + ';background:' + c[0] + ';border:1.5px solid ' + c[1] + ';color:var(--text)">'
+                + (sp.st === 'done' ? '✓ ' : '') + ckE(sp.l) + (sp.st === 'started' ? '<div style="font-size:10px;font-weight:600">' + (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + '</div>' : '') + '</button>'; }).join('') + '</div></div>';
+      }).join('');
+    }).catch(function() {});
   };
   window.rcNewRound = function() {
     if (!confirm('Start a NEW recount? Every column will show as "not done" again. (Counts already saved stay.)')) return;
@@ -14232,6 +14251,11 @@ window.invCredLogin = async function() {
         + ((d.notSpots || []).length ? '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="__bad" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (RC.area === '__bad' ? 'var(--accent)' : 'var(--orange)') + ';background:var(--orange-bg,#fff7ed);color:var(--text)"><b>⚠ ' + d.notSpots.length + ' not real spots</b><br><span style="font-size:11px">a note / barcode / container in SKU Mgr Location</span></button>' : '')
         + '</div>'
         + '<div id="rc-area-grid">' + rcAreaGrid() + '</div>';
+      // 📤 Lists sent to someone (still open): who, area, how far
+      if ((d.assigned || []).length) h += '<div style="font-weight:800;color:var(--text);margin:10px 0 4px">📤 Sent to finish</div>' + d.assigned.map(function(a) {
+          return '<div style="padding:4px 0;border-top:1px solid var(--border);color:var(--text)"><b>' + ckE(a.to) + '</b> · ' + ckE(a.area || '') + ' · <b>' + a.done + ' of ' + a.total + '</b> done'
+            + ' <span style="color:var(--text3)">(sent by ' + ckE(a.by) + ' ' + ckE(xfrFmtT(a.at)) + (a.note ? ' · “' + ckE(a.note) + '”' : '') + ')</span>'
+            + ' <a href="#" onclick="rcAssignCancel(' + a.id + ');return false" style="color:var(--red);font-size:11px">✕ cancel</a></div>'; }).join('');
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
         + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
         + (d.people.length ? d.people.map(function(p) { return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
@@ -14265,6 +14289,7 @@ window.invCredLogin = async function() {
     return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
       + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
       + '<span>🟩 done ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
+      + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished to…</button>' : '')
       + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px">'
       + a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }).map(function(sp) { var c = col[sp.st];
@@ -14292,6 +14317,34 @@ window.invCredLogin = async function() {
       invFlash('🗑 ' + d.location + ' deleted' + (d.rows ? ' — ' + d.rows + ' SKU Mgr row' + (d.rows === 1 ? '' : 's') + (d.cases ? ', ' + xfrN(d.cases) + ' cases taken off (History)' : '') : ''), 'success');
       var keep = RC.area; rcReport(); RC.area = keep;
     }).catch(function() { invFlash('📶 Not deleted — check WiFi', 'error'); });
+  };
+  // 📤 Send every 🟥 not scanned / 🟨 started spot of an area to one person (owner 2026-10-19, C4).
+  window.rcAssignOpen = function(area) {
+    var a = (RC.rep && RC.rep.areas || []).filter(function(x) { return x.area === area; })[0]; if (!a) return;
+    var spots = a.spots.filter(function(sp) { return sp.st !== 'done'; }).map(function(sp) { return sp.l; });
+    wFetch(W + '/inventory/recount/people').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { invFlash((d && d.error) || 'Could not load people', 'error'); return; }
+      xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">📤 Send ' + spots.length + ' unfinished ' + ckE(area) + ' spot' + (spots.length === 1 ? '' : 's') + '</div>'
+        + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;max-height:90px;overflow:auto;font-family:var(--mono)">' + spots.slice().sort(invPullWalkCompare).map(ckE).join(' · ') + '</div>'
+        + '<div style="font-size:13px;font-weight:700;margin-bottom:4px">To who?</div><select id="rc-as-to" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:15px;margin-bottom:8px;background:var(--bg);color:var(--text)"><option value="">— pick a person —</option>'
+        + d.people.map(function(p) { return '<option value="' + p.id + '">' + ckE(p.name) + '</option>'; }).join('') + '</select>'
+        + '<input id="rc-as-note" placeholder="Note (optional), e.g. pull the boxes out and recount" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px;background:var(--bg);color:var(--text)">'
+        + '<button type="button" onclick="rcAssignSend(this.dataset.a)" data-a="' + ckE(area) + '" style="width:100%;padding:13px;border-radius:11px;border:none;background:var(--accent);color:#fff;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:6px">📤 Send</button>'
+        + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:11px;border-radius:11px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:14px;cursor:pointer">Cancel</button>');
+      RC._asSpots = spots;
+    }).catch(function() { invFlash('📶 Could not load — check WiFi', 'error'); });
+  };
+  window.rcAssignSend = function(area) {
+    var to = (g('rc-as-to') || {}).value; if (!to) { invFlash('Pick who gets it', 'error'); return; }
+    wFetch(W + '/inventory/recount/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, spots: RC._asSpots || [], toUserId: to, note: (g('rc-as-note') || {}).value || '' }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('✗ ' + ((d && d.error) || 'Not sent'), 'error'); return; }
+        xfrPopupClose(); invFlash('📤 Sent ' + d.spots + ' spot' + (d.spots === 1 ? '' : 's') + ' to ' + d.to + ' — they see it on Audit → 📋 Recount', 'success'); rcReport();
+      }).catch(function() { invFlash('📶 Not sent — check WiFi', 'error'); });
+  };
+  window.rcAssignCancel = function(id) {
+    if (!confirm('Cancel this list? The person no longer sees it.')) return;
+    wFetch(W + '/inventory/recount/assign/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) }).then(function() { rcReport(); }).catch(function() {});
   };
   window.rcArea = function(a) { RC.area = RC.area === a ? '' : a; var gEl = g('rc-area-grid'); if (gEl) gEl.innerHTML = rcAreaGrid();
     document.querySelectorAll('[data-rca]').forEach(function(b) { b.style.borderColor = b.getAttribute('data-rca') === RC.area ? 'var(--accent)' : 'var(--border)'; }); };

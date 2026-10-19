@@ -7665,6 +7665,7 @@ async function recountReport(env) {
     Object.values(areas).forEach(a => a.spots.forEach(s => { if (s.l.includes('=') && segs(s) < mode[pre(s)]) s.odd = true; })); }
   return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
     areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })), notSpots: Object.values(badSpots),
+    assigned: await recountAssignList(env, '', []).catch(() => []),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/spot/delete { location, force } — managers only (Recount report → 🗺 By area → ✕).
@@ -7697,6 +7698,72 @@ async function inventorySpotDelete(request, env, session) {
   await env.DB.prepare('DELETE FROM locations WHERE UPPER(TRIM(location)) = ?').bind(L).run().catch(() => {});
   if (session && session.userId) await logUserActivity(env, session.userId, 'spot_delete', { location: L, rows: removed, cases }).catch(() => {});
   return J({ ok: true, location: L, rows: removed, cases });
+}
+// ── 📤 Send the unfinished spots of an area to someone (owner 2026-10-19: "C4 — they say it's done, but some spots are 'not
+// scanned' or '1 line scanned': forward all of those to someone so they go back over the ones not done yet"). A list per
+// person (who sent it, when, a note); the person sees it on Audit → 📋 Recount ("📋 For you") with each spot's state now;
+// it closes by itself when every spot is done, or the manager cancels it. All on record.
+async function recountAssignTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, to_user_id INTEGER, to_name TEXT,
+    area TEXT, spots TEXT, note TEXT, closed_at TEXT, closed_by TEXT, closed_how TEXT)`).run();
+}
+// Each spot's state in this round: done (a finished column) · started (recount lines / ✕ stopped) · none.
+async function recountSpotStates(env, roundStart) {
+  const st = {};
+  (await d1All(env, 'SELECT UPPER(location) l, by_user, ts, COALESCE(stopped, 0) s FROM recount_columns WHERE ts >= ? ORDER BY ts', [roundStart])).forEach(r => {
+    if (!r.s) st[r.l] = { st: 'done', by: r.by_user || '', at: r.ts }; else if (!st[r.l] || st[r.l].st !== 'done') st[r.l] = { st: 'started', by: r.by_user || '', at: r.ts, stopped: true, lines: 0 }; });
+  (await d1All(env, `SELECT UPPER(TRIM(location)) AS l, COUNT(*) AS n, MAX(timestamp) AS at, MAX(initials) AS by FROM inventory_log
+      WHERE timestamp >= ? AND notes LIKE '%(📋 Recount)%' AND COALESCE(status,'') != 'Rejected' AND cancelled_at IS NULL GROUP BY UPPER(TRIM(location))`, [roundStart]).catch(() => []))
+    .forEach(r => { if (st[r.l] && st[r.l].st === 'done') return; st[r.l] = { st: 'started', by: r.by || '', at: r.at, lines: r.n, stopped: !!(st[r.l] && st[r.l].stopped) }; });
+  return st;
+}
+async function recountAssignList(env, where, args) {
+  await recountAssignTable(env); await recountTables(env);
+  const roundStart = await recountRoundStart(env), st = await recountSpotStates(env, roundStart);
+  const rows = await d1All(env, `SELECT * FROM recount_assign WHERE closed_at IS NULL ${where} ORDER BY id DESC LIMIT 100`, args);
+  const out = [];
+  for (const r of rows) {
+    let spots = []; try { spots = JSON.parse(r.spots || '[]') || []; } catch (_) {}
+    const list = spots.map(l => ({ l, ...(st[String(l).toUpperCase()] || { st: 'none' }) }));
+    const done = list.filter(x => x.st === 'done').length;
+    if (list.length && done === list.length) { // every spot done → closes by itself
+      await env.DB.prepare("UPDATE recount_assign SET closed_at = ?, closed_by = ?, closed_how = 'all done' WHERE id = ? AND closed_at IS NULL").bind(new Date().toISOString(), r.to_name || '', r.id).run();
+      continue;
+    }
+    out.push({ id: r.id, at: r.at, by: r.by_user, toUserId: r.to_user_id, to: r.to_name, area: r.area, note: r.note || '', spots: list, done, total: list.length });
+  }
+  return out;
+}
+async function inventoryRecountAssign(path, request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), mgmt = session && session.pin_level === 'mgmt';
+  await recountAssignTable(env);
+  if (path === '/inventory/recount/assigned') { // the lists sent to me (anyone signed in)
+    const uid = session && (session.userId || session.user_id);
+    return J({ ok: true, lists: uid ? await recountAssignList(env, 'AND to_user_id = ?', [uid]) : [] });
+  }
+  if (!mgmt) return J({ ok: false, error: 'Management access required' }, 403);
+  if (path === '/inventory/recount/people') {
+    const ppl = await d1All(env, "SELECT id, username, display_name FROM cred_users WHERE active = 1 AND deleted_at IS NULL ORDER BY COALESCE(NULLIF(display_name,''), username)").catch(() => []);
+    return J({ ok: true, people: ppl.map(p => ({ id: p.id, name: p.display_name || p.username })) });
+  }
+  const b = await request.json().catch(() => ({}));
+  if (path === '/inventory/recount/assign') {
+    const spots = [...new Set((Array.isArray(b.spots) ? b.spots : []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean))].slice(0, 500);
+    const uid = parseInt(b.toUserId, 10);
+    if (!spots.length) return J({ ok: false, error: 'No spot to send' }, 400);
+    const u = uid ? await d1First(env, 'SELECT id, username, display_name FROM cred_users WHERE id = ? AND active = 1', [uid]).catch(() => null) : null;
+    if (!u) return J({ ok: false, error: 'Pick who gets it' }, 400);
+    const ins = await env.DB.prepare('INSERT INTO recount_assign (at, by_user, to_user_id, to_name, area, spots, note) VALUES (?,?,?,?,?,?,?)')
+      .bind(new Date().toISOString(), who, u.id, u.display_name || u.username, String(b.area || '').slice(0, 30), JSON.stringify(spots), String(b.note || '').slice(0, 300)).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'recount_assign', { to: u.display_name || u.username, area: b.area, spots: spots.length }).catch(() => {});
+    return J({ ok: true, id: ins.meta.last_row_id, to: u.display_name || u.username, spots: spots.length });
+  }
+  if (path === '/inventory/recount/assign/close') {
+    await env.DB.prepare("UPDATE recount_assign SET closed_at = ?, closed_by = ?, closed_how = 'cancelled' WHERE id = ? AND closed_at IS NULL").bind(new Date().toISOString(), who, parseInt(b.id, 10) || 0).run();
+    return J({ ok: true });
+  }
+  return J({ ok: false, error: 'Not found' }, 404);
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
 async function recountNewRound(env, session) {
@@ -9536,6 +9603,7 @@ const _app = {
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env);
       }
+      if (path === '/inventory/recount/assigned' || path === '/inventory/recount/people' || path === '/inventory/recount/assign' || path === '/inventory/recount/assign/close') return await inventoryRecountAssign(path, request, env, session);
       if (path === '/inventory/spot/delete' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await inventorySpotDelete(request, env, session);

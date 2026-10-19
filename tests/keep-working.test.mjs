@@ -7498,6 +7498,49 @@ console.log('\n🗺 Recount report by area: tap an area → every spot 🟩 done
   sq.exec("DELETE FROM master_list WHERE base_sku = '939-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q9=%'; DELETE FROM inventory_log WHERE part_num = '939-1-1=10'");
 }
 
+// Owner (2026-10-19): "our people say they already done C4, but I still see some spot not scanned or 1 line scanned —
+// can I just forward all the not scanned / 1 line scanned to someone, so they can go over the ones still not done?"
+console.log('\n📤 Recount by area: send the unfinished spots to someone → "📋 For you" on their Recount screen');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('938-1-1','tee','938-1-1=10','Q8=11-1-1',2,10), ('938-1-1','tee','938-1-1=10','Q8=11-1-2',1,10), ('938-1-1','tee','938-1-1=10','Q8=12-1-1',1,10)`).run();
+  await post('/inventory/recount/column-done', { location: 'Q8=11-1-1', items: 1, changed: 0, detail: [] });
+  sq.prepare("INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status) VALUES (0,?, 'IN', '938-1-1=10', 'Q8=11-1-2', 0, 'MK', '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', 'Verified')").run(new Date().toISOString());
+  const pkTok = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pkId = sq.prepare("SELECT id FROM cred_users WHERE username = 'picker'").get().id;
+  const ppl = await post('/inventory/recount/people', {});
+  const pkSend = await call('/inventory/recount/assign', { method: 'POST', headers: { 'X-Cred-Token': pkTok, 'Content-Type': 'application/json' }, body: JSON.stringify({ area: 'Q8', spots: ['Q8=12-1-1'], toUserId: pkId }) });
+  const noTok = await call('/inventory/recount/assigned', {});
+  check('only a manager can send (a picker gets 403); not signed in → refused; the "who gets it" list holds the active people',
+    pkSend.status === 403 && noTok.status === 401 && (ppl.people || []).some(p => p.id === pkId && p.name === 'PK'), { pk: pkSend.status, no: noTok.status });
+  const sent = await post('/inventory/recount/assign', { area: 'Q8', spots: ['Q8=11-1-2', 'q8=12-1-1', 'Q8=12-1-1'], toUserId: pkId, note: 'C4 left over' });
+  const bad = await post('/inventory/recount/assign', { area: 'Q8', spots: [], toUserId: pkId });
+  const mine = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  const L = (mine.lists || [])[0] || { spots: [] }, S = Object.fromEntries(L.spots.map(x => [x.l, x]));
+  check('send Q8\'s 2 unfinished spots to PK with a note → PK sees "📋 For you": Q8, 2 spots, 🟨 Q8=11-1-2 1 line · 🟥 Q8=12-1-1 not scanned, sent by TS; no spot → refused',
+    sent.ok && sent.spots === 2 && sent.to === 'PK' && bad.ok === false && (mine.lists || []).length === 1 && L.area === 'Q8' && L.total === 2 && L.done === 0 && L.note === 'C4 left over' && L.by === 'TS'
+    && S['Q8=11-1-2'].st === 'started' && S['Q8=11-1-2'].lines === 1 && S['Q8=12-1-1'].st === 'none', mine);
+  const tsList = await get('/inventory/recount/assigned'), rep = await get('/inventory/recount/report');
+  check('…not on the sender\'s own "For you"; the recount report lists it under "📤 Sent to finish"',
+    (tsList.lists || []).length === 0 && (rep.assigned || []).some(a => a.id === sent.id && a.to === 'PK'), null);
+  await post('/inventory/recount/column-done', { location: 'Q8=11-1-2', items: 1, changed: 0, detail: [] });
+  const m2 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  await post('/inventory/recount/column-done', { location: 'Q8=12-1-1', items: 1, changed: 0, detail: [] });
+  const m3 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  const cl = sq.prepare('SELECT closed_how FROM recount_assign WHERE id = ?').get(sent.id);
+  check('…1 of 2 done → still on the list (🟩 1 of 2); both done → the list closes by itself ("all done")',
+    (m2.lists || [])[0] && m2.lists[0].done === 1 && (m3.lists || []).length === 0 && cl.closed_how === 'all done', { m2, cl });
+  const s2 = await post('/inventory/recount/assign', { area: 'Q8', spots: ['Q8=99-1-1'], toUserId: pkId });
+  await post('/inventory/recount/assign/close', { id: s2.id });
+  const m4 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  check('…✕ cancel takes a list off', (m4.lists || []).length === 0 && sq.prepare('SELECT closed_how FROM recount_assign WHERE id = ?').get(s2.id).closed_how === 'cancelled', null);
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…screens: "📤 Send the N unfinished to…" under the area grid, "📤 Sent to finish" in the report, "📋 For you" card on the Recount screen',
+    /onclick="rcAssignOpen\(this\.dataset\.a\)"/.test(ih) && /📤 Send the /.test(ih) && /📤 Sent to finish/.test(ih) && /id="rc-mine"/.test(ih) && /📋 For you/.test(ih) && /window\.rcMine = /.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '938-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q8=%'; DELETE FROM inventory_log WHERE part_num = '938-1-1=10'; DELETE FROM recount_assign");
+}
+
 // Owner (2026-10-17, Recount report → 🗺 By area): "why do we have '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?"
 console.log('\n⚠ Recount report: SKU Mgr Locations that are a note / barcode / container are not spots — listed apart to fix');
 {
