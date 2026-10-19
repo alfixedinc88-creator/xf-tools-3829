@@ -451,6 +451,53 @@ document.addEventListener('input', function (e) {
       .then(function () { loading = false; });
   }
 
+  // 📴 Owner (2026-10-19): "no internet this morning and we couldn't use the app". With no internet every page still opens
+  // (saved on the device) and shows the last data it saw; this bar says so, and how much work is saved on this device
+  // waiting to be sent (Inventory outbox, Print Log scans, other saved entries) — it all goes by itself, once, when back.
+  var off = { net: navigator.onLine !== false, saved: false, swq: 0 };
+  function offCount() {
+    var n = off.swq;
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && (k.indexOf('xf_inv_outbox_') === 0 || k === 'ps_pl_queue')) { var a = JSON.parse(localStorage.getItem(k) || '[]'); if (Array.isArray(a)) n += a.length; }
+      }
+    } catch (e) {}
+    return n;
+  }
+  function offBar() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', offBar); return; }
+    var el = document.getElementById('xf-offline-bar');
+    if (off.net) { if (el) { el.remove(); document.body.style.paddingTop = document.body.dataset.xfOffPt || ''; } return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'xf-offline-bar';
+      el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483646;background:#1f2937;color:#fff;font:700 12px/1.35 system-ui,sans-serif;padding:6px 10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3)';
+      document.body.appendChild(el);
+      if (document.body.dataset.xfOffPt == null) document.body.dataset.xfOffPt = document.body.style.paddingTop || '';
+    }
+    var n = offCount();
+    el.textContent = '📴 No internet — the app keeps working from this device' + (off.saved ? ' (showing the last saved data)' : '') + '. '
+      + (n ? n + ' saved on this device — sent by itself, once, when the internet is back.' : 'Your work is saved on this device and sent when the internet is back.')
+      + ' 没有网络 — 先存在本设备' + (n ? '（' + n + ' 笔）' : '') + '，有网后自动上传。';
+    document.body.style.paddingTop = (el.offsetHeight || 28) + 'px';
+  }
+  window.addEventListener('offline', function () { off.net = false; offBar(); });
+  window.addEventListener('online', function () {
+    off.net = true; off.saved = false; offBar();
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE' }); } catch (e) {}
+  });
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (d.type === 'XF_NET') { off.net = !!d.online && navigator.onLine !== false; if (d.saved) off.saved = true; offBar(); }
+    if (d.type === 'QUEUE_STATUS') { off.swq = d.count || 0; if (!off.net) offBar(); }
+  });
+  setInterval(function () {
+    if (off.net) return;
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'QUEUE_STATUS' }); } catch (e) {}
+    offBar();
+  }, 5000);
+  if (!off.net) offBar();
+
   // 🧪 Test switch (Admin → 🧪 Test): while it's on, every page shows an
   // orange frame and a note — anything done now is erased when it's turned off.
   function testBanner(tm) {

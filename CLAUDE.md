@@ -146,6 +146,12 @@ it to `XF_ACCESS_CATALOG` in `xf-access.js` (page → tab → part, with a selec
 Admin → 🧩 Pages & Tabs. The "Pages & Tabs" check in `tests/keep-working.test.mjs` fails for a new tab or card without one.
 A check mark can only hide things: a server-side rule (e.g. Admin / Owner only) still applies on top.
 
+## The app must keep working with no internet (📴 offline mode)
+Owner (2026-10-19): "if the WiFi is down a whole day or two, we still use the app, everything keeps rolling and nothing
+is miscounted". A new page goes in `OFFLINE_PAGES` in `sw.js` (a check fails otherwise). A new write that people do on
+the floor must save on the device when offline and send once when back, carrying a `_requestId` the Worker de-dupes,
+so nothing is counted twice or lost.
+
 ## Other standing rules
 - Scanner "stopped working" (N77, Zebra DS2278, Farset R20H, Svantto MC002)? Read `docs/SCANNERS.md`
   first: the known causes and the exact working settings are there.
