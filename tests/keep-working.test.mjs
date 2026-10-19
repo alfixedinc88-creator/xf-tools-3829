@@ -7574,5 +7574,24 @@ console.log('\n🗺 FRONT → FRONT3 / FRONT4; ⚠ odd spot (FRONT=2-6); ✕ del
   sq.exec("DELETE FROM master_list WHERE base_sku = '942-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '942-1-1%'");
 }
 
+// Owner (2026-10-19): "Auto Label → Print new labels now: maybe more than 199 labels don't show? it stays at 199 waiting for a long time".
+console.log('\n🖨 Auto Label: the "waiting" count is the real total (not stuck at ~200); Print new labels now prints past 200');
+{
+  await get('/veeqo/autolabel/config'); // label tables
+  const ins = sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, service, created_at) VALUES (?, 'eBay', ?, 'USPS', 'GA', ?)");
+  const t0 = Date.now() - 3 * 3600e3;
+  for (let i = 0; i < 230; i++) ins.run('W230-' + i, '9400W230' + String(i).padStart(6, '0'), new Date(t0 + i * 1000).toISOString());
+  const all = sq.prepare("SELECT COUNT(*) n FROM label_print_queue WHERE printed_at IS NULL AND cancel_hold IS NULL").get().n;
+  const d = await get('/veeqo/autolabel/labels?status=new&limit=200');
+  check('230+ labels waiting → "total" = every waiting label (' + all + ', not the ~200 the list holds), with the oldest',
+    d.ok && d.total === all && all >= 230 && (d.labels || []).length < all && !!d.oldest, { n: (d.labels || []).length, total: d.total, all });
+  const { readFileSync: rfL2 } = await import('node:fs');
+  const ph = rfL2(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…page count uses the real total ("N waiting — list shows the first 200"); Print new labels now goes round after round (50 each, up to 40) — never stops at 200',
+    /var tot = all\[0\] && all\[0\]\.total != null \? all\[0\]\.total : fresh\.length/.test(ph) && /' — list shows the first ' \+ fresh\.length/.test(ph) && /tot\.toLocaleString\(\) \+ more \+ ' waiting · 🤖 '/.test(ph)
+    && /while \(rounds\+\+ < 40\) \{\n      var d = await _psAlFetch\('\/veeqo\/autolabel\/labels\?status=new&limit=50&after=' \+ after\);/.test(ph), null);
+  sq.prepare("DELETE FROM label_print_queue WHERE order_number LIKE 'W230-%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
