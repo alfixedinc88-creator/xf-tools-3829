@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v261-access-marks-20261017';
+const CACHE_VERSION = 'v262-offline-pages-20261019';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
@@ -35,6 +35,20 @@ const SHELL_ASSETS = [
   '/xf-tools-3829/',
   '/xf-tools-3829/index.html',
 ];
+// 📴 Owner (2026-10-19): "this morning we had no internet and couldn't use the app — make it work without internet".
+// Every page and shared file is saved on the device when a new version installs (not only pages opened before), so
+// every page opens with no internet. A file that can't be fetched is skipped (never blocks the update).
+const BASE = '/xf-tools-3829/';
+const OFFLINE_PAGES = ['index.html', 'inventory.html', 'packship.html', 'warehouse.html', 'upc.html', 'labelprint.html', 'lights.html',
+  'reorder.html', 'awd.html', 'repricer.html', 'sales.html', 'receivepo.html', 'ldash.html', 'profit.html', 'imagemaker.html', 'training.html',
+  'xfitting-admin.html', 'xf-access.js', 'xf-lang.js', 'xf-lang-es.js', 'xf-signout.js', 'manifest.json', 'icon-192x192.png', 'icon-512x512.png'];
+// Fonts and libraries pages load from these sites (Excel, barcodes, charts…): saved after the first use, used offline.
+const LIB_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'unpkg.com'];
+const LIB_CACHE = 'xfitting-libs';
+// The last answer the server gave for each data request (a part #, a spot, a list): shown ONLY when the server can't be
+// reached, marked "📴 saved copy". Kept across updates; wiped on sign out; never given to a request with no sign-in.
+const DATA_CACHE = 'xfitting-data';
+const DATA_MAX = 600;
 
 // Which POST paths get queued for offline retry instead of just failing.
 // Add new write endpoints here as they're built — this is the ONE place
@@ -47,7 +61,8 @@ const QUEUEABLE_PATHS = [
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(SHELL_ASSETS))
+      .then(cache => cache.addAll(SHELL_ASSETS).then(() => Promise.all(OFFLINE_PAGES.map(f =>
+        fetch(BASE + f, { cache: 'no-cache' }).then(r => { if (r.ok) return cache.put(BASE + f, r); }).catch(() => {})))))
       .then(() => self.skipWaiting())
   );
 });
@@ -59,7 +74,7 @@ self.addEventListener('activate', e => {
         keys
           // keep the offline queue ('xfitting-meta') — it used to be deleted
           // here on every update, losing anything still waiting in it
-          .filter(k => k !== CACHE_NAME && k !== 'xfitting-meta' && !k.startsWith('xfitting-meta-'))
+          .filter(k => k !== CACHE_NAME && k !== 'xfitting-meta' && !k.startsWith('xfitting-meta-') && k !== LIB_CACHE && k !== DATA_CACHE)
           .map(k => {
             console.log('[XF SW] Deleting old cache:', k);
             return caches.delete(k);
@@ -87,7 +102,18 @@ self.addEventListener('fetch', e => {
   if (url.origin === new URL(WORKER_URL).origin) {
     if (e.request.method === 'POST') {
       e.respondWith(handleWorkerPost(e.request.clone()));
+    } else if (e.request.method === 'GET' && dataCacheable(url, e.request)) {
+      e.respondWith(handleWorkerGet(e.request));
     }
+    return;
+  }
+
+  // Fonts / libraries — network first, the saved copy when offline
+  if (e.request.method === 'GET' && LIB_HOSTS.includes(url.hostname)) {
+    e.respondWith(fetch(e.request).then(res => {
+      if (res.ok || res.type === 'opaque') { const c = res.clone(); caches.open(LIB_CACHE).then(x => x.put(e.request, c)); }
+      return res;
+    }).catch(() => caches.match(e.request, { cacheName: LIB_CACHE }).then(r => r || Promise.reject(new Error('offline')))));
     return;
   }
 
@@ -107,20 +133,57 @@ self.addEventListener('fetch', e => {
       .catch(() =>
         caches.match(e.request).then(cached => {
           if (cached) return cached;
-          if (e.request.mode === 'navigate') {
-            return caches.match('/xf-tools-3829/index.html')
-                || caches.match('/xf-tools-3829/');
-          }
+          // page.html?tab=… / xf-access.js?v=… → the saved page / file (saved without the ?…)
+          return caches.match(e.request, { ignoreSearch: true }).then(c2 => {
+            if (c2) return c2;
+            if (e.request.mode === 'navigate') {
+              return caches.match('/xf-tools-3829/index.html')
+                  .then(c3 => c3 || caches.match('/xf-tools-3829/'));
+            }
+          });
         })
       )
   );
 });
+
+// ── 📴 Data requests: live when the server answers; the last saved answer when it can't be reached ──────────
+// Not saved: sign-in calls, and anything without a sign-in (nobody browses data without a password).
+function dataCacheable(url, req) {
+  if (/^\/auth\//.test(url.pathname)) return false;
+  return !!req.headers.get('X-Cred-Token');
+}
+let lastNet = 0;
+async function handleWorkerGet(request) {
+  try {
+    const res = await fetch(request.clone());
+    if (res.ok && /json/.test(res.headers.get('Content-Type') || '')) {
+      const c = res.clone();
+      caches.open(DATA_CACHE).then(x => x.put(request.url, c)).then(() => dataTrim()).catch(() => {});
+    }
+    if (Date.now() - lastNet > 15000) { lastNet = Date.now(); tellClients({ type: 'XF_NET', online: true }); }
+    return res;
+  } catch (err) {
+    const saved = await caches.match(request.url, { cacheName: DATA_CACHE });
+    tellClients({ type: 'XF_NET', online: false, saved: !!saved, path: new URL(request.url).pathname });
+    if (!saved) throw err;
+    const h = new Headers(saved.headers); h.set('X-XF-Offline', '1');
+    return new Response(await saved.blob(), { status: 200, headers: h });
+  }
+}
+let trimAt = 0;
+async function dataTrim() {
+  if (Date.now() - trimAt < 60000) return; trimAt = Date.now();
+  const c = await caches.open(DATA_CACHE), keys = await c.keys();
+  for (let i = 0; i < keys.length - DATA_MAX; i++) await c.delete(keys[i]); // oldest first
+}
+async function tellClients(msg) { (await self.clients.matchAll()).forEach(c => c.postMessage(msg)); }
 
 // ── Message handler ───────────────────────────────────────────────────────────
 self.addEventListener('message', e => {
   if (e.data?.type === 'ONLINE')        replayQueue();
   if (e.data?.type === 'QUEUE_STATUS')  sendQueueStatus(e.source);
   if (e.data?.type === 'SKIP_WAITING')  self.skipWaiting();
+  if (e.data?.type === 'CLEAR_DATA')    caches.delete(DATA_CACHE); // signed out → this device keeps no data
 });
 
 // ── POST queueing for offline ─────────────────────────────────────────────────

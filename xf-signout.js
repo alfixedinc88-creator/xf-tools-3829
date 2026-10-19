@@ -23,6 +23,8 @@
   function clearSignIn() {
     try { localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); } catch (e) {}
     try { sessionStorage.removeItem('xf_session'); } catch (e) {}
+    // 📴 the saved copies of data (for no-internet days) go too — a signed-out device keeps no data.
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_DATA' }); } catch (e) {}
   }
   function goHome() {
     if (/(^|\/)(index\.html)?$/.test(location.pathname)) location.reload();

@@ -7605,5 +7605,30 @@ console.log('\n🖨 Auto Label: the "waiting" count is the real total (not stuck
   sq.prepare("DELETE FROM label_print_queue WHERE order_number LIKE 'W230-%'").run();
 }
 
+// Owner (2026-10-19): "this morning we had no internet and couldn't use the app — build an offline mode in our app" (step 1:
+// every page opens with no internet, the last data each device saw is shown, a 📴 bar says so and how much is saved here).
+console.log('\n📴 Offline mode step 1: pages open with no internet, last saved data, 📴 bar');
+{
+  const { readFileSync: rfO, readdirSync } = await import('node:fs');
+  const R = f => rfO(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const sw = R('sw.js'), xa = R('xf-access.js'), so = R('xf-signout.js');
+  const pagesList = (sw.match(/const OFFLINE_PAGES = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const htmls = readdirSync(fileURLToPath(new URL('../', import.meta.url))).filter(f => /\.html$/.test(f));
+  const missing = htmls.filter(f => !pagesList.includes("'" + f + "'"));
+  check('every page (' + htmls.length + ' .html) and the shared files are saved on the device when a new version installs — a NEW page fails here until it is added to OFFLINE_PAGES',
+    !missing.length && ['xf-access.js', 'xf-lang.js', 'xf-signout.js'].every(f => pagesList.includes("'" + f + "'"))
+      && /Promise\.all\(OFFLINE_PAGES\.map\(f =>\s*fetch\(BASE \+ f, \{ cache: 'no-cache' \}\)\.then\(r => \{ if \(r\.ok\) return cache\.put\(BASE \+ f, r\); \}\)\.catch\(\(\) => \{\}\)\)\)/.test(sw), missing);
+  check('offline: page.html?tab=… / file.js?v=… open from the saved copy (ignoreSearch); fonts + libraries (cdnjs, jsdelivr, unpkg, Google fonts) saved after first use',
+    /caches\.match\(e\.request, \{ ignoreSearch: true \}\)/.test(sw) && /const LIB_HOSTS = \['fonts\.googleapis\.com', 'fonts\.gstatic\.com', 'cdn\.jsdelivr\.net', 'cdnjs\.cloudflare\.com', 'unpkg\.com'\];/.test(sw), null);
+  check('data: live from the server when it answers; the last saved answer only when it can\'t be reached, marked X-XF-Offline; never for sign-in calls or a request with no sign-in; kept across updates; wiped on sign out',
+    /if \(\/\^\\\/auth\\\/\/\.test\(url\.pathname\)\) return false;\s*return !!req\.headers\.get\('X-Cred-Token'\);/.test(sw) && /h\.set\('X-XF-Offline', '1'\)/.test(sw)
+      && /k !== LIB_CACHE && k !== DATA_CACHE/.test(sw) && /if \(e\.data\?\.type === 'CLEAR_DATA'\)\s+caches\.delete\(DATA_CACHE\);/.test(sw) && /postMessage\(\{ type: 'CLEAR_DATA' \}\)/.test(so), null);
+  check('POST outbox kept as it was (Inventory outbox requests not queued twice; queued ones keep their _requestId so a replay is never counted twice)',
+    /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
+  check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
+    /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019a/.test(R(f))), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
