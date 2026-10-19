@@ -7590,6 +7590,18 @@ console.log('\n🖨 Auto Label: the "waiting" count is the real total (not stuck
   check('…page count uses the real total ("N waiting — list shows the first 200"); Print new labels now goes round after round (50 each, up to 40) — never stops at 200',
     /var tot = all\[0\] && all\[0\]\.total != null \? all\[0\]\.total : fresh\.length/.test(ph) && /' — list shows the first ' \+ fresh\.length/.test(ph) && /tot\.toLocaleString\(\) \+ more \+ ' waiting · 🤖 '/.test(ph)
     && /while \(rounds\+\+ < 40\) \{\n      var d = await _psAlFetch\('\/veeqo\/autolabel\/labels\?status=new&limit=50&after=' \+ after\);/.test(ph), null);
+  // Owner (2026-10-19): "I don't want something after 199 not printing out" — the printer station's own rounds (50 each,
+  // ?after= the last id) reach EVERY waiting label, the 201st … 230th included, each exactly once, oldest first.
+  const seen = [];
+  for (let after = 0, round = 0; round < 40; round++) {
+    const r = await get('/veeqo/autolabel/labels?status=new&limit=50&after=' + after);
+    const list = (r.labels || []).filter(l => l.id > after);
+    if (!list.length) break;
+    list.forEach(l => seen.push(l.order_number)); after = Math.max(...list.map(l => l.id));
+  }
+  const ours = seen.filter(n => /^W230-/.test(n));
+  check('…Print new labels now reaches all 230 (not 199 / 200): W230-0 … W230-229 each once, oldest first',
+    ours.length === 230 && new Set(ours).size === 230 && ours[0] === 'W230-0' && ours[229] === 'W230-229', { got: ours.length, first: ours[0], last: ours[ours.length - 1] });
   sq.prepare("DELETE FROM label_print_queue WHERE order_number LIKE 'W230-%'").run();
 }
 
