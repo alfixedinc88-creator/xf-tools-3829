@@ -98,6 +98,7 @@ document.addEventListener('input', function (e) {
         { key: 'barcode', label: '🏷 Barcode designer', sel: '#bd-open-btn' },
         { key: 'bdqueue', label: '🏷 Barcode labels to print', sel: '#bd-queue-card' },
         { key: 'recountreport', label: '📊 Recount report', sel: '#rc-report' },
+        { key: 'foryou', label: '📋 For you (recount spots sent to me) — bar on every Inventory tab + Audit count', sel: '#rc-mine, #rc-foryou-bar, #rc-foryou-badge' },
         { key: 'othertools', label: '🔧 Other audit tools (search a part # / a location)', sel: '#inv-audit-old' },
         { key: 'prefixes', label: '🏷 Location Prefixes', sel: '#inv-prefix-card' },
         { key: 'photos', label: '🖼 Product Photos', sel: '#inv-photo-card, #inv-photo-edit-card' },
