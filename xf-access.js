@@ -434,10 +434,14 @@ document.addEventListener('input', function (e) {
         // Pages open straight away with the saved sign-in; this is the check.
         // Signed out / expired → forget it and reload, which shows Sign In.
         if (r.status === 401 && token() === t) {
+          // 📴 signed in with no internet → the internet is back: sign in again (with internet) so the saved work is sent
+          if (/^offline\./.test(t)) { try { localStorage.setItem('xf_back_online', '1'); } catch (e) {} }
           try { localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); sessionStorage.removeItem('xf_access'); } catch (e) {}
           location.reload();
           return { blocked: [] };
         }
+        // 📴 the server answers with a real sign-in → send anything this device saved while offline (and offline sign-ins)
+        if (r.ok && !/^offline\./.test(t)) { try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE', token: t }); } catch (e) {} }
         return r.ok ? r.json() : { blocked: [] };
       })
       .then(function (d) {
@@ -468,6 +472,14 @@ document.addEventListener('input', function (e) {
   function offBar() {
     if (!document.body) { document.addEventListener('DOMContentLoaded', offBar); return; }
     var el = document.getElementById('xf-offline-bar');
+    var back = false; try { back = off.net && localStorage.getItem('xf_back_online') === '1'; } catch (e) {}
+    if (back && !token()) {
+      if (!el) { el = document.createElement('div'); el.id = 'xf-offline-bar'; document.body.appendChild(el); }
+      el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483646;background:#15803d;color:#fff;font:700 12px/1.35 system-ui,sans-serif;padding:6px 10px;text-align:center';
+      el.textContent = '✅ The internet is back — sign in again, and everything saved on this device is sent by itself. 网络已恢复 — 请重新登录，本设备保存的资料会自动上传。';
+      return;
+    }
+    if (back && token()) { try { localStorage.removeItem('xf_back_online'); } catch (e) {} }
     if (off.net) { if (el) { el.remove(); document.body.style.paddingTop = document.body.dataset.xfOffPt || ''; } return; }
     if (!el) {
       el = document.createElement('div'); el.id = 'xf-offline-bar';
@@ -476,7 +488,8 @@ document.addEventListener('input', function (e) {
       if (document.body.dataset.xfOffPt == null) document.body.dataset.xfOffPt = document.body.style.paddingTop || '';
     }
     var n = offCount();
-    el.textContent = '📴 No internet — the app keeps working from this device' + (off.saved ? ' (showing the last saved data)' : '') + '. '
+    var who = ''; try { if (/^offline\./.test(token())) who = ' (signed in with no internet)'; } catch (e) {}
+    el.textContent = '📴 No internet' + who + ' — the app keeps working from this device' + (off.saved ? ' (showing the last saved data)' : '') + '. '
       + (n ? n + ' saved on this device — sent by itself, once, when the internet is back.' : 'Your work is saved on this device and sent when the internet is back.')
       + ' 没有网络 — 先存在本设备' + (n ? '（' + n + ' 笔）' : '') + '，有网后自动上传。';
     document.body.style.paddingTop = (el.offsetHeight || 28) + 'px';
@@ -484,7 +497,7 @@ document.addEventListener('input', function (e) {
   window.addEventListener('offline', function () { off.net = false; offBar(); });
   window.addEventListener('online', function () {
     off.net = true; off.saved = false; offBar();
-    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE' }); } catch (e) {}
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE', token: localStorage.getItem('xf_cred_token') || '' }); } catch (e) {}
   });
   if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) {
     var d = e.data || {};
@@ -497,6 +510,7 @@ document.addEventListener('input', function (e) {
     offBar();
   }, 5000);
   if (!off.net) offBar();
+  try { if (localStorage.getItem('xf_back_online') === '1') offBar(); } catch (e) {}
 
   // 🧪 Test switch (Admin → 🧪 Test): while it's on, every page shows an
   // orange frame and a note — anything done now is erased when it's turned off.

@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v262-offline-pages-20261019';
+const CACHE_VERSION = 'v263-offline-signin-20261019';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
@@ -180,7 +180,7 @@ async function tellClients(msg) { (await self.clients.matchAll()).forEach(c => c
 
 // ── Message handler ───────────────────────────────────────────────────────────
 self.addEventListener('message', e => {
-  if (e.data?.type === 'ONLINE')        replayQueue();
+  if (e.data?.type === 'ONLINE')        replayQueue(offlineTokenUser(e.data.token) ? '' : (e.data.token || ''));
   if (e.data?.type === 'QUEUE_STATUS')  sendQueueStatus(e.source);
   if (e.data?.type === 'SKIP_WAITING')  self.skipWaiting();
   if (e.data?.type === 'CLEAR_DATA')    caches.delete(DATA_CACHE); // signed out → this device keeps no data
@@ -192,15 +192,29 @@ async function handleWorkerPost(request) {
   // requests carry "_outbox": true and must NOT also be queued here, or the
   // same entry would wait in two places.
   const copy = request.clone();
+  // 📴 a second copy for the save-for-later queue: fetch() uses up the request's body even when there is no internet,
+  // so reading `request` afterwards failed ("body already used") and nothing was saved (found 2026-10-19).
+  const forQueue = request.clone();
+  const isLogin = new URL(request.url).pathname === '/auth/login';
+  const loginCopy = isLogin ? request.clone() : null;
   try {
-    return await fetch(request);
+    const res = await fetch(request);
+    if (isLogin && res.ok) rememberLogin(loginCopy, res.clone()).catch(() => {});
+    return res;
   } catch {
+    if (isLogin) return offlineLogin(loginCopy); // 📴 no internet: this scanner checks the password itself
     const url = new URL(request.url);
+    if (url.pathname === '/auth/logout') { // 📴 signed out with no internet → on record too (Admin → 🔑 Log in, when back)
+      let tk = ''; try { tk = JSON.parse(await copy.clone().text()).token || ''; } catch {}
+      const uid = offlineTokenUser(tk);
+      if (uid) { const list = await metaGet('offline-signins', []); list.push({ userId: uid, at: new Date().toISOString(), kind: 'signout' }); await metaPut('offline-signins', list.slice(-200)); }
+      return new Response(JSON.stringify({ ok: true, offline: true }), { headers: { 'Content-Type': 'application/json' } });
+    }
     let pageOutbox = false;
     try { pageOutbox = !!JSON.parse(await copy.text())._outbox; } catch { /* not JSON */ }
     if (pageOutbox) throw new Error('Network unavailable');
     if (QUEUEABLE_PATHS.includes(url.pathname)) {
-      const queueItem = await queueRequest(request);
+      const queueItem = await queueRequest(forQueue);
       return new Response(JSON.stringify({
         ok: true, queued: true, requestId: queueItem.requestId,
         message: 'Offline — entry queued and will sync when connection returns.'
@@ -227,9 +241,13 @@ async function queueRequest(request) {
   // original attempt and any replay — see the v4 header note above for
   // why that check doesn't exist yet.
   let bodyWithId = rawBody;
+  const offTok = offlineTokenUser(request.headers.get('X-Cred-Token'));
   try {
     const parsed = JSON.parse(rawBody);
     parsed._requestId = requestId; // an id the page already set is kept (same id = never counted twice)
+    // 📴 made by someone signed in with no internet: it is sent later with whoever is signed in then, and still belongs
+    // to the person who made it (the Worker records _byUserId for an _outbox entry).
+    if (offTok) { parsed._outbox = true; parsed._byUserId = offTok; }
     bodyWithId = JSON.stringify(parsed);
   } catch { /* body wasn't JSON — leave it unmodified, id is still tracked locally below */ }
 
@@ -244,13 +262,18 @@ async function queueRequest(request) {
   return item;
 }
 
-async function replayQueue() {
+async function replayQueue(token) {
+  sendOfflineSignins(token).catch(() => {});
   const queue = await getQueue();
   if (!queue.length) return;
   const remaining = [];
   for (const item of queue) {
     try {
-      const res = await fetch(item.url, { method: item.method, headers: item.headers, body: item.body });
+      // 📴 an entry made after an offline sign-in has no real sign-in: it goes with whoever is signed in now
+      const headers = { ...item.headers };
+      const hk = Object.keys(headers).find(k => k.toLowerCase() === 'x-cred-token');
+      if (hk && offlineTokenUser(headers[hk])) { if (!token) { remaining.push(item); continue; } headers[hk] = token; }
+      const res = await fetch(item.url, { method: item.method, headers, body: item.body });
       if (!res.ok) remaining.push(item);
     } catch { remaining.push(item); }
   }
@@ -282,4 +305,49 @@ async function setQueue(queue) {
   const cache = await caches.open(META_CACHE);
   await cache.put('queue', new Response(JSON.stringify(queue),
     { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// ── 📴 Sign in with no internet (owner 2026-10-19: "4 scanners, 6 people — someone signs out and in on the same scanner") ──
+// Each time a person signs in WITH internet, this scanner keeps a check of their password (PBKDF2, its own random salt —
+// never the password itself) with their name and level. With no internet, the same person can sign in on THIS scanner:
+// the password is checked here. Only people who signed in on this scanner with internet in the last 30 days can.
+// Every offline sign-in is kept and sent to Admin → 🔑 Log in when the internet is back.
+const LOGIN_DAYS = 30;
+function offlineTokenUser(t) { const m = /^offline\.(\d+)\./.exec(String(t || '')); return m ? parseInt(m[1], 10) : 0; }
+function hex(b) { return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+async function pwCheck(password, saltHex) {
+  const salt = new Uint8Array(saltHex.match(/../g).map(h => parseInt(h, 16)));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(password)), 'PBKDF2', false, ['deriveBits']);
+  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, key, 256));
+}
+async function metaGet(k, d) { try { const r = await (await caches.open(META_CACHE)).match(k); return r ? await r.json() : d; } catch { return d; } }
+async function metaPut(k, v) { await (await caches.open(META_CACHE)).put(k, new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } })); }
+async function rememberLogin(req, res) {
+  const b = await req.json(), d = await res.json();
+  const name = String(b.username || '').trim().toLowerCase();
+  if (!name || !b.password || !d.token || !d.userId) return;
+  const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+  const all = await metaGet('logins', {});
+  all[name] = { salt, hash: await pwCheck(b.password, salt), at: Date.now(),
+    user: { userId: d.userId, username: d.username || name, displayName: d.displayName || '', roles: d.roles || [], level: d.level || null } };
+  await metaPut('logins', all);
+}
+async function offlineLogin(req) {
+  const J = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+  let b = {}; try { b = await req.json(); } catch {}
+  const name = String(b.username || '').trim().toLowerCase();
+  const all = await metaGet('logins', {}), it = all[name];
+  if (!it || Date.now() - it.at > LOGIN_DAYS * 864e5)
+    return J({ error: '📴 No internet — ' + (b.username || 'this person') + ' has not signed in on THIS scanner with internet (in the last ' + LOGIN_DAYS + ' days), so it can\'t check the password. Use a scanner you signed in on before, or wait for the internet. 没有网络 — 此人没有在这台扫描器上联网登录过，无法验证密码。', offline: true }, 401);
+  if (await pwCheck(b.password || '', it.salt) !== it.hash) return J({ error: 'Invalid username or password', offline: true }, 401);
+  const at = new Date().toISOString();
+  const list = await metaGet('offline-signins', []); list.push({ userId: it.user.userId, username: it.user.username, at, kind: 'signin' }); await metaPut('offline-signins', list.slice(-200));
+  tellClients({ type: 'XF_NET', online: false });
+  return J({ ...it.user, token: 'offline.' + it.user.userId + '.' + hex(crypto.getRandomValues(new Uint8Array(8))), offline: true });
+}
+async function sendOfflineSignins(token) {
+  if (!token) return;
+  const list = await metaGet('offline-signins', []); if (!list.length) return;
+  const r = await fetch(WORKER_URL + '/auth/offline-signins', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token }, body: JSON.stringify({ items: list }) });
+  if (r.ok) await metaPut('offline-signins', []);
 }
