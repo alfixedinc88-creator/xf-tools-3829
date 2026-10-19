@@ -3393,6 +3393,40 @@ async function inventoryDiscrepanciesHandler(env) {
 // GET /inventory/lookup?code=<upc_or_partnum>
 // Looks up a scanned barcode in the UPC sheet (col D = outside UPC)
 // then finds all Master_List rows for that part number
+// GET /inventory/offline-pack — 📴 Owner (2026-10-19): "if the WiFi is down a whole day or two we still use the app". Every
+// signed-in device keeps this copy (refreshed every ~10 minutes while online), so with no internet a scan of ANY part #,
+// spot or UPC still finds it — the same answer /inventory/lookup gives (same rows, row numbers, waiting-for-approval cases,
+// UPCs: 🔢 saved here → UPC list → vendor box/bag list → Stock In links). Signed in only, like every data request.
+async function inventoryOfflinePack(env) {
+  const all = async (sql) => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  const U = x => String(x || '').trim().toUpperCase();
+  const rows = (await all(`SELECT id, sku, name, part_num, location, cases, units_per_case, ROW_NUMBER() OVER () AS rn FROM master_list`))
+    .map(r => [r.rn, r.id, String(r.sku || ''), String(r.name || ''), String(r.part_num || ''), String(r.location || ''), r.cases ?? 0, r.units_per_case ?? 0]);
+  const pending = await buildPendingMap(env).catch(() => ({}));
+  // The same order /inventory/lookup uses, first match wins at each step:
+  //  prim  (gives the part # AND its UPCs): 🔢 saved here → the D1 UPC list
+  //  sheet (the old UPC sheet rows, UPC or part # match, gives UPCs)
+  //  sec   (part # only, upcToPart): Stock In links → vendor box/bag list → UPC list → ✏️ fixes → vendor sheets
+  // A UPC taken off a part # in 🔢 (edit) no longer finds that part # from any older list.
+  const ed = await upcEditMap(env);
+  const live = (P, z) => P && !(ed.byPart.has(P) && !ed.byPart.get(P).z.includes(z));
+  const prim = {}, sec = {};
+  ed.byPart.forEach((e, P) => e.z.forEach(z => { if (!prim[z]) prim[z] = [P, e.inside || '', e.outside || '']; }));
+  const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
+  upcRows.forEach(r => { const P = U(r.sku); [r.outside_upc, r.inside_upc].forEach(c => { const z = upcZ(c); if (z && !prim[z] && live(P, z)) prim[z] = [String(r.sku || '').trim(), r.inside_upc || '', r.outside_upc || '']; }); });
+  const addSec = (P, c) => { const z = upcZ(c); if (z && !(z in sec) && live(U(P), z)) sec[z] = U(P); };
+  (await all('SELECT upc, part FROM upc_link')).forEach(r => addSec(r.part, r.upc));
+  vendorUpcMap().byUpc.forEach((P, z) => addSec(P, z));
+  upcRows.forEach(r => { addSec(r.sku, r.outside_upc); addSec(r.sku, r.inside_upc); });
+  (await all('SELECT part, inside_upc, outside_upc FROM reorder_fix')).forEach(r => { addSec(r.part, r.outside_upc); addSec(r.part, r.inside_upc); });
+  (await all('SELECT part, inside_upc, outside_upc FROM reorder_vendor_catalog ORDER BY updated_at DESC')).forEach(r => { addSec(r.part, r.outside_upc); addSec(r.part, r.inside_upc); });
+  const sheet = ((await invUpcSheetCached(env).catch(() => ({ values: [] }))).values || []).map(r => [String(r[0] || '').trim(), String(r[1] || '').trim(), String(r[2] || '').trim(), String(r[3] || '').trim()]).filter(r => r[1] || r[0]);
+  const editZ = {}; ed.byPart.forEach((e, P) => { editZ[P] = e.z; });
+  const cParts = [...vendorUpcMap().allParts].filter(P => /\d[C](?=\s*$|=)/.test(P));
+  const caseOf = {}; (await all('SELECT part, target FROM reorder_case_of')).forEach(r => { caseOf[U(r.part)] = U(r.target); });
+  return cors(new Response(JSON.stringify({ ok: true, at: new Date().toISOString(), rows, pending, prim, sec, sheet, editZ, cParts, caseOf }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function buildPendingMap(env) {
   // Phase 2: read from D1 — ~5ms vs ~800ms from Sheets
   // Falls back to Sheets if D1 not available
@@ -9594,6 +9628,7 @@ const _app = {
       if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
       if (path === '/inventory/barcode-job' || path.startsWith('/inventory/barcode-job/')) return await inventoryBarcodeJob(path, request, url, env, session);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
+      if (path === '/inventory/offline-pack' && method === 'GET') return await inventoryOfflinePack(env);
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
       if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);

@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v263-offline-signin-20261019';
+const CACHE_VERSION = 'v264-offline-stock-20261019';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
@@ -163,8 +163,19 @@ async function handleWorkerGet(request) {
     if (Date.now() - lastNet > 15000) { lastNet = Date.now(); tellClients({ type: 'XF_NET', online: true }); }
     return res;
   } catch (err) {
-    const saved = await caches.match(request.url, { cacheName: DATA_CACHE });
-    tellClients({ type: 'XF_NET', online: false, saved: !!saved, path: new URL(request.url).pathname });
+    let saved = await caches.match(request.url, { cacheName: DATA_CACHE });
+    const u = new URL(request.url);
+    // 📴 a part # / spot / UPC: answered from this device's stock copy (every part #, even one never looked up here),
+    // unless the saved answer for it is newer than the copy.
+    if (u.pathname === '/inventory/lookup') {
+      const pk = await packGet(), savedAt = saved ? Date.parse(saved.headers.get('Date') || '') || 0 : 0;
+      if (pk && (!saved || Date.parse(pk.at) > savedAt)) {
+        const ans = packLookup(pk, u.searchParams.get('code') || '');
+        tellClients({ type: 'XF_NET', online: false, saved: true, path: u.pathname });
+        if (ans) return new Response(JSON.stringify(ans), { status: ans.error ? 400 : 200, headers: { 'Content-Type': 'application/json', 'X-XF-Offline': '1', 'X-XF-Offline-At': pk.at } });
+      }
+    }
+    tellClients({ type: 'XF_NET', online: false, saved: !!saved, path: u.pathname });
     if (!saved) throw err;
     const h = new Headers(saved.headers); h.set('X-XF-Offline', '1');
     return new Response(await saved.blob(), { status: 200, headers: h });
@@ -180,10 +191,10 @@ async function tellClients(msg) { (await self.clients.matchAll()).forEach(c => c
 
 // ── Message handler ───────────────────────────────────────────────────────────
 self.addEventListener('message', e => {
-  if (e.data?.type === 'ONLINE')        replayQueue(offlineTokenUser(e.data.token) ? '' : (e.data.token || ''));
+  if (e.data?.type === 'ONLINE')        { const tk = offlineTokenUser(e.data.token) ? '' : (e.data.token || ''); replayQueue(tk); packRefresh(tk).catch(() => {}); }
   if (e.data?.type === 'QUEUE_STATUS')  sendQueueStatus(e.source);
   if (e.data?.type === 'SKIP_WAITING')  self.skipWaiting();
-  if (e.data?.type === 'CLEAR_DATA')    caches.delete(DATA_CACHE); // signed out → this device keeps no data
+  if (e.data?.type === 'CLEAR_DATA')    { caches.delete(DATA_CACHE); packMem = null; caches.open(META_CACHE).then(c => c.delete('pack')); }
 });
 
 // ── POST queueing for offline ─────────────────────────────────────────────────
@@ -350,4 +361,72 @@ async function sendOfflineSignins(token) {
   const list = await metaGet('offline-signins', []); if (!list.length) return;
   const r = await fetch(WORKER_URL + '/auth/offline-signins', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token }, body: JSON.stringify({ items: list }) });
   if (r.ok) await metaPut('offline-signins', []);
+}
+
+// ── 📴 This device's stock copy (step 2b): every SKU Mgr row (part #, spot, cases, Ea/Case), cases waiting for approval,
+// every UPC → part #. Refreshed at most every 10 minutes while online (any page sends ONLINE with its sign-in); with no
+// internet a lookup of ANY part # / parent / UPC is answered from it the same way the Worker's /inventory/lookup does.
+const PACK_MIN = 10 * 60000;
+let packMem = null, packBusy = false;
+async function packGet() { if (!packMem) packMem = await metaGet('pack', null); return packMem; }
+async function packRefresh(token) {
+  if (!token || packBusy) return;
+  const cur = await packGet();
+  if (cur && Date.now() - Date.parse(cur.at) < PACK_MIN) return;
+  packBusy = true;
+  try {
+    const r = await fetch(WORKER_URL + '/inventory/offline-pack', { headers: { 'X-Cred-Token': token } });
+    if (r.ok) { const d = await r.json(); if (d && d.ok && Array.isArray(d.rows)) { packMem = d; await metaPut('pack', d); } }
+  } finally { packBusy = false; }
+}
+function packBase(p) { const s = String(p || ''); const b = s.includes('=') ? s.split('=')[0] : s; return b.replace(/^(\s*\d+(?:-\d+)+(?:&\d+)?)[cC](\s*)$/, '$1$2').trim().toUpperCase(); }
+function packAddFirstDigit(z) { // the R20H scanner sends 810097207059 as 10097207059
+  const ok = c => { let t = 0; for (let i = 0; i < 11; i++) t += (+c[i]) * (i % 2 ? 1 : 3); return (10 - t % 10) % 10 === +c[11]; };
+  if (!/^\d{11}$/.test(z) || ok('0' + z)) return null;
+  for (let d = 1; d <= 9; d++) if (ok(d + z)) return d + z;
+  return null;
+}
+// The same steps, in the same order, as the Worker's /inventory/lookup (first match wins at each step).
+function packLookup(pk, raw) {
+  const rawCode = String(raw || '').trim().toUpperCase();
+  const has = p => pk.rows.some(r => String(r[4]).trim().toUpperCase() === p);
+  let code = (pk.cParts || []).includes(rawCode) ? rawCode : rawCode.replace(/^(\s*\d+(?:-\d+)+)[cC](?=\s*$|=)/, '$1');
+  if (code !== rawCode && has(rawCode)) code = rawCode;
+  if (!code) return { error: 'No code provided' };
+  const norm = v => String(v || '').replace(/\D/g, '').replace(/^0+/, ''), z = norm(code), z11 = z.length === 11 ? packAddFirstDigit(z) : null;
+  let partNum = null, sku = null, insideUpc = null, outsideUpc = null;
+  // 1–2. 🔢 saved here, then the UPC list (part # and its UPCs)
+  const p1 = (z && pk.prim[z] && (pk.editZ[pk.prim[z][0].toUpperCase()] || /^\d{8,14}$/.test(code)) ? pk.prim[z] : null)
+    || (z11 && pk.prim[z11] && pk.editZ[pk.prim[z11][0].toUpperCase()] ? pk.prim[z11] : null);
+  if (p1) { partNum = sku = p1[0]; insideUpc = p1[1] || null; outsideUpc = p1[2] || null; }
+  // 3. the old UPC sheet: a UPC or the part # itself
+  if (!partNum) for (const r of pk.sheet || []) {
+    const variant = r[1], V = variant.toUpperCase(), ez = pk.editZ[V];
+    if (ez && z && !ez.includes(z) && V !== code) continue;
+    if ((z && (norm(r[3]) === z || norm(r[2]) === z)) || (variant && V === code)) { partNum = sku = variant || r[0] || null; insideUpc = r[2] || null; outsideUpc = r[3] || null; break; }
+  }
+  // 4. other UPC lists (part # only)
+  const upcLike = /^\d{11,14}$/.test(code);
+  if (!partNum && upcLike) { const f = pk.sec[z] || (z11 ? (pk.prim[z11] && pk.editZ[pk.prim[z11][0].toUpperCase()] ? pk.prim[z11][0] : pk.sec[z11]) : null); if (f) partNum = sku = f; }
+  if (!partNum && upcLike && !has(code)) return { partNum: null, upcNotLinked: true, code, locations: [], offlineCopy: pk.at };
+  const upcNotLinked = !partNum && upcLike;
+  if (!partNum) partNum = code;
+  const baseSku = packBase(sku || partNum), P = String(partNum).toUpperCase();
+  const locations = [], partNums = new Set(); let name = '';
+  for (const r of pk.rows) {
+    const rowSku = String(r[2]).trim().toUpperCase(), rowPart = String(r[4]).trim(), rowPartUp = rowPart.toUpperCase();
+    const ok = rowPartUp === P || (baseSku.length > 2 && (packBase(rowSku) === baseSku || packBase(rowPartUp) === baseSku));
+    if (!ok) continue;
+    if (!name && r[3]) name = String(r[3]).trim();
+    if (rowPart) partNums.add(rowPart);
+    const loc = String(r[5]).trim();
+    if (!loc) continue;
+    const pend = pk.pending[rowPartUp + '|' + loc.toUpperCase()] || 0;
+    locations.push({ partNum: rowPart, location: loc, cases: String(r[6]), eachQty: String(r[7]), rowIndex: r[0] + 1, masterId: r[1] || null,
+      isPlaceholder: /will be here/i.test(loc), pendingCases: pend, adjustedCases: Math.max(0, (parseFloat(r[6]) || 0) - pend) });
+  }
+  const variants = Array.from(partNums).sort();
+  const caseOf = {}; Object.keys(pk.caseOf || {}).forEach(k => { if (packBase(k) === baseSku) caseOf[k] = pk.caseOf[k]; });
+  return { partNum, sku: sku || partNum, name, baseSku, insideUpc, outsideUpc, locations, variants, isMultiVariant: variants.length > 1 && P === baseSku,
+    fbaParts: [], photo: '', upcNotLinked, caseOf, offlineCopy: pk.at };
 }

@@ -511,6 +511,12 @@ document.addEventListener('input', function (e) {
   }, 5000);
   if (!off.net) offBar();
   try { if (localStorage.getItem('xf_back_online') === '1') offBar(); } catch (e) {}
+  // 📴 step 2b: while online and signed in, the device's stock copy is kept fresh (the service worker fetches it at most
+  // every 10 minutes) — so with no internet any part # / spot / UPC still finds its spots and cases.
+  setInterval(function () {
+    var t = token(); if (!off.net || !t || /^offline\./.test(t)) return;
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE', token: t }); } catch (e) {}
+  }, 10 * 60000);
 
   // 🧪 Test switch (Admin → 🧪 Test): while it's on, every page shows an
   // orange frame and a note — anything done now is erased when it's turned off.

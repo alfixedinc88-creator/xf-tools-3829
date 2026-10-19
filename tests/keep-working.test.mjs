@@ -7665,12 +7665,12 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /caches\.match\(e\.request, \{ ignoreSearch: true \}\)/.test(sw) && /const LIB_HOSTS = \['fonts\.googleapis\.com', 'fonts\.gstatic\.com', 'cdn\.jsdelivr\.net', 'cdnjs\.cloudflare\.com', 'unpkg\.com'\];/.test(sw), null);
   check('data: live from the server when it answers; the last saved answer only when it can\'t be reached, marked X-XF-Offline; never for sign-in calls or a request with no sign-in; kept across updates',
     /if \(\/\^\\\/auth\\\/\/\.test\(url\.pathname\)\) return false;\s*return !!req\.headers\.get\('X-Cred-Token'\);/.test(sw) && /h\.set\('X-XF-Offline', '1'\)/.test(sw)
-      && /k !== LIB_CACHE && k !== DATA_CACHE/.test(sw) && /if \(e\.data\?\.type === 'CLEAR_DATA'\)\s+caches\.delete\(DATA_CACHE\);/.test(sw), null);
+      && /k !== LIB_CACHE && k !== DATA_CACHE/.test(sw) && /if \(e\.data\?\.type === 'CLEAR_DATA'\)\s+\{ caches\.delete\(DATA_CACHE\);/.test(sw), null);
   check('POST outbox kept as it was (Inventory outbox requests not queued twice; queued ones keep their _requestId so a replay is never counted twice)',
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019b/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019c/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -7697,6 +7697,37 @@ console.log('\n📴 Offline step 2a: shared scanners — sign in with no interne
   const rows = sq.prepare("SELECT kind, detail FROM cred_login_log WHERE user_id = ? AND detail LIKE '%NO internet%' ORDER BY id").all(uid);
   check('POST /auth/offline-signins needs a sign-in; each offline sign in / out lands in Admin → 🔑 Log in with its real time and who sent it (unknown user skipped)',
     no.status === 401 && ok.ok && ok.logged === 2 && rows.length === 2 && rows[0].kind === 'signin' && /signed in with NO internet on a scanner at 2026-10-19T13:05/.test(rows[0].detail) && rows[1].kind === 'signout', { st: no.status, ok, rows });
+}
+
+// 📴 Offline step 2b (owner 2026-10-19: "WiFi down a whole day or two, we still use the app, nothing miscounted"): each device keeps
+// a stock copy; with no internet a lookup is answered from it — and must give the SAME spots / cases / waiting cases as the server.
+console.log('\n📴 Offline step 2b: the device stock copy answers a lookup exactly like the server');
+{
+  const { readFileSync: rfK } = await import('node:fs');
+  const sw = rfK(fileURLToPath(new URL('../sw.js', import.meta.url)), 'utf8');
+  const grab = n => { const i = sw.indexOf('function ' + n + '('); const j = sw.indexOf('\n}\n', i); return i < 0 ? '' : sw.slice(i, j + 2); };
+  const packLookup = new Function(grab('packBase') + '\n' + grab('packLookup') + '; return packLookup;')();
+  const pk = await get('/inventory/offline-pack');
+  const noSign = await call('/inventory/offline-pack');
+  check('GET /inventory/offline-pack needs a sign-in; has every SKU Mgr row, waiting cases, UPC → part #', noSign.status === 401 && pk.ok && pk.rows.length === sq.prepare('SELECT COUNT(*) n FROM master_list').get().n && typeof pk.prim === 'object' && typeof pk.sec === 'object' && pk.at, { st: noSign.status, rows: pk.rows && pk.rows.length });
+  // UPCs compared for a UPC scan (offline also shows a part #'s own box / bag codes when the part # is typed — the server
+  // only fills them from the old UPC sheet then); every spot / case / waiting count is compared for every code.
+  const pick = (d, c) => ({ partNum: d.partNum, name: d.name, baseSku: d.baseSku, variants: d.variants, isMultiVariant: d.isMultiVariant, upcNotLinked: !!d.upcNotLinked,
+    ...(/^\d{8,14}$/.test(c) ? { insideUpc: d.insideUpc || null, outsideUpc: d.outsideUpc || null } : {}),
+    locations: (d.locations || []).map(l => [l.partNum, l.location, String(l.cases), String(l.eachQty), l.rowIndex, String(l.masterId || ''), l.pendingCases, l.adjustedCases, !!l.isPlaceholder]) });
+  // a Stock Out waiting for approval, so "waiting" cases are in the answer too
+  const vendorUpc = (rfK(fileURLToPath(new URL('../worker/src/vendor-upc.js', import.meta.url)), 'utf8').match(/\["(23-2-3=[^"]*|40-1-1=[^"]*)","(\d+)"/) || [])[2];
+  const codes = ['23-2-3', '23-2-3=2', '40-1-1=1', '40-1-1', '30-4-6=10X', '26-4-3=100', '99-9-9=1', '00810139933984', '840000000000', '10097208292', '810097208292'].concat(vendorUpc ? [vendorUpc] : []);
+  const diff = [];
+  for (const c of codes) {
+    const live = pick(await get('/inventory/lookup?code=' + encodeURIComponent(c)), c), off = pick(packLookup(pk, c), c);
+    if (JSON.stringify(live) !== JSON.stringify(off)) diff.push({ c, live, off });
+  }
+  const cases = codes.slice(0, 2).map(c => (packLookup(pk, c).locations || []).reduce((a, l) => a + (parseFloat(l.cases) || 0), 0));
+  check('offline answer = the server\'s answer for ' + codes.length + ' part #s / parents / UPCs (every spot, cases, Ea/Case, row #, waiting cases, UPCs) — nothing counted differently offline', !diff.length, diff.slice(0, 2));
+  check('…e.g. 23-2-3 offline: its spots add up to the same cases as SKU Mgr', cases[0] === sq.prepare("SELECT SUM(cases) n FROM master_list WHERE part_num LIKE '23-2-3%' AND location != ''").get().n, cases);
+  check('device copy: refreshed at most every 10 min while online (any signed-in page), kept in the scanner, never trimmed; wiped only by CLEAR_DATA',
+    /const PACK_MIN = 10 \* 60000;/.test(sw) && /if \(cur && Date\.now\(\) - Date\.parse\(cur\.at\) < PACK_MIN\) return;/.test(sw) && /await metaPut\('pack', d\);/.test(sw) && /packRefresh\(tk\)\.catch/.test(sw), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
