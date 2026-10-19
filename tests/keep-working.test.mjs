@@ -7670,7 +7670,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019c/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019d/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -7728,6 +7728,33 @@ console.log('\n📴 Offline step 2b: the device stock copy answers a lookup exac
   check('…e.g. 23-2-3 offline: its spots add up to the same cases as SKU Mgr', cases[0] === sq.prepare("SELECT SUM(cases) n FROM master_list WHERE part_num LIKE '23-2-3%' AND location != ''").get().n, cases);
   check('device copy: refreshed at most every 10 min while online (any signed-in page), kept in the scanner, never trimmed; wiped only by CLEAR_DATA',
     /const PACK_MIN = 10 \* 60000;/.test(sw) && /if \(cur && Date\.now\(\) - Date\.parse\(cur\.at\) < PACK_MIN\) return;/.test(sw) && /await metaPut\('pack', d\);/.test(sw) && /packRefresh\(tk\)\.catch/.test(sw), null);
+}
+
+// Owner (2026-10-19): "for the Audit recount report I sent it to MG, but how come nothing is showing on her end?"
+console.log('\n📋 Recount spots sent to MG: she sees them on every Inventory tab; the report says if she opened it / why it closed');
+{
+  const { readFileSync: rfM } = await import('node:fs');
+  const ih = rfM(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('939-1-1','tee','939-1-1=10','Q9=11-1-1',2,10), ('939-1-1','tee','939-1-1=10','Q9=11-1-2',1,10)`).run();
+  const mgTok = (await (await call('/auth/login', { method: 'POST', body: '{"username":"manager1","password":"password1"}' })).json()).token;
+  const mgId = sq.prepare("SELECT id FROM cred_users WHERE username = 'manager1'").get().id;
+  const sent = await post('/inventory/recount/assign', { area: 'Q9', spots: ['Q9=11-1-1', 'Q9=11-1-2'], toUserId: mgId, note: 'please finish' });
+  const rep0 = await get('/inventory/recount/report'), a0 = (rep0.assigned || []).find(a => a.id === sent.id) || {};
+  const mine = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': mgTok } })).json();
+  const rep1 = await get('/inventory/recount/report'), a1 = (rep1.assigned || []).find(a => a.id === sent.id) || {};
+  check('sent to MG → MG gets it (2 spots, from TS); the report says "⏳ MG has not opened it yet" before, "👀 MG opened it <time>" after',
+    sent.ok && sent.to === 'MG' && (mine.lists || []).length === 1 && mine.lists[0].total === 2 && mine.lists[0].by === 'TS' && !a0.seenAt && !!a1.seenAt, { a0, a1, mine });
+  await post('/inventory/recount/column-done', { location: 'Q9=11-1-1', items: 1, changed: 0, detail: [] });
+  await post('/inventory/recount/column-done', { location: 'Q9=11-1-2', items: 1, changed: 0, detail: [] });
+  const gone = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': mgTok } })).json();
+  const rep2 = await get('/inventory/recount/report'), c2 = (rep2.assignedClosed || []).find(a => a.id === sent.id) || {};
+  check('…every spot done → closes by itself, and the report still shows it under "Closed in the last 3 days": ✅ every spot done, when, opened when',
+    (gone.lists || []).length === 0 && !(rep2.assigned || []).some(a => a.id === sent.id) && c2.closedHow === 'all done' && c2.to === 'MG' && c2.total === 2 && !!c2.seenAt && !!c2.closedAt, c2);
+  check('page: "📋 For you" bar under the Inventory tabs on EVERY tab (tap → 🔍 Audit) + a count on the 🔍 Audit tab, checked when the page opens and every 2 min; report shows 👀 opened / ⏳ not opened and the closed ones',
+    /<div id="rc-foryou-bar" style="display:none;[^"]*" onclick="invSwitchTab\('audit'\)"><\/div>/.test(ih) && /id="inv-tab-audit" onclick="invSwitchTab\('audit'\)">🔍 Audit<span class="ibadge" id="rc-foryou-badge"/.test(ih)
+      && /setTimeout\(function\(\) \{ rcForYouCheck\(\); \}, 2500\);/.test(ih) && /setInterval\(function\(\) \{ if \(!document\.hidden\) rcForYouCheck\(\); \}, 120000\);/.test(ih)
+      && /has not opened it yet/.test(ih) && /opened it ' \+ ckE\(xfrFmtT\(a\.seenAt\)\)/.test(ih) && /Closed in the last 3 days/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '939-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q9=%'; DELETE FROM recount_assign");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

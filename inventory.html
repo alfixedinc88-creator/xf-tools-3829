@@ -596,13 +596,15 @@ window.invCredLogin = async function() {
   <button class="itab" id="inv-tab-check" onclick="invSwitchTab('check')">✅ Checking</button>
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
-  <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
+  <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit<span class="ibadge" id="rc-foryou-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
   <button class="itab" id="inv-tab-location" onclick="invSwitchTab('location')">📍 Location Plan</button>
   <button class="itab" id="inv-tab-history" onclick="invSwitchTab('history')">&#x1F4DC; History</button>
   <button class="itab" id="inv-tab-soldout" onclick="invSwitchTab('soldout')">🚫 Sold Out</button>
 </div>
+<!-- 📋 Owner (2026-10-19): "I sent the recount spots to MG, but nothing shows on her end" — on every Inventory tab, not only Audit. -->
+<div id="rc-foryou-bar" style="display:none;margin:8px 12px 0;padding:10px 12px;border-radius:10px;border:2px solid var(--orange);background:var(--orange-bg,#fff7ed);color:var(--text);font-weight:700;cursor:pointer" onclick="invSwitchTab('audit')"></div>
 
 <div class="ipanel iactive" id="inv-panel-scan">
   <!-- The Mode toggle used to live here (Stock In / Stock Out inside one
@@ -13965,11 +13967,30 @@ window.invCredLogin = async function() {
     }).catch(function() {});
     rcMine();
   };
+  // 📋 For you on every Inventory tab (owner 2026-10-19: "I sent it to MG, but nothing shows on her end"): a bar under the
+  // tabs + a count on 🔍 Audit, checked when the page opens and every 2 minutes — tap → Audit, where the list is.
+  function rcForYouShow(L) {
+    var left = 0; L.forEach(function(a) { left += a.total - a.done; });
+    var bar = g('rc-foryou-bar'), bd = g('rc-foryou-badge');
+    if (bd) { bd.textContent = left; bd.style.display = left ? '' : 'none'; }
+    if (!bar) return;
+    if (!L.length) { bar.style.display = 'none'; return; }
+    bar.textContent = '📋 For you: ' + L.map(function(a) { return (a.area || '') + ' — ' + (a.total - a.done) + ' spot' + (a.total - a.done === 1 ? '' : 's') + ' (from ' + a.by + ')'; }).join(' · ') + ' — tap to open 🔍 Audit. 给你的盘点任务 — 点这里打开。';
+    bar.style.display = '';
+  }
+  window.rcForYouCheck = function() {
+    var t = ''; try { t = localStorage.getItem('xf_cred_token') || ''; } catch (e) {}
+    if (!t) return;
+    wFetch(W + '/inventory/recount/assigned').then(function(r) { return r.json(); }).then(function(d) { if (d && d.ok) rcForYouShow(d.lists || []); }).catch(function() {});
+  };
+  setTimeout(function() { rcForYouCheck(); }, 2500);
+  setInterval(function() { if (!document.hidden) rcForYouCheck(); }, 120000);
   // 📋 For you: the lists sent to me — each spot's state now (🟩 done · 🟨 started · 🟥 not scanned); tap one to start it.
   window.rcMine = function() {
     var box = g('rc-mine'); if (!box) return;
     wFetch(W + '/inventory/recount/assigned').then(function(r) { return r.json(); }).then(function(d) {
       var L = (d && d.ok && d.lists) || [];
+      rcForYouShow(L);
       if (!L.length) { box.innerHTML = ''; return; }
       var col = { done: ['var(--green-bg,#e8f7ee)', 'var(--green)'], started: ['#fef9c3', '#ca8a04'], none: ['var(--red-bg,#fdf0ee)', 'var(--red)'] };
       box.innerHTML = L.map(function(a) {
@@ -14255,7 +14276,14 @@ window.invCredLogin = async function() {
       if ((d.assigned || []).length) h += '<div style="font-weight:800;color:var(--text);margin:10px 0 4px">📤 Sent to finish</div>' + d.assigned.map(function(a) {
           return '<div style="padding:4px 0;border-top:1px solid var(--border);color:var(--text)"><b>' + ckE(a.to) + '</b> · ' + ckE(a.area || '') + ' · <b>' + a.done + ' of ' + a.total + '</b> done'
             + ' <span style="color:var(--text3)">(sent by ' + ckE(a.by) + ' ' + ckE(xfrFmtT(a.at)) + (a.note ? ' · “' + ckE(a.note) + '”' : '') + ')</span>'
+            // 👀 Owner (2026-10-19): "nothing shows on her end" — did they open it yet?
+            + (a.seenAt ? ' <span style="color:var(--green);font-weight:700">👀 ' + ckE(a.to) + ' opened it ' + ckE(xfrFmtT(a.seenAt)) + '</span>' : ' <span style="color:var(--orange);font-weight:700">⏳ ' + ckE(a.to) + ' has not opened it yet</span>')
             + ' <a href="#" onclick="rcAssignCancel(' + a.id + ');return false" style="color:var(--red);font-size:11px">✕ cancel</a></div>'; }).join('');
+      // …and the ones closed in the last 3 days (all spots done by itself / cancelled), so a list that "disappeared" is found
+      if ((d.assignedClosed || []).length) h += '<details style="margin:4px 0"><summary style="cursor:pointer;color:var(--text2)">📤 Closed in the last 3 days (' + d.assignedClosed.length + ')</summary>' + d.assignedClosed.map(function(a) {
+          return '<div style="padding:3px 0;border-top:1px solid var(--border);color:var(--text2)"><b>' + ckE(a.to) + '</b> · ' + ckE(a.area || '') + ' · ' + a.total + ' spot' + (a.total === 1 ? '' : 's') + ' · sent ' + ckE(xfrFmtT(a.at))
+            + ' · ' + (a.closedHow === 'all done' ? '✅ closed by itself: every spot done ' : '✕ cancelled by ' + ckE(a.closedBy || '') + ' ') + ckE(xfrFmtT(a.closedAt))
+            + (a.seenAt ? ' · 👀 opened ' + ckE(xfrFmtT(a.seenAt)) : ' · ⏳ never opened') + '</div>'; }).join('') + '</details>';
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
         + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
         + (d.people.length ? d.people.map(function(p) { return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
@@ -15211,6 +15239,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261019c"></script>
+<script src="xf-access.js?v=20261019d"></script>
 </body>
 </html>

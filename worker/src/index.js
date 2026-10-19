@@ -7700,6 +7700,10 @@ async function recountReport(env) {
   return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
     areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })), notSpots: Object.values(badSpots),
     assigned: await recountAssignList(env, '', []).catch(() => []),
+    // closed in the last 3 days (all done by itself / cancelled) — so a list that "disappeared" can be found
+    assignedClosed: (await d1All(env, `SELECT id, at, by_user, to_name, area, spots, closed_at, closed_by, closed_how, seen_at FROM recount_assign WHERE closed_at >= ? ORDER BY closed_at DESC LIMIT 30`,
+      [new Date(Date.now() - 3 * 864e5).toISOString()]).catch(() => [])).map(r => { let n = 0; try { n = (JSON.parse(r.spots || '[]') || []).length; } catch (_) {}
+        return { id: r.id, at: r.at, by: r.by_user, to: r.to_name, area: r.area, total: n, closedAt: r.closed_at, closedBy: r.closed_by, closedHow: r.closed_how, seenAt: r.seen_at || null }; }),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/spot/delete { location, force } — managers only (Recount report → 🗺 By area → ✕).
@@ -7740,7 +7744,10 @@ async function inventorySpotDelete(request, env, session) {
 async function recountAssignTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, to_user_id INTEGER, to_name TEXT,
     area TEXT, spots TEXT, note TEXT, closed_at TEXT, closed_by TEXT, closed_how TEXT)`).run();
+  // 👀 Owner (2026-10-19): "I sent it to MG, but nothing shows on her end" — when the person first opened it is on record.
+  if (!_raSeenCol) { await env.DB.prepare('ALTER TABLE recount_assign ADD COLUMN seen_at TEXT').run().catch(() => {}); _raSeenCol = true; }
 }
+let _raSeenCol = false;
 // Each spot's state in this round: done (a finished column) · started (recount lines / ✕ stopped) · none.
 async function recountSpotStates(env, roundStart) {
   const st = {};
@@ -7764,7 +7771,7 @@ async function recountAssignList(env, where, args) {
       await env.DB.prepare("UPDATE recount_assign SET closed_at = ?, closed_by = ?, closed_how = 'all done' WHERE id = ? AND closed_at IS NULL").bind(new Date().toISOString(), r.to_name || '', r.id).run();
       continue;
     }
-    out.push({ id: r.id, at: r.at, by: r.by_user, toUserId: r.to_user_id, to: r.to_name, area: r.area, note: r.note || '', spots: list, done, total: list.length });
+    out.push({ id: r.id, at: r.at, by: r.by_user, toUserId: r.to_user_id, to: r.to_name, area: r.area, note: r.note || '', spots: list, done, total: list.length, seenAt: r.seen_at || null });
   }
   return out;
 }
@@ -7774,7 +7781,9 @@ async function inventoryRecountAssign(path, request, env, session) {
   await recountAssignTable(env);
   if (path === '/inventory/recount/assigned') { // the lists sent to me (anyone signed in)
     const uid = session && (session.userId || session.user_id);
-    return J({ ok: true, lists: uid ? await recountAssignList(env, 'AND to_user_id = ?', [uid]) : [] });
+    const lists = uid ? await recountAssignList(env, 'AND to_user_id = ?', [uid]) : [];
+    if (lists.length) await env.DB.prepare(`UPDATE recount_assign SET seen_at = ? WHERE to_user_id = ? AND seen_at IS NULL AND closed_at IS NULL`).bind(new Date().toISOString(), uid).run().catch(() => {});
+    return J({ ok: true, lists });
   }
   if (!mgmt) return J({ ok: false, error: 'Management access required' }, 403);
   if (path === '/inventory/recount/people') {
