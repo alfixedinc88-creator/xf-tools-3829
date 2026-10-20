@@ -13992,7 +13992,7 @@ window.invCredLogin = async function() {
     if (bd) { bd.textContent = left; bd.style.display = left ? '' : 'none'; }
     if (!bar) return;
     if (!L.length) { bar.style.display = 'none'; return; }
-    bar.textContent = '📋 For you: ' + L.map(function(a) { return (a.area || '') + ' — ' + (a.total - a.done) + ' spot' + (a.total - a.done === 1 ? '' : 's') + ' (from ' + a.by + ')'; }).join(' · ') + ' — tap to open 🔍 Audit. 给你的盘点任务 — 点这里打开。';
+    bar.textContent = '📋 For you: ' + L.map(function(a) { return (a.area || '') + ' — ' + (a.total - a.done) + ' spot' + (a.total - a.done === 1 ? '' : 's') + ' (from ' + a.by + ')'; }).join(' · ') + ' — tap to open 🔍 Audit.';
     bar.style.display = '';
   }
   window.rcForYouCheck = function() {

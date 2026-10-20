@@ -7538,6 +7538,9 @@ console.log('\n📤 Recount by area: send the unfinished spots to someone → "�
   const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('…screens: "📤 Send the N unfinished to…" under the area grid, "📤 Sent to finish" in the report, "📋 For you" card on the Recount screen',
     /onclick="rcAssignOpen\(this\.dataset\.a\)"/.test(ih) && /📤 Send the /.test(ih) && /📤 Sent to finish/.test(ih) && /id="rc-mine"/.test(ih) && /📋 For you/.test(ih) && /window\.rcMine = /.test(ih), null);
+  // Owner (2026-10-20): "when they open it there is Chinese there, please remove the Chinese" — the 📋 For you bar / card / send box are English only.
+  const rcPart = ih.slice(ih.indexOf('function rcForYouShow('), ih.indexOf('window.rcArea = function'));
+  check('…📋 For you bar, card and 📤 send box: no Chinese text', rcPart.length > 1000 && /tap to open 🔍 Audit\.'/.test(rcPart) && !/[\u4e00-\u9fff]/.test(rcPart), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '938-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q8=%'; DELETE FROM inventory_log WHERE part_num = '938-1-1=10'; DELETE FROM recount_assign");
 }
 
