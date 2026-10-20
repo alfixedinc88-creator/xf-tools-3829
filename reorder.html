@@ -4569,7 +4569,9 @@ async function rvoCheck(title, file) {
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--red)" onclick="rvoLineDel(' + i + ')" title="Take this item off this sheet">🗑</button>'
         + (l.where !== 'own' ? ' <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoMapLine(' + i + ')">Map to part #</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
+  h += '<details id="rvo-ck-hist" style="margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:6px 10px" open><summary style="cursor:pointer;font-weight:700">🕘 Changes to this sheet</summary><div style="font-size:12px;color:var(--text3)">Loading…</div></details>';
   body.innerHTML = h;
+  rvoSheetHistory(title);
   RVO_CK = { title: title, lines: d.lines, file: file, filter: (RVO_CK && RVO_CK.title === title) ? RVO_CK.filter : '' };
   rvoCkFilter(RVO_CK.filter, true);
 }
@@ -4779,14 +4781,33 @@ async function rvoTemplate() {
 
 
 // 🕘 History — everything done on this tab (worker table reorder_history).
+// 🕘 Every kind of change in plain words (owner 2026-10-20: "I want anything I change to keep in history too").
+var RVO_HIST_ICON = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇', incoming: '🚢', received: '📦', 'incoming-line': '✏️', take: '🔗', pallets: '🧱',
+  weights: '⚖️', 'case-of': '📦', 'upc-ok': '✔', 'upc-retired': '🚫', sales_fix: '🧮', sales_fix_undo: '↩️', note: '📝' };
+var RVO_HIST_LAB = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV', incoming: 'On the way', received: 'Received',
+  'incoming-line': 'Sheet line changed', take: 'Taken off order', pallets: 'Pallets', weights: 'Weights', 'case-of': 'Sold as a case', 'upc-ok': 'UPC marked right',
+  'upc-retired': 'Not used anymore', sales_fix: 'Sales fixed', sales_fix_undo: 'Sales fix undone', note: 'Note' };
+// 🕘 This sheet's own changes, inside its 📋 Import check (imports, ✏️ / 🗑 lines, taken off orders, received, removed).
+async function rvoSheetHistory(title) {
+  var box = document.getElementById('rvo-ck-hist'); if (!box || !title) return;
+  try {
+    var d = await (await wFetch(W + '/reorder/fix/history?q=' + encodeURIComponent(title))).json(); if (!d.ok) throw new Error(d.error || 'Failed');
+    var T = String(title).toUpperCase(), L = (d.history || []).filter(function (h) { return String(h.detail || '').toUpperCase().indexOf(T) >= 0 || String(h.part || '').toUpperCase() === T; });
+    box.innerHTML = '<summary style="cursor:pointer;font-weight:700;color:var(--text)">🕘 Changes to this sheet (' + L.length + ')</summary>'
+      + (L.length ? '<table style="font-size:12px;border-collapse:collapse;width:100%;margin-top:4px"><tbody>' + L.map(function (h) {
+          var t = new Date(h.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          return '<tr style="border-top:1px solid var(--border)"><td style="padding:4px 8px;white-space:nowrap;color:var(--text3)">' + escHtml(t) + '</td><td style="padding:4px 8px;white-space:nowrap;font-weight:700">' + escHtml(h.by_user || '—') + '</td>'
+            + '<td style="padding:4px 8px;white-space:nowrap">' + (RVO_HIST_ICON[h.action] || '•') + ' ' + escHtml(RVO_HIST_LAB[h.action] || h.action) + '</td><td style="padding:4px 8px">' + escHtml(h.detail || '') + '</td></tr>'; }).join('') + '</tbody></table>'
+        : '<div style="font-size:12px;color:var(--text3);margin-top:4px">Nothing recorded for this sheet yet.</div>');
+  } catch (e) { box.innerHTML = '<summary>🕘 Changes to this sheet</summary><div style="color:var(--red);font-size:12px">✗ ' + escHtml(e.message) + '</div>'; }
+}
 async function rvoLoadHistory() {
   var box = document.getElementById('rvo-hist'), q = (document.getElementById('rvo-hist-q').value || '').trim();
   box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
   try {
     var d = await (await wFetch(W + '/reorder/fix/history' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
     if (!d.ok) throw new Error(d.error || 'Failed');
-    var icon = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇', incoming: '🚢', received: '📦' };
-    var lab = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV', incoming: 'On the way', received: 'Received' };
+    var icon = RVO_HIST_ICON, lab = RVO_HIST_LAB;
     box.innerHTML = !d.history.length ? '<div style="font-size:12px;color:var(--text3)">' + (q ? 'Nothing matches.' : 'Nothing yet — edits, part # fixes, imports and CSV downloads show up here.') + '</div>'
       : '<table style="font-size:12px;border-collapse:collapse;width:100%"><tbody>' + d.history.map(function (h) {
         var t = new Date(h.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
