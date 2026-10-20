@@ -7780,5 +7780,36 @@ console.log('\n🧾 Reorder: two Amazon listings of the same part # → ONE row 
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '79-5-1&2%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '79-5-1&2%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '79-5-1&2%'; DELETE FROM master_list WHERE base_sku = '79-5-1&2'`);
 }
 
+// Owner (2026-10-20, the vendor file again: "URGENT - ship 26-4-3=100 · 810097201638 in the bag column, no box — why? I have
+// already edited it in Barcode / vendor for a part #"): the file is made from the rows of the last Calculate; a save after
+// that wasn't in them. Now the saved codes go onto the row at once, and an old Calculate is warned before downloading.
+console.log('\n🧾 Vendor file: a UPC saved after Calculate is in the file (row updated at once; old Calculate warned)');
+{
+  const { readFileSync: rfV } = await import('node:fs');
+  const rh = rfV(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const F = '78-4-3', wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString();
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,40)").run(F + '=100', wk);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, updated_at) VALUES (?,'3/4 jclamp',?,'C2=1-1-1',0,100,'2026-09-01')").run(F, F + '=100');
+  // our UPC list: the bag column holds the box code with a typo, no box (what the owner saw for 26-4-3=100)
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', ?, ?, '810097201638', '', ?)").run(F + '=100', F, now);
+  const Q = '/reorder/vendor-order?days=90&lead=3&cover=3', row = d => (d.rows || []).find(r => r.sku === F + '=100') || {};
+  const r0 = row(await get(Q));
+  const sv = await post('/inventory/upc-manager/save', { rows: [{ part: F + '=100', outside: '810097204638', inside: '810097206021' }], confirm: [F + '=100'] });
+  const r1 = row(await get(Q));
+  check('before the save the row has bag 810097201638, no box; after the save (and Calculate) box 810097204638 · bag 810097206021',
+    r0.insideUpc === '810097201638' && !r0.outsideUpc && sv.ok && r1.outsideUpc === '810097204638' && r1.insideUpc === '810097206021', [r0.outsideUpc, r0.insideUpc, r1.outsideUpc, r1.insideUpc]);
+  // the page: the saved codes go onto the row already on screen (no Calculate needed), its UPC ⚠ lines go
+  const grab = n => { const i = rh.indexOf('function ' + n + '('); const j = rh.indexOf('\n}\n', i); return rh.slice(i, j + 2); };
+  const ctx = { RVO: { rows: [{ sku: F + '=100', outsideUpc: '', insideUpc: '810097201638', upcWarn: '⚠ inside bag UPC but NO outside box UPC', note: 'Family x · ⚠ inside bag UPC but NO outside box UPC · ⚠ our inside bag UPC 810097201638 is not a real UPC (last digit wrong — typo?)' }, { sku: '1-1-1=5', outsideUpc: '1', insideUpc: '2', note: '' }] }, drawn: 0 };
+  new Function('ctx', 'var RVO = ctx.RVO; function rvoRender() { ctx.drawn++; }\n' + grab('rvoRowUpcSet') + '\nctx.n = rvoRowUpcSet("' + F.toLowerCase() + '=100", "810097204638", "810097206021");')(ctx);
+  const a = ctx.RVO.rows[0];
+  check('…on the page: the row gets box 810097204638 · bag 810097206021 at once (no Calculate needed), its UPC ⚠ goes from the note, other rows untouched, table redrawn',
+    ctx.n === 1 && a.outsideUpc === '810097204638' && a.insideUpc === '810097206021' && !a.upcWarn && a.note === 'Family x' && ctx.RVO.rows[1].outsideUpc === '1' && ctx.drawn === 1, a);
+  check('…every UPC save on Reorder (✏️ Save, ✅ Use) puts the codes on the row; downloading a Calculate 30+ min old asks first (Cancel = press Calculate)',
+    /await rvoUpcOkPost\(part, out, inn, 'saved as our codes'\);\s*rvoRowUpcSet\(part, out, inn\);/.test(rh) && /rvoUpcOkPost\(part, out, inn, 'saved with ✏️ — already our codes'\); rvoRowUpcSet\(part, out, inn\);/.test(rh)
+      && /RVO\.calcAt = Date\.now\(\);/.test(rh) && /if \(ageMin >= 30 && !confirm\(/.test(rh) && /OK = download anyway · Cancel = press Calculate first/.test(rh), null);
+  sq.exec(`DELETE FROM ebay_sales_weekly WHERE sku LIKE '78-4-3%'; DELETE FROM master_list WHERE base_sku = '78-4-3'; DELETE FROM upc WHERE sku LIKE '78-4-3%'; DELETE FROM upc_edit WHERE part LIKE '78-4-3%'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
