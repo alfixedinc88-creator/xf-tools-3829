@@ -7811,5 +7811,31 @@ console.log('\n🧾 Vendor file: a UPC saved after Calculate is in the file (row
   sq.exec(`DELETE FROM ebay_sales_weekly WHERE sku LIKE '78-4-3%'; DELETE FROM master_list WHERE base_sku = '78-4-3'; DELETE FROM upc WHERE sku LIKE '78-4-3%'; DELETE FROM upc_edit WHERE part LIKE '78-4-3%'`);
 }
 
+// Owner (2026-10-20, SKU Mgr search 201-1-10): "I see 2 lines of 201-1-10=10X and =2X — did we import the vendor sheet twice, or
+// was it one? if one, merge it — each order only needs to show up in one line".
+console.log('\n🏭 SKU Mgr → Coming in: ONE line per part # per order (the part # not shown twice)');
+{
+  const { readFileSync: rfI } = await import('node:fs');
+  const ih = rfI(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const grab = n => { const i = ih.indexOf('window.' + n + ' = function'); const j = ih.indexOf('\n  };\n', i); return ih.slice(i, j + 5); };
+  const render = new Function('var window = {};\n' + grab('skumgrIncomingHtml') + '\nreturn window.skumgrIncomingHtml;')();
+  await call('/reorder/fix/history', { headers: H });
+  const now = new Date().toISOString();
+  // One order with 2 part #s (what the owner saw), and a 2nd part with 2 orders + a container (several lines under it).
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('9-14-26 orders', 'production', ?, ?), ('PO-B 10/2', 'production', ?, ?), ('CT-B 10/9', 'shipped', ?, ?)").run(now, now, now, now, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, price, updated_at) VALUES ('9-14-26 orders','701-1-10=10X',25,'JQ',0,NULL,?), ('9-14-26 orders','701-1-10=2X',125,'JQ',0,NULL,?), ('9-14-26 orders','702-1-1=5',40,'JQ',0,NULL,?), ('PO-B 10/2','702-1-1=5',60,'JQ',0,NULL,?), ('CT-B 10/9','702-1-1=5',30,'JQ',0,NULL,?)").run(now, now, now, now, now);
+  const d1 = await get('/inventory/incoming?q=701-1-10'), h1 = render(d1);
+  const lines1 = (h1.match(/class="sk-inc-line"/g) || []).length, cnt = (h, p) => (h.match(new RegExp(p.replace(/[=]/g, '\\=') + '<', 'g')) || []).length;
+  check('201-1-10 case: ONE order with =10X and =2X → 2 lines, each part # once, each says its order + "= N units coming" (was 4 lines: a total line + an order line each)',
+    d1.ok && lines1 === 2 && cnt(h1, '701-1-10=10X') === 1 && cnt(h1, '701-1-10=2X') === 1 && /701-1-10=10X<\/b> — 🏭 <b>ordered<\/b> · 9-14-26 orders · (JQ|#1) · 25 units/.test(h1) && /= 25 units coming<\/span>/.test(h1) && /= 125 units coming<\/span>/.test(h1), h1);
+  const d2 = await get('/inventory/incoming?q=702-1-1'), h2 = render(d2);
+  const t2 = (d2.totals || []).find(t => t.part === '702-1-1=5') || {};
+  check('…a part # on 2 orders + a container → ONE line: the part # once with its total (= 130 coming: 100 owed + 30 on the way), each order / shipment once under it',
+    (h2.match(/class="sk-inc-line"/g) || []).length === 1 && cnt(h2, '702-1-1=5') === 1 && t2.comingUnits === 130 && /= 130 units coming<\/span>/.test(h2)
+      && (h2.match(/9-14-26 orders/g) || []).length === 1 && (h2.match(/PO-B 10\/2/g) || []).length === 1 && (h2.match(/CT-B 10\/9/g) || []).length === 1, { h2, t2 });
+  sq.prepare("DELETE FROM reorder_incoming WHERE title IN ('9-14-26 orders','PO-B 10/2','CT-B 10/9')").run();
+  sq.prepare("DELETE FROM reorder_title WHERE title IN ('9-14-26 orders','PO-B 10/2','CT-B 10/9')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

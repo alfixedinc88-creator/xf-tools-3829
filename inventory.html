@@ -7777,6 +7777,49 @@ window.invCredLogin = async function() {
         + '</details>';
     }).catch(function() { box.innerHTML = '<div style="padding:8px;color:var(--red);font-size:12px">💲 Price history failed to load.</div>'; });
   };
+  // 🏭 / 🚢 Coming in, ONE line per part # per order (owner 2026-10-20, 201-1-10: "I see 2 lines of =10X and =2X — did we import
+  // twice? each order only needs to show up in one line"). It was one order: each part # showed once in a total line and
+  // again in the order line. Now a part # with one order / shipment is ONE line (status, order, vendor, units, pcs, = coming);
+  // a part # with several shows its total once and one short line per order under it (the part # not repeated).
+  window.skumgrIncomingHtml = function(d) {
+    var e = function(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+    var n = function(v) { return (Math.round((parseFloat(v) || 0) * 100) / 100).toLocaleString(); };
+    var icon = { 'ordered': '🏭', 'on the way': '🚢', 'received — unpacking': '📦' };
+    var tot = {}; (d.totals || []).forEach(function(t) { tot[String(t.part).toUpperCase()] = t; });
+    var parts = [], byPart = {};
+    (d.items || []).forEach(function(it) { var k = String(it.part).toUpperCase(); if (!byPart[k]) { byPart[k] = []; parts.push(k); } byPart[k].push(it); });
+    (d.totals || []).forEach(function(t) { var k = String(t.part).toUpperCase(); if (!byPart[k] && (t.comingUnits > 0 || t.unpackingCases > 0)) { byPart[k] = []; parts.push(k); } });
+    // Owner: "so if I check, I can see if that item is already ordered, on the way, how many are still left not shipped".
+    var totTxt = function(t) {
+      if (!t || !(t.comingUnits > 0 || t.unpackingCases > 0)) return '';
+      return '<span style="color:#1A56DB;font-weight:700">= ' + n(t.comingUnits) + ' units coming</span>'
+        + ' <span style="color:var(--text2)">(🏭 ordered, not shipped yet <b>' + n(t.orderedUnits) + '</b>' + (t.orderedPcs ? ' = ' + n(t.orderedPcs) + ' pcs' : '')
+        + ' · 🚢 on the way <b>' + n(t.onWayUnits) + '</b>' + (t.onWayPcs ? ' = ' + n(t.onWayPcs) + ' pcs' : '') + ')</span>'
+        + (t.unpackingCases ? ' · 📦 ' + n(t.unpackingCases) + ' boxes received, still on pallets' : '');
+    };
+    var itemTxt = function(it) {
+      var pals = it.pallets && it.pallets.length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + it.pallets.map(function(p) {
+          return '<div>🧱 <b>Pallet ' + e(p.pallet) + '</b>: ' + n(p.cases) + ' box' + (p.cases === 1 ? '' : 'es') + (p.pcs ? ' · ' + n(p.pcs) + ' pcs' : '')
+            + (p.moved ? ' (' + n(Math.min(p.moved, p.cases)) + ' moved to shelves)' : '') + '</div>'; }).join('') + '</div>' : '';
+      return (icon[it.status] || '•') + ' <b>' + e(it.status) + '</b> · ' + e(it.title) + (it.vendor ? ' · ' + e(it.vendor) : '')
+        + (it.filePart ? ' <span style="color:var(--text3)">(sheet: ' + e(it.filePart) + ')</span>' : '')
+        + (it.units ? ' · ' + n(it.units) + ' units' : '') + (it.cases ? ' · ' + n(it.cases) + ' boxes' : '') + (it.pieces ? ' · ' + n(it.pieces) + ' pcs' : '')
+        + (it.status === 'received — unpacking' ? ' · ' + n(it.movedToShelves) + ' of ' + n(it.cases) + ' boxes moved off the pallets with 🚢 Container here' : '')
+        + (it.price > 0 ? ' · $' + (+it.price).toFixed(3) + '/pc' : '') // no price yet → left out until it comes (owner)
+        + (it.status === 'ordered' && it.shippedUnits > 0 ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + n(it.orderedUnits) + ' ordered: ' + it.shippedFrom.map(function(t) { return n(t.units) + ' shipped in ' + e(t.to); }).join(', ') + ' · <b>' + n(it.units) + ' still owed</b> by the vendor</div>' : '')
+        + (it.status === 'on the way' && (it.fromOrders || []).length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">from order ' + it.fromOrders.map(function(t) { return e(t.from) + ' (' + n(t.units) + ')'; }).join(', ') + '</div>' : '')
+        + pals;
+    };
+    return '<div style="border:1.5px solid #BFDBFE;background:#EFF6FF;border-radius:10px;padding:8px 10px;font-size:12px">'
+      + '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
+      + parts.map(function(k) {
+        var its = byPart[k], t = tot[k], name = its.length ? its[0].part : t.part;
+        var head = '<b style="font-family:var(--mono)">' + e(name) + '</b>';
+        if (its.length === 1) return '<div class="sk-inc-line" style="padding:4px 0;border-top:1px solid #DBEAFE">' + head + ' — ' + itemTxt(its[0]) + (totTxt(t) ? '<div style="margin:2px 0 0 18px">' + totTxt(t) + '</div>' : '') + '</div>';
+        return '<div class="sk-inc-line" style="padding:4px 0;border-top:1px solid #DBEAFE">' + head + (totTxt(t) ? ' ' + totTxt(t) : '')
+          + its.map(function(it) { return '<div style="margin:3px 0 0 18px">' + itemTxt(it) + '</div>'; }).join('') + '</div>';
+      }).join('') + '</div>';
+  };
   // 🏭 / 🚢 What's coming for the searched part # (imported on Reorder):
   // not stock yet — SKU Mgr cases change only at 📦 Received.
   window.skumgrLoadIncoming = function(q) {
@@ -7784,34 +7827,8 @@ window.invCredLogin = async function() {
     box.style.display = 'none'; box.innerHTML = '';
     wFetch(W + '/inventory/incoming?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok || !d.items.length) return;
-      var e = function(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
-      var n = function(v) { return (Math.round((parseFloat(v) || 0) * 100) / 100).toLocaleString(); };
-      var icon = { 'ordered': '🏭', 'on the way': '🚢', 'received — unpacking': '📦' };
       box.style.display = 'block';
-      box.innerHTML = '<div style="border:1.5px solid #BFDBFE;background:#EFF6FF;border-radius:10px;padding:8px 10px;font-size:12px">'
-        + '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
-        // Owner: "so if I check, I can see if that item is already ordered, on the way, how many are still left not shipped".
-        + (d.totals || []).filter(function(t) { return t.comingUnits > 0 || t.unpackingCases > 0; }).map(function(t) {
-          return '<div style="padding:3px 0;font-weight:700">' + e(t.part) + ': '
-            + '🏭 ordered, not shipped yet <b>' + n(t.orderedUnits) + '</b> units' + (t.orderedPcs ? ' (' + n(t.orderedPcs) + ' pcs)' : '')
-            + ' · 🚢 on the way <b>' + n(t.onWayUnits) + '</b> units' + (t.onWayPcs ? ' (' + n(t.onWayPcs) + ' pcs)' : '')
-            + ' · <span style="color:#1A56DB">= ' + n(t.comingUnits) + ' units coming</span>'
-            + (t.unpackingCases ? ' · 📦 ' + n(t.unpackingCases) + ' boxes received, still on pallets' : '') + '</div>';
-        }).join('')
-        + d.items.map(function(it) {
-          var pals = it.pallets.length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + it.pallets.map(function(p) {
-              return '<div>🧱 <b>Pallet ' + e(p.pallet) + '</b>: ' + n(p.cases) + ' box' + (p.cases === 1 ? '' : 'es') + (p.pcs ? ' · ' + n(p.pcs) + ' pcs' : '')
-                + (p.moved ? ' (' + n(Math.min(p.moved, p.cases)) + ' moved to shelves)' : '') + '</div>'; }).join('') + '</div>' : '';
-          return '<div style="padding:4px 0;border-top:1px solid #DBEAFE">' + (icon[it.status] || '•') + ' <b style="font-family:var(--mono)">' + e(it.part) + '</b>'
-            + (it.filePart ? ' <span style="color:var(--text3)">(sheet: ' + e(it.filePart) + ')</span>' : '')
-            + ' — <b>' + e(it.status) + '</b> · ' + e(it.title) + (it.vendor ? ' · ' + e(it.vendor) : '')
-            + (it.units ? ' · ' + n(it.units) + ' units' : '') + (it.cases ? ' · ' + n(it.cases) + ' boxes' : '') + (it.pieces ? ' · ' + n(it.pieces) + ' pcs' : '')
-            + (it.status === 'received — unpacking' ? ' · ' + n(it.movedToShelves) + ' of ' + n(it.cases) + ' boxes moved off the pallets with 🚢 Container here' : '')
-            + (it.price > 0 ? ' · $' + (+it.price).toFixed(3) + '/pc' : '') // no price yet → left out until it comes (owner)
-            + (it.status === 'ordered' && it.shippedUnits > 0 ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + n(it.orderedUnits) + ' ordered: ' + it.shippedFrom.map(function(t) { return n(t.units) + ' shipped in ' + e(t.to); }).join(', ') + ' · <b>' + n(it.units) + ' still owed</b> by the vendor</div>' : '')
-            + (it.status === 'on the way' && (it.fromOrders || []).length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">from order ' + it.fromOrders.map(function(t) { return e(t.from) + ' (' + n(t.units) + ')'; }).join(', ') + '</div>' : '')
-            + pals + '</div>';
-        }).join('') + '</div>';
+      box.innerHTML = skumgrIncomingHtml(d);
     }).catch(function() {});
   };
 
