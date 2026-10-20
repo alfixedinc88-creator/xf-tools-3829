@@ -4001,7 +4001,7 @@ async function rvoLoad() {
     var r = await wFetch(W + '/reorder/vendor-order?' + q);
     var d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Failed');
-    RVO.loaded = true; RVO.rows = d.rows || []; RVO.meta = d; RVO.edits = {}; RVO.off = {}; RVO.titles = {}; RVO.titlesState = '';
+    RVO.loaded = true; RVO.rows = d.rows || []; RVO.meta = d; RVO.edits = {}; RVO.off = {}; RVO.titles = {}; RVO.titlesState = ''; RVO.calcAt = Date.now();
     var sel = g('rvo-vendor'), cur = sel.value;
     sel.innerHTML = '<option value="">All vendors</option>' + (d.vendors || []).map(function (v) { return '<option value="' + escHtml(v) + '">' + escHtml(v) + '</option>'; }).join('') + '<option value="__none">(no vendor in SKU Mgr)</option>';
     if (cur) sel.value = cur;
@@ -5315,6 +5315,21 @@ function rvoPartSave() {
       else done();
     }).catch(function () { btn.disabled = false; alert('Not saved — check WiFi and try again'); });
 }
+// 🧾 Owner (2026-10-20, 26-4-3=100 in the vendor file again: "why? I have already edited it in Barcode / vendor for a part #"):
+// the vendor file is made from the rows of the last Calculate — a UPC saved after that wasn't in them ("press Calculate to
+// see it" was easy to miss). Now a saved UPC goes straight onto its row here: the saved codes are ours (first in the vendor
+// file) and marked ✔ right, so the row's UPC ⚠ goes — exactly what the next Calculate shows.
+function rvoRowUpcSet(part, out, inn) {
+  var P = String(part || '').trim().toUpperCase(), n = 0;
+  (RVO.rows || []).forEach(function (r) {
+    if (String(r.sku || '').toUpperCase() !== P) return;
+    r.outsideUpc = out || ''; r.insideUpc = inn || ''; r.upcWarn = '';
+    r.note = String(r.note || '').split(' · ').filter(function (x) { return !(/^⚠/.test(x) && /UPC/.test(x)); }).join(' · ');
+    n++;
+  });
+  if (n && typeof rvoRender === 'function') { try { rvoRender(); } catch (e) {} }
+  return n;
+}
 // 🔢 Write a part #'s outside box / inside bag UPC into our UPC codes (SKU Mgr → 🔢: Inventory → History has the line).
 // Checked first; a code already on another part # moves only after OK. Resolves to a message, or null when not saved.
 async function rvoUpcWriteOurs(part, out, inn) {
@@ -5335,11 +5350,12 @@ async function rvoUpcWriteOurs(part, out, inn) {
       if (!pv.ok) throw new Error(pv.error || 'not saved');
     }
     if (pr.status === 'error') { alert('🔢 ' + part + ' NOT saved in our UPC codes: ' + (pr.problems || []).join('; ')); return null; }
-    if (pr.status === 'same') { await rvoUpcOkPost(part, out, inn, 'saved with ✏️ — already our codes'); return '🔢 ' + part + ': our UPC codes already match — ✔ marked right' + added; }
+    if (pr.status === 'same') { await rvoUpcOkPost(part, out, inn, 'saved with ✏️ — already our codes'); rvoRowUpcSet(part, out, inn); return '🔢 ' + part + ': our UPC codes already match — ✔ marked right' + added; }
     if ((pr.warn || []).length && !confirm('🔢 ' + part + '\n\n' + pr.warn.join('\n') + '\n\nOK = save it anyway')) return null;
     var sv = await post({ rows: [row], confirm: pr.needsConfirm ? [part] : [] });
     if (!sv.ok || !(sv.saved || []).length) { alert('🔢 ' + part + ' NOT saved: ' + (((sv.skipped || [])[0] || {}).problems || [sv.error || 'failed']).join('; ')); return null; }
     await rvoUpcOkPost(part, out, inn, 'saved as our codes');
+    rvoRowUpcSet(part, out, inn);
     return '🔢 ' + part + ' saved: box ' + (out || '—') + ' · bag ' + (inn || '—') + ' (Inventory → History) — ✔ marked right' + added;
   } catch (e) { alert('🔢 ' + part + ' NOT saved in our UPC codes — ' + (e.message || 'check WiFi')); return null; }
 }
@@ -5480,6 +5496,9 @@ async function rvoSheetBlob(lines) {
 }
 async function rvoCsv() {
   if (!RVO.loaded) { alert('Press Calculate first.'); return; }
+  // 🧾 Calculated a while ago → anything saved on another screen / device since then is not in it (owner 2026-10-20).
+  var ageMin = RVO.calcAt ? Math.round((Date.now() - RVO.calcAt) / 60000) : 0;
+  if (ageMin >= 30 && !confirm('🧾 These numbers and UPC codes were calculated ' + ageMin + ' min ago (' + new Date(RVO.calcAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + ').\nAnything saved since then on another screen or device (UPC codes, vendors, stock) is NOT in this file.\n\nOK = download anyway · Cancel = press Calculate first')) return;
   var v = document.getElementById('rvo-vendor').value;
   var rows = rvoVisible().filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
   if (!rows.length) { alert('Nothing to order for this selection.'); return; }
