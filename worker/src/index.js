@@ -1832,6 +1832,59 @@ async function reorderPutBackTakes(env, to, T, now) {
   await d1Batch(env, stmts);
   return prev;
 }
+// POST /reorder/fix/incoming-line { title, part, qty, cases, delete, reason } — ✏️ / 🗑 ONE line of an imported order / container
+// (owner 2026-10-20: "the box quantities on the sheet I imported were wrong — let me click to edit the quantities or boxes, or
+// delete an item, instead of deleting the whole sheet and importing it again"). Every piece stays in ONE place
+// (docs/ORDERS-AND-CONTAINERS.md):
+//  • a 🚢 container line: what the container took off its orders goes back on them, then it is taken again with the new
+//    quantities from the same order(s), oldest first (the same as importing the container again) — never twice.
+//  • a 🏭 order line: its "still owed" units / boxes become the new numbers; deleted → containers that took from it no
+//    longer put units back into it.
+// On record in Reorder → 🕘 History (before → after, who, why). Units are this line's units (bags); pieces = units × pack.
+async function reorderIncomingLineEdit(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const title = String(b.title || '').trim(), part = String(b.part || '').trim(), del = !!b.delete;
+  if (!title || !part) return _roResp({ ok: false, error: 'Title and part # needed' }, 400);
+  const line = await env.DB.prepare('SELECT part, qty, cases, vendor FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).first();
+  if (!line) return _roResp({ ok: false, error: `"${part}" is not on "${title}" (already received or removed?)` }, 404);
+  const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? Math.round(x * 1000) / 1000 : null; };
+  const qty = del ? 0 : num(b.qty), cases = del ? null : (b.cases === '' || b.cases == null ? null : num(b.cases));
+  if (!del && !(qty > 0)) return _roResp({ ok: false, error: 'Units must be more than 0 — to take the item off, 🗑 delete it' }, 400);
+  if (!del && cases != null && cases < 0) return _roResp({ ok: false, error: 'Boxes can\'t be below 0' }, 400);
+  const st = await env.DB.prepare('SELECT stage FROM reorder_title WHERE title = ?').bind(title).first().catch(() => null);
+  const shipped = st && st.stage === 'shipped', who = _roWho(session), now = new Date().toISOString(), reason = String(b.reason || '').trim().slice(0, 150);
+  const sumOf = async t => ((await env.DB.prepare('SELECT COALESCE(SUM(qty), 0) AS u FROM reorder_incoming WHERE title = ?').bind(t).first()) || {}).u || 0;
+  const tookFrom = shipped ? ((await env.DB.prepare('SELECT DISTINCT from_title FROM reorder_take WHERE to_title = ?').bind(title).all()).results || []).map(r => r.from_title) : [];
+  const before = { line: line.qty, title: await sumOf(title), orders: {} };
+  for (const o of tookFrom) before.orders[o] = await sumOf(o);
+  if (del) {
+    await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).run();
+    if (shipped) await env.DB.prepare('DELETE FROM reorder_pallet WHERE title = ? AND UPPER(part) = ?').bind(title, part.toUpperCase()).run().catch(() => {});
+    else await env.DB.prepare('DELETE FROM reorder_take WHERE from_title = ? AND part = ?').bind(title, part).run(); // an order line gone: no container puts units back into it
+  } else {
+    await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?').bind(qty, cases, now, title, part).run();
+    if (shipped && cases != null) { // one pallet line for it → that pallet gets the new boxes (pieces per box kept)
+      const pl = (await env.DB.prepare('SELECT id, cases, pcs, pcs_per_ctn FROM reorder_pallet WHERE title = ? AND UPPER(part) = ?').bind(title, part.toUpperCase()).all().catch(() => ({ results: [] }))).results || [];
+      const per = pl.length === 1 ? (pl[0].pcs_per_ctn > 0 ? pl[0].pcs_per_ctn : pl[0].cases > 0 && pl[0].pcs > 0 ? pl[0].pcs / pl[0].cases : 0) : 0;
+      if (pl.length === 1) await env.DB.prepare('UPDATE reorder_pallet SET cases = ?, pcs = ?, units = ? WHERE id = ?').bind(cases, per > 0 ? Math.round(per * cases * 1000) / 1000 : pl[0].pcs, qty, pl[0].id).run().catch(() => {});
+    }
+  }
+  // A container that took from orders: put back and take again (same order(s), oldest first) with the new numbers.
+  let retake = null;
+  if (shipped && tookFrom.length) {
+    const r = await reorderIncomingTake(new Request('https://internal/reorder/fix/incoming-take', { method: 'POST', body: JSON.stringify({ from: 'same', to: title }) }), env, session);
+    retake = await r.json().catch(() => null);
+  }
+  const after = { line: del ? 0 : qty, title: await sumOf(title), orders: {} };
+  for (const o of tookFrom) after.orders[o] = await sumOf(o);
+  const ordTxt = tookFrom.map(o => `"${o}" ${Math.round(before.orders[o] * 100) / 100} → ${Math.round(after.orders[o] * 100) / 100}`).join(', ');
+  await reorderLog(env, who, 'incoming-line', part, `${del ? '🗑 Deleted' : '✏️ Changed'} ${part} on ${shipped ? 'container' : 'order'} "${title}": `
+    + (del ? `${line.qty} units${line.cases ? ', ' + line.cases + ' boxes' : ''} taken off` : `units ${line.qty} → ${qty}, boxes ${line.cases ?? '—'} → ${cases ?? '—'}`)
+    + ` · "${title}" ${Math.round(before.title * 100) / 100} → ${Math.round(after.title * 100) / 100} units` + (ordTxt ? ` · its orders (taken again, oldest first): ${ordTxt}` : '') + (reason ? ` — ${reason}` : ''));
+  return _roResp({ ok: retake ? retake.ok !== false : true, title, part, deleted: del, shipped, before, after, retake: retake && { taken: retake.taken, notOnOrder: retake.notOnOrder } });
+}
+
 // POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
 // comes off the orders still being made, part # by part #, so its units are
 // on the way once. from = '*' → every open 🏭 order of the same vendor,
@@ -9174,6 +9227,7 @@ const _app = {
         const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_incoming WHERE title = ?').bind(title).first();
         return _roResp({ ok: true, results, left: left ? left.n : 0 });
       }
+      if (url.pathname === '/reorder/fix/incoming-line' && method === 'POST') return await reorderIncomingLineEdit(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/incoming-remove' && method === 'POST') {
         // A shipment arrived (now in SKU Mgr) or was cancelled — drop its column.
         await reorderFixTables(env);
