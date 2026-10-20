@@ -122,7 +122,9 @@ document.addEventListener('input', function (e) {
         { key: 'pncheck', label: '🧹 Check part #s', sel: '#skumgr-pncheck-btn, #skumgr-pncheck-panel' },
         { key: 'pricehist', label: '💲 Price history', sel: '#skumgr-pricehist-btn, #skumgr-pricehist' },
         { key: 'addrow', label: '+ Add New Row', sel: '#inv-panel-skumgr button[onclick="skumgrShowAddRow()"]' },
-        { key: 'incoming', label: 'Ordered / on the way', sel: '#skumgr-incoming' } ] },
+        { key: 'incoming', label: 'Ordered / on the way', sel: '#skumgr-incoming' },
+        { key: 'incomingtotal', label: '📊 Search totals (in stock / still making / on the way / sold)', sel: '#skumgr-incoming .sk-sum-box' },
+        { key: 'incomingsales', label: '💵 Sold last 30 / 90 days (in the search totals)', sel: '#skumgr-incoming .sk-sum-sales' } ] },
       { key: 'location', label: '📍 Location Plan', sel: '#inv-tab-location', needs: 'Mgmt', parts: [
         { key: 'plan', label: '📍 Plan', sel: '#lp-tab-plan, #lp-plan-view' },
         { key: 'photos', label: '🖼 Photos', sel: '#lp-tab-photos, #lp-photo-view' } ] },

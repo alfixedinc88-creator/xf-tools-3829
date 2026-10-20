@@ -5788,7 +5788,47 @@ async function inventoryIncomingFor(url, env) {
     else t.unpackingCases += Math.max(0, (it.cases || 0) - (it.movedToShelves || 0));
   });
   Object.values(totals).forEach(t => { t.comingUnits = t.orderedUnits + t.onWayUnits; t.comingPcs = t.orderedPcs + t.onWayPcs; });
-  return cors(new Response(JSON.stringify({ ok: true, q, items: list, totals: Object.values(totals).sort((a, b) => a.part.localeCompare(b.part)) }), { headers: { 'Content-Type': 'application/json' } }));
+  const out = { ok: true, q, items: list, totals: Object.values(totals).sort((a, b) => a.part.localeCompare(b.part)) };
+  if (url.searchParams.get('summary') === '1') out.summary = await inventoryPartSummary(env, q, alias, out.totals);
+  return cors(new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json' } }));
+}
+// 📊 SKU Mgr search → one total for the whole part # family (owner 2026-10-20, "24-4-6": "a total of how many coming and
+// how many still making, the single part #s folded; also the pieces we sold in 30 / 90 days and the pieces in stock now —
+// search once and know what we have, what's coming, what we sell"). Every number is in PIECES (units × the pack after "="),
+// so =2 and =10X add up. Coming = the same totals the lines under it show (nothing counted twice); a container already
+// 📦 Received is in stock (SKU Mgr), not coming. Stock = SKU Mgr cases × Ea/Case — a row with no Ea/Case is not
+// guessed: its boxes are shown as "not counted". Sales = all 4 channels, the same tables Stock Levels uses.
+async function inventoryPartSummary(env, q, alias, totals) {
+  const U = x => String(x || '').trim().toUpperCase();
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const mine = part => part === q || part.split('=')[0] === q;
+  const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const r2 = x => Math.round((x || 0) * 100) / 100;
+  const S = { stock: { cases: 0, pieces: 0, spots: 0, noEaCases: 0, negCases: 0, parts: {} }, orderedPcs: 0, onWayPcs: 0, comingPcs: 0, unpackingCases: 0, sold30Pcs: 0, sold90Pcs: 0, sales: {} };
+  for (const r of await all(`SELECT part_num, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`)) {
+    const part = P(r.part_num); if (!mine(part)) continue;
+    const c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
+    if (c < 0) { S.stock.negCases += c; continue; } // a counting mistake — never "minus stock"; shown in red
+    if (!(c > 0)) continue;
+    const sp = S.stock.parts[part] = S.stock.parts[part] || { cases: 0, pieces: 0 };
+    S.stock.cases += c; S.stock.spots++; sp.cases += c;
+    if (ea > 0) { S.stock.pieces += c * ea; sp.pieces += c * ea; } else S.stock.noEaCases += c;
+  }
+  (totals || []).forEach(t => { S.orderedPcs += t.orderedPcs || 0; S.onWayPcs += t.onWayPcs || 0; S.unpackingCases += t.unpackingCases || 0; });
+  S.comingPcs = S.orderedPcs + S.onWayPcs;
+  const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  for (const [t, ch] of SALES_TABLES) {
+    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u90, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30 FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90)) {
+      const part = P(r.sku); if (!part || !mine(part)) continue;
+      const pk = reorderExtractPackSize(part) || 1, p30 = (r.u30 || 0) * pk, p90 = (r.u90 || 0) * pk;
+      S.sold30Pcs += p30; S.sold90Pcs += p90;
+      const c = S.sales[ch] = S.sales[ch] || { p30: 0, p90: 0 }; c.p30 += p30; c.p90 += p90;
+    }
+  }
+  ['orderedPcs', 'onWayPcs', 'comingPcs', 'unpackingCases', 'sold30Pcs', 'sold90Pcs'].forEach(k => { S[k] = r2(S[k]); });
+  ['cases', 'pieces', 'noEaCases', 'negCases'].forEach(k => { S.stock[k] = r2(S.stock[k]); });
+  Object.values(S.sales).forEach(c => { c.p30 = r2(c.p30); c.p90 = r2(c.p90); });
+  return S;
 }
 
 // GET /inventory/stock-overview — Warehouse Lookup → 📊 Stock Levels.

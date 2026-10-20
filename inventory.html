@@ -7810,23 +7810,45 @@ window.invCredLogin = async function() {
         + (it.status === 'on the way' && (it.fromOrders || []).length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">from order ' + it.fromOrders.map(function(t) { return e(t.from) + ' (' + n(t.units) + ')'; }).join(', ') + '</div>' : '')
         + pals;
     };
-    return '<div style="border:1.5px solid #BFDBFE;background:#EFF6FF;border-radius:10px;padding:8px 10px;font-size:12px">'
-      + '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
+    var lines = '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
       + parts.map(function(k) {
         var its = byPart[k], t = tot[k], name = its.length ? its[0].part : t.part;
         var head = '<b style="font-family:var(--mono)">' + e(name) + '</b>';
         if (its.length === 1) return '<div class="sk-inc-line" style="padding:4px 0;border-top:1px solid #DBEAFE">' + head + ' — ' + itemTxt(its[0]) + (totTxt(t) ? '<div style="margin:2px 0 0 18px">' + totTxt(t) + '</div>' : '') + '</div>';
         return '<div class="sk-inc-line" style="padding:4px 0;border-top:1px solid #DBEAFE">' + head + (totTxt(t) ? ' ' + totTxt(t) : '')
           + its.map(function(it) { return '<div style="margin:3px 0 0 18px">' + itemTxt(it) + '</div>'; }).join('') + '</div>';
-      }).join('') + '</div>';
+      }).join('');
+    var box = '<div style="border:1.5px solid #BFDBFE;background:#EFF6FF;border-radius:10px;padding:8px 10px;font-size:12px">';
+    if (!d.summary) return box + lines + '</div>';
+    // 📊 Owner (2026-10-20, "24-4-6"): the totals first — in stock, still making, on the way, sold 30 / 90 days, all in
+    // pieces — and each part #'s lines folded under them (tap to open).
+    var S = d.summary, st = S.stock || {}, pc = function(v) { return '<b>' + n(v) + '</b> pcs'; };
+    var cell = function(lbl, val, sub, c, cls) { return '<div' + (cls ? ' class="' + cls + '"' : '') + ' style="flex:1 1 130px;min-width:120px;background:var(--bg,#fff);border:1px solid #DBEAFE;border-radius:8px;padding:6px 8px">'
+      + '<div style="font-size:11px;color:var(--text2)">' + lbl + '</div><div style="font-size:16px;color:' + (c || 'var(--text)') + '">' + val + '</div>' + (sub ? '<div style="font-size:11px;color:var(--text3)">' + sub + '</div>' : '') + '</div>'; };
+    var chs = Object.keys(S.sales || {}).filter(function(ch) { return S.sales[ch].p90 > 0; });
+    var top = '<div class="sk-sum-box"><div class="sk-sum" style="font-weight:800;margin-bottom:6px;color:#1A56DB">📊 ' + e(d.q) + ' — all part #s together (pieces)</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+      + cell('🏬 In stock now', pc(st.pieces), n(st.cases) + ' box' + (st.cases === 1 ? '' : 'es') + ' · ' + st.spots + ' spot' + (st.spots === 1 ? '' : 's') + (S.unpackingCases ? ' · 📦 ' + n(S.unpackingCases) + ' still on pallets' : ''))
+      + cell('🏭 Still making', pc(S.orderedPcs), 'ordered, not shipped yet')
+      + cell('🚢 On the way', pc(S.onWayPcs), 'shipped, not 📦 Received')
+      + cell('= Coming in total', pc(S.comingPcs), 'still making + on the way', '#1A56DB')
+      + cell('💵 Sold last 30 days', pc(S.sold30Pcs), 'all channels', '', 'sk-sum-sales')
+      + cell('💵 Sold last 90 days', pc(S.sold90Pcs), chs.map(function(ch) { return e(ch) + ' ' + n(S.sales[ch].p90); }).join(' · ') || 'all channels', '', 'sk-sum-sales')
+      + '</div>'
+      + (st.noEaCases ? '<div style="margin-top:4px;color:var(--red);font-weight:700">⚠ ' + n(st.noEaCases) + ' box' + (st.noEaCases === 1 ? '' : 'es') + ' with no Ea/Case in SKU Mgr — not counted in the pieces above</div>' : '')
+      + (st.negCases ? '<div style="margin-top:4px;color:var(--red);font-weight:700">⚠ ' + n(st.negCases) + ' boxes (minus) in SKU Mgr — a counting mistake, not counted</div>' : '') + '</div>';
+    return box + top + (parts.length
+      ? '<details class="sk-inc-det" style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:#1A56DB">▸ Each part # coming in — ' + parts.length + ' part #' + (parts.length === 1 ? '' : 's') + ' (tap to open)</summary><div style="margin-top:4px">' + lines + '</div></details>'
+      : '<div style="margin-top:6px;color:var(--text3)">Nothing on order or on the way.</div>') + '</div>';
   };
   // 🏭 / 🚢 What's coming for the searched part # (imported on Reorder):
   // not stock yet — SKU Mgr cases change only at 📦 Received.
   window.skumgrLoadIncoming = function(q) {
     var box = g('skumgr-incoming'); if (!box) return;
     box.style.display = 'none'; box.innerHTML = '';
-    wFetch(W + '/inventory/incoming?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
-      if (!d || !d.ok || !d.items.length) return;
+    wFetch(W + '/inventory/incoming?summary=1&q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      var S = d && d.summary;
+      if (!d || !d.ok || (!d.items.length && !(S && (S.stock.cases || S.sold90Pcs || S.stock.negCases)))) return;
       box.style.display = 'block';
       box.innerHTML = skumgrIncomingHtml(d);
     }).catch(function() {});
