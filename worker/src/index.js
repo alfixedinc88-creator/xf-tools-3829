@@ -2686,6 +2686,45 @@ async function reorderVendorOrder(env, url) {
   const gapDays = firstWeek ? (Date.parse(firstWeek.slice(0, 10) + 'T00:00:00Z') - Date.parse(since + 'T00:00:00Z')) / 86400000 : 0;
   const coveredDays = gapDays > 0 && gapDays < 7 ? days - gapDays : days;
   const months = coveredDays / 30, rows = [];
+  // 📈 Owner (2026-10-20): "90 days we sold 4,000 but the last 30 days only 100 — maybe another seller sold out and the 90 days
+  // aren't normal; don't order that much by the 90 days. Check 6 and 12 months too, to find the 90 days (or the 30 days)
+  // that isn't normal". Per family, pieces a MONTH sold in the last 30 d / 90 d / 6 mo / 12 mo (all 4 channels, the same
+  // part # clean-up as above, a broken pack after "=" left out the same way) — a window only when the sales history really
+  // reaches back that far. Normal: see below. The window picked sells more than 1.5× normal → the order
+  // is made for the normal month (never more than the window's own); the last 30 days far from normal are named on the row.
+  const winDays = [30, 90, 180, 365], dAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  const famWin = {}, weekStarts = new Set();
+  for (const [t, k] of chans) {
+    for (const r of await all(`SELECT sku, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u90,
+      SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u180, SUM(units_ordered) AS u365 FROM ${t} WHERE period_start >= ? GROUP BY sku`, dAgo(30), dAgo(90), dAgo(180), dAgo(365))) {
+      let s = P(r.sku); if (!s) continue;
+      if (k === 'amz' && !fbaSkuStrs.has(s) && !alias[U(r.sku)] && !alias[reorderCleanPart(U(r.sku))]) { const a = asinOf[U(r.sku)], to = a && fbaSkuOfAsin[a]; if (to) s = to; }
+      const sb = U(reorderGetBaseSku(s)), ps = pack(s);
+      if (ps > Math.max(1000, 10 * (knownMax[sb] || 0))) continue; // broken pack after "=" — not counted, as above
+      const w = famWin[sb] = famWin[sb] || [0, 0, 0, 0];
+      w[0] += (r.u30 || 0) * ps; w[1] += (r.u90 || 0) * ps; w[2] += (r.u180 || 0) * ps; w[3] += (r.u365 || 0) * ps;
+    }
+    (await all(`SELECT DISTINCT substr(period_start, 1, 10) AS w FROM ${t} WHERE period_start >= ?`, dAgo(365))).forEach(r => { if (r.w) weekStarts.add(r.w); });
+  }
+  const wks = [...weekStarts].sort();
+  const winInfo = winDays.map(W => {
+    const st = dAgo(W), fw = wks.find(x => x >= st), gap = fw ? (Date.parse(fw + 'T00:00:00Z') - Date.parse(st + 'T00:00:00Z')) / 86400000 : 0;
+    return { W, ok: !!dataFrom && String(dataFrom).slice(0, 10) <= dAgo(W - 7), days: gap > 0 && gap < 7 ? W - gap : W }; // history reaches back the whole window
+  });
+  // Normal = the middle month of the parts of the year that don't overlap (last 30 d · 30–90 d · 3–6 mo · 6–12 mo), so a jump
+  // in one of them (it is inside the 90 d AND the 6 mo) can't make itself look normal.
+  const salesCheckOf = (b, chosen) => {
+    const w = famWin[b]; if (!w) return { factor: 1 };
+    const r1 = x => x == null ? null : Math.round(x * 10) / 10;
+    const rates = winInfo.map((x, i) => x.ok ? w[i] / (x.days / 30) : null);
+    const seg = winInfo.map((x, i) => { if (!x.ok) return null; const pd = i ? winInfo[i - 1].days : 0, d = x.days - pd; return d > 0 ? (w[i] - (i ? w[i - 1] : 0)) / (d / 30) : null; });
+    const have = seg.filter(x => x != null).sort((p, q) => p - q), L = have.length, med = !L ? 0 : L % 2 ? have[(L - 1) / 2] : (have[L / 2 - 1] + have[L / 2]) / 2;
+    const out = { r30: r1(rates[0]), r90: r1(rates[1]), r180: r1(rates[2]), r365: r1(rates[3]), parts: seg.map(r1), normal: r1(med), chosen: r1(chosen), factor: 1, high: false, flag30: '' };
+    if (L < 3 || !(med > 0)) return out; // less than 6 months of sales history → nothing to compare with
+    if (chosen > 1.5 * med) { out.factor = med / chosen; out.high = true; }
+    if (seg[0] != null) { if (seg[0] < 0.5 * med) out.flag30 = 'low'; else if (seg[0] > 2 * med) out.flag30 = 'high'; }
+    return out;
+  };
   const bases = new Set([...Object.keys(piecesByBase), ...Object.keys(fbaByBase)]);
   for (const b of bases) {
     const total = piecesByBase[b] || 0;
@@ -2723,9 +2762,10 @@ async function reorderVendorOrder(env, url) {
     // the shelf / on the way). That need is split over the listings that are short, by how short each is — so
     // the rows together never order more than the family needs (rounding up to whole cases aside).
     const H = lead + cover, tset = new Set(targets.map(x => x.sku));
+    const sc = salesCheckOf(b, dSum / months), f = sc.factor;
     const famRows = targets.map(x => {
       const xs = bySku[x.sku] || { units: 0 }, xps = pack(x.sku);
-      const target = (x.demand || 0) / months * H;
+      const target = (x.demand || 0) / months * f * H;
       const have = xs.units * xps + incUnitsOf(x.sku) * xps + (countFba ? x.fbaAvailPieces : 0);
       return { sku: x.sku, target, have, short: Math.max(0, target - have) };
     });
@@ -2738,7 +2778,7 @@ async function reorderVendorOrder(env, url) {
     for (const t of targets) {
       const share = targets.length === 1 ? 1 : dSum > 0 ? (t.demand || 0) / dSum : 1 / targets.length;
       const ps = pack(t.sku), sm = bySku[t.sku] || { units: 0, caseQty: 0 };
-      const demandPcs = t.demand, monthlyPcs = demandPcs / months;
+      const demandPcs = t.demand, monthlyPcs = demandPcs / months * f; // f < 1 only when the window sold more than normal
       const ownPcs = sm.units * ps;
       let otherPcs = 0, otherIncPcs = 0;
       const otherList = [];
@@ -2800,6 +2840,10 @@ async function reorderVendorOrder(env, url) {
         if (orderUnits !== needUnits) notes.push(`Rounded up from ${needUnits} to ${orderUnits} (${cases} case${cases === 1 ? '' : 's'} of ${caseQty})`);
       } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
       if (/^family /.test(caseSrc)) notes.push(`Case size from the same item: ${caseSrc.slice(7)}, ${Math.round(casePcs * 1000) / 1000} pcs a box`);
+      const nf = x => Math.round(x || 0).toLocaleString('en-US'), scTxt = () => `30 d ${sc.r30 == null ? '—' : nf(sc.r30)} · 90 d ${sc.r90 == null ? '—' : nf(sc.r90)} · 6 mo ${sc.r180 == null ? '—' : nf(sc.r180)} · 12 mo ${sc.r365 == null ? '—' : nf(sc.r365)}`;
+      if (sc.high) notes.push(`📈 Sales check (pcs a month, whole ${b}): ${scTxt()} — the last ${days} days sold more than normal (another seller out of stock?): ordered for ${nf(sc.normal)} a month (normal: the middle of 30 d · 30–90 d · 3–6 mo · 6–12 mo), not ${nf(sc.chosen)}`);
+      if (sc.flag30 === 'low') notes.push(`📉 The last 30 days sold much LESS than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — out of stock, or a seller came back? Check before ordering`);
+      if (sc.flag30 === 'high') notes.push(`📈 The last 30 days sold much MORE than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — not normal yet, not ordered for it; check if it keeps up`);
       if (!t.fbaSku && t.onePack) notes.push(`No FBA listing — ONE pack for the whole part #: =${t.onePack.pack}, the size most orders are in (${t.onePack.byPack.map(x => '=' + x.pack + ' ' + x.units + ' sold').join(', ')}); it carries every piece sold (${Math.round(demandPcs)} pcs) — other sizes are cut / repacked from it`);
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
@@ -2852,10 +2896,11 @@ async function reorderVendorOrder(env, url) {
         calc: { months: Math.round(months * 10) / 10, horizon: H, famSoldPcs, famTarget: Math.round(famTarget), famHave: Math.round(famHave),
           famListings: famRows.map(x => ({ sku: x.sku, target: Math.round(x.target), have: Math.round(x.have), short: Math.round(x.short) })),
           famOtherShelf: Math.round(famOtherShelf), famOtherList, famOtherInc: Math.round(famOtherInc), famNeed: Math.round(famNeed),
-          rowNeedPcs: Math.round(needPcs), negative: negSkus, badPack: badPack[b] || [],
+          rowNeedPcs: Math.round(needPcs), negative: negSkus, badPack: badPack[b] || [], salesCheck: sc,
           // every part # of the family that sold, per channel, 30 / 90 days (units and pieces)
           famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
         sales: sales3090(t.sku),
+        salesCheck: sc,
         onePack: t.onePack || null,
       };
       row.issues = [];
@@ -5826,18 +5871,25 @@ async function inventoryPartSummary(env, q, alias, totals) {
   }
   (totals || []).forEach(t => { S.orderedPcs += t.orderedPcs || 0; S.onWayPcs += t.onWayPcs || 0; S.unpackingCases += t.unpackingCases || 0; });
   S.comingPcs = S.orderedPcs + S.onWayPcs;
-  const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  // Owner (2026-10-20): "for SKU Mgr give me 6 month and 12 months pcs we sold too" — the same 4 channels, 180 / 365 days.
+  const dAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  const d30 = dAgo(30), d90 = dAgo(90), d180 = dAgo(180), d365 = dAgo(365);
+  S.sold180Pcs = 0; S.sold365Pcs = 0; S.salesFrom = null;
   for (const [t, ch] of SALES_TABLES) {
-    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u90, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30 FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90)) {
+    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u365, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30,
+      SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u90, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u180
+      FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90, d180, d365)) {
       const part = P(r.sku); if (!part || !mine(part)) continue;
-      const pk = reorderExtractPackSize(part) || 1, p30 = (r.u30 || 0) * pk, p90 = (r.u90 || 0) * pk;
-      S.sold30Pcs += p30; S.sold90Pcs += p90;
-      const c = S.sales[ch] = S.sales[ch] || { p30: 0, p90: 0 }; c.p30 += p30; c.p90 += p90;
+      const pk = reorderExtractPackSize(part) || 1, p30 = (r.u30 || 0) * pk, p90 = (r.u90 || 0) * pk, p180 = (r.u180 || 0) * pk, p365 = (r.u365 || 0) * pk;
+      S.sold30Pcs += p30; S.sold90Pcs += p90; S.sold180Pcs += p180; S.sold365Pcs += p365;
+      const c = S.sales[ch] = S.sales[ch] || { p30: 0, p90: 0, p180: 0, p365: 0 }; c.p30 += p30; c.p90 += p90; c.p180 += p180; c.p365 += p365;
     }
+    const m = (await all(`SELECT MIN(period_start) AS m FROM ${t}`))[0];
+    if (m && m.m && (!S.salesFrom || m.m < S.salesFrom)) S.salesFrom = String(m.m).slice(0, 10);
   }
-  ['orderedPcs', 'onWayPcs', 'comingPcs', 'unpackingCases', 'sold30Pcs', 'sold90Pcs'].forEach(k => { S[k] = r2(S[k]); });
+  ['orderedPcs', 'onWayPcs', 'comingPcs', 'unpackingCases', 'sold30Pcs', 'sold90Pcs', 'sold180Pcs', 'sold365Pcs'].forEach(k => { S[k] = r2(S[k]); });
   ['cases', 'pieces', 'noEaCases', 'negCases'].forEach(k => { S.stock[k] = r2(S.stock[k]); });
-  Object.values(S.sales).forEach(c => { c.p30 = r2(c.p30); c.p90 = r2(c.p90); });
+  Object.values(S.sales).forEach(c => { c.p30 = r2(c.p30); c.p90 = r2(c.p90); c.p180 = r2(c.p180); c.p365 = r2(c.p365); });
   return S;
 }
 
