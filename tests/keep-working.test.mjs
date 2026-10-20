@@ -8100,5 +8100,35 @@ console.log('\n📈 Reorder: 90 days that sold more than normal (checked against
   sq.exec("DELETE FROM master_list WHERE base_sku = '725-5-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '725-5-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '725-5-5%'");
 }
 
+// Owner (2026-10-20, 24-5-2=50 "3/4 PEX POLY ELBOW"): "FBA has =50, but our FBM / other channels order =25 a lot; ordering only =50
+// means cutting =50 open and rebagging every time. A smaller bag (=25, =10, =5) our other channels sell up to 4 boxes a month of
+// gets its own row for our shelves. The same bag size as the FBA listing (=10 next to =10XX) is fine — keep ordering the FBA one".
+console.log('\n🏬 Reorder: a smaller bag our other channels sell ≥ 4 boxes a month of gets its own row (not cut from the FBA bag)');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), wk = day(14);
+  await call('/reorder/fix/history', { headers: H });
+  // 86-6-6: FBA =50 (Amazon 40 bags = 2,000 pcs, eBay 6 = 300) · eBay =25 300 bags (7,500 pcs; box 500 pcs = 20 bags → 5 boxes a month) · eBay =10 9 bags (90)
+  // 86-6-7: FBA =10XX, eBay =10 600 bags (same bag size → no own row) · 86-6-8: FBA =50, eBay =25 120 bags (2 boxes a month → no own row)
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('86-6-6=50','B0T8666','pex elbow',10), ('86-6-7=10XX','B0T8667','pex tee',0), ('86-6-8=50','B0T8668','pex cap',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('86-6-6=50',?,40,'B0T8666'), ('86-6-7=10XX',?,50,'B0T8667'), ('86-6-8=50',?,40,'B0T8668')").run(wk, wk, wk);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('86-6-6=50',?,6), ('86-6-6=25',?,300), ('86-6-6=10',?,9), ('86-6-7=10',?,600), ('86-6-8=25',?,120)").run(wk, wk, wk, wk, wk);
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('86-6-6','pex elbow','86-6-6=25','C1=1-1-1',2,500),
+    ('86-6-6','pex elbow','86-6-6=50','C2=1-1-1',1,500), ('86-6-8','pex cap','86-6-8=25','C3=1-1-1',0,500), ('86-6-8','pex cap','86-6-8=50','C3=1-1-2',0,500)`).run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'), row = k => (d.rows || []).find(r => r.sku === k) || {};
+  const a = row('86-6-6=50'), b = row('86-6-6=25'), fam = (d.rows || []).filter(r => r.baseSku === '86-6-6');
+  const tab = [['86-6-6=25 own row, sold (pcs)', 7500, b.soldPcs], ['86-6-6=50 FBA row, sold (2,000 + 300 + 90 =10)', 2390, a.soldPcs],
+    ['family sold = every sale once', 9890, fam.reduce((t, r) => t + r.soldPcs, 0)], ['86-6-6=25 stock on its row (2 boxes × 500)', 1000, b.stockPcs],
+    ['86-6-6=50 stock (1 box) + at Amazon (10 × 50)', 1000, a.stockPcs + a.fbaPcs], ['=25 shelf not counted again on the =50 row', 0, a.otherPackPcs],
+    ['family has (shelf 1,500 + Amazon 500)', 2000, (a.calc || {}).famHave], ['the 2 rows of the family', 2, fam.length]];
+  tab.forEach(([w, want, got]) => check(w + ': expected ' + want + ' = counted ' + got, want === got, null));
+  check('86-6-6=25 row: not FBA, says why (🏬 For our shelves … 100 bags of =25 a month = 5 boxes … FBA has only =50); the =50 row says its =25 sales are on their own row',
+    b.fbaSku === false && b.shelfPack && b.shelfPack.pack === 25 && b.shelfPack.boxes === 5 && /🏬 For our shelves: our other channels sell 100 bags of =25 a month = 5 boxes \(box 20 bags, SKU Mgr; 4 or more → own row\) — FBA has only =50/.test(b.note)
+      && /🏬 86-6-6=25 sales \(7,500 pcs\) are ordered on its own row for our shelves, not on this FBA row/.test(a.note) && !(d.rows || []).some(r => r.sku === '86-6-6=10'), { b: b.note, a: a.note });
+  check('…the family orders for every piece once: the 2 rows\' needs add up to the family need', Math.abs(fam.reduce((t, r) => t + (r.calc || {}).rowNeedPcs, 0) - (a.calc || {}).famNeed) <= 1, fam.map(r => r.calc && [r.calc.rowNeedPcs, r.calc.famNeed]));
+  check('86-6-7: =10 next to the FBA =10XX (same bag size) → no own row, on the =10XX row as before', !(d.rows || []).some(r => r.sku === '86-6-7=10') && row('86-6-7=10XX').soldPcs === 6500, row('86-6-7=10XX').soldPcs);
+  check('86-6-8: =25 only 2 boxes a month (< 4) → no own row, its sales stay on the =50 row', !(d.rows || []).some(r => r.sku === '86-6-8=25') && row('86-6-8=50').soldPcs === 5000, row('86-6-8=50').soldPcs);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '86-6-%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '86-6-%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '86-6-%'; DELETE FROM master_list WHERE base_sku LIKE '86-6-%'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
