@@ -2730,8 +2730,39 @@ async function reorderVendorOrder(env, url) {
     const total = piecesByBase[b] || 0;
     let targets;
     if (fbaByBase[b]) {
-      const v = fbaByBase[b], w = v.reduce((a, x) => a + x.amzUnits, 0), pool = poolByBase[b] || 0;
-      targets = v.map(x => ({ ...x, demand: x.amzPieces + pool * (w > 0 ? x.amzUnits / w : 1 / v.length), fbaSku: true }));
+      const v = fbaByBase[b], w = v.reduce((a, x) => a + x.amzUnits, 0);
+      let pool = poolByBase[b] || 0;
+      // 🏬 Owner (2026-10-20, 24-5-2=50 "3/4 PEX POLY ELBOW"): "FBA has =50 only, but FBM / our other channels sell a lot of =25 —
+      // ordering only =50 means cutting =50 bags open and rebagging every time. A smaller bag size (=25, =10, =5 …) our other
+      // channels sell up to 4 boxes a month of gets its own row, for our shelves; the same bag size as an FBA listing (=10 next
+      // to =10XX) stays on the FBA row." Its pieces move off the FBA rows' share (pool) onto its own row — every piece once.
+      const fbaPacks = v.map(x => pack(x.sku)), maxFba = Math.max(...fbaPacks), f0 = salesCheckOf(b, total / months).factor || 1;
+      const byP = {};
+      for (const s in piecesBySku) {
+        if (U(reorderGetBaseSku(s)) !== b || !/=\d/.test(s) || fbaSkuSet.has(s) || claimed.has(s) || caseOf[s]) continue;
+        const P = pack(s);
+        if (P >= maxFba || fbaPacks.includes(P) || fbaPacks.some(fp => fp < P && P % fp === 0)) continue; // same bag / made from whole FBA bags: no cutting
+        const su = (sales[s] || { amz: 0, other: 0 }).amz + (sales[s] || { amz: 0, other: 0 }).other;
+        const o = byP[P] = byP[P] || { pack: P, pcs: 0, units: 0, sku: s, skuUnits: -1, skus: [] };
+        o.pcs += piecesBySku[s]; o.units += su; o.skus.push(s);
+        if (su > o.skuUnits || (su === o.skuUnits && s < o.sku)) { o.sku = s; o.skuUnits = su; }
+      }
+      const shelf = [];
+      for (const o of Object.values(byP)) {
+        let box = parseFloat((fixes[o.sku] || {}).case_qty) || (bySku[o.sku] || {}).caseQty || 0, boxSrc = 'SKU Mgr';
+        if (!box) { // the family's box (same pack number first, then the biggest), in bags of this size
+          const fam = [...((byBase[b] || {}).skus || [])].filter(k => bySku[k] && bySku[k].caseQty > 0).map(k => ({ k, same: pack(k) === o.pack, pcs: bySku[k].caseQty * pack(k) })).sort((x, y) => (y.same - x.same) || (y.pcs - x.pcs));
+          if (fam.length) { box = Math.max(1, Math.round(fam[0].pcs / o.pack)); boxSrc = 'family ' + fam[0].k; }
+        }
+        const perMonth = o.units / months * f0, boxes = box > 0 ? perMonth / box : 0;
+        if (box > 0 && boxes >= 4 - 1e-9) shelf.push({ ...o, box, boxSrc, perMonth, boxes });
+      }
+      shelf.forEach(o => { pool -= o.pcs; });
+      pool = Math.max(0, pool);
+      targets = v.map(x => ({ ...x, demand: x.amzPieces + pool * (w > 0 ? x.amzUnits / w : 1 / v.length), fbaSku: true,
+        ...(shelf.length ? { shelfMoved: shelf.map(o => ({ sku: o.sku, pcs: Math.round(o.pcs) })) } : {}) }));
+      shelf.forEach(o => targets.push({ sku: o.sku, asin: '', demand: o.pcs, fbaAvailPieces: 0, fbaSku: false,
+        shelfPack: { pack: o.pack, fbaPacks, unitsPerMonth: Math.round(o.perMonth * 10) / 10, box: o.box, boxSrc: o.boxSrc, boxes: Math.round(o.boxes * 10) / 10, skus: o.skus } }));
     } else {
       if (!total) continue;
       // 📦 Owner (2026-10-08): "for the ones without an FBA listing, check the order history: if most orders are 5 or
@@ -2782,7 +2813,7 @@ async function reorderVendorOrder(env, url) {
       const ownPcs = sm.units * ps;
       let otherPcs = 0, otherIncPcs = 0;
       const otherList = [];
-      [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) { otherPcs += bySku[s].units * pack(s); if (bySku[s].units > 0) otherList.push({ sku: s, pcs: bySku[s].units * pack(s) }); } });
+      [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && !tset.has(s) && bySku[s]) { otherPcs += bySku[s].units * pack(s); if (bySku[s].units > 0) otherList.push({ sku: s, pcs: bySku[s].units * pack(s) }); } });
       // Owner: "we still have a lot of 201-5-4=OLD but it says order more" — every other pack counted is named on the row,
       // and any spot of this part (or its other packs) with cases but no Ea/Case is shown as NOT counted.
       const noEa = [...bo.skus].filter(s => bySku[s] && bySku[s].noEaCases > 0 && (s === t.sku || !fbaSkuSet.has(s))).map(s => ({ sku: s, cases: Math.round(bySku[s].noEaCases * 100) / 100 }));
@@ -2790,7 +2821,7 @@ async function reorderVendorOrder(env, url) {
       // other pack of the part on the way always count (new stock ordered in
       // a pack size with no FBA listing is still stock of this part); other
       // packs on the shelf only with "Count other pack sizes".
-      for (const k in incoming) if (k !== t.sku && !fbaSkuSet.has(k) && U(reorderGetBaseSku(k)) === b) otherIncPcs += incUnitsOf(k) * pack(k);
+      for (const k in incoming) if (k !== t.sku && !fbaSkuSet.has(k) && !tset.has(k) && U(reorderGetBaseSku(k)) === b) otherIncPcs += incUnitsOf(k) * pack(k);
       otherPcs *= share; otherIncPcs *= share;
       const incUnits = incUnitsOf(t.sku);
       const stockPcs = ownPcs + incUnits * ps + otherIncPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
@@ -2844,6 +2875,8 @@ async function reorderVendorOrder(env, url) {
       if (sc.high) notes.push(`📈 Sales check (pcs a month, whole ${b}): ${scTxt()} — the last ${days} days sold more than normal (another seller out of stock?): ordered for ${nf(sc.normal)} a month (normal: the middle of 30 d · 30–90 d · 3–6 mo · 6–12 mo), not ${nf(sc.chosen)}`);
       if (sc.flag30 === 'low') notes.push(`📉 The last 30 days sold much LESS than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — out of stock, or a seller came back? Check before ordering`);
       if (sc.flag30 === 'high') notes.push(`📈 The last 30 days sold much MORE than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — not normal yet, not ordered for it; check if it keeps up`);
+      if (t.shelfPack) notes.push(`🏬 For our shelves: our other channels sell ${nf(t.shelfPack.unitsPerMonth)} bags of =${t.shelfPack.pack} a month = ${t.shelfPack.boxes} boxes (box ${t.shelfPack.box} bags, ${t.shelfPack.boxSrc}; 4 or more → own row) — FBA has only =${t.shelfPack.fbaPacks.join(' / =')}; ordered as =${t.shelfPack.pack} so those bags aren't cut open and rebagged (${Math.round(t.demand)} pcs of sales, not on the FBA row)`);
+      (t.shelfMoved || []).forEach(x => notes.push(`🏬 ${x.sku} sales (${nf(x.pcs)} pcs) are ordered on its own row for our shelves, not on this FBA row`));
       if (!t.fbaSku && t.onePack) notes.push(`No FBA listing — ONE pack for the whole part #: =${t.onePack.pack}, the size most orders are in (${t.onePack.byPack.map(x => '=' + x.pack + ' ' + x.units + ' sold').join(', ')}); it carries every piece sold (${Math.round(demandPcs)} pcs) — other sizes are cut / repacked from it`);
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
@@ -2901,7 +2934,7 @@ async function reorderVendorOrder(env, url) {
           famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
         sales: sales3090(t.sku),
         salesCheck: sc,
-        onePack: t.onePack || null,
+        onePack: t.onePack || null, shelfPack: t.shelfPack || null,
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
