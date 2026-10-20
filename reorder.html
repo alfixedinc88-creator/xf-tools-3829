@@ -4563,7 +4563,12 @@ async function rvoCheck(title, file) {
         + '<td style="padding:5px 8px;font-family:var(--mono)">' + escHtml(l.raw_part || l.part) + '</td>'
         + '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">' + escHtml(l.readAs) + '</td>'
         + '<td style="padding:5px 8px;min-width:160px;max-width:320px">' + (l.description ? escHtml(l.description) : '<span style="color:var(--text3)">—</span>') + '</td>'
-        + '<td style="padding:5px 8px;text-align:right;font-weight:600">' + fmt0(l.pcs) + '</td><td style="padding:5px 8px;text-align:right;color:var(--text3)">' + fmt0(l.qty) + '</td><td style="padding:5px 8px;text-align:right">' + (l.cases ? fmt0(l.cases) : '') + '</td>'
+        + '<td style="padding:5px 8px;text-align:right;font-weight:600">' + fmt0(l.pcs) + '</td><td style="padding:5px 8px;text-align:right;color:var(--text3)">' + fmt0(l.qty) + '</td><td style="padding:5px 8px;text-align:right">'
+          // 📦 Owner (2026-10-20): "I need to be able to edit the case quantities — that's what most of us go with". Type the boxes,
+          // Enter → saved; the units follow at this line's bags per box (or SKU Mgr's box size).
+          + '<input class="rvo-ck-cs" type="text" inputmode="decimal" value="' + (l.cases ? escHtml(String(Math.round(rvoNum(l.cases) * 1000) / 1000)) : '') + '" placeholder="—" title="Boxes (cases) — type the right number, Enter to save"'
+          + ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" onchange="rvoLineCases(' + i + ', this)"'
+          + ' style="width:64px;text-align:right;font-size:12px;font-weight:700;padding:3px 5px;border:1.5px solid var(--accent);border-radius:6px;background:var(--bg2);color:var(--text)"></td>'
         + '<td style="padding:5px 8px;color:' + col[l.where] + '">' + escHtml(l.whereTxt) + '</td>'
         + '<td style="padding:5px 8px;white-space:nowrap"><button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoLineEdit(' + i + ')" title="Change this line\'s units / boxes">✏️ Edit</button> '
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--red)" onclick="rvoLineDel(' + i + ')" title="Take this item off this sheet">🗑</button>'
@@ -4674,13 +4679,41 @@ async function rvoLinePost(body) {
   if (document.getElementById('rvo-hist-box') && document.getElementById('rvo-hist-box').open) rvoLoadHistory();
   return d;
 }
+// Bags per box of a line: its own units ÷ boxes, else SKU Mgr's box size for that part # (bags a case), else unknown (0).
+function rvoLinePer(l) {
+  var q = rvoNum(l.qty), c = rvoNum(l.cases);
+  if (q > 0 && c > 0) return q / c;
+  var r = (RVO.rows || []).filter(function (x) { return x.sku === l.readAs; })[0];
+  return r && r.caseQty > 0 ? r.caseQty : 0;
+}
+// 📦 Boxes typed in the Cases box of the 📋 Import check → saved; units = boxes × bags per box.
+async function rvoLineCases(i, el) {
+  var l = RVO_CK && RVO_CK.lines[i]; if (!l) return;
+  var raw = String(el.value || '').trim(), was = rvoNum(l.cases);
+  if (raw === '' || Math.abs(rvoNum(raw) - was) < 1e-9) { el.value = l.cases ? String(Math.round(was * 1000) / 1000) : ''; return; }
+  var c = rvoNum(raw);
+  if (!(c > 0)) { el.value = l.cases ? String(was) : ''; if (c === 0) rvoLineDel(i); else alert('Boxes must be a number above 0 (0 = take the item off with 🗑).'); return; }
+  var per = rvoLinePer(l), u;
+  if (per > 0) u = Math.round(c * per * 1000) / 1000;
+  else {
+    var t = prompt('📦 ' + l.part + ': ' + c + ' boxes — how many units (bags) in all? (this line has no box size yet)', l.qty);
+    if (t == null || !(rvoNum(t) > 0)) { el.value = l.cases ? String(was) : ''; return; }
+    u = rvoNum(t);
+  }
+  el.disabled = true;
+  var d = await rvoLinePost({ title: RVO_CK.title, part: l.part, qty: u, cases: c, reason: 'boxes ' + (was || '—') + ' → ' + c + (per > 0 ? ' (' + (Math.round(per * 1000) / 1000) + ' bags a box → ' + u + ' units)' : '') });
+  if (!d) { el.disabled = false; el.value = l.cases ? String(was) : ''; }
+}
 async function rvoLineEdit(i) {
   var l = RVO_CK && RVO_CK.lines[i]; if (!l) return;
-  var u = prompt('✏️ ' + l.part + ' on "' + RVO_CK.title + '"\n\nUnits (bags) on this sheet now: ' + fmt0(l.qty) + ' (= ' + fmt0(l.pcs) + ' pcs)\nType the RIGHT units:', l.qty);
-  if (u == null) return; u = String(u).trim(); if (!(parseFloat(u) > 0)) { alert('Units must be more than 0 — to take the item off, use 🗑.'); return; }
-  var c = prompt('✏️ ' + l.part + ' — boxes (cases) on this sheet now: ' + (l.cases ? fmt0(l.cases) : '—') + '\nType the RIGHT number of boxes (empty = none):', l.cases || '');
+  // Boxes first (owner 2026-10-20: "case quantities — that's what most of us go with"), then the units it makes.
+  var c = prompt('✏️ ' + l.part + ' on "' + RVO_CK.title + '"\n\nBoxes (cases) on this sheet now: ' + (l.cases ? fmt0(l.cases) : '—') + '\nType the RIGHT number of boxes (empty = none):', l.cases || '');
   if (c == null) return; c = String(c).trim();
   if (c !== '' && !(parseFloat(c) >= 0)) { alert('Boxes must be a number.'); return; }
+  var per = rvoLinePer(l), uDef = c !== '' && per > 0 ? Math.round(parseFloat(c) * per * 1000) / 1000 : l.qty;
+  var u = prompt('✏️ ' + l.part + ' — units (bags) now: ' + fmt0(l.qty) + ' (= ' + fmt0(l.pcs) + ' pcs)'
+    + (c !== '' && per > 0 ? '\n' + c + ' boxes × ' + (Math.round(per * 1000) / 1000) + ' bags a box = ' + uDef + ' units' : '') + '\nType the RIGHT units:', uDef);
+  if (u == null) return; u = String(u).trim(); if (!(parseFloat(u) > 0)) { alert('Units must be more than 0 — to take the item off, use 🗑.'); return; }
   var why = prompt('Why? (kept in 🕘 History, e.g. "box quantity typed wrong")', 'box quantity typed wrong');
   if (why == null) return;
   await rvoLinePost({ title: RVO_CK.title, part: l.part, qty: parseFloat(u), cases: c === '' ? '' : parseFloat(c), reason: why });

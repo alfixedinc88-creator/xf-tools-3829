@@ -7907,5 +7907,35 @@ console.log('\n🕘 Reorder History: every change kept, in plain words; each she
   sq.prepare('DELETE FROM reorder_incoming WHERE title = ?').run(T); sq.prepare('DELETE FROM reorder_title WHERE title = ?').run(T);
 }
 
+// Owner (2026-10-20): "for the Import check I need to be able to edit the case quantities — that's what most of us go with".
+console.log('\n📦 Import check: type the boxes (cases) right in the line → saved; the units follow at bags per box');
+{
+  const { readFileSync: rfC } = await import('node:fs');
+  const rh = rfC(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const grab = n => { const i = rh.indexOf('function ' + n + '('); const j = rh.indexOf('\n}\n', i); return rh.slice(i - (rh.slice(i - 6, i) === 'async ' ? 6 : 0), j + 2); };
+  const run = async (line, typed, rows, promptAns) => {
+    const ctx = { posts: [], dels: 0 };
+    const f = new Function('ctx', 'var RVO = { rows: ctx.rows }, RVO_CK = { title: "PO-X", lines: [ctx.line] };'
+      + 'function rvoNum(x) { var n = parseFloat(String(x == null ? "" : x).replace(/,/g, "")); return isFinite(n) ? n : 0; }'
+      + 'function prompt() { return ctx.promptAns; } function alert(m) { ctx.alert = m; } function rvoLineDel() { ctx.dels++; }'
+      + 'async function rvoLinePost(b) { ctx.posts.push(b); return { ok: true }; }\n' + grab('rvoLinePer') + '\n' + grab('rvoLineCases') + '\nreturn rvoLineCases;');
+    Object.assign(ctx, { line, rows: rows || [], promptAns });
+    const el = { value: typed, disabled: false };
+    await f(ctx)(0, el);
+    return ctx;
+  };
+  const a = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '30');
+  const b = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 100, cases: null }, '3', [{ sku: '24-6-7=10', caseQty: 25 }]);
+  const c = await run({ part: '9-9-9=1', readAs: '9-9-9=1', qty: 10, cases: null }, '2', [], '50');
+  const same = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '40');
+  const zero = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '0');
+  check('400 bags in 40 boxes → type 30 boxes → saved 30 boxes = 300 units (10 a box), "boxes 40 → 30" in 🕘 History',
+    a.posts.length === 1 && a.posts[0].cases === 30 && a.posts[0].qty === 300 && /boxes 40 → 30 \(10 bags a box → 300 units\)/.test(a.posts[0].reason), a.posts);
+  check('…no boxes on the line yet → SKU Mgr\'s box size (25 bags) → 3 boxes = 75 units; no box size anywhere → asks the units (50); the same number → nothing saved; 0 → 🗑',
+    b.posts[0] && b.posts[0].qty === 75 && b.posts[0].cases === 3 && c.posts[0] && c.posts[0].qty === 50 && c.posts[0].cases === 2 && same.posts.length === 0 && zero.posts.length === 0 && zero.dels === 1, { b: b.posts, c: c.posts });
+  check('page: the Cases column of the 📋 Import check is a box you type in (Enter saves); ✏️ Edit asks boxes first, then the units it makes',
+    /<input class="rvo-ck-cs" type="text" inputmode="decimal"/.test(rh) && /onchange="rvoLineCases\(' \+ i \+ ', this\)"/.test(rh) && /Boxes \(cases\) on this sheet now:/.test(rh) && rh.indexOf('Boxes (cases) on this sheet now:') < rh.indexOf("units (bags) now: '"), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
