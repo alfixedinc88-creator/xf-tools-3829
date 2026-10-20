@@ -1560,9 +1560,14 @@ async function reorderCatalogImport(request, env, session) {
   // An order the vendor is still making can be given as cases only: units =
   // cases × units per case (✏️ case qty → SKU Mgr → vendor sheet carton).
   // A line with no case size is NOT guessed — it's sent back as not counted.
-  const caseQtyOf = {}, noCaseQty = [], fromCases = [];
+  // 📦 Owner (2026-10-20, the 10-20-26 order): "the Cartons on the sheet are our boxes — use that number instead of QTY (QTY just
+  // tells how many bags)". On an ORDER sheet the cartons win: units = cartons × bags per carton (the sheet's own Master Carton
+  // pcs, else ✏️ case qty, else SKU Mgr Ea/Case, else the vendor sheet's carton). QTY only when no carton size is known. A sheet
+  // whose QTY disagrees is listed (cartonsWin). 🚢 container packing lists are unchanged (their QTY PCS still counts).
+  const cartonsFirst = stage === 'production';
+  const caseQtyOf = {}, noCaseQty = [], fromCases = [], cartonsWin = [], qtyNoCase = [];
   if (title) {
-    const need = [...new Set(rows.filter(r => !(num(r.qty) > 0) && num(r.cases) > 0).map(r => reorderCleanPart(r.part)).filter(Boolean))];
+    const need = [...new Set(rows.filter(r => (cartonsFirst || !(num(r.qty) > 0)) && num(r.cases) > 0).map(r => reorderCleanPart(r.part)).filter(Boolean))];
     if (need.length) {
       const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
       for (const k of need) {
@@ -1607,9 +1612,14 @@ async function reorderCatalogImport(request, env, session) {
     if (!part || /^[.=]/.test(part)) continue;
     kept++;
     let q = num(r.qty);
-    if (title && !(q > 0) && num(r.cases) > 0) {
-      const cq = caseQtyOf[part] || 0;
-      if (cq > 0) { q = num(r.cases) * cq; fromCases.push({ part, cases: num(r.cases), caseQty: cq, units: q }); }
+    const sheetPer = cartonsFirst && num(r.case_pcs) > 0 ? num(r.case_pcs) / reorderExtractPackSize(part) : 0; // the sheet's own carton pcs
+    if (title && (cartonsFirst || !(q > 0)) && num(r.cases) > 0) {
+      const cq = sheetPer || caseQtyOf[part] || 0;
+      if (cq > 0) {
+        const sheetQty = q, u = Math.round(num(r.cases) * cq * 1000) / 1000;
+        q = u; fromCases.push({ part, cases: num(r.cases), caseQty: Math.round(cq * 1000) / 1000, units: u, sheetQty: sheetQty > 0 ? sheetQty : null, per: sheetPer ? 'sheet' : 'case size' });
+        if (sheetQty > 0 && Math.abs(sheetQty - u) > 0.001) cartonsWin.push({ part, cases: num(r.cases), caseQty: Math.round(cq * 1000) / 1000, units: u, sheetQty });
+      } else if (q > 0) qtyNoCase.push({ part, cases: num(r.cases), units: q }); // no carton size known → the sheet's QTY
       else noCaseQty.push({ part, cases: num(r.cases), row: t(r.src_rows || r.row) });
     }
     let cs = num(r.cases);
@@ -1645,7 +1655,7 @@ async function reorderCatalogImport(request, env, session) {
   if (title) {
     const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
     if (b.last) await reorderLog(env, _roWho(session), 'incoming', title, `On the way "${title}" (${vendor}${b.file ? ', ' + String(b.file).slice(0, 80) : ''}): now ${it.n || 0} part #s, ${Math.round(it.u || 0)} units`);
-    return _roResp({ ok: true, vendor, title, stage, saved: kept, incoming: incParts, incomingUnitsSent: incUnits, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept, noCaseQty, fromCases, priceChanges, alreadyShipped });
+    return _roResp({ ok: true, vendor, title, stage, saved: kept, incoming: incParts, incomingUnitsSent: incUnits, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept, noCaseQty, fromCases, cartonsWin, qtyNoCase, priceChanges, alreadyShipped });
   }
   if (b.last) await reorderLog(env, _roWho(session), 'import', '', `Imported vendor sheet ${vendor}${b.file ? ' (' + String(b.file).slice(0, 80) + ')' : ''}: ${c ? c.n : kept} part #s`);
   return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept, priceChanges });

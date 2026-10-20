@@ -4549,7 +4549,12 @@ async function rvoCheck(title, file) {
   h += '<div style="font-size:13px;margin-bottom:10px">' + (file && file.pcs != null ? ok(pcsOk) + ' File pieces ' + (pcsOk ? '= saved pieces' : '≠ saved pieces — difference ' + fmt0(file.pcs - savedPcs)) + ' &nbsp; ' : '')
     + (file ? ok(fileOk) + ' File units ' + (fileOk ? '= saved units' : '≠ saved units — difference ' + fmt0(file.units - saved)) + ' &nbsp; ' : '')
     + ok(counted === saved) + ' Saved ' + (counted === saved ? 'pieces / units = subtracted from the order' : '— ' + fmt0(savedPcs - countedPcs) + ' pieces (' + fmt0(saved - counted) + ' units) are not counted (orange / red lines below)') + '</div>';
-  if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + ' line(s) had no Qty — worked out from Cases × Master Carton pcs.</div>';
+  if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + (file.cartonsFirst ? ' line(s) counted from the <b>Cartons</b> (our boxes): cartons × bags per carton.' : ' line(s) had no Qty — worked out from Cases × Master Carton pcs.') + '</div>';
+  // 📦 Order sheet: the cartons won over a QTY that disagrees; lines with no known carton size used the QTY (owner 2026-10-20)
+  if (file && (file.cartonsWin || []).length) h += '<div style="font-size:12px;margin-bottom:6px;padding:6px 10px;background:#FEF6E7;border-radius:8px"><b>📦 ' + file.cartonsWin.length + ' line(s): the sheet\'s QTY doesn\'t match the cartons — counted the CARTONS:</b><br>'
+    + file.cartonsWin.slice(0, 40).map(function (k) { return escHtml(k.part) + ': ' + fmt0(k.cases) + ' cartons × ' + (Math.round(k.caseQty * 1000) / 1000) + ' bags = <b>' + fmt0(k.units) + '</b> counted (sheet QTY said ' + fmt0(k.sheetQty) + ')'; }).join('<br>') + (file.cartonsWin.length > 40 ? '<br>…' : '') + '</div>';
+  if (file && (file.qtyNoCase || []).length) h += '<div style="font-size:12px;margin-bottom:6px;padding:6px 10px;background:#FEF6E7;border-radius:8px"><b>⚠ ' + file.qtyNoCase.length + ' line(s): no carton size known (✏️ Case qty / SKU Mgr Ea/Case) — counted the sheet\'s QTY:</b> '
+    + file.qtyNoCase.slice(0, 40).map(function (k) { return escHtml(k.part) + ' ' + fmt0(k.units) + ' units (' + fmt0(k.cases) + ' cartons)'; }).join(', ') + '. Set the case size, then ✏️ the cartons (or import again) to count by cartons.</div>';
   if (file && file.packing) h += rvoPackingHtml(file.packing, saved);
   else if (file && file.prices) h += rvoPricesHtml(file.prices);
   if (file && !file.packing && file.weights) h += rvoWeightsHtml(file.weights);
@@ -4777,8 +4782,8 @@ async function rvoTemplate() {
       widths = [16, 34, 10, 8, 10, 14, 16];
       how = [['🏭 Ordered — vendor still making it (no pallets yet)'], [''],
         ['Part #', 'Required. Our part number, one row per pack size.'],
-        ['Cases', 'Boxes ordered. Units = Cases × SKU Mgr Ea/Case (pieces per box) ÷ pack size. A part # with no known case size is NOT counted (shown in red).'],
-        ['Qty', 'Or give units of the part # directly (27-2-2=10: 1 unit = 1 bag of 10). Qty wins over Cases.'],
+        ['Cases', 'Boxes (cartons) ordered — THE number used (owner 2026-10-20). Units = Cases × bags per carton: a Master Carton (pcs) column on the sheet, else ✏️ Case qty, else SKU Mgr Ea/Case (pieces per box) ÷ pack size, else the vendor info sheet\'s carton.'],
+        ['Qty', 'Optional. Used only when no carton size is known for the part # (listed in the 📋 Import check). A Qty that does not match Cases × bags per carton is listed; the Cases count.'],
         ['Price per piece', 'Price per single piece. Empty = imported and shown in red.'],
         ['Weight each (lb)', 'Optional. Weight of ONE piece, already in POUNDS (lb) — type it as it is, nothing is converted. Saved on the product (Products sheet / Warehouse → Item Search) ONLY when the product has no weight yet — an existing weight is never changed.'],
         ['', 'Counts as on the way right away, so Reorder does not order it again. When the container ships, import its packing list with Stage 🚢 and pick this order in "Made for order" — the shipped part comes off this order (never counted twice).']].concat(common);
@@ -5252,12 +5257,13 @@ async function rvoImport(input) {
         + withQty.length + ' part #s with a quantity will count as on the way and be subtracted from what to order.'
         + (exists ? '\nSame part #s get the new quantity; others in "' + title + '" stay.' : ''))) return;
     } else if (!confirm('Import ' + rows.length + ' rows from ' + f.name + ' as vendor "' + vendor + '"?\n\nThis replaces what was imported before for ' + vendor + '. Your ✏️ fixes are kept.\n\n(To record a shipment / order on the way, type a Title first.)')) return;
-    var saved = 0, noCase = [], caseLines = [], priceChanges = [], alreadyShipped = [];
+    var saved = 0, noCase = [], caseLines = [], priceChanges = [], alreadyShipped = [], cartonsWin = [], qtyNoCase = [];
     for (var i = 0; i < rows.length; i += 400) {
       var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, stage: stage, replace: i === 0, last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) });
       var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Import failed');
       saved = d.total; (d.noCaseQty || []).forEach(function (k) { noCase.push(k); }); (d.fromCases || []).forEach(function (k) { caseLines.push(k); });
       (d.priceChanges || []).forEach(function (k) { priceChanges.push(k); });
+      (d.cartonsWin || []).forEach(function (k) { cartonsWin.push(k); }); (d.qtyNoCase || []).forEach(function (k) { qtyNoCase.push(k); });
       (d.alreadyShipped || []).forEach(function (k) { alreadyShipped.push(k); });
     }
     if (alreadyShipped.length) alert('🏭 "' + title + '": ' + alreadyShipped.length + ' part # already shipped (in part or all) in a container — the order keeps only what is still owed (ordered − shipped), never counted twice:\n\n'
@@ -5267,7 +5273,8 @@ async function rvoImport(input) {
     showToast(title ? 'On the way "' + title + '" saved' : 'Imported ' + vendor + ': ' + saved + ' part #s');
     if (title) document.getElementById('rvo-imp-title').value = '';
     await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
-    caseLines.forEach(function (k) { rows.forEach(function (r) { if (!r.dup && rvoClean(r.part) === k.part && !(rvoNum(r.qty) > 0)) { r.fileQty = k.units; r.qtyFrom = 'cases'; } }); });
+    // 📦 an order's cartons win (owner 2026-10-20): the units counted from the cartons are this line's units in the check too
+    caseLines.forEach(function (k) { rows.forEach(function (r) { if (!r.dup && rvoClean(r.part) === k.part && (stage === 'production' || !(rvoNum(r.qty) > 0))) { r.fileQty = k.units; r.qtyFrom = 'cases'; } }); });
     var fileLines = rows.filter(function (r) { return rvoNum(r.fileQty != null ? r.fileQty : r.qty) > 0; });
     rvoCheck(title, { file: f.name, vendor: vendor, parts: rows.length, lines: fileLines.length,
       units: fileLines.reduce(function (a, r) { return a + rvoNum(r.fileQty != null ? r.fileQty : r.qty); }, 0),
@@ -5277,7 +5284,7 @@ async function rvoImport(input) {
       fromCases: rows.filter(function (r) { return r.qtyFrom === 'cases'; }).length,
       dups: rows.filter(function (r) { return r.dup; }).length,
       skipped: skipped.concat(noCase.map(function (k) { return { row: k.row, part: k.part, qty: '', cases: k.cases, why: 'NOT counted — no case size for this part # (set ✏️ Case qty or SKU Mgr units per case, then import again)' }; })),
-      caseUnits: caseLines, weights: weights,
+      caseUnits: caseLines, weights: weights, cartonsWin: cartonsWin, qtyNoCase: qtyNoCase, cartonsFirst: stage === 'production',
       prices: title ? { ordered: stage === 'production', sheets: [], priced: rows.filter(function (r) { return !r.dup && r.price > 0; }).length, missing: rows.filter(function (r) { return !r.dup && !(r.price > 0) && rvoNum(r.qtyTot || r.qty) > 0; }).map(function (r) { return rvoClean(r.part); }), notExact: [], changes: priceChanges } : null });
     if (title && stage === 'production') { var np = rows.filter(function (r) { return !r.dup && !(r.price > 0); }); if (np.length) alert('✓ Order "' + title + '" saved — its quantities count as on the way, so the next order won\'t order them again.\n\n' + np.length + ' line(s) have no price yet: ' + np.slice(0, 20).map(function (r) { return r.part; }).join(', ') + (np.length > 20 ? ', …' : '') + '\nThat\'s fine for an order: the price comes with the shipped container. (Or import this order again with a Price column when the vendor sends prices.)'); }
     if (noCase.length) alert('⚠ ' + noCase.length + ' line(s) NOT counted — no case size known: ' + noCase.map(function (k) { return k.part; }).join(', ') + '\nSet their Case qty (✏️) and import again.');

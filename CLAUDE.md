@@ -139,6 +139,11 @@ Read `docs/ORDERS-AND-CONTAINERS.md` before touching Reorder orders / containers
   again.
 - The "Orders and containers" checks in `tests/keep-working.test.mjs` must stay green.
 
+## Vendor sheets for Reorder → ⬆ Import vendor sheet
+When the owner hands over a vendor's file (JQ #1, EFF #2, YAO #3) to get ready for the import, read
+`docs/VENDOR-SHEETS.md` first and do it the same way for every vendor: our template layout (vendor info / order /
+packing list), order sheets counted by CARTONS (owner 2026-10-20), totals checked vendor file vs ours (✅ match).
+
 ## Every new page / tab / section gets a 🧩 Pages & Tabs check mark
 Owner (2026-10-17): "every time we add new stuff, under Pages & Tabs add the check mark for it too, so we can tick who can
 see it". When a change adds a page, a tab, or a section / button someone might need to hide (a card, a report, a tool), add

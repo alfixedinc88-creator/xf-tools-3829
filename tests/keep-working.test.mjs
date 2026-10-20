@@ -7985,5 +7985,35 @@ console.log('\n📊 SKU Mgr search → totals for the whole part # (in stock · 
     DELETE FROM amazon_sales_weekly WHERE sku LIKE '724-4-6%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '724-4-6%'`);
 }
 
+// Owner (2026-10-20, the 10-20-26 order): "when we import the sheet, the Cartons are our boxes — use that number instead of QTY,
+// I believe QTY just tells how many bags; I don't think we need it" (order sheets; container packing lists unchanged).
+console.log('\n📦 Order sheet import: CARTONS count (units = cartons × bags per carton); QTY only when no carton size is known');
+{
+  await call('/reorder/fix/history', { headers: H });
+  const now = new Date().toISOString(), T = '10-20-26 order TEST';
+  // SKU Mgr: 73-1-1=10 boxes of 100 pcs (= 10 bags a carton).
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, updated_at) VALUES ('73-1-1','x','73-1-1=10','C1=3-3-3',1,100,?)").run(now);
+  const rows = [
+    { part: '73-1-1=10', cases: '10', qty: '500', row: 2 },               // QTY wrong → 10 cartons × 10 bags = 100
+    { part: '73-2-2=10', cases: '5', qty: '', case_pcs: '200', row: 3 },  // the sheet's own carton: 200 pcs = 20 bags → 100
+    { part: '73-3-3=5', cases: '3', qty: '40', row: 4 },                  // no carton size anywhere → QTY 40
+    { part: '73-4-4=1', cases: '', qty: '30', row: 5 },                   // no cartons → QTY 30 (as before)
+    { part: '73-5-5=1', cases: '2', qty: '', row: 6 } ];                  // nothing to count by → not counted (as before)
+  const d = await post('/reorder/vendor-catalog/import', { vendor: 'JQ', title: T, stage: 'production', replace: false, last: true, file: '10-20-26.xlsx', rows });
+  const q = p => (sq.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').get(T, p) || {});
+  check('73-1-1=10: 10 cartons × 10 bags (SKU Mgr 100 pcs a box) = 100 units counted — not the sheet\'s QTY 500 (listed: cartons win)',
+    d.ok && q('73-1-1=10').qty === 100 && q('73-1-1=10').cases === 10 && (d.cartonsWin || []).some(k => k.part === '73-1-1=10' && k.sheetQty === 500 && k.units === 100), { q: q('73-1-1=10'), cw: d.cartonsWin });
+  check('…73-2-2=10: the sheet\'s Master Carton 200 pcs = 20 bags a carton → 5 cartons = 100 units; 73-3-3=5 no carton size → its QTY 40 (listed); 73-4-4=1 no cartons → QTY 30; 73-5-5=1 → not counted (listed)',
+    q('73-2-2=10').qty === 100 && q('73-3-3=5').qty === 40 && (d.qtyNoCase || []).some(k => k.part === '73-3-3=5') && q('73-4-4=1').qty === 30 && !q('73-5-5=1').qty && (d.noCaseQty || []).some(k => k.part === '73-5-5=1'), [q('73-2-2=10'), q('73-3-3=5'), q('73-4-4=1'), d.noCaseQty]);
+  const tot = sq.prepare('SELECT SUM(qty) u FROM reorder_incoming WHERE title = ?').get(T).u;
+  check('…order total = 100 + 100 + 40 + 30 = 270 units, each line once', tot === 270, tot);
+  const { readFileSync: rfO } = await import('node:fs');
+  const rh = rfO(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: the 📋 Import check lists "the sheet\'s QTY doesn\'t match the cartons — counted the CARTONS" and the lines that used QTY; the order template says Cases are THE number used',
+    /the sheet\\'s QTY doesn\\'t match the cartons — counted the CARTONS/.test(rh) && /no carton size known \(✏️ Case qty \/ SKU Mgr Ea\/Case\) — counted the sheet\\'s QTY/.test(rh) && /Boxes \(cartons\) ordered — THE number used/.test(rh), null);
+  sq.prepare('DELETE FROM reorder_incoming WHERE title = ?').run(T); sq.prepare("DELETE FROM master_list WHERE base_sku = '73-1-1'").run();
+  sq.prepare("DELETE FROM reorder_vendor_catalog WHERE part LIKE '73-%'").run(); sq.prepare('DELETE FROM reorder_title WHERE title = ?').run(T);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
