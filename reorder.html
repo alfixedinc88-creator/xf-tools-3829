@@ -4057,6 +4057,9 @@ function rvoWhy(sku) {
   var c = r.calc, n = function (v) { return (Math.round(v || 0)).toLocaleString('en-US'); };
   alert('🔍 ' + r.baseSku + ' family (all its part #s) — in pieces\n\n'
     + 'Sold in the window: ' + n(c.famSoldPcs) + ' pcs (' + c.months + ' months)\n'
+    + (c.salesCheck && c.salesCheck.normal != null ? 'Sales check, pcs a month: 30 d ' + (c.salesCheck.r30 == null ? '—' : n(c.salesCheck.r30)) + ' · 90 d ' + (c.salesCheck.r90 == null ? '—' : n(c.salesCheck.r90))
+      + ' · 6 mo ' + (c.salesCheck.r180 == null ? '—' : n(c.salesCheck.r180)) + ' · 12 mo ' + (c.salesCheck.r365 == null ? '—' : n(c.salesCheck.r365)) + ' → normal ' + n(c.salesCheck.normal)
+      + (c.salesCheck.high ? ' · the window sold more than normal → ordered for ' + n(c.salesCheck.normal) + ' a month, not ' + n(c.salesCheck.chosen) : '') + '\n' : '')
     + 'Needed for ' + c.horizon + ' months (lead + order): ' + n(c.famTarget) + ' pcs\n'
     + 'We have: ' + n(c.famHave) + ' pcs\n'
     + c.famListings.map(function (x) { return '   • ' + x.sku + ': needs ' + n(x.target) + ', has ' + n(x.have) + ' (shelf + Amazon + on the way)' + (x.short ? ' → short ' + n(x.short) : ''); }).join('\n') + '\n'

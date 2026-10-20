@@ -8041,5 +8041,64 @@ console.log('\n📦 Order import reads the cartons column by any usual name — 
     /📦 Cartons read from the column <b>"/.test(rh) && /⚠ No Cartons column found on this sheet — every line was counted by QTY/.test(rh), null);
 }
 
+// Owner (2026-10-20): "when you recommend what to order, check the sales history too: 90 days we sold 4,000 but the last 30 days
+// only 100 — maybe a vendor (seller) sold out, the 90 days aren't normal, don't order that much. Check 6 and 12 months too, to find
+// whether the 90 days or the 30 days aren't normal. And SKU Mgr: give me the 6 month and 12 months pieces we sold too".
+console.log('\n📈 Reorder: 90 days that sold more than normal (checked against 30 d / 6 mo / 12 mo) are not ordered for; SKU Mgr sold 6 / 12 months');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const rh = rfS(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'), ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  await call('/reorder/fix/history', { headers: H });
+  // 87-7-7=10 (the owner's example): 30 d 100 pcs · 90 d 4,000 · 6 mo 6,000 · 12 mo 10,000 — 3,900 sold 30–90 days ago (a jump).
+  // 87-7-8=10 steady (≈300 pcs a month). 87-7-9=10: steady, then almost nothing the last 30 days (out of stock?).
+  const ins = sq.prepare('INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,?)');
+  [['87-7-7=10', [[10, 10], [60, 390], [150, 200], [300, 400], [372, 0]]], ['87-7-8=10', [[10, 30], [60, 60], [150, 90], [300, 180]]], ['87-7-9=10', [[10, 1], [60, 60], [150, 90], [300, 180]]]]
+    .forEach(([sku, w]) => w.forEach(([d, u]) => ins.run(sku, day(d), u)));
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'), row = k => (d.rows || []).find(r => r.sku === k) || {};
+  const a = row('87-7-7=10'), b = row('87-7-8=10'), c = row('87-7-9=10'), sa = a.salesCheck || {}, sb = b.salesCheck || {}, sc = c.salesCheck || {};
+  const near = (x, y, tol) => Math.abs(x - y) <= tol;
+  const tab = [['87-7-7 sold 30 d (pcs)', 100, a.calc && a.calc.famSales && a.calc.famSales.reduce((t, x) => t + x.p30, 0)],
+    ['87-7-7 sold 90 d (pcs, the window)', 4000, a.soldPcs], ['87-7-7 6 mo a month ≈ 6,000 ÷ 6', 1000, sa.r180], ['87-7-7 12 mo a month ≈ 10,000 ÷ 12', 833, sa.r365]];
+  tab.forEach(([w, want, got]) => check(w + ': expected ≈' + want + ' = counted ' + got, got != null && near(got, want, want * 0.06 + 1), sa));
+  check('87-7-7: normal ≈ 660 pcs a month (the middle of 30 d 100 · 30–90 d 1,950 · 3–6 mo 667 · 6–12 mo 657) → the 90 days (≈1,333 a month) flagged as more than normal',
+    sa.high === true && near(sa.normal, 662, 40) && sa.chosen > 1.5 * sa.normal, sa);
+  check('…ordered for the normal month: needs ≈ 662 × 6 months ≈ 3,970 pcs, not 4,000 ÷ 3 × 6 = 8,000 (row ' + a.needUnits + ' units of 10)',
+    near(a.calc.famTarget, sa.normal * 6, 6) && near(a.needUnits * 10, a.calc.famTarget, 10) && a.needUnits < 500, { t: a.calc && a.calc.famTarget, n: a.needUnits });
+  check('…the row says why: 📈 Sales check with 30 d / 90 d / 6 mo / 12 mo, "ordered for … a month … not …"; sold (4,000) stays what really sold',
+    /📈 Sales check \(pcs a month, whole 87-7-7\): 30 d [\d,]+ · 90 d [\d,]+ · 6 mo [\d,]+ · 12 mo [\d,]+ — the last 90 days sold more than normal/.test(a.note) && /ordered for [\d,]+ a month/.test(a.note) && a.soldPcs === 4000, a.note);
+  check('…and the last 30 days (100 vs normal ≈ 660) are named as much LESS than normal', sa.flag30 === 'low' && /📉 The last 30 days sold much LESS than normal/.test(a.note), sa);
+  check('87-7-8 steady → no change: ordered for what the 90 days sold (900 ÷ 3 × 6 = 1,800 pcs − 0 = 180 units), no 📈 / 📉 note',
+    sb.high === false && sb.factor === 1 && !sb.flag30 && near(b.calc.famTarget, 900 / b.calc.months * 6, 2) && !/📈|📉/.test(b.note || ''), { sb, t: b.calc && b.calc.famTarget });
+  check('87-7-9 almost nothing the last 30 days → 📉 named (check before ordering), the order NOT raised or cut (90 days ≈ normal)',
+    sc.flag30 === 'low' && sc.high === false && sc.factor === 1 && /📉/.test(c.note || ''), sc);
+  check('…🔍 shows the sales check line', /Sales check, pcs a month: 30 d/.test(rh) && /the window sold more than normal → ordered for/.test(rh), null);
+  sq.exec("DELETE FROM ebay_sales_weekly WHERE sku LIKE '87-7-%'");
+  // 📉 less than 6 months of sales history → nothing to compare with → nothing changed
+  sq.prepare('INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,?), (?,?,?)').run('87-7-6=10', day(10), 10, '87-7-6=10', day(60), 390);
+  const minFrom = sq.prepare("SELECT MIN(m) m FROM (SELECT MIN(period_start) m FROM ebay_sales_weekly UNION ALL SELECT MIN(period_start) FROM amazon_sales_weekly)").get().m;
+  const d2 = await get('/reorder/vendor-order?days=90&lead=3&cover=3'), e = (d2.rows || []).find(r => r.sku === '87-7-6=10') || {};
+  check('…a jump with no older history to compare with (6 / 12 months not counted) is never cut by guessing', minFrom > day(173) ? (e.salesCheck || {}).factor === 1 : (e.salesCheck || {}).r180 != null, e.salesCheck);
+  sq.exec("DELETE FROM ebay_sales_weekly WHERE sku LIKE '87-7-%'");
+
+  // SKU Mgr → 💵 sold 6 / 12 months (pieces, all channels)
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('725-5-5','tee','725-5-5=10','C1=1-1-1',1,100)").run();
+  sq.prepare('INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,?), (?,?,?), (?,?,?), (?,?,?)').run('725-5-5=10', day(10), 2, '725-5-5=10', day(150), 5, '725-5-5=10', day(300), 10, '725-5-5=10', day(400), 7);
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('725-5-5=10',?,3,'B0T7255')").run(day(200));
+  const s = await get('/inventory/incoming?summary=1&q=725-5-5'), S = s.summary || {};
+  [['💵 sold 30 days', 20, S.sold30Pcs], ['💵 sold 90 days', 20, S.sold90Pcs], ['💵 sold 6 months', 70, S.sold180Pcs], ['💵 sold 12 months (400 days ago not counted)', 200, S.sold365Pcs],
+    ['…Amazon 12 months', 30, (S.sales && S.sales.Amazon || {}).p365], ['…eBay 6 months', 70, (S.sales && S.sales.eBay || {}).p180]]
+    .forEach(([w, want, got]) => check('725-5-5 ' + w + ': expected ' + want + ' = counted ' + got, want === got, S));
+  const grab = n => { const i = ih.indexOf('window.' + n + ' = function'); const j = ih.indexOf('\n  };\n', i); return ih.slice(i, j + 5); };
+  const render = new Function('var window = {};\n' + grab('skumgrIncomingHtml') + '\nreturn window.skumgrIncomingHtml;')();
+  const h = render(s);
+  check('…SKU Mgr shows 💵 Sold last 6 months 70 pcs and 💵 Sold last 12 months 200 pcs after the 30 / 90 days (hidden with the sales check mark)',
+    /💵 Sold last 6 months<\/div><div[^>]*><b>70<\/b> pcs/.test(h) && /💵 Sold last 12 months<\/div><div[^>]*><b>200<\/b> pcs/.test(h) && h.indexOf('Sold last 90 days') < h.indexOf('Sold last 6 months')
+      && (h.match(/class="sk-sum-sales"/g) || []).length === 4, h);
+  const h2 = render({ ...s, summary: { ...S, salesFrom: day(100) } });
+  check('…sales kept only since a later day → "⚠ sales kept only since …" under 6 / 12 months', (h2.match(/⚠ sales kept only since/g) || []).length === 2, null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '725-5-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '725-5-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '725-5-5%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
