@@ -7940,5 +7940,50 @@ console.log('\n📦 Import check: type the boxes (cases) right in the line → s
     /<input class="rvo-ck-cs" type="text" inputmode="decimal"/.test(rh) && /onchange="rvoLineCases\(' \+ i \+ ', this\)"/.test(rh) && /Boxes \(cases\) on this sheet now:/.test(rh) && rh.indexOf('Boxes (cases) on this sheet now:') < rh.indexOf("units (bags) now: '"), null);
 }
 
+// Owner (2026-10-20, SKU Mgr search "24-4-6"): "it shows each sku separately — how many coming, how many still making. I want a
+// total of coming and still making, the single sku info folded (open it when I want), and the total pieces we sold in 30 and
+// 90 days, and the total pieces in stock now — search once and know what we have, what's coming, what we sell".
+console.log('\n📊 SKU Mgr search → totals for the whole part # (in stock · still making · on the way · sold 30 / 90 days), each part # folded');
+{
+  const { readFileSync: rfT } = await import('node:fs');
+  const ih = rfT(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const grab = n => { const i = ih.indexOf('window.' + n + ' = function'); const j = ih.indexOf('\n  };\n', i); return ih.slice(i, j + 5); };
+  const render = new Function('var window = {};\n' + grab('skumgrIncomingHtml') + '\nreturn window.skumgrIncomingHtml;')();
+  await call('/reorder/fix/history', { headers: H });
+  const now = new Date().toISOString(), day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  // SKU Mgr: =2 3 boxes × 200 = 600 pcs · =10X 2 × 100 = 200 · =10X 1 box with no Ea/Case (not guessed) · =OLD 1 × 50 · 724-4-60 is ANOTHER part
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('724-4-6','tee','724-4-6=2','C1=1-1-1',3,200), ('724-4-6','tee','724-4-6=10X','C2=1-1-1',2,100), ('724-4-6','tee','724-4-6=10X','BO=1-1-1',1,0),
+    ('724-4-6','tee','724-4-6=OLD','C3=1-1-1',1,50), ('724-4-60','tee','724-4-60=2','C4=1-1-1',5,10)`).run();
+  // Still making: PO-S =2 100 units (200 pcs) + =10X 30 units (300 pcs) = 500 · on the way: CT-S =2 50 units = 100 pcs · 724-4-60 not counted
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-S 10/1', 'production', ?, ?), ('CT-S 10/9', 'shipped', ?, ?)").run(now, now, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES ('PO-S 10/1','724-4-6=2',100,'JQ',5,?), ('PO-S 10/1','724-4-6=10X',30,'JQ',3,?), ('CT-S 10/9','724-4-6=2',50,'JQ',2,?), ('PO-S 10/1','724-4-60=2',999,'JQ',9,?)").run(now, now, now, now);
+  // Sold: 10 days ago Amazon =10X 4 (40 pcs) + eBay =2 10 (20 pcs) = 60 in 30 days; 60 days ago eBay =2 30 (60 pcs) → 120 in 90 days;
+  // 120 days ago (too old) and 724-4-60 (another part) not counted.
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('724-4-6=10X',?,4,'B0T7246'), ('724-4-6=10X',?,100,'B0T7246')").run(day(10), day(120));
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('724-4-6=2',?,10), ('724-4-6=2',?,30), ('724-4-60=2',?,7)").run(day(10), day(60), day(10));
+  const d = await get('/inventory/incoming?summary=1&q=724-4-6'), S = d.summary || { stock: {}, sales: {} };
+  const rows = [
+    ['🏬 in stock, pieces', 850, S.stock.pieces], ['🏬 in stock, boxes', 7, S.stock.cases], ['⚠ boxes with no Ea/Case (shown, not counted)', 1, S.stock.noEaCases],
+    ['🏭 still making, pieces', 500, S.orderedPcs], ['🚢 on the way, pieces', 100, S.onWayPcs], ['= coming in total', 600, S.comingPcs],
+    ['💵 sold 30 days, pieces', 60, S.sold30Pcs], ['💵 sold 90 days, pieces', 120, S.sold90Pcs], ['…Amazon 90 days', 40, (S.sales.Amazon || {}).p90], ['…eBay 90 days', 80, (S.sales.eBay || {}).p90]];
+  rows.forEach(([what, want, got]) => check('724-4-6 ' + what + ': expected ' + want + ' = counted ' + got, want === got, null));
+  // the totals = the lines under them, nothing counted twice
+  const sumT = k => (d.totals || []).reduce((a, t) => a + (t[k] || 0), 0);
+  check('…the "coming" totals are the sum of the part # lines under them (still making ' + sumT('orderedPcs') + ', on the way ' + sumT('onWayPcs') + ')', sumT('orderedPcs') === S.orderedPcs && sumT('onWayPcs') === S.onWayPcs, d.totals);
+  const plain = await get('/inventory/incoming?q=724-4-6');
+  check('…without ?summary=1 the answer is the same as before (no summary)', plain.ok && !plain.summary && plain.items.length === d.items.length, null);
+  const h = render(d), h0 = render(plain);
+  check('…screen: the 📊 totals first (850 in stock · 500 still making · 100 on the way · 600 coming · 60 / 120 sold), ⚠ 1 box no Ea/Case in red; each part # folded under "▸ Each part # coming in" (closed)',
+    /📊 724-4-6 — all part #s together \(pieces\)/.test(h) && /<b>850<\/b> pcs/.test(h) && /<b>500<\/b> pcs/.test(h) && /<b>100<\/b> pcs/.test(h) && /<b>600<\/b> pcs/.test(h) && /<b>60<\/b> pcs/.test(h) && /<b>120<\/b> pcs/.test(h)
+      && /⚠ 1 box with no Ea\/Case in SKU Mgr — not counted/.test(h) && /<details class="sk-inc-det" style="margin-top:8px"><summary[^>]*>▸ Each part # coming in — 2 part #s \(tap to open\)/.test(h)
+      && h.indexOf('📊 724-4-6') < h.indexOf('<details') && h.indexOf('class="sk-inc-line"') > h.indexOf('<details') && (h.match(/class="sk-inc-line"/g) || []).length === 2, h);
+  check('…the old Coming in lines are unchanged inside it (same lines as without the totals)', h.indexOf(h0.slice(h0.indexOf('<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for'), -6)) > 0, null);
+  check('…SKU Mgr asks for the totals; 🧩 Pages & Tabs can hide the totals and the sales numbers',
+    /\/inventory\/incoming\?summary=1&q=/.test(ih) && /sel: '#skumgr-incoming \.sk-sum-box'/.test(rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /sel: '#skumgr-incoming \.sk-sum-sales'/.test(rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  sq.exec(`DELETE FROM master_list WHERE base_sku IN ('724-4-6','724-4-60'); DELETE FROM reorder_incoming WHERE title IN ('PO-S 10/1','CT-S 10/9'); DELETE FROM reorder_title WHERE title IN ('PO-S 10/1','CT-S 10/9');
+    DELETE FROM amazon_sales_weekly WHERE sku LIKE '724-4-6%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '724-4-6%'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
