@@ -2548,14 +2548,26 @@ async function reorderVendorOrder(env, url) {
   const asinSkus = {}, claimed = new Set(); // claimed = FBA SKU strings whose Amazon sales stay with that FBA SKU
   fba.forEach(r => { if (r.sku) { r.sku = P(r.sku); (asinSkus[r.asin || r.sku] = asinSkus[r.asin || r.sku] || []).push(r); } });
   const fbaByBase = {};
+  // 🧾 Owner (2026-10-20: "Totals don't match — not downloading. On more than one row: 29-5-1&2=10"): two Amazon listings
+  // (2 ASINs) that are the same part # after clean-up ("…=10" and "…=10-") made 2 rows — each counting the part's Amazon
+  // sales and shelf again (sold 600 pcs showed 1,000, ordered twice). ONE row per part #: each SKU's sales once, the
+  // Amazon stock of every listing added (different boxes at Amazon), both ASINs named on the row.
+  const fbaBySku = {};
   for (const k in asinSkus) {
     const g = asinSkus[k];
     const pick = g.find(r => reorderIsProperFormat(r.sku)) || g[0];
     const sku = U(pick.sku);
-    const amzUnits = [...new Set(g.map(r => U(r.sku)))].reduce((a, k) => a + ((sales[k] || {}).amz || 0), 0);
     g.forEach(r => { claimed.add(U(r.sku)); });
     const fbaAvail = g.reduce((a, r) => a + Math.max(0, parseFloat(r.available) || 0), 0);
-    (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: pick.asin || '', amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: fbaAvail * pack(sku), fbaName: pick.product_name || '' });
+    const e = fbaBySku[sku] = fbaBySku[sku] || { sku, asin: pick.asin || '', asins: [], skus: new Set(), fbaAvail: 0, fbaName: pick.product_name || '' };
+    if (pick.asin && !e.asins.includes(pick.asin)) e.asins.push(pick.asin);
+    g.forEach(r => e.skus.add(U(r.sku)));
+    e.fbaAvail += fbaAvail;
+  }
+  for (const sku in fbaBySku) {
+    const e = fbaBySku[sku], amzUnits = [...e.skus].reduce((a, k) => a + ((sales[k] || {}).amz || 0), 0);
+    (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: e.asin, amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: e.fbaAvail * pack(sku), fbaName: e.fbaName,
+      ...(e.asins.length > 1 ? { asins: e.asins } : {}) });
   }
   // 📦 Sold as a case of another part # (=100X → =10X): its Amazon sales (pieces) and FBA stock go on that part #'s row; it
   // gets no row of its own, and its shelf / on-the-way stock count as another pack of the part — every piece once.
@@ -2736,6 +2748,7 @@ async function reorderVendorOrder(env, url) {
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
       (t.caseFrom || []).forEach(x => notes.push(`📦 Incl. ${x.sku} (sold as a case of ${t.sku}): ${x.amzPieces} pcs Amazon sales, ${x.fbaPieces} pcs at Amazon — ordered as ${t.sku}`));
+      if ((t.asins || []).length > 1) notes.push(`${t.asins.length} Amazon listings are this part # (ASIN ${t.asins.join(', ')}) — one row: their sales counted once, their Amazon stock added`);
       const upcOk = upcOkMap.get(t.sku), upcD = x => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
       const upcW = upcOk && upcOk.key === upcD(u.outside_upc) + '|' + upcD(u.inside_upc) ? '' : reorderUpcWarn(u, fx, ct, vlUpc[t.sku]); // ✔ confirmed right
       if (upcW) notes.push(upcW);

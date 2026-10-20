@@ -7757,5 +7757,28 @@ console.log('\n📋 Recount spots sent to MG: she sees them on every Inventory t
   sq.exec("DELETE FROM master_list WHERE base_sku = '939-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q9=%'; DELETE FROM recount_assign");
 }
 
+// Owner (2026-10-20, Reorder → download sheet for vendor): "⚠ Totals don't match — not downloading. On more than one row:
+// 29-5-1&2=10" — two Amazon listings (2 ASINs) that are the same part # made 2 rows, each counting the part's sales + shelf.
+console.log('\n🧾 Reorder: two Amazon listings of the same part # → ONE row (sales + shelf counted once, both listings\' Amazon stock)');
+{
+  const F = '79-5-1&2', wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // Two FBA listings: "79-5-1&2=10" (ASIN A, 6 at Amazon) and "79-5-1&2=10-" (ASIN B, 4 at Amazon) — the same part # after clean-up.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES (?,'B0T79A',' x',6), (?,'B0T79B',' x',4)").run(F + '=10', F + '=10-');
+  // Amazon: 30 bags on A's SKU, 10 on B's SKU (raw SKUs) → 40 bags = 400 pcs; eBay 20 bags (200 pcs) → family 600 pcs.
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES (?,?,30,'B0T79A'), (?,?,10,'B0T79B')").run(F + '=10', wk, F + '=10-', wk);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES (?,?,20)").run(F + '=10', wk);
+  // Shelf: 2 cases of 100 pcs (200 pcs).
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, updated_at) VALUES (?,'tee',?,'C1=7-9-1',2,100,'2026-09-01')").run(F, F + '=10');
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'), r = (d.rows || []).filter(x => x.baseSku === F);
+  const a = r[0] || {};
+  const c = a.calc || {};
+  check('ONE row for ' + F + '=10 (was 2 → the vendor download refused), naming both ASINs', r.length === 1 && a.sku === F + '=10' && /2 Amazon listings are this part # \(ASIN B0T79A, B0T79B\)/.test(a.note || ''), r.map(x => [x.sku, x.note]));
+  // Expected: sold 400 (Amazon 30+10 bags) + 200 (eBay 20 bags) = 600 pcs (was 1,000: Amazon counted on both rows);
+  // have 200 shelf + 100 at Amazon (6+4 bags) = 300 pcs; need 600 / 3 mo × 6 mo = 1,200 − 300 = 900 pcs = 90 bags (was 80 + 80).
+  check('…every piece once: sold 600 pcs (not 1,000), at Amazon 100 pcs (6 + 4 bags), have 300 pcs (200 shelf + 100 Amazon), order 90 bags = 900 pcs (not 2 × 80)',
+    a.soldPcs === 600 && a.fbaPcs === 100 && c.famSoldPcs === 600 && c.famHave === 300 && a.orderUnits === 90, [a.soldPcs, a.fbaPcs, c.famSoldPcs, c.famHave, a.orderUnits]);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '79-5-1&2%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '79-5-1&2%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '79-5-1&2%'; DELETE FROM master_list WHERE base_sku = '79-5-1&2'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
