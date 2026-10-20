@@ -4549,6 +4549,10 @@ async function rvoCheck(title, file) {
   h += '<div style="font-size:13px;margin-bottom:10px">' + (file && file.pcs != null ? ok(pcsOk) + ' File pieces ' + (pcsOk ? '= saved pieces' : '≠ saved pieces — difference ' + fmt0(file.pcs - savedPcs)) + ' &nbsp; ' : '')
     + (file ? ok(fileOk) + ' File units ' + (fileOk ? '= saved units' : '≠ saved units — difference ' + fmt0(file.units - saved)) + ' &nbsp; ' : '')
     + ok(counted === saved) + ' Saved ' + (counted === saved ? 'pieces / units = subtracted from the order' : '— ' + fmt0(savedPcs - countedPcs) + ' pieces (' + fmt0(saved - counted) + ' units) are not counted (orange / red lines below)') + '</div>';
+  // 📦 Which column was read as the cartons (owner 2026-10-20: "there's no cases number") — or a clear warning when none was.
+  if (file && file.cartonsFirst) h += file.casesCol
+    ? '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">📦 Cartons read from the column <b>"' + escHtml(file.casesCol) + '"</b>' + (file.qtyCol ? ' · QTY from <b>"' + escHtml(file.qtyCol) + '"</b> (used only when no carton size is known)' : '') + '.</div>'
+    : '<div style="font-size:13px;margin-bottom:8px;padding:8px 10px;background:#FDECEA;border-radius:8px;color:#9B1C1C"><b>⚠ No Cartons column found on this sheet — every line was counted by QTY' + (file.qtyCol ? ' ("' + escHtml(file.qtyCol) + '")' : '') + '.</b> Name the boxes column "Cartons" (or "Cases" / "CTNS") and import again with the same Title, or type the boxes in the Cases box of each line below.</div>';
   if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + (file.cartonsFirst ? ' line(s) counted from the <b>Cartons</b> (our boxes): cartons × bags per carton.' : ' line(s) had no Qty — worked out from Cases × Master Carton pcs.') + '</div>';
   // 📦 Order sheet: the cartons won over a QTY that disagrees; lines with no known carton size used the QTY (owner 2026-10-20)
   if (file && (file.cartonsWin || []).length) h += '<div style="font-size:12px;margin-bottom:6px;padding:6px 10px;background:#FEF6E7;border-radius:8px"><b>📦 ' + file.cartonsWin.length + ' line(s): the sheet\'s QTY doesn\'t match the cartons — counted the CARTONS:</b><br>'
@@ -4699,6 +4703,11 @@ async function rvoLineCases(i, el) {
   var c = rvoNum(raw);
   if (!(c > 0)) { el.value = l.cases ? String(was) : ''; if (c === 0) rvoLineDel(i); else alert('Boxes must be a number above 0 (0 = take the item off with 🗑).'); return; }
   var per = rvoLinePer(l), u;
+  if (per > 0 && !(was > 0)) { // no boxes saved on this line yet → the bags per box comes from SKU Mgr: show it, let it be fixed
+    var pb = prompt('📦 ' + l.part + ': this line had no box count saved (only ' + fmt0(l.qty) + ' bags).\n' + c + ' boxes × ' + (Math.round(per * 1000) / 1000) + ' bags a box (SKU Mgr) = ' + (Math.round(c * per * 1000) / 1000) + ' bags.\n\nBags in ONE box (change it if the vendor\'s box is different):', Math.round(per * 1000) / 1000);
+    if (pb == null || !(rvoNum(pb) > 0)) { el.value = ''; return; }
+    per = rvoNum(pb);
+  }
   if (per > 0) u = Math.round(c * per * 1000) / 1000;
   else {
     var t = prompt('📦 ' + l.part + ': ' + c + ' boxes — how many units (bags) in all? (this line has no box size yet)', l.qty);
@@ -4964,7 +4973,13 @@ function rvoParseSheet(aoa, opt) {
       H = { part: partCol, desc: find(/desc/), item: find(/item no/), out: find(/out ?side.*upc/),
         inn: find(/(inside|inner|plastic).*upc/) >= 0 ? find(/(inside|inner|plastic).*upc/) : find(/upc/, /out ?side/),
         asin: find(/asin/), innerPcs: find(/inner bag/), casePcs: find(/master carton|each case/),
-        qty: find(/^(order )?(q'?ty|quantity)\b|^qty/), cases: find(/^(cartons?|cases?|ctns?)( shipped| qty)?$|^# ?of (cartons|cases)/),
+        // 📦 Owner (2026-10-20, 23-5-3=100: "there's no cases number"): the cartons column of an order is read by any usual name —
+        // "Cartons", "Total Cartons", "No. of Cartons", "CTNS.", "Boxes", "Box Qty", "Qty (CTNS)" … — never a carton SIZE ("PCS/CTN",
+        // "Master Carton (pcs)", "per carton"), a carton NUMBER ("C/NO", "Carton No.") or a weight / measure. A QTY header that is
+        // really cartons ("QTY (CTNS)") is cartons, not bags.
+        qty: find(/^(order )?(q'?ty|quantity)\b|^qty/, /ctn|carton|case|box/),
+        cases: (function () { var a = find(/^(cartons?|cases?|ctns?)( shipped| qty)?$|^# ?of (cartons|cases)/); if (a >= 0) return a;
+          return find(/\b(cartons?|ctns?\.?|cases?|boxe?s?|box)\b/, /per|\/|pcs|pieces|master|inner|each|weight|wt|kgs?|lbs?|size|dim|meas|cbm|c\/?no\b|\bno\.?$|number|serial|upc|barcode|label|price|cost|amount/); })(),
         price: find(/price|unit cost|^cost/, /total|amount|retail|sell/),
         wlb: find(/weight.*(lb|each)|lb.*weight/) };
       hr = i;
@@ -4997,6 +5012,7 @@ function rvoParseSheet(aoa, opt) {
     }
   }
   out.hasQty = H.qty >= 0 || H.cases >= 0; out.skipped = skipped; out.hasCases = H.cases >= 0; out.hasPrice = H.price >= 0;
+  out.casesCol = H.cases >= 0 ? norm((aoa[hr] || [])[H.cases]) : ''; out.qtyCol = H.qty >= 0 ? norm((aoa[hr] || [])[H.qty]) : ''; // shown in the 📋 Import check
   return out;
 }
 // Stage of a titled import. A shipped container can say which order (still
@@ -5284,7 +5300,7 @@ async function rvoImport(input) {
       fromCases: rows.filter(function (r) { return r.qtyFrom === 'cases'; }).length,
       dups: rows.filter(function (r) { return r.dup; }).length,
       skipped: skipped.concat(noCase.map(function (k) { return { row: k.row, part: k.part, qty: '', cases: k.cases, why: 'NOT counted — no case size for this part # (set ✏️ Case qty or SKU Mgr units per case, then import again)' }; })),
-      caseUnits: caseLines, weights: weights, cartonsWin: cartonsWin, qtyNoCase: qtyNoCase, cartonsFirst: stage === 'production',
+      caseUnits: caseLines, weights: weights, cartonsWin: cartonsWin, qtyNoCase: qtyNoCase, cartonsFirst: stage === 'production', casesCol: rows.casesCol || '', qtyCol: rows.qtyCol || '',
       prices: title ? { ordered: stage === 'production', sheets: [], priced: rows.filter(function (r) { return !r.dup && r.price > 0; }).length, missing: rows.filter(function (r) { return !r.dup && !(r.price > 0) && rvoNum(r.qtyTot || r.qty) > 0; }).map(function (r) { return rvoClean(r.part); }), notExact: [], changes: priceChanges } : null });
     if (title && stage === 'production') { var np = rows.filter(function (r) { return !r.dup && !(r.price > 0); }); if (np.length) alert('✓ Order "' + title + '" saved — its quantities count as on the way, so the next order won\'t order them again.\n\n' + np.length + ' line(s) have no price yet: ' + np.slice(0, 20).map(function (r) { return r.part; }).join(', ') + (np.length > 20 ? ', …' : '') + '\nThat\'s fine for an order: the price comes with the shipped container. (Or import this order again with a Price column when the vendor sends prices.)'); }
     if (noCase.length) alert('⚠ ' + noCase.length + ' line(s) NOT counted — no case size known: ' + noCase.map(function (k) { return k.part; }).join(', ') + '\nSet their Case qty (✏️) and import again.');

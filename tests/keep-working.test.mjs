@@ -7920,7 +7920,8 @@ console.log('\n📦 Import check: type the boxes (cases) right in the line → s
     const ctx = { posts: [], dels: 0 };
     const f = new Function('ctx', 'var RVO = { rows: ctx.rows }, RVO_CK = { title: "PO-X", lines: [ctx.line] };'
       + 'function rvoNum(x) { var n = parseFloat(String(x == null ? "" : x).replace(/,/g, "")); return isFinite(n) ? n : 0; }'
-      + 'function prompt() { return ctx.promptAns; } function alert(m) { ctx.alert = m; } function rvoLineDel() { ctx.dels++; }'
+      + 'function prompt(m) { ctx.asked = (ctx.asked || []).concat([m]); return ctx.promptAns; } function alert(m) { ctx.alert = m; } function rvoLineDel() { ctx.dels++; }'
+      + 'function fmt0(v){ return (v||0).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0}); }'
       + 'async function rvoLinePost(b) { ctx.posts.push(b); return { ok: true }; }\n' + grab('rvoLinePer') + '\n' + grab('rvoLineCases') + '\nreturn rvoLineCases;');
     Object.assign(ctx, { line, rows: rows || [], promptAns });
     const el = { value: typed, disabled: false };
@@ -7928,13 +7929,18 @@ console.log('\n📦 Import check: type the boxes (cases) right in the line → s
     return ctx;
   };
   const a = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '30');
-  const b = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 100, cases: null }, '3', [{ sku: '24-6-7=10', caseQty: 25 }]);
+  const b = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 100, cases: null }, '3', [{ sku: '24-6-7=10', caseQty: 25 }], '25'); // asked "bags in ONE box", kept 25
+  // Owner (2026-10-20, 23-5-3=100): 444 bags, no box count saved (the sheet's "Total Cartons" 111 wasn't read) → types 50 boxes;
+  // SKU Mgr says 4 bags a box → asked, 4 → 200 bags.
+  const e = await run({ part: '23-5-3=100', readAs: '23-5-3=100', qty: 444, cases: null }, '50', [{ sku: '23-5-3=100', caseQty: 4 }], '4');
+  check('23-5-3=100 (444 bags, no box count saved) → type 50 boxes → asked "bags in ONE box" (SKU Mgr 4) → saved 50 boxes = 200 bags, History "boxes — → 50"',
+    e.posts.length === 1 && e.posts[0].cases === 50 && e.posts[0].qty === 200 && /boxes — → 50/.test(e.posts[0].reason) && /had no box count saved/.test((e.asked || [])[0]), { p: e.posts, a: e.asked });
   const c = await run({ part: '9-9-9=1', readAs: '9-9-9=1', qty: 10, cases: null }, '2', [], '50');
   const same = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '40');
   const zero = await run({ part: '24-6-7=10', readAs: '24-6-7=10', qty: 400, cases: 40 }, '0');
   check('400 bags in 40 boxes → type 30 boxes → saved 30 boxes = 300 units (10 a box), "boxes 40 → 30" in 🕘 History',
     a.posts.length === 1 && a.posts[0].cases === 30 && a.posts[0].qty === 300 && /boxes 40 → 30 \(10 bags a box → 300 units\)/.test(a.posts[0].reason), a.posts);
-  check('…no boxes on the line yet → SKU Mgr\'s box size (25 bags) → 3 boxes = 75 units; no box size anywhere → asks the units (50); the same number → nothing saved; 0 → 🗑',
+  check('…no boxes on the line yet → SKU Mgr\'s box size (25 bags, asked to confirm) → 3 boxes = 75 units; no box size anywhere → asks the units (50); the same number → nothing saved; 0 → 🗑',
     b.posts[0] && b.posts[0].qty === 75 && b.posts[0].cases === 3 && c.posts[0] && c.posts[0].qty === 50 && c.posts[0].cases === 2 && same.posts.length === 0 && zero.posts.length === 0 && zero.dels === 1, { b: b.posts, c: c.posts });
   check('page: the Cases column of the 📋 Import check is a box you type in (Enter saves); ✏️ Edit asks boxes first, then the units it makes',
     /<input class="rvo-ck-cs" type="text" inputmode="decimal"/.test(rh) && /onchange="rvoLineCases\(' \+ i \+ ', this\)"/.test(rh) && /Boxes \(cases\) on this sheet now:/.test(rh) && rh.indexOf('Boxes (cases) on this sheet now:') < rh.indexOf("units (bags) now: '"), null);
@@ -8013,6 +8019,26 @@ console.log('\n📦 Order sheet import: CARTONS count (units = cartons × bags p
     /the sheet\\'s QTY doesn\\'t match the cartons — counted the CARTONS/.test(rh) && /no carton size known \(✏️ Case qty \/ SKU Mgr Ea\/Case\) — counted the sheet\\'s QTY/.test(rh) && /Boxes \(cartons\) ordered — THE number used/.test(rh), null);
   sq.prepare('DELETE FROM reorder_incoming WHERE title = ?').run(T); sq.prepare("DELETE FROM master_list WHERE base_sku = '73-1-1'").run();
   sq.prepare("DELETE FROM reorder_vendor_catalog WHERE part LIKE '73-%'").run(); sq.prepare('DELETE FROM reorder_title WHERE title = ?').run(T);
+}
+
+// Owner (2026-10-20, 23-5-3=100: "there's no cases number" — 111 cartons on the sheet, the Import check showed none): the cartons
+// column was named in a way the importer didn't know ("Total Cartons" …), so it was never read and QTY counted.
+console.log('\n📦 Order import reads the cartons column by any usual name — never a carton size / carton number / weight');
+{
+  const { readFileSync: rfP } = await import('node:fs');
+  const rh = rfP(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const grab = n => { const i = rh.indexOf('function ' + n + '('); const j = rh.indexOf('\n}\n', i); return rh.slice(i, j + 2); };
+  const parse = new Function(grab('rvoNum') + grab('rvoClean').split('\n')[0] + '\n' + grab('rvoPack').split('\n')[0] + '\n' + grab('rvoParseSheet') + '\nreturn rvoParseSheet;')();
+  const read = head => { const o = parse([head, ['23-5-3=100', 'x', 111, 444, 400, 7]], { noUpc: true }); return { col: o.casesCol, cases: o[0] && o[0].cases, qty: o[0] && o[0].qty }; };
+  const names = ['Cartons', 'Total Cartons', 'No. of Cartons', 'CTNS.', 'Boxes', 'Box Qty', 'Total Boxes', 'Cartons (boxes)', 'Qty (CTNS)', 'Cases'];
+  const got = names.map(n => [n, read(['Part #', 'Description', n, 'QTY', 'PCS/CTN', 'C/NO'])]);
+  check('the cartons column is read as cartons (111) under ' + names.length + ' usual names: ' + names.join(' · '), got.every(([n, r]) => r.col === n && r.cases === '111'), got.filter(([n, r]) => !(r.col === n && r.cases === '111')));
+  const qtyCtns = read(['Part #', 'Description', 'Qty (CTNS)', 'QTY', 'PCS/CTN', 'C/NO']);
+  const notCtn = read(['Part #', 'Description', 'Carton No.', 'QTY', 'PCS/CTN', 'Carton weight']);
+  check('…"Qty (CTNS)" is cartons, not bags (QTY stays the QTY column); "PCS/CTN", "Carton No.", "C/NO", "Carton weight" are never the box count',
+    qtyCtns.col === 'Qty (CTNS)' && qtyCtns.qty === '444' && notCtn.col === '' && notCtn.cases === '', { qtyCtns, notCtn });
+  check('page: the 📋 Import check of an order says which column was read as cartons, or "⚠ No Cartons column found on this sheet — every line was counted by QTY"',
+    /📦 Cartons read from the column <b>"/.test(rh) && /⚠ No Cartons column found on this sheet — every line was counted by QTY/.test(rh), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
