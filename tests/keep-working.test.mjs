@@ -7881,5 +7881,31 @@ console.log('\n✏️ Reorder: edit / delete ONE line of an imported order or co
   sq.prepare('DELETE FROM reorder_title WHERE title IN (?, ?)').run(O, C); sq.prepare('DELETE FROM reorder_pallet WHERE title = ?').run(C);
 }
 
+// Owner (2026-10-20): "I want anything I change to keep in history too".
+console.log('\n🕘 Reorder History: every change kept, in plain words; each sheet shows its own changes');
+{
+  const { readFileSync: rfH } = await import('node:fs');
+  const rh = rfH(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'), wd = rfH(workerPath, 'utf8');
+  // every kind of History entry the Worker writes has a plain label (and icon) on the page
+  const kinds = [...new Set([...wd.matchAll(/reorderLog\(env, [^,]+, '([a-z_-]+)'/g)].map(m => m[1]).concat(['download', 'note']))];
+  const labSrc = (rh.match(/var RVO_HIST_LAB = \{([\s\S]*?)\};/) || ['', ''])[1], iconSrc = (rh.match(/var RVO_HIST_ICON = \{([\s\S]*?)\};/) || ['', ''])[1];
+  const has = (src, k) => new RegExp("(^|[\\s{,])'?" + k.replace(/[-]/g, '\\-') + "'?:").test(src);
+  const noLab = kinds.filter(k => !has(labSrc, k) || !has(iconSrc, k));
+  check('every kind of change the Worker records (' + kinds.length + ': ' + kinds.join(', ') + ') shows in 🕘 History with a plain label + icon (a new kind fails here until it gets one)', !noLab.length, noLab);
+  // one sheet's changes, inside its 📋 Import check
+  await call('/reorder/fix/history', { headers: H });
+  const now = new Date().toISOString(), T = 'PO-HIST 10/20';
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES (?, 'production', ?, ?)").run(T, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?, '72-1-1=10', 40, 'JQ', 4, ?), (?, '72-2-2=10', 10, 'JQ', 1, ?)").run(T, now, T, now);
+  await post('/reorder/fix/incoming-line', { title: T, part: '72-1-1=10', qty: 50, cases: 5, reason: 'boxes typed wrong' });
+  await post('/reorder/fix/incoming-line', { title: T, part: '72-2-2=10', delete: true, reason: 'not ordered' });
+  const hq = await get('/reorder/fix/history?q=' + encodeURIComponent(T)), mine = (hq.history || []).filter(h => (h.detail || '').includes(T));
+  check('this sheet\'s changes come back for it, newest first, with who and why: 🗑 72-2-2=10 (not ordered), ✏️ 72-1-1=10 40 → 50 units, 4 → 5 boxes (boxes typed wrong)',
+    mine.length === 2 && /🗑 Deleted 72-2-2=10/.test(mine[0].detail) && /not ordered/.test(mine[0].detail) && /units 40 → 50, boxes 4 → 5/.test(mine[1].detail) && /boxes typed wrong/.test(mine[1].detail) && mine.every(h => h.by_user), mine);
+  check('page: the 📋 Import check of a sheet ends with "🕘 Changes to this sheet" (open), loaded for that title',
+    /<details id="rvo-ck-hist"[^>]* open>/.test(rh) && /rvoSheetHistory\(title\);/.test(rh) && /async function rvoSheetHistory\(title\)/.test(rh) && /'\/reorder\/fix\/history\?q=' \+ encodeURIComponent\(title\)/.test(rh), null);
+  sq.prepare('DELETE FROM reorder_incoming WHERE title = ?').run(T); sq.prepare('DELETE FROM reorder_title WHERE title = ?').run(T);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
