@@ -7673,7 +7673,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261019d/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261020a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -8128,6 +8128,39 @@ console.log('\n🏬 Reorder: a smaller bag our other channels sell ≥ 4 boxes a
   check('86-6-7: =10 next to the FBA =10XX (same bag size) → no own row, on the =10XX row as before', !(d.rows || []).some(r => r.sku === '86-6-7=10') && row('86-6-7=10XX').soldPcs === 6500, row('86-6-7=10XX').soldPcs);
   check('86-6-8: =25 only 2 boxes a month (< 4) → no own row, its sales stay on the =50 row', !(d.rows || []).some(r => r.sku === '86-6-8=25') && row('86-6-8=50').soldPcs === 5000, row('86-6-8=50').soldPcs);
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '86-6-%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '86-6-%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '86-6-%'; DELETE FROM master_list WHERE base_sku LIKE '86-6-%'`);
+}
+
+// Owner (2026-10-20): "under the SKU Mgr can I click on the location like C1, Barn, Garage, to see what was in there, and how much
+// inventory in there?"
+console.log('\n📍 SKU Mgr → By Location: tap an area (C1, BARN, GARAGE) → every spot in it + boxes / pieces');
+{
+  const { readFileSync: rfA } = await import('node:fs');
+  const ih = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfA(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('727-1-1','tee','727-1-1=10','ZQ1=1-1-1',3,100), ('727-1-1','tee','727-1-1=2','ZQ1=1-1-2',2,50), ('727-1-2','cap','727-1-2=5','ZQ1=2-1-1',1,0),
+    ('727-1-2','cap','727-1-2=5','ZQ1=2-1-2',0,40), ('727-1-2','cap','727-1-2=5','ZQ10=1-1-1',4,10), ('727-1-1','tee','727-1-1=10','ZQ1',1,100)`).run();
+  const A = await get('/inventory/sku-search?location=ZQ1'), S = A.summary || {};
+  // ZQ1: 3×100 + 2×50 + 1 box no Ea/Case + 1×100 (spot just "ZQ1") = 7 boxes, 500 pcs counted, 1 not counted; the 0-box spot and ZQ10 (another area) not in it
+  [['boxes', 7, S.cases], ['pieces (boxes × Ea/Case)', 500, S.pieces], ['boxes with no Ea/Case (shown, not counted)', 1, S.noEaCases], ['spots', 4, S.spots], ['part #s', 3, S.parts], ['rows listed', 4, (A.results || []).length]]
+    .forEach(([w, want, got]) => check('area ZQ1 ' + w + ': expected ' + want + ' = counted ' + got, want === got, null));
+  check('…ZQ10 (another area) and a spot with 0 boxes are not in ZQ1', !(A.results || []).some(r => /^ZQ10/.test(r.location) || !(r.cases > 0)) && A.mode === 'area', A.results);
+  const one = await get('/inventory/sku-search?location=ZQ1=1-1-1');
+  check('…one exact spot (ZQ1=1-1-1) works as before: 1 row, 3 boxes = 300 pcs', one.mode === 'location' && (one.results || []).length === 1 && one.summary.cases === 3 && one.summary.pieces === 300, one);
+  const ar = await get('/inventory/sku-search?areas=1'), z1 = (ar.areas || []).find(a => a.area === 'ZQ1') || {}, z10 = (ar.areas || []).find(a => a.area === 'ZQ10') || {};
+  check('areas=1: ZQ1 7 boxes / 500 pcs / 4 spots, ZQ10 4 boxes / 40 pcs; every area adds up to the total', z1.cases === 7 && z1.pieces === 500 && z1.spots === 4 && z10.cases === 4 && z10.pieces === 40
+    && Math.abs((ar.areas || []).reduce((t, a) => t + a.pieces, 0) - ar.total.pieces) < 0.01 && Math.abs((ar.areas || []).reduce((t, a) => t + a.cases, 0) - ar.total.cases) < 0.01, { z1, z10, total: ar.total });
+  const grab = n => { const i = ih.indexOf('window.' + n + ' = function'); const j = ih.indexOf('\n  };\n', i); return ih.slice(i, j + 5); };
+  const pre = "var SKUMGR_AREA_ORDER = ['BO', '2FL', 'FRONT', 'BSMT', 'PR', 'GARAGE', 'C1', 'C2', 'BARN', 'C3', 'C4', 'C5']; var skN = function(v) { return (Math.round((v || 0) * 100) / 100).toLocaleString('en-US'); }; var skEsc = function(v) { return String(v == null ? '' : v); };";
+  const fns = new Function('var window = {};\n' + pre + grab('skumgrAreasHtml') + grab('skumgrLocSumHtml') + grab('skumgrLocCell') + '\nreturn window;')();
+  const h = fns.skumgrAreasHtml({ areas: [{ area: 'C3', cases: 1, pieces: 10, spots: 1 }, { area: 'GARAGE', cases: 2, pieces: 20, spots: 1 }, { area: 'BO', cases: 3, pieces: 30, spots: 2 }, { area: 'ZZ', cases: 1, pieces: 1, spots: 1 }] });
+  check('screen: area buttons in walking order (BO → GARAGE → C3 → others), each with boxes · pcs · spots', h.indexOf('📍 BO') < h.indexOf('📍 GARAGE') && h.indexOf('📍 GARAGE') < h.indexOf('📍 C3') && h.indexOf('📍 C3') < h.indexOf('📍 ZZ') && /3 boxes · 30 pcs · 2 spots/.test(h), h);
+  const hs = fns.skumgrLocSumHtml(A, 'ZQ1');
+  check('…totals on top: "📍 ZQ1 (whole area) — 7 boxes · 500 pcs · 3 part #s · 4 spots", ⚠ 1 box no Ea/Case in red', /📍 ZQ1 \(whole area\)<\/b> — <b>7<\/b> boxes · <b>500<\/b> pcs · 3 part #s · 4 spots/.test(hs) && /⚠ 1 box with no Ea\/Case in SKU Mgr — not counted/.test(hs), hs);
+  const lc = fns.skumgrLocCell('C1=1-1-1');
+  check('…a location in the list: tap "C1" → the whole area, tap "=1-1-1" → that spot', /onclick="skumgrOpenLoc\('C1'\)">C1<\/span>/.test(lc) && /onclick="skumgrOpenLoc\('C1=1-1-1'\)">=1-1-1<\/span>/.test(lc), lc);
+  check('…page: area buttons show in By Location, location cells are taps, 🧩 Pages & Tabs check mark',
+    /<div id="skumgr-areas"/.test(ih) && /<div id="skumgr-loc-sum"/.test(ih) && /skumgrLocCell\(row\.location\)/.test(ih) && /if \(mode === 'loc'\) skumgrLoadAreas\(\)/.test(ih) && /key: 'areas', label: '📍 Areas[^']*', sel: '#skumgr-areas, #skumgr-loc-sum'/.test(xa), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('727-1-1','727-1-2')");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

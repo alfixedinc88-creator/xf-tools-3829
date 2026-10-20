@@ -14751,7 +14751,34 @@ async function inventorySkuSearch(url, env) {
   const limit    = parseInt(url.searchParams.get('limit') || '6000');
   const isAll    = q === 'ALL';
 
+  // 📍 Owner (2026-10-20): "under SKU Mgr can I click on the location like C1, Barn, Garage, to see what was in there and how much
+  // inventory in there?" — ?areas=1: every area (the part before "=") with its spots / boxes / pieces; a location with no "="
+  // (C1, BARN) = the whole area. Pieces = boxes × Ea/Case; boxes with no Ea/Case are shown as not counted, never guessed.
+  const areaSum = rows => {
+    const S = { spots: 0, parts: 0, cases: 0, pieces: 0, noEaCases: 0 }, locs = new Set(), parts = new Set();
+    rows.forEach(r => { const c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0; if (!(c > 0)) return;
+      locs.add(String(r.location || '').toUpperCase()); parts.add(String(r.part_num || '').toUpperCase()); S.cases += c; if (ea > 0) S.pieces += c * ea; else S.noEaCases += c; });
+    S.spots = locs.size; S.parts = parts.size; ['cases', 'pieces', 'noEaCases'].forEach(k => { S[k] = Math.round(S[k] * 100) / 100; });
+    return S;
+  };
+  if (url.searchParams.get('areas') === '1' && env.DB) {
+    const rows = await d1All(env, `SELECT part_num, location, cases, units_per_case FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`, []);
+    const by = {}; rows.forEach(r => { const a = String(r.location).trim().toUpperCase().split('=')[0]; (by[a] = by[a] || []).push(r); });
+    const areas = Object.keys(by).map(a => ({ area: a, ...areaSum(by[a]) }));
+    return cors(new Response(JSON.stringify({ ok: true, areas, total: areaSum(rows) }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   // Location search mode
+  if (locQ && env.DB && !locQ.includes('=')) {
+    const area = locQ.replace(/=+$/, '');
+    const rows = await d1All(env,
+      `SELECT m.id, m.sku, m.base_sku,
+              COALESCE(NULLIF(m.name,''), (SELECT p.name FROM products p WHERE UPPER(p.sku)=UPPER(m.base_sku) LIMIT 1), '') as name,
+              m.part_num, m.location, m.cases, m.units_per_case, m.vendor, m.price, m.prev_notes, m.sheet_row
+       FROM master_list m WHERE (UPPER(TRIM(m.location)) = ? OR UPPER(TRIM(m.location)) LIKE ?) AND m.cases > 0 ORDER BY m.location, m.part_num`,
+      [area, area + '=%']);
+    return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'area', area, summary: areaSum(rows) }),
+      { headers: { 'Content-Type': 'application/json' } }));
+  }
   if (locQ && env.DB) {
     try {
       const rows = await d1All(env,
@@ -14766,7 +14793,7 @@ async function inventorySkuSearch(url, env) {
          ORDER BY m.part_num`,
         [locQ]
       );
-      return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'location' }),
+      return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'location', summary: areaSum(rows) }),
         { headers: { 'Content-Type': 'application/json' } }));
     } catch(e) {
       return cors(new Response(JSON.stringify({ ok: false, error: e.message }),

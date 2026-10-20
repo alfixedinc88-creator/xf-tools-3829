@@ -124,7 +124,8 @@ document.addEventListener('input', function (e) {
         { key: 'addrow', label: '+ Add New Row', sel: '#inv-panel-skumgr button[onclick="skumgrShowAddRow()"]' },
         { key: 'incoming', label: 'Ordered / on the way', sel: '#skumgr-incoming' },
         { key: 'incomingtotal', label: '📊 Search totals (in stock / still making / on the way / sold)', sel: '#skumgr-incoming .sk-sum-box' },
-        { key: 'incomingsales', label: '💵 Sold last 30 / 90 days (in the search totals)', sel: '#skumgr-incoming .sk-sum-sales' } ] },
+        { key: 'incomingsales', label: '💵 Sold last 30 / 90 days (in the search totals)', sel: '#skumgr-incoming .sk-sum-sales' },
+        { key: 'areas', label: '📍 Areas: tap C1 / BARN / GARAGE… to see what is there and how much', sel: '#skumgr-areas, #skumgr-loc-sum' } ] },
       { key: 'location', label: '📍 Location Plan', sel: '#inv-tab-location', needs: 'Mgmt', parts: [
         { key: 'plan', label: '📍 Plan', sel: '#lp-tab-plan, #lp-plan-view' },
         { key: 'photos', label: '🖼 Photos', sel: '#lp-tab-photos, #lp-photo-view' } ] },
