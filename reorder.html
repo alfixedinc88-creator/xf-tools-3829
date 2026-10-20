@@ -4565,7 +4565,9 @@ async function rvoCheck(title, file) {
         + '<td style="padding:5px 8px;min-width:160px;max-width:320px">' + (l.description ? escHtml(l.description) : '<span style="color:var(--text3)">—</span>') + '</td>'
         + '<td style="padding:5px 8px;text-align:right;font-weight:600">' + fmt0(l.pcs) + '</td><td style="padding:5px 8px;text-align:right;color:var(--text3)">' + fmt0(l.qty) + '</td><td style="padding:5px 8px;text-align:right">' + (l.cases ? fmt0(l.cases) : '') + '</td>'
         + '<td style="padding:5px 8px;color:' + col[l.where] + '">' + escHtml(l.whereTxt) + '</td>'
-        + '<td style="padding:5px 8px">' + (l.where !== 'own' ? '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;white-space:nowrap" onclick="rvoMapLine(' + i + ')">Map to part #</button>' : '') + '</td></tr>';
+        + '<td style="padding:5px 8px;white-space:nowrap"><button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoLineEdit(' + i + ')" title="Change this line\'s units / boxes">✏️ Edit</button> '
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:var(--red)" onclick="rvoLineDel(' + i + ')" title="Take this item off this sheet">🗑</button>'
+        + (l.where !== 'own' ? ' <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoMapLine(' + i + ')">Map to part #</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
   body.innerHTML = h;
   RVO_CK = { title: title, lines: d.lines, file: file, filter: (RVO_CK && RVO_CK.title === title) ? RVO_CK.filter : '' };
@@ -4655,6 +4657,37 @@ function rvoSkippedHtml(sk) {
   return '<div style="font-size:12px;margin:0 0 10px;padding:8px 10px;background:#FDF0EE;border-radius:8px"><b style="color:var(--red)">Skipped from the file (' + sk.length + '):</b>'
     + sk.slice(0, 200).map(function (k) { return '<div>row ' + escHtml(String(k.row)) + ': <span style="font-family:var(--mono)">' + escHtml(k.part || '(empty)') + '</span>' + (k.qty ? ' · qty ' + escHtml(String(k.qty)) : '') + (k.cases ? ' · cases ' + escHtml(String(k.cases)) : '') + ' — ' + escHtml(k.why) + '</div>'; }).join('')
     + (sk.length > 200 ? '<div>… and ' + (sk.length - 200) + ' more</div>' : '') + '</div>';
+}
+// ✏️ / 🗑 one line of an imported sheet (owner 2026-10-20: "I did the box quantities wrong — let me edit the quantities / boxes or
+// delete the item, instead of deleting the whole sheet and importing it again"). A container line: what it took off its
+// orders is put back and taken again with the new numbers (oldest order first). On record in 🕘 History.
+async function rvoLinePost(body) {
+  var d = await (await wFetch(W + '/reorder/fix/incoming-line', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+  if (!d.ok) { alert('Not saved: ' + (d.error || 'failed')); return null; }
+  var o = Object.keys((d.after || {}).orders || {});
+  showToast((d.deleted ? '🗑 ' + d.part + ' taken off "' + d.title + '"' : '✏️ ' + d.part + ' saved on "' + d.title + '"')
+    + ' — ' + d.title + ' ' + fmt0(d.before.title) + ' → ' + fmt0(d.after.title) + ' units'
+    + (o.length ? ' · its order' + (o.length > 1 ? 's' : '') + ': ' + o.map(function (t) { return t + ' ' + fmt0(d.before.orders[t]) + ' → ' + fmt0(d.after.orders[t]); }).join(', ') : ''));
+  await rvoLoad(); rvoCheck(RVO_CK.title, RVO_CK.file);
+  if (document.getElementById('rvo-hist-box') && document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+  return d;
+}
+async function rvoLineEdit(i) {
+  var l = RVO_CK && RVO_CK.lines[i]; if (!l) return;
+  var u = prompt('✏️ ' + l.part + ' on "' + RVO_CK.title + '"\n\nUnits (bags) on this sheet now: ' + fmt0(l.qty) + ' (= ' + fmt0(l.pcs) + ' pcs)\nType the RIGHT units:', l.qty);
+  if (u == null) return; u = String(u).trim(); if (!(parseFloat(u) > 0)) { alert('Units must be more than 0 — to take the item off, use 🗑.'); return; }
+  var c = prompt('✏️ ' + l.part + ' — boxes (cases) on this sheet now: ' + (l.cases ? fmt0(l.cases) : '—') + '\nType the RIGHT number of boxes (empty = none):', l.cases || '');
+  if (c == null) return; c = String(c).trim();
+  if (c !== '' && !(parseFloat(c) >= 0)) { alert('Boxes must be a number.'); return; }
+  var why = prompt('Why? (kept in 🕘 History, e.g. "box quantity typed wrong")', 'box quantity typed wrong');
+  if (why == null) return;
+  await rvoLinePost({ title: RVO_CK.title, part: l.part, qty: parseFloat(u), cases: c === '' ? '' : parseFloat(c), reason: why });
+}
+async function rvoLineDel(i) {
+  var l = RVO_CK && RVO_CK.lines[i]; if (!l) return;
+  var why = prompt('🗑 Take ' + l.part + ' (' + fmt0(l.qty) + ' units' + (l.cases ? ', ' + fmt0(l.cases) + ' boxes' : '') + ') off "' + RVO_CK.title + '"?\n\nOnly this item — the rest of the sheet stays. A container: what it took off its order goes back on the order.\nWhy? (kept in 🕘 History)', 'not on this order');
+  if (why == null) return;
+  await rvoLinePost({ title: RVO_CK.title, part: l.part, delete: true, reason: why });
 }
 async function rvoMapLine(i) {
   var l = RVO_CK && RVO_CK.lines[i]; if (!l) return;

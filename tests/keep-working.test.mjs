@@ -7837,5 +7837,49 @@ console.log('\n🏭 SKU Mgr → Coming in: ONE line per part # per order (the pa
   sq.prepare("DELETE FROM reorder_title WHERE title IN ('9-14-26 orders','PO-B 10/2','CT-B 10/9')").run();
 }
 
+// Owner (2026-10-20): "the box quantities on the vendor sheet I imported were wrong — something I can click to edit the quantities or
+// boxes, even delete the item, instead of deleting the whole sheet and importing the new one again".
+console.log('\n✏️ Reorder: edit / delete ONE line of an imported order or container — every piece still in one place');
+{
+  await call('/reorder/fix/history', { headers: H }); // reorder tables
+  const now = new Date().toISOString(), O = 'PO-E 10/1', C = 'CT-E 10/8', A = '71-1-1=10', B = '71-2-2=5';
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES (?, 'production', ?, ?), (?, 'shipped', ?, ?)").run(O, now, now, C, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,100,'JQ',10,?), (?,?,50,'JQ',5,?), (?,?,60,'JQ',6,?)").run(O, A, now, O, B, now, C, A, now);
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, cases, pcs, units, pcs_per_ctn, updated_at) VALUES (?, 'JQ', 'P1', ?, 6, 600, 60, 100, ?)").run(C, A, now);
+  const tk = await post('/reorder/fix/incoming-take', { from: O, to: C });
+  const q = (t, p) => (sq.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').get(t, p) || { qty: 0, cases: null });
+  // Start: ordered 100 of A, the container shipped 60 → order owes 40, on the water 60 = 100.
+  check('start: order "' + O + '" owes 40 of ' + A + ' (100 − 60 shipped), container 60 on the water → 100 pcs-worth, once', tk.ok && q(O, A).qty === 40 && q(C, A).qty === 60, [q(O, A), q(C, A)]);
+  // 1) The container line was really 80 (boxes 8) → put back 60, take 80: order 20, water 80 = 100.
+  const e1 = await post('/reorder/fix/incoming-line', { title: C, part: A, qty: 80, cases: 8, reason: 'box quantity typed wrong' });
+  const pal = sq.prepare('SELECT cases, pcs, units FROM reorder_pallet WHERE title = ? AND part = ?').get(C, A);
+  check('✏️ container ' + A + ' 60 → 80 (8 boxes): taken again from its order → order 20 + on the water 80 = 100 (nothing twice); the one pallet line → 8 boxes = 800 pcs',
+    e1.ok && e1.shipped && q(C, A).qty === 80 && q(C, A).cases === 8 && q(O, A).qty === 20 && q(O, A).qty + q(C, A).qty === 100 && e1.before.orders[O] === 90 && e1.after.orders[O] === 70 && pal.cases === 8 && pal.pcs === 800 && pal.units === 80, { e1, o: q(O, A), c: q(C, A), pal });
+  // 2) More shipped than ordered (120): the order is used up, the extra 20 counts only on the water (rule 4).
+  const e2 = await post('/reorder/fix/incoming-line', { title: C, part: A, qty: 120, cases: 12 });
+  check('✏️ container 80 → 120 (more than the 100 ordered): order line used up (0), 120 on the water, 20 shown as "not on an order"',
+    e2.ok && q(O, A).qty === 0 && q(C, A).qty === 120 && (e2.retake.notOnOrder || []).some(x => x.part === A && x.shipped - x.fromOrder === 20), e2.retake);
+  // 3) 🗑 the container line: what it took goes back on the order (100 again), the pallet line goes.
+  const e3 = await post('/reorder/fix/incoming-line', { title: C, part: A, delete: true, reason: 'not in this container' });
+  check('🗑 container line: the order owes 100 of ' + A + ' again, nothing on the water, its pallet line gone', e3.ok && q(O, A).qty === 100 && !sq.prepare('SELECT 1 FROM reorder_incoming WHERE title = ? AND part = ?').get(C, A)
+    && !sq.prepare('SELECT 1 FROM reorder_pallet WHERE title = ? AND part = ?').get(C, A), q(O, A));
+  // 4) an order line: units / boxes become the new numbers; 5) 🗑 it.
+  const e4 = await post('/reorder/fix/incoming-line', { title: O, part: B, qty: 30, cases: 3, reason: 'boxes typed wrong' });
+  const bad = await post('/reorder/fix/incoming-line', { title: O, part: B, qty: 0 });
+  check('✏️ order ' + B + ' 50 units / 5 boxes → 30 / 3 (still owed); 0 units refused ("use 🗑")', e4.ok && !e4.shipped && q(O, B).qty === 30 && q(O, B).cases === 3 && bad.ok === false, [q(O, B), bad.error]);
+  const e5 = await post('/reorder/fix/incoming-line', { title: O, part: B, delete: true });
+  const tot = sq.prepare('SELECT COALESCE(SUM(qty),0) u FROM reorder_incoming WHERE title IN (?, ?)').get(O, C).u;
+  check('🗑 order line ' + B + ' → gone; the rest of the sheet stays (' + A + ' 100); orders + on the water now 100', e5.ok && !sq.prepare('SELECT 1 FROM reorder_incoming WHERE title = ? AND part = ?').get(O, B) && q(O, A).qty === 100 && tot === 100, tot);
+  const h = sq.prepare("SELECT detail FROM reorder_history WHERE action = 'incoming-line' ORDER BY ts").all().map(r => r.detail);
+  check('every edit / delete is in 🕘 History with before → after, the order(s) taken again, and why',
+    h.length === 5 && /✏️ Changed 71-1-1=10 on container "CT-E 10\/8": units 60 → 80, boxes 6 → 8 · "CT-E 10\/8" 60 → 80 units · its orders \(taken again, oldest first\): "PO-E 10\/1" 90 → 70 — box quantity typed wrong/.test(h[0]) && /🗑 Deleted 71-1-1=10 on container/.test(h[2]) && /✏️ Changed 71-2-2=5 on order "PO-E 10\/1": units 50 → 30, boxes 5 → 3/.test(h[3]), h);
+  const { readFileSync: rfE } = await import('node:fs');
+  const rh = rfE(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: every line in the 📋 Import check has ✏️ Edit (units, boxes, why) and 🗑 (why); "Map to part #" kept for lines without their own row',
+    /onclick="rvoLineEdit\(' \+ i \+ '\)"/.test(rh) && /onclick="rvoLineDel\(' \+ i \+ '\)"/.test(rh) && /'\/reorder\/fix\/incoming-line'/.test(rh) && /l\.where !== 'own' \? ' <button[^>]*onclick="rvoMapLine\(' \+ i \+ '\)">Map to part #/.test(rh), null);
+  sq.prepare('DELETE FROM reorder_incoming WHERE title IN (?, ?)').run(O, C); sq.prepare('DELETE FROM reorder_take WHERE to_title = ? OR from_title = ?').run(C, O);
+  sq.prepare('DELETE FROM reorder_title WHERE title IN (?, ?)').run(O, C); sq.prepare('DELETE FROM reorder_pallet WHERE title = ?').run(C);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
