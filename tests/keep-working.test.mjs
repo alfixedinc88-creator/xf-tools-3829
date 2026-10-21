@@ -8359,7 +8359,13 @@ console.log('\n🚫 Reorder: mark a part # Discontinued → never ordered / not 
   check('…kept in 🕘 Reorder History (Discontinued, why)', !!hl && /sells too slow/.test(hl.detail || ''), hist && Object.keys(hist));
   const qty = new Function('RVO', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\nreturn rvoQty;')({ edits: { '85-5-5=50': 20 } });
   check('…the vendor file never has it, even with a number typed by hand (rvoQty 0)', qty({ sku: '85-5-5=50', orderUnits: 5, discontinued: { by: 'x' } }) === 0 && qty({ sku: '85-5-5=50', orderUnits: 5 }) === 20, null);
+  // Owner (2026-10-21): "put discontinued under Barcode / vendor for a part # — search for it and set it as discontinued".
+  const pi = await get('/reorder/fix/part-info?part=85-5-5%3D50');
+  check('🏷 Barcode / vendor: searching 85-5-5=50 shows it discontinued (why, who); the page has the 🚫 Discontinued / ↩ Sell it again button there',
+    pi.ok && pi.discontinued && pi.discontinued.note === 'sells too slow' && /class="rvo-p-disc"/.test(rh) && /onclick="rvoDiscPart\(/.test(rh) && /🚫 Discontinued \(stop ordering it\)…/.test(rh) && /↩ Sell it again/.test(rh)
+      && /async function rvoDiscPart\(part, on\)[\s\S]{0,700}\/reorder\/fix\/discontinued/.test(rh), pi.discontinued);
   await call('/reorder/fix/discontinued', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ part: '85-5-5=50', on: false }) });
+  check('…↩ from there → part-info says not discontinued', !(await get('/reorder/fix/part-info?part=85-5-5%3D50')).discontinued, null);
   const r2 = await rows(), hist2 = await get('/reorder/fix/history');
   check('↩ sold again → back to before (=10 450 / =50 550, ordered again), "Sold again" in History', r2.a.soldPcs === 450 && r2.b.soldPcs === 550 && !r2.b.discontinued && r2.b.orderUnits === r0.b.orderUnits
     && ((hist2.history || [])).some(x => x.action === 'undiscontinued' && x.part === '85-5-5=50'), [r2.a.soldPcs, r2.b.soldPcs]);

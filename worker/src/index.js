@@ -2023,6 +2023,8 @@ async function reorderPartInfo(env, raw) {
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
     retired: (await upcRetiredMap(env)).get(P) || null,
     caseOf: ((await all('SELECT target FROM reorder_case_of WHERE part = ?', [P]))[0] || {}).target || '',
+    // 🚫 Owner (2026-10-21): discontinued can be set from 🏷 Barcode / vendor (search the part #) too.
+    discontinued: (await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {}), (await all('SELECT by_user, at, note FROM reorder_discontinued WHERE part = ?', [reorderDashFix(P)]))[0] || null),
     fix, catalog, upc, edit, builtIn, links, skuMgr: sm, upcDup: upcDup.length > 1 && !edit ? upcDup : [], upcWarn: reorderUpcWarn(ours, fix, catalog[0], builtIn), siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
 }
 // One row's fix. Fields not sent keep what was saved before.
