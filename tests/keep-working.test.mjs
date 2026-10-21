@@ -8301,5 +8301,38 @@ console.log('\n🧭 Recount report → By area: one line per aisle + row (BARN 1
   check('…each line says how many of its spots are done (BARN 1-2: 1/2 — 1-2-1 done; 1-1: 0/4); every spot shown once', /1-2<div[^>]*>1\/2<\/div>/.test(B.html) && /1-1<div[^>]*>0\/4<\/div>/.test(B.html) && B.rows.reduce((a, r) => a + r.spots.length, 0) === 7 && C.rows.reduce((a, r) => a + r.spots.length, 0) === 7, null);
 }
 
+// Owner (2026-10-21): "BARN is a big section — I want to be able to select which ones are unfinished and send them to who to finish".
+console.log('\n☑ Recount report → 📤 Send: tick which unfinished spots to send (a line at a time, All / None); one already sent starts unticked');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ih.indexOf('  function ' + n + '('); const j = ih.indexOf('\n  }\n', i); return ih.slice(i, j + 4); };
+  const spots = ['BARN=1-2-1', 'BARN=1-1-2', 'BARN=2-1-1', 'BARN=1-1-1', 'BARN=1-1-10'];
+  const assigned = [{ to: 'MG', spots: [{ l: 'BARN=2-1-1', st: 'none' }, { l: 'BARN=9-9-9', st: 'done' }] }];
+  let posted = null; const flashes = [], els = {};
+  const lib = new Function('ckE', 'g', 'document', 'wFetch', 'W', 'invFlash', 'RC', 'xfrPopupClose', 'rcReport', 'var window = {};\n' + fnOf('rcAisleKey') + fnOf('rcSpotCompare') + fnOf('rcAssignPickHtml')
+    + ih.slice(ih.indexOf('  window.rcAssignCount = function'), ih.indexOf('  window.rcAssignCancel = function')) + '\nvar rcAssignCount = window.rcAssignCount;\nwindow.rcAssignPickHtml = rcAssignPickHtml; return window;')(
+    x => String(x), id => els[id], { querySelectorAll: sel => doc.q(sel) }, (u, o) => { posted = JSON.parse(o.body); return Promise.resolve({ json: () => ({ ok: true, spots: posted.spots.length, to: 'MG' }) }); }, '', m => flashes.push(m), { _asSpots: spots }, () => {}, () => {});
+  const html = lib.rcAssignPickHtml(spots, assigned);
+  // a tiny page: the tick boxes in the popup
+  const boxes = [...html.matchAll(/<input type="checkbox" class="(rc-as-line|rc-as-spot)" data-line="(\d+)"(?: value="([^"]+)")?([^>]*)>/g)].map(m => ({ cls: m[1], line: m[2], value: m[3], checked: /checked/.test(m[4]), indeterminate: false, getAttribute(a) { return a === 'data-line' ? this.line : null; } }));
+  const doc = { q: sel => { const m = sel.match(/^\.(rc-as-\w+)(?:\[data-line="(\d+)"\])?$/); return boxes.filter(b => b.cls === m[1] && (!m[2] || b.line === m[2])); } };
+  els['rc-as-count'] = { textContent: '' }; els['rc-as-send'] = { textContent: '' }; els['rc-as-to'] = { value: '7' }; els['rc-as-note'] = { value: '' };
+  const spotsShown = boxes.filter(b => b.cls === 'rc-as-spot').map(b => b.value);
+  check('popup: every unfinished spot with a tick box, one line per aisle + row (1-1: 1-1-1 1-1-2 1-1-10 · 1-2 · 2-1), a tick for the whole line', spotsShown.join(' ') === 'BARN=1-1-1 BARN=1-1-2 BARN=1-1-10 BARN=1-2-1 BARN=2-1-1' && boxes.filter(b => b.cls === 'rc-as-line').length === 3, spotsShown);
+  lib.rcAssignCount();
+  check('…BARN=2-1-1 is already on MG\'s list → says "📤 MG" and starts unticked; the other 4 start ticked ("4 of 5 picked", "📤 Send 4 spots")',
+    /📤 MG<\/span>/.test(html) && !boxes.find(b => b.value === 'BARN=2-1-1').checked && els['rc-as-count'].textContent === '4 of 5 picked' && els['rc-as-send'].textContent === '📤 Send 4 spots', els);
+  lib.rcAssignAll(false); const l0 = boxes.find(b => b.cls === 'rc-as-line' && b.line === '0'); l0.checked = true; lib.rcAssignLine(l0);
+  check('…✗ None, then tick line 1-1 → its 3 spots picked ("3 of 5 picked")', els['rc-as-count'].textContent === '3 of 5 picked' && boxes.filter(b => b.cls === 'rc-as-spot' && b.checked).map(b => b.value).join(' ') === 'BARN=1-1-1 BARN=1-1-2 BARN=1-1-10', els['rc-as-count']);
+  boxes.find(b => b.value === 'BARN=1-1-10').checked = false; lib.rcAssignCount();
+  check('…untick 1-1-10 → the 1-1 line shows part-ticked', l0.indeterminate === true && l0.checked === false, l0);
+  await lib.rcAssignSend('BARN'); await new Promise(r => setTimeout(r, 5));
+  check('📤 Send → only the ticked spots go (BARN=1-1-1, BARN=1-1-2), to the person picked', posted && posted.spots.join(' ') === 'BARN=1-1-1 BARN=1-1-2' && posted.toUserId === '7' && posted.area === 'BARN', posted);
+  lib.rcAssignAll(false); posted = null; await lib.rcAssignSend('BARN');
+  check('…nothing ticked → not sent, "Tick at least one spot to send"', posted === null && flashes.some(f => /Tick at least one spot/.test(f)), flashes);
+  check('page: the area button says "📤 Send the N unfinished (pick which) to…"', /unfinished \(pick which\) to…/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
