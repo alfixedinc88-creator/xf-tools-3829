@@ -14424,15 +14424,17 @@ window.invCredLogin = async function() {
   // 🔎 Search by name / day (New York day) over every column ever done: per person per day — columns, boxes, time, avg / column, over 10 min.
   function rcNyDay(iso) { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); } catch (e) { return String(iso || '').slice(0, 10); } }
   function rcDaySearchHtml(d) {
-    var who = {}; (d.history || []).forEach(function(c) { who[c.by] = 1; });
+    var who = {}, today = rcNyDay(new Date().toISOString()); (d.history || []).forEach(function(c) { who[c.by] = 1; });
     return '<div class="rc-daysearch" style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
       + '<div style="font-weight:800;color:var(--text);margin-bottom:6px">🔎 Search by name / day</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">'
       + '<select id="rc-ds-who" onchange="rcDaySearch()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px"><option value="">Everyone</option>'
       + Object.keys(who).sort().map(function(n) { return '<option value="' + ckE(n) + '">' + ckE(n) + '</option>'; }).join('') + '</select>'
-      + '<input id="rc-ds-day" type="date" onchange="rcDaySearch()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">'
+      // Owner (2026-10-21): "stay on today — if I want the other days I can search for it". Opens on today (New York).
+      + '<input id="rc-ds-day" type="date" value="' + today + '" onchange="rcDaySearch()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">'
+      + '<a href="#" onclick="var x=document.getElementById(\'rc-ds-day\');x.value=\'' + today + '\';rcDaySearch();return false" style="font-size:12px">today</a>'
       + '<a href="#" onclick="var x=document.getElementById(\'rc-ds-day\');x.value=\'\';rcDaySearch();return false" style="font-size:12px">all days</a></div>'
-      + '<div id="rc-ds-out" style="margin-top:6px">' + rcDaySearchOut(d, '', '') + '</div></div>';
+      + '<div id="rc-ds-out" style="margin-top:6px">' + rcDaySearchOut(d, '', today) + '</div></div>';
   }
   function rcDaySearchOut(d, who, day) {
     var M = function(m) { return m == null ? '—' : m < 60 ? (Math.round(m * 10) / 10) + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
