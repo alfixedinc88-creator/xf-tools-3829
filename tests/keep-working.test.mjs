@@ -8274,20 +8274,24 @@ console.log('\n🔎 Recount report: search by name / day (columns a day, avg / c
   sq.exec("DELETE FROM recount_columns WHERE location LIKE 'ZZA=%'");
 }
 
-// Owner (2026-10-21): "Audit → By area: each aisle on its own line — 1A stays with 1A: 1A-1-1, 1A-1-2 etc., 1A-2-1, 1A-2-2 etc."
-console.log('\n🧭 Recount report → By area: one line per aisle (1A, 1B, 2A … 10A), spots 1A-1-1, 1A-1-2 … 1A-2-1 in order');
+// Owner (2026-10-21): "Audit → By area: each aisle on its own line — 1A stays with 1A: 1A-1-1, 1A-1-2 etc." — then (same day, BARN):
+// "1-1-1 … all stay on one line, when we do 1-2-1 start with a new line again, that way it's easy to see". One line per aisle + row.
+console.log('\n🧭 Recount report → By area: one line per aisle + row (BARN 1-1 · 1-2 · 2-1; C1 1A-1 · 1A-2 · 1B-1 · 10A-1), spots in order');
 {
   const { readFileSync: rfB } = await import('node:fs');
   const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   const fnOf = n => { const i = ih.indexOf('  function ' + n + '('); const j = ih.indexOf('\n  }\n', i); return ih.slice(i, j + 4); };
   const wc = ih.slice(ih.indexOf('  var INV_PULL_AREA_ORDER = '), ih.indexOf('\n', ih.indexOf('  var INV_PULL_ZONE = ') + 200));
-  const RC = { area: 'C1', rep: { areas: [{ area: 'C1', done: 1, started: 0, notScanned: 6, spots: ['C1=1A-2-1', 'C1=1A-1-2', 'C1=1B-1-1', 'C1=1A-1-1', 'C1=10A-1-1', 'C1=2A-1-1', 'C1=1A-1-10']
-    .map((l, i) => ({ l, st: i === 3 ? 'done' : 'none', by: i === 3 ? 'MG' : '', at: '', stock: true })) }], notSpots: [] } };
-  const html = new Function('RC', 'ckE', 'xfrFmtT', 'xfrN', wc + '\n' + fnOf('invPullLocationRank') + fnOf('invPullWalkCompare') + fnOf('rcAisleKey') + fnOf('rcSpotCompare') + fnOf('rcAisleRows') + fnOf('rcAreaGrid') + '\nreturn rcAreaGrid();')(RC, x => String(x), x => String(x), x => String(x));
-  const rows = html.split('class="rc-aisle-row"').slice(1).map(r => ({ aisle: (r.match(/font-size:13px;color:var\(--text\);padding-top:4px">([^<]+)/) || [])[1], spots: [...r.matchAll(/font-size:11\.5px">([^<]+)<\/div>/g)].map(m => m[1]) }));
-  check('aisles each on their own line, in order: 1A · 1B · 2A · 10A', rows.map(r => r.aisle).join(' ') === '1A 1B 2A 10A', rows);
-  check('…1A\'s line: 1A-1-1, 1A-1-2, 1A-1-10, 1A-2-1 (2nd number, then the 3rd — 10 after 2)', rows[0] && rows[0].spots.join(' ') === '1A-1-1 1A-1-2 1A-1-10 1A-2-1', rows[0]);
-  check('…each line says how many of its spots are done (1A: 1/4); every spot shown once (7)', /1A<div[^>]*>1\/4<\/div>/.test(html) && rows.reduce((a, r) => a + r.spots.length, 0) === 7, null);
+  const grid = (area, spots) => {
+    const RC = { area, rep: { areas: [{ area, done: 1, started: 0, notScanned: spots.length - 1, spots: spots.map((l, i) => ({ l, st: i === 0 ? 'done' : 'none', by: i === 0 ? 'MG' : '', at: '', stock: true })) }], notSpots: [] } };
+    const html = new Function('RC', 'ckE', 'xfrFmtT', 'xfrN', wc + '\n' + fnOf('invPullLocationRank') + fnOf('invPullWalkCompare') + fnOf('rcAisleKey') + fnOf('rcSpotCompare') + fnOf('rcAisleRows') + fnOf('rcAreaGrid') + '\nreturn rcAreaGrid();')(RC, x => String(x), x => String(x), x => String(x));
+    return { html, rows: html.split('class="rc-aisle-row"').slice(1).map(r => ({ line: (r.match(/font-size:13px;color:var\(--text\);padding-top:4px">([^<]+)/) || [])[1], spots: [...r.matchAll(/font-size:11\.5px">([^<]+)<\/div>/g)].map(m => m[1]) })) };
+  };
+  const B = grid('BARN', ['BARN=1-2-1', 'BARN=1-1-2', 'BARN=2-1-1', 'BARN=1-1-1', 'BARN=1-1-10', 'BARN=1-2-2', 'BARN=1-1-3']);
+  check('BARN: 1-1-1, 1-1-2, 1-1-3, 1-1-10 on ONE line; 1-2-1 starts a new line; then 2-1', B.rows.map(r => r.line + ': ' + r.spots.join(' ')).join(' | ') === '1-1: 1-1-1 1-1-2 1-1-3 1-1-10 | 1-2: 1-2-1 1-2-2 | 2-1: 2-1-1', B.rows);
+  const C = grid('C1', ['C1=1A-2-1', 'C1=1A-1-2', 'C1=1B-1-1', 'C1=1A-1-1', 'C1=10A-1-1', 'C1=2A-1-1', 'C1=1A-1-10']);
+  check('C1: 1A-1 (1A-1-1, 1A-1-2, 1A-1-10) · 1A-2 · 1B-1 · 2A-1 · 10A-1 (numbers as numbers)', C.rows.map(r => r.line + ': ' + r.spots.join(' ')).join(' | ') === '1A-1: 1A-1-1 1A-1-2 1A-1-10 | 1A-2: 1A-2-1 | 1B-1: 1B-1-1 | 2A-1: 2A-1-1 | 10A-1: 10A-1-1', C.rows);
+  check('…each line says how many of its spots are done (BARN 1-2: 1/2 — 1-2-1 done; 1-1: 0/4); every spot shown once', /1-2<div[^>]*>1\/2<\/div>/.test(B.html) && /1-1<div[^>]*>0\/4<\/div>/.test(B.html) && B.rows.reduce((a, r) => a + r.spots.length, 0) === 7 && C.rows.reduce((a, r) => a + r.spots.length, 0) === 7, null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

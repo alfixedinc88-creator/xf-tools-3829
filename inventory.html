@@ -14482,9 +14482,10 @@ window.invCredLogin = async function() {
             + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + (sp.odd ? '⚠ ' : '') + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; })
       + '</div>';
   }
-  // Spots → one line per aisle: "1A" on the left, then 1A-1-1, 1A-1-2 … 1A-2-1, 1A-2-2 … wrapping inside that line. Aisles 1A, 1B, 2A … 10A
-  // (numbers as numbers); inside an aisle by the 2nd number, then the 3rd (the owner's order — not the pick-list walk).
-  function rcAisleKey(L) { var r = String(L).slice(String(L).indexOf('=') + 1); return r.split('-')[0] || r; }
+  // Spots → one line per aisle + row: owner (2026-10-21, BARN): "1-1-1, 1-1-2 … all stay on one line; at 1-2-1 start a new line".
+  // The line is everything but the last number (BARN=1-1-3 → "1-1", C1=1A-2-1 → "1A-2"), wrapping inside that line. Lines in order
+  // 1-1, 1-2 … 1A-1, 1B-1, 2A-1 … 10A-1 (numbers as numbers); spots inside by their last number (the owner's order — not the pick-list walk).
+  function rcAisleKey(L) { var r = String(L).slice(String(L).indexOf('=') + 1), p = r.split('-'); return p.length > 1 ? p.slice(0, -1).join('-') : r; }
   function rcSpotCompare(a, b) {
     var pa = String(a).slice(String(a).indexOf('=') + 1).split('-'), pb = String(b).slice(String(b).indexOf('=') + 1).split('-');
     for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -14496,12 +14497,12 @@ window.invCredLogin = async function() {
   function rcAisleRows(spots, cell) {
     var order = [], by = {};
     spots.forEach(function(sp) { var k = rcAisleKey(sp.l); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(sp); });
-    order.sort(function(x, y) { return String(x).localeCompare(String(y), undefined, { numeric: true }); });
+    order.sort(function(x, y) { return rcSpotCompare('=' + x, '=' + y); });
     order.forEach(function(k) { by[k].sort(function(x, y) { return rcSpotCompare(x.l, y.l); }); });
     return order.map(function(k) {
       var d = by[k].filter(function(sp) { return sp.st === 'done'; }).length;
       return '<div class="rc-aisle-row" style="display:flex;gap:6px;align-items:flex-start;padding:4px 0;border-top:1px solid var(--border)">'
-        + '<div style="flex:0 0 52px;font-family:var(--mono);font-weight:800;font-size:13px;color:var(--text);padding-top:4px">' + ckE(k) + '<div style="font-size:10px;font-weight:400;color:var(--text3)">' + d + '/' + by[k].length + '</div></div>'
+        + '<div style="flex:0 0 64px;font-family:var(--mono);font-weight:800;font-size:13px;color:var(--text);padding-top:4px">' + ckE(k) + '<div style="font-size:10px;font-weight:400;color:var(--text3)">' + d + '/' + by[k].length + '</div></div>'
         + '<div style="flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px">' + by[k].map(cell).join('') + '</div></div>';
     }).join('');
   }
