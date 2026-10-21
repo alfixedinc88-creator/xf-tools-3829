@@ -9278,7 +9278,16 @@ const _app = {
     // ── AWD routes /awd/* ──
     if (url.pathname === '/awd/cpack'                    && method === 'GET')  return await awdCpackSync(env);
     if (url.pathname === '/awd/cpack-add'                 && method === 'POST') return await awdCpackAdd(request, env);
-    if (url.pathname === '/awd/amazon-sync'              && method === 'POST') return await awdAmazonSync(env);
+    // ⚡ Sync from Amazon = the same 4-report run as every morning (the old sync left units shipped blank).
+    if (url.pathname === '/awd/amazon-sync'              && method === 'POST') { try { const r = await awdAutoTick(env, true); return cors(new Response(JSON.stringify({ ...r, ok: !!(r.ok && r.inv && r.inv.fba && !r.inv.fba.error), error: r.error || (r.inv && r.inv.fba && r.inv.fba.error) || '', fbaCount: (r.inv && r.inv.fba && r.inv.fba.count) || 0, awdCount: (r.inv && r.inv.awd && r.inv.awd.count) || 0, syncedAt: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } })); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })); } }
+    // 📡 The 4 reports by themselves: GET = when each one came in (and any problem); POST = get them now (⚡ Sync).
+    if (url.pathname === '/awd/auto-reports' && (method === 'GET' || method === 'POST')) {
+      if (method === 'POST') { try { return cors(new Response(JSON.stringify(await awdAutoTick(env, true)), { headers: { 'Content-Type': 'application/json' } })); }
+        catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })); } }
+      if (url.searchParams.get('check') === '1' && env.AMAZON_REFRESH_TOKEN) await awdAutoHealth(env).catch(() => {}); // the page is waiting on Inventory Health
+      const o = await awdAutoGet(env);
+      return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.pathname === '/awd/amazon-velocity-request'  && method === 'POST') return await awdVelocityRequest(env);
     if (url.pathname === '/awd/amazon-velocity-status'   && method === 'GET')  return await awdVelocityStatus(url, env);
     if (url.pathname === '/awd/amazon-velocity-download' && method === 'POST') return await awdVelocityDownload(request, env);
@@ -10096,6 +10105,8 @@ const _app = {
     if (now.getUTCHours() === 0 && min === 0) ctx.waitUntil(cleanProcessedRequests(env));
     // 🖼 Daily: parent photos not ✓ confirmed take the newest Pack & Ship order photo.
     if (hr === 11 && min === 0) ctx.waitUntil(productPhotoDailyRefresh(env, 2).catch(e => console.error('[photo refresh]', e.message)));
+    // 📡 AWD planner's 4 Amazon reports: once a New York morning, and any tick picks up a finished Inventory Health report.
+    ctx.waitUntil(awdAutoTick(env, false).then(r => { if (r && (r.ran || (r.health && r.health.status === 'DONE'))) console.log('[cron] awdAutoTick', JSON.stringify({ ran: r.ran, health: r.health })); }, e => console.error('[cron] awdAutoTick FAILED', e && e.message)));
     // Amazon FBM listings on the same ASIN as our FBA listing → its part #, hourly.
     if (min === 0) ctx.waitUntil(reorderAutoSameAsin(env).catch(e => console.error('[auto same ASIN]', e.message)));
     // Archive Scan_Log/Manifest_Log rows older than 45 days, runs at midnight
@@ -14235,6 +14246,142 @@ async function awdAmazonSync(env) {
     await writeSheet('FBA_Live',[['sku','asin','product-name','afn-fulfillable-quantity','afn-total-quantity'],...fbaItems.map(i=>{const d=i.inventoryDetails||{};return[i.sellerSku||'',i.asin||'',i.productName||'',d.fulfillableQuantity||0,i.totalQuantity||0];})]);
     return cors(new Response(JSON.stringify({ok:true,fbaCount:fbaItems.length,syncedAt:new Date().toISOString()}),{headers:{'Content-Type':'application/json'}}));
   } catch(e){return cors(new Response(JSON.stringify({ok:false,error:e.message}),{status:500,headers:{'Content-Type':'application/json'}}));}
+}
+
+// 📡 Owner (2026-10-21): "FBA Inventory Health, AWD inventory, FBA Live inventory, FBA Reserved inventory — all 4 reports: can the
+// system get them by itself instead of us downloading them?" Yes, from Amazon's seller API, every morning (and with ⚡ Sync):
+//   • FBA Live + FBA Reserved + inbound: the FBA Inventory API (fulfillable, inbound working / shipped / receiving, reserved:
+//     customer orders, FC transfers, FC processing).
+//   • AWD: the AWD API (available, inbound to AWD, reserved, on its way to FBA).
+//   • Inventory Health (units shipped 7 / 30 / 60 / 90 days): Amazon's GET_FBA_INVENTORY_PLANNING_DATA report — Amazon takes a few
+//     minutes to make it, so it is asked for once and picked up on a later 30-minute tick.
+// Written to the same 4 sheets the planner page reads (FBA_Inventory, FBA_Live, FBA_Reserve, AWD_Inventory), in the same columns as
+// the CSV uploads. Fixes on the way: the old sync left units shipped BLANK (every SKU looked unsold) and put FC processing in the
+// "Reserved FC Transfer" column. A report that can't be read keeps the sheet as it was and says why — never written empty.
+const AWD_AUTO_TABLE = 'CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)';
+async function awdAutoGet(env) {
+  await env.DB.prepare(AWD_AUTO_TABLE).run();
+  const o = {}; ((await env.DB.prepare('SELECT k, v FROM awd_auto').all()).results || []).forEach(r => { try { o[r.k] = JSON.parse(r.v); } catch (_) {} });
+  return o;
+}
+async function awdAutoSet(env, k, v) { await env.DB.prepare('INSERT INTO awd_auto (k, v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(k, JSON.stringify(v)).run(); }
+const awdAmzDate = () => new Date().toISOString().replace(/[:\-.]/g, '').slice(0, 15) + 'Z';
+async function awdSpGet(env, token, url) {
+  return await spApiRetry(async () => {
+    const r = await fetch(url, { headers: { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = JSON.stringify(d.errors || d).slice(0, 300); if (r.status === 429 || e.includes('QuotaExceeded')) throw new Error('QuotaExceeded:' + e); throw new Error('HTTP ' + r.status + ': ' + e); }
+    return d;
+  }, 3, 6000);
+}
+async function awdSheetWrite(env, tab, rows) {
+  const tok = await getToken(env), id = env.AMAZON_SHEET_ID || env.SHEET_ID;
+  await fetch(`${SHEETS_URL}/${id}/values/${encodeURIComponent(tab)}:clear`, { method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' } });
+  await fetch(`${SHEETS_URL}/${id}/values/${encodeURIComponent(tab)}?valueInputOption=RAW`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range: tab, majorDimension: 'ROWS', values: rows }) });
+}
+async function awdReportText(env, token, docId) {
+  const doc = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/documents/${docId}`);
+  if (!doc.url) throw new Error('No report file');
+  const raw = await (await fetch(doc.url)).arrayBuffer(), m = new Uint8Array(raw.slice(0, 2));
+  if (m[0] === 0x1f && m[1] === 0x8b) return await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return new TextDecoder().decode(raw);
+}
+const AWD_FBA_HEAD = ['sku','asin','fnsku','product-name','condition','afn-fulfillable-quantity','afn-unsellable-quantity','afn-reserved-quantity','afn-total-quantity','per-unit-volume','afn-inbound-working-quantity','afn-inbound-shipped-quantity','afn-inbound-receiving-quantity','units-shipped-t7','units-shipped-t30','units-shipped-t60','units-shipped-t90','Reserved FC Transfer'];
+// FBA_Inventory = the FBA Inventory API numbers + units shipped from the newest Inventory Health report (never blank when we have one).
+async function awdWriteFbaInventory(env, items, health) {
+  await awdSheetWrite(env, 'FBA_Inventory', [AWD_FBA_HEAD, ...items.map(i => { const d = i.inventoryDetails || {}, res = d.reservedQuantity || {}, h = (health || {})[String(i.sellerSku || '').trim().toUpperCase()] || null;
+    return [i.sellerSku || '', i.asin || '', i.fnSku || '', i.productName || '', i.condition || '', d.fulfillableQuantity || 0, (d.unfulfillableQuantity && d.unfulfillableQuantity.totalUnfulfillableQuantity) || 0,
+      res.totalReservedQuantity || 0, i.totalQuantity || 0, '', d.inboundWorkingQuantity || 0, d.inboundShippedQuantity || 0, d.inboundReceivingQuantity || 0,
+      h ? h.t7 : '', h ? h.t30 : '', h ? h.t60 : '', h ? h.t90 : '', res.pendingTransshipmentQuantity || 0]; })]);
+}
+// Inventory now: FBA (Live + Reserved + FBA_Inventory) and AWD. Then asks Amazon for a fresh Inventory Health report.
+async function awdAutoInventory(env) {
+  const st = await awdAutoGet(env), now = new Date().toISOString(), out = {};
+  const token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  // FBA
+  try {
+    let items = [], next = null, pages = 0;
+    do {
+      const p = new URLSearchParams({ granularityType: 'Marketplace', granularityId: mid, marketplaceIds: mid, details: 'true' }); if (next) p.set('nextToken', next);
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inventory/v1/summaries?${p}`);
+      items = items.concat((d.payload && d.payload.inventorySummaries) || []);
+      next = d.pagination && d.pagination.nextToken ? d.pagination.nextToken : null;
+    } while (next && ++pages < 60);
+    if (!items.length) throw new Error('Amazon sent no FBA SKUs — sheets kept as they were');
+    await awdWriteFbaInventory(env, items, st.healthRows || null);
+    await awdSheetWrite(env, 'FBA_Live', [['sku', 'asin', 'product-name', 'afn-fulfillable-quantity', 'afn-total-quantity'], ...items.map(i => { const d = i.inventoryDetails || {}; return [i.sellerSku || '', i.asin || '', i.productName || '', d.fulfillableQuantity || 0, i.totalQuantity || 0]; })]);
+    await awdSheetWrite(env, 'FBA_Reserve', [['sku', 'fnsku', 'asin', 'product-name', 'reserved_qty', 'reserved_customerorders', 'reserved_fc-transfers', 'reserved_fc-processing'],
+      ...items.map(i => { const r = (i.inventoryDetails || {}).reservedQuantity || {}; return [i.sellerSku || '', i.fnSku || '', i.asin || '', i.productName || '', r.totalReservedQuantity || 0, r.pendingCustomerOrderQuantity || 0, r.pendingTransshipmentQuantity || 0, r.fcProcessingQuantity || 0]; })]);
+    await awdAutoSet(env, 'fbaItems', items.map(i => ({ sellerSku: i.sellerSku, asin: i.asin, fnSku: i.fnSku, productName: i.productName, condition: i.condition, totalQuantity: i.totalQuantity, inventoryDetails: i.inventoryDetails })));
+    out.fba = { at: now, count: items.length };
+  } catch (e) { out.fba = { at: now, error: String(e.message || e).slice(0, 300) }; }
+  await awdAutoSet(env, 'fba', out.fba);
+  // AWD
+  try {
+    let inv = [], next = null, pages = 0;
+    do {
+      const p = new URLSearchParams({ details: 'SHOW', maxResults: '200' }); if (next) p.set('nextToken', next);
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inventory?${p}`);
+      inv = inv.concat(d.inventory || []); next = d.nextToken || null;
+    } while (next && ++pages < 60);
+    if (!inv.length) throw new Error('Amazon sent no AWD SKUs — sheet kept as it was');
+    await awdSheetWrite(env, 'AWD_Inventory', [['SKU', 'Available in AWD (units)', 'Inbound to AWD (units)', 'Reserved in AWD (units)', 'Outbound to FBA (units)', 'On hand in AWD (units)'],
+      ...inv.map(x => { const dt = x.inventoryDetails || {}; const res = dt.reservedDistributableQuantity || 0, onh = x.totalOnhandQuantity || 0;
+        return [x.sku || '', dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res), x.totalInboundQuantity || 0, res, dt.replenishmentQuantity || 0, onh]; })]);
+    out.awd = { at: now, count: inv.length };
+  } catch (e) {
+    const m = String(e.message || e);
+    out.awd = { at: now, error: (/HTTP 40[13]/.test(m) ? 'Amazon refused AWD (the seller-API app needs the "Amazon Warehousing and Distribution" role) — ' : '') + m.slice(0, 250) };
+  }
+  await awdAutoSet(env, 'awd', out.awd);
+  // Inventory Health: ask for it now, pick it up on a later tick.
+  try {
+    const r = await fetch('https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports', { method: 'POST', headers: { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportType: 'GET_FBA_INVENTORY_PLANNING_DATA', marketplaceIds: [mid] }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.reportId) throw new Error('HTTP ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 250));
+    out.health = { ...(st.health || {}), pending: { reportId: d.reportId, at: now }, error: '' };
+  } catch (e) { out.health = { ...(st.health || {}), pending: null, error: 'Could not ask Amazon for it: ' + String(e.message || e).slice(0, 250) }; }
+  await awdAutoSet(env, 'health', out.health);
+  await awdAutoSet(env, 'lastRun', { at: now, day: new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) });
+  return out;
+}
+// A pending Inventory Health report: done → units shipped 7 / 30 / 60 / 90 days per SKU saved and FBA_Inventory rewritten with them.
+async function awdAutoHealth(env) {
+  const st = await awdAutoGet(env), h = st.health || {};
+  if (!h.pending || !h.pending.reportId) return { pending: false };
+  const token = await getAmazonToken(env), now = new Date().toISOString();
+  const rep = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports/${h.pending.reportId}`);
+  const s = rep.processingStatus;
+  if (s === 'CANCELLED' || s === 'FATAL') { await awdAutoSet(env, 'health', { ...h, pending: null, error: 'Amazon could not make the report (' + s + ') — the last one is kept', checkedAt: now }); return { pending: false, status: s }; }
+  if (s !== 'DONE' || !rep.reportDocumentId) {
+    // Amazon is still making it; give up after 6 hours (asked again tomorrow / on the next ⚡ Sync).
+    if (Date.now() - Date.parse(h.pending.at) > 6 * 3600e3) { await awdAutoSet(env, 'health', { ...h, pending: null, error: 'Amazon took more than 6 hours — the last one is kept', checkedAt: now }); return { pending: false, status: 'TIMEOUT' }; }
+    await awdAutoSet(env, 'health', { ...h, checkedAt: now, status: s }); return { pending: true, status: s };
+  }
+  const text = await awdReportText(env, token, rep.reportDocumentId);
+  const lines = text.split(/\r?\n/).filter(l => l.trim()), head = (lines[0] || '').split('\t').map(x => x.trim().toLowerCase());
+  const ix = n => head.indexOf(n), iS = ix('sku'), i7 = ix('units-shipped-t7'), i30 = ix('units-shipped-t30'), i60 = ix('units-shipped-t60'), i90 = ix('units-shipped-t90');
+  if (iS < 0 || i90 < 0) { await awdAutoSet(env, 'health', { ...h, pending: null, error: 'The report had no sku / units-shipped-t90 column — the last one is kept', checkedAt: now }); return { pending: false, status: 'BADFILE' }; }
+  const rows = {}, num = v => { const n = parseFloat(String(v || '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
+  lines.slice(1).forEach(l => { const c = l.split('\t'), k = String(c[iS] || '').trim().toUpperCase(); if (!k) return;
+    rows[k] = { t7: num(c[i7]), t30: num(c[i30]), t60: num(c[i60]), t90: num(c[i90]) }; });
+  await awdAutoSet(env, 'healthRows', rows);
+  if (Array.isArray(st.fbaItems) && st.fbaItems.length) await awdWriteFbaInventory(env, st.fbaItems, rows);
+  const done = { at: now, count: Object.keys(rows).length, pending: null, error: '' };
+  await awdAutoSet(env, 'health', done);
+  return { pending: false, status: 'DONE', count: done.count };
+}
+// Every 30-minute tick: once a New York day (from 5 am) the inventory run; any tick: pick up a pending Inventory Health report.
+async function awdAutoTick(env, force) {
+  if (!env.DB || !env.AMAZON_REFRESH_TOKEN) return { ok: false, error: 'Amazon seller API not set up' };
+  const st = await awdAutoGet(env), nyDay = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const nyHour = +new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+  let inv = null;
+  if (force || ((!st.lastRun || st.lastRun.day !== nyDay) && nyHour >= 5)) inv = await awdAutoInventory(env);
+  let health = null; try { health = await awdAutoHealth(env); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
+  return { ok: true, ran: !!inv, inv, health, status: await awdAutoGet(env).then(o => ({ fba: o.fba || null, awd: o.awd || null, health: o.health || null, lastRun: o.lastRun || null })) };
 }
 
 async function awdVelocityRequest(env) {
