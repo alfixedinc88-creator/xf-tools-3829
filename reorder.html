@@ -5589,7 +5589,10 @@ async function rvoCaseOf(i) {
   } catch (e) { alert('Not saved: ' + e.message); }
 }
 // Rows (arrays; a UPC is { upc }) → { blob, ext }: .xlsx with the UPCs as text cells, or .csv if Excel support can't load.
+// `more` = extra sheets [{ name, lines }] after the "Order" sheet (owner 2026-10-21: the "Order" sheet holds only the order; the
+// family sales list is its own sheet 2). The .csv (only if Excel support can't load) has one sheet: they go under the order there.
 async function rvoSheetBlob(lines) {
+  var more = (arguments[1] || []).filter(function (m) { return m && m.lines && m.lines.length; });
   try {
     await rvoLoadXlsx();
     var aoa = lines.map(function (l) { return l.map(function (c) { return c && typeof c === 'object' ? c.upc : c; }); });
@@ -5599,10 +5602,16 @@ async function rvoSheetBlob(lines) {
     for (var ri = 1; ri < lines.length; ri++) { var ad9 = XLSX.utils.encode_cell({ r: ri, c: 9 }), lt = ws[ad9]; if (lt && lt.t === 's' && /^-?\d+\.\d\d$/.test(lt.v) && lines[ri].length > 12) ws[ad9] = { t: 'n', v: parseFloat(lt.v), z: '0.00' }; }
     ws['!cols'] = (lines[0] || []).map(function (h, ci) { return { wch: ci === 4 || ci === 11 ? 40 : Math.max(10, Math.min(30, String(h).length + 2)) }; });
     var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Order');
+    more.forEach(function (m) {
+      var ws2 = XLSX.utils.aoa_to_sheet(m.lines);
+      ws2['!cols'] = (m.lines[1] || m.lines[0] || []).map(function (h) { return { wch: Math.max(12, Math.min(30, String(h).length + 2)) }; });
+      XLSX.utils.book_append_sheet(wb, ws2, String(m.name).slice(0, 31));
+    });
     var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     return { blob: new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), ext: '.xlsx' };
   } catch (e) {
     var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+    more.forEach(function (m) { lines = lines.concat([[]], m.lines); });
     var csv = lines.map(function (l) { return l.map(function (c) { return c && typeof c === 'object' ? (c.upc ? '"=""' + c.upc + '"""' : '') : cell(c); }).join(','); }).join('\r\n');
     return { blob: new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), ext: '.csv' };
   }
@@ -5682,16 +5691,12 @@ async function rvoCsv() {
   var seenFam = {}, famLines = [];
   rows.forEach(function (r) { if (!r.calc || seenFam[r.baseSku]) return; seenFam[r.baseSku] = 1;
     (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.p30, x.p90]); }); });
-  if (famLines.length) {
-    lines.push([]);
-    // Owner (2026-10-07): "the report in PIECES only — boxes hold different counts, I don't want to convert packs myself".
-    lines.push([cell('SALES BY PART # - whole family, 30 / 90 days, in PIECES')]);
-    lines.push(['Parent', 'Part #', 'Channel', 'Pieces 30d', 'Pieces 90d']);
-    lines = lines.concat(famLines);
-  }
+  // Owner (2026-10-07): "the report in PIECES only — boxes hold different counts, I don't want to convert packs myself".
+  // Owner (2026-10-21): "move the SALES BY PART # info to sheet 2 — under the sheet 'Order' only the order info".
+  var salesSheet = famLines.length ? [[cell('SALES BY PART # - whole family, 30 / 90 days, in PIECES')], ['Parent', 'Part #', 'Channel', 'Pieces 30d', 'Pieces 90d']].concat(famLines) : [];
   // 📗 An Excel file (.xlsx): UPCs as text, numbers as numbers. Only if Excel support can't load: the old .csv.
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10);
-  var sheet = await rvoSheetBlob(lines);
+  var sheet = await rvoSheetBlob(lines, [{ name: 'Sales by part #', lines: salesSheet }]);
   name += sheet.ext;
   var a = document.createElement('a'); a.href = URL.createObjectURL(sheet.blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
