@@ -5904,6 +5904,7 @@ async function inventoryPartSummary(env, q, alias, totals) {
   const S = { stock: { cases: 0, pieces: 0, spots: 0, noEaCases: 0, negCases: 0, parts: {} }, orderedPcs: 0, onWayPcs: 0, comingPcs: 0, unpackingCases: 0, sold30Pcs: 0, sold90Pcs: 0, sales: {} };
   for (const r of await all(`SELECT part_num, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`)) {
     const part = P(r.part_num); if (!mine(part)) continue;
+    S.skuRows = (S.skuRows || 0) + 1; // a SKU Mgr line of this part #, stock or not (out of stock still shows its sales)
     const c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
     if (c < 0) { S.stock.negCases += c; continue; } // a counting mistake — never "minus stock"; shown in red
     if (!(c > 0)) continue;
@@ -5928,6 +5929,12 @@ async function inventoryPartSummary(env, q, alias, totals) {
     }
     const m = (await all(`SELECT MIN(period_start) AS m FROM ${t}`))[0];
     if (m && m.m && (!S.salesFrom || m.m < S.salesFrom)) S.salesFrom = String(m.m).slice(0, 10);
+    // 🗓 Owner (2026-10-21): "no more inventory, In Stock Only — I still want to see the sales history": the last week it sold
+    // (any time, not only 12 months), so an item out of stock for a while still shows when it last sold, and where.
+    for (const r of await all(`SELECT sku, MAX(period_start) AS m FROM ${t} WHERE units_ordered > 0 AND UPPER(sku) LIKE ? GROUP BY sku`, String(q).split('=')[0] + '%')) {
+      const part = P(r.sku); if (!part || !mine(part) || !r.m) continue;
+      if (!S.lastSold || String(r.m) > S.lastSold.at) S.lastSold = { at: String(r.m).slice(0, 10), ch, part };
+    }
   }
   ['orderedPcs', 'onWayPcs', 'comingPcs', 'unpackingCases', 'sold30Pcs', 'sold90Pcs', 'sold180Pcs', 'sold365Pcs'].forEach(k => { S[k] = r2(S[k]); });
   ['cases', 'pieces', 'noEaCases', 'negCases'].forEach(k => { S.stock[k] = r2(S.stock[k]); });

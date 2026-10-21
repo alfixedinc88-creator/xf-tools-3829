@@ -7834,7 +7834,7 @@ window.invCredLogin = async function() {
       return from && from > start ? '⚠ sales kept only since ' + e(from) : 'all channels'; };
     var top = '<div class="sk-sum-box"><div class="sk-sum" style="font-weight:800;margin-bottom:6px;color:#1A56DB">📊 ' + e(d.q) + ' — all part #s together (pieces)</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
-      + cell('🏬 In stock now', pc(st.pieces), n(st.cases) + ' box' + (st.cases === 1 ? '' : 'es') + ' · ' + st.spots + ' spot' + (st.spots === 1 ? '' : 's') + (S.unpackingCases ? ' · 📦 ' + n(S.unpackingCases) + ' still on pallets' : ''))
+      + cell('🏬 In stock now', st.cases ? pc(st.pieces) : '<b style="color:var(--red)">0</b> pcs · out of stock', n(st.cases) + ' box' + (st.cases === 1 ? '' : 'es') + ' · ' + st.spots + ' spot' + (st.spots === 1 ? '' : 's') + (S.unpackingCases ? ' · 📦 ' + n(S.unpackingCases) + ' still on pallets' : ''))
       + cell('🏭 Still making', pc(S.orderedPcs), 'ordered, not shipped yet')
       + cell('🚢 On the way', pc(S.onWayPcs), 'shipped, not 📦 Received')
       + cell('= Coming in total', pc(S.comingPcs), 'still making + on the way', '#1A56DB')
@@ -7843,6 +7843,7 @@ window.invCredLogin = async function() {
       // Owner (2026-10-20): 6 and 12 months too. Sales kept only since a later day → said, so a short history isn't read as a slow year.
       + (S.sold365Pcs != null ? cell('💵 Sold last 6 months', pc(S.sold180Pcs), skSalesSince(S, 180), '', 'sk-sum-sales')
         + cell('💵 Sold last 12 months', pc(S.sold365Pcs), skSalesSince(S, 365), '', 'sk-sum-sales') : '')
+      + (S.lastSold ? cell('🗓 Last sold', '<b>' + e(S.lastSold.at) + '</b>', 'week of · ' + e(S.lastSold.ch) + ' · ' + e(S.lastSold.part), '', 'sk-sum-sales') : S.skuRows != null ? cell('🗓 Last sold', '<b>—</b>', 'no sale on record', '', 'sk-sum-sales') : '')
       + '</div>'
       + (st.noEaCases ? '<div style="margin-top:4px;color:var(--red);font-weight:700">⚠ ' + n(st.noEaCases) + ' box' + (st.noEaCases === 1 ? '' : 'es') + ' with no Ea/Case in SKU Mgr — not counted in the pieces above</div>' : '')
       + (st.negCases ? '<div style="margin-top:4px;color:var(--red);font-weight:700">⚠ ' + n(st.negCases) + ' boxes (minus) in SKU Mgr — a counting mistake, not counted</div>' : '') + '</div>';
@@ -7857,7 +7858,9 @@ window.invCredLogin = async function() {
     box.style.display = 'none'; box.innerHTML = '';
     wFetch(W + '/inventory/incoming?summary=1&q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
       var S = d && d.summary;
-      if (!d || !d.ok || (!d.items.length && !(S && (S.stock.cases || S.sold90Pcs || S.stock.negCases)))) return;
+      // Owner (2026-10-21): "no more inventory and In Stock Only — I still want to see the sales history": shown for any part # SKU Mgr
+      // knows (even at 0 boxes) or that sold in the last 12 months / ever, not only when something sold in 90 days.
+      if (!d || !d.ok || (!d.items.length && !(S && (S.stock.cases || S.sold90Pcs || S.sold365Pcs || S.stock.negCases || S.skuRows || S.lastSold)))) return;
       box.style.display = 'block';
       box.innerHTML = skumgrIncomingHtml(d);
     }).catch(function() {});

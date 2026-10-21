@@ -8094,7 +8094,7 @@ console.log('\n📈 Reorder: 90 days that sold more than normal (checked against
   const h = render(s);
   check('…SKU Mgr shows 💵 Sold last 6 months 70 pcs and 💵 Sold last 12 months 200 pcs after the 30 / 90 days (hidden with the sales check mark)',
     /💵 Sold last 6 months<\/div><div[^>]*><b>70<\/b> pcs/.test(h) && /💵 Sold last 12 months<\/div><div[^>]*><b>200<\/b> pcs/.test(h) && h.indexOf('Sold last 90 days') < h.indexOf('Sold last 6 months')
-      && (h.match(/class="sk-sum-sales"/g) || []).length === 4, h);
+      && (h.match(/class="sk-sum-sales"/g) || []).length === 5, h); // 30 / 90 days, 6 / 12 months + 🗓 Last sold (2026-10-21)
   const h2 = render({ ...s, summary: { ...S, salesFrom: day(100) } });
   check('…sales kept only since a later day → "⚠ sales kept only since …" under 6 / 12 months', (h2.match(/⚠ sales kept only since/g) || []).length === 2, null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '725-5-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '725-5-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '725-5-5%'");
@@ -8373,6 +8373,32 @@ console.log('\n🚫 Reorder: mark a part # Discontinued → never ordered / not 
     /onclick="rvoDisc\(' \+ RVO\.rows\.indexOf\(r\) \+ '\)"/.test(rh) && /🚫 DISCONTINUED<\/span>/.test(rh) && /if \(r\.discontinued\) return '<span[^']*>🚫 0<\/span>'/.test(rh) && /class="rvo-disc-sum"/.test(rh)
       && /discontinued: 'Discontinued', undiscontinued: 'Sold again'/.test(rh) && /discontinued: '🚫', undiscontinued: '↩️'/.test(rh), null);
   sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '85-5-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '85-5-5%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '85-5-5%'; DELETE FROM reorder_discontinued WHERE part LIKE '85-5-5%'");
+}
+
+// Owner (2026-10-21): "SKU Mgr: if there is no more inventory and I select In Stock Only, I still want to see the sales history too".
+console.log('\n🗓 SKU Mgr search: out of stock (In Stock Only shows no rows) → the 📊 totals and sales history still show, with 🗓 Last sold');
+{
+  const { readFileSync: rfO } = await import('node:fs');
+  const ih = rfO(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  // 731-3-3=10: SKU Mgr line at 0 boxes; sold 12 bags 200 days ago (eBay) and 5 bags 500 days ago (Amazon) — nothing in 90 days
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('731-3-3','elbow','731-3-3=10','C1=1-1-1',0,100)").run();
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('731-3-3=10',?,12)").run(day(200));
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('731-3-3=10',?,5,'B0T7313')").run(day(500));
+  const inst = await get('/inventory/sku-search?q=731-3-3&sort=asc&instock=1'), d = await get('/inventory/incoming?summary=1&q=731-3-3'), S = d.summary || {};
+  check('In Stock Only: no SKU Mgr row (0 boxes) — but the totals know the part #: 1 SKU Mgr line, 0 in stock, sold 12 months 120 pcs, 90 days 0, last sold ' + day(200) + ' on eBay',
+    (inst.results || []).length === 0 && S.skuRows === 1 && S.stock.cases === 0 && S.sold365Pcs === 120 && S.sold90Pcs === 0 && S.lastSold && S.lastSold.at === day(200) && S.lastSold.ch === 'eBay', S);
+  const grab = n => { const i = ih.indexOf('window.' + n + ' = function'); const j = ih.indexOf('\n  };\n', i); return ih.slice(i, j + 5); };
+  const render = new Function('var window = {};\n' + grab('skumgrIncomingHtml') + '\nreturn window.skumgrIncomingHtml;')();
+  const h = render(d);
+  check('…screen: "0 pcs · out of stock" in red, 💵 12 months 120 pcs, 🗓 Last sold ' + day(200) + ' (eBay · 731-3-3=10)',
+    /<b style="color:var\(--red\)">0<\/b> pcs · out of stock/.test(h) && /💵 Sold last 12 months<\/div><div[^>]*><b>120<\/b> pcs/.test(h) && h.includes('🗓 Last sold') && h.includes('<b>' + day(200) + '</b>') && /eBay · 731-3-3=10/.test(h), h.slice(0, 1500));
+  // …and the box is shown (it used to hide when nothing sold in 90 days and nothing was in stock)
+  const box = { style: {}, innerHTML: '' };
+  await new Function('g', 'wFetch', 'W', 'skumgrIncomingHtml', 'var window = {};\n' + grab('skumgrLoadIncoming') + '\nwindow.skumgrLoadIncoming("731-3-3"); return new Promise(r => setTimeout(r, 10));')(
+    () => box, () => Promise.resolve({ json: () => d }), '', render);
+  check('…the box shows (it used to stay hidden: nothing in stock and no sale in 90 days)', box.style.display === 'block' && /🗓 Last sold/.test(box.innerHTML), box.style);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '731-3-3'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '731-3-3%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '731-3-3%'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
