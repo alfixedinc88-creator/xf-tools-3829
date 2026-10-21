@@ -8154,6 +8154,15 @@ window.invCredLogin = async function() {
     if (!a.since && !a.noRecordCases) h += a.lastIn ? '<div>last in ' + e(d(a.lastIn.at)) + ' · ' + e(a.lastIn.from) + '</div>' : '<div>no record</div>';
     if (a.lastOut) h += '<div style="color:var(--text3)">last out ' + e(d(a.lastOut.at)) + (a.lastOut.by ? ' · ' + e(a.lastOut.by) : '') + (a.lastOut.to ? ' → ' + e(a.lastOut.to) : '') + '</div>';
     else if (a.since) h += '<div style="color:var(--text3)">none taken out since</div>';
+    // 🔍 The last Audit of this spot (owner 2026-10-21): matched, corrected (SKU Mgr changed), or still waiting in Review (not changed yet).
+    var au = a.audit;
+    if (au) {
+      var aw = e(d(au.at)) + (au.by ? ' · ' + e(au.by) : '');
+      if (au.pending) h += '<div class="sk-got-audit" style="color:var(--red);font-weight:700">⏳ Audit ' + aw + (au.from != null ? ': ' + au.from + ' → ' + au.to + ' cs' : '') + ' waiting in Review — SKU Mgr not changed yet</div>';
+      else if (au.matched != null) h += '<div class="sk-got-audit" style="color:#0891B2">🔍 Audit ' + aw + ': ' + au.matched + ' cs ✓ matched</div>';
+      else if (au.from != null) h += '<div class="sk-got-audit" style="color:#0891B2">🔍 Audit ' + aw + ': ' + au.from + ' → ' + au.to + ' cs (SKU Mgr changed)</div>';
+      else h += '<div class="sk-got-audit" style="color:#0891B2">🔍 Audit ' + aw + '</div>';
+    } else h += '<div class="sk-got-audit" style="color:var(--text3)">never audited</div>';
     return h;
   }
   window.skumgrLoadArrivals = function(pageRows) {

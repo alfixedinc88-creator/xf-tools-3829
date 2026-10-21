@@ -14722,8 +14722,25 @@ async function inventoryArrivals(request, env) {
       WHERE UPPER(TRIM(part_num)) IN (${ch.map(() => '?').join(',')}) AND type IN ('IN','OUT','TRANSFER_IN','TRANSFER_OUT')
         AND COALESCE(status,'') NOT IN ('Rejected','Pending') AND cancelled_at IS NULL ORDER BY id`, ch)).forEach(r => { (log[r.p + '|' + r.l] = log[r.p + '|' + r.l] || []).push(r); });
   }
+  // 🔍 Owner (2026-10-21, 29-1-2=OLD at C4=1-3-29: "16 cs: no record of getting here — we already scanned that column in Audit, did
+  // Audit change SKU Mgr?"): the last Audit of each spot — a match (0 cases, "Confirmed"), a correction (approved = SKU Mgr changed),
+  // or one still waiting in Review (SKU Mgr NOT changed until it is approved).
+  const audit = {};
+  for (let i = 0; i < parts.length; i += 80) {
+    const ch = parts.slice(i, i + 80);
+    (await d1All(env, `SELECT id, timestamp ts, type, UPPER(TRIM(part_num)) p, UPPER(TRIM(location)) l, cases, initials, notes, status FROM inventory_log
+      WHERE UPPER(TRIM(part_num)) IN (${ch.map(() => '?').join(',')}) AND type IN ('IN','OUT') AND notes LIKE '%[AUDIT]%'
+        AND COALESCE(status,'') != 'Rejected' AND cancelled_at IS NULL ORDER BY id`, ch)).forEach(r => { audit[r.p + '|' + r.l] = r; });
+  }
+  const auditOf = r => {
+    if (!r) return null;
+    const n = String(r.notes || ''), ok = /\[AUDIT\] Confirmed: ([\d.]+)/.exec(n), fx = /System: ([\d.]+) → Actual: ([\d.]+)/.exec(n);
+    return { at: r.ts, by: r.initials || '', pending: String(r.status || '') === 'Pending', type: r.type, cases: parseFloat(r.cases) || 0,
+      ...(ok ? { matched: parseFloat(ok[1]) } : fx ? { from: parseFloat(fx[1]), to: parseFloat(fx[2]) } : {}) };
+  };
   const src = r => {
     const n = String(r.notes || '');
+    if (/\[AUDIT\]/.test(n)) return '🔍 Audit (found more)';
     const m = n.match(/^\[RECEIVED\] (.*?) — /);
     if (m) return '📦 container ' + m[1];
     if (r.type === 'TRANSFER_IN') return '🔁 moved from ' + (r.paired_location || '?');
@@ -14741,6 +14758,7 @@ async function inventoryArrivals(request, env) {
     if (w.cases > 0 && left > 1e-9) res.noRecordCases = Math.round(left * 1000) / 1000; // here before any record (or put in by an SKU Mgr edit)
     const li = ins[ins.length - 1]; if (li) res.lastIn = { at: li.ts, from: src(li), by: li.initials || '', cases: parseFloat(li.cases) || 0 };
     const lo = outs[outs.length - 1]; if (lo) res.lastOut = { at: lo.ts, by: lo.initials || '', cases: parseFloat(lo.cases) || 0, to: lo.type === 'TRANSFER_OUT' ? (lo.paired_location || '') : '' };
+    const au = auditOf(audit[w.part + '|' + w.loc]); if (au) res.audit = au;
     out[w.part + '|' + w.loc] = res;
   }
   return J({ ok: true, rows: out });
