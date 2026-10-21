@@ -8163,5 +8163,36 @@ console.log('\n📍 SKU Mgr → By Location: tap an area (C1, BARN, GARAGE) → 
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('727-1-1','727-1-2')");
 }
 
+// Owner (2026-10-21): "Download sheet for vendor: move the SALES BY PART # (whole family, 30 / 90 days, in PIECES) info to sheet 2 —
+// under the sheet 'Order' only the order info".
+console.log('\n📗 Vendor sheet: "Order" sheet = the order only; SALES BY PART # on its own sheet 2');
+{
+  const { readFileSync: rfV } = await import('node:fs');
+  const rh = rfV(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fn = (rh.match(/async function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0] + '\n' + (rh.match(/async function rvoSheetBlob\(lines\) \{[\s\S]*?\n\}/) || [''])[0];
+  const r = { sku: '728-1-1=10', baseSku: '728-1-1', packSize: 10, orderUnits: 10, needUnits: 10, caseQty: 0, price: 0.1, priceAt: '2026-10-01', vendor: 'JQ', description: 'tee', outsideUpc: '', insideUpc: '', note: '', sales: {},
+    calc: { famSoldPcs: 300, months: 3, famTarget: 600, horizon: 6, famHave: 500, famNeed: 100, famSales: [{ sku: '728-1-1=10', ch: 'Amazon', u30: 1, u90: 3, p30: 10, p90: 30 }, { sku: '728-1-1=OLD', ch: 'eBay', u30: 0, u90: 2, p30: 0, p90: 20 }] } };
+  const run = async xlsx => {
+    const books = [];
+    const X = { utils: { book_new: () => { const b = { sheets: [] }; books.push(b); return b; }, aoa_to_sheet: aoa => ({ aoa }), encode_cell: () => 'A1', book_append_sheet: (b, ws, name) => b.sheets.push({ name, aoa: ws.aoa }) }, write: () => [] };
+    let csv = '';
+    await new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', 'XLSX', 'rvoLoadXlsx',
+      (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; return rvoCsv();')(
+      { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } }, { loaded: true, off: {}, edits: {}, meta: {} },
+      () => [r], () => ({ ok: true, dup: [], text: '' }), function (p) { if (typeof p[0] === 'string') csv = p.join(''); }, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '',
+      X, xlsx ? () => Promise.resolve() : () => Promise.reject(new Error('no Excel')));
+    return { books, csv };
+  };
+  const x = await run(true), b = x.books[0] || { sheets: [] }, ord = (b.sheets[0] || {}).aoa || [], sal = (b.sheets[1] || {}).aoa || [];
+  const txt = a => a.map(l => l.join('|')).join('\n');
+  check('.xlsx: 2 sheets — "Order" then "Sales by part #"', b.sheets.length === 2 && b.sheets[0].name === 'Order' && b.sheets[1].name === 'Sales by part #', b.sheets.map(s => s.name));
+  check('…"Order" sheet: the order lines + TOTAL only, no SALES BY PART # in it', /728-1-1=10/.test(txt(ord)) && /TOTAL/.test(txt(ord)) && !/SALES BY PART #|Pieces 30d/.test(txt(ord)), txt(ord).slice(-300));
+  check('…sheet 2: the title, Parent / Part # / Channel / Pieces 30d / Pieces 90d, every part # of the family that sold (=10 Amazon 10 / 30, =OLD eBay 0 / 20)',
+    /SALES BY PART # - whole family, 30 \/ 90 days, in PIECES/.test(sal[0][0]) && sal[1].join('|') === 'Parent|Part #|Channel|Pieces 30d|Pieces 90d'
+      && sal.some(l => l.join('|') === '728-1-1|728-1-1=10|Amazon|10|30') && sal.some(l => l.join('|') === '728-1-1|728-1-1=OLD|eBay|0|20') && sal.length === 4, sal);
+  const c = await run(false), L = c.csv.replace(/^﻿/, '').split('\r\n');
+  check('…no Excel (.csv, one sheet only): the sales list still comes, under the order as before', L.some(l => /SALES BY PART #/.test(l)) && L.includes('728-1-1,728-1-1=OLD,eBay,0,20') && L.findIndex(l => /^"?TOTAL/.test(l)) < L.findIndex(l => /SALES BY PART #/.test(l)), L.slice(-5));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
