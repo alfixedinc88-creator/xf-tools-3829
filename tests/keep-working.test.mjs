@@ -8270,6 +8270,13 @@ console.log('\n🔎 Recount report: search by name / day (columns a day, avg / c
   check('…the report draws: "⏱ 1 column took more than 10 minutes (ZZA=1-1-2 AA 12 min)", that row red with ⏱ 12 min, AA "Over 10 min" 1, the 🔎 search box with AA in it',
     /⏱ 1 column took more than 10 minutes <span[^>]*>\(ZZA=1-1-2 AA 12 min\)/.test(RH) && /<tr class="rc-col-over10" style="background:var\(--red-bg,#fdf0ee\)">/.test(RH) && /⏱ 12 min/.test(RH) && /<tr class="" style="background:var\(--bg\)">/.test(RH)
       && /<b style="color:var\(--red\)">1<\/b>/.test(RH) && /class="rc-daysearch"/.test(RH) && /<option value="AA">AA<\/option>/.test(RH), RH.slice(0, 1500));
+  // Owner (2026-10-21): "search by name / day — stay on today; other days I can search for".
+  const nyToday = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const dsT = new Function('ckE', 'xfrN', 'xfrFmtT', fnOf('rcOver10') + fnOf('rcNyDay') + fnOf('rcDaySearchHtml') + fnOf('rcDaySearchOut') + '\nreturn rcDaySearchHtml;')(x => String(x), x => String(x), x => String(x))(
+    { history: [{ location: 'ZZT=1-1-1', by: 'TT', startedAt: new Date(Date.now() - 5 * 6e4).toISOString(), doneAt: new Date().toISOString(), minutes: 5, boxes: 2, stopped: false },
+      { location: 'ZZT=1-1-2', by: 'AA', startedAt: '2025-01-05T15:00:00.000Z', doneAt: '2025-01-05T15:20:00.000Z', minutes: 20, boxes: 4, stopped: false }] });
+  check('🔎 opens on TODAY (New York): the day box holds ' + nyToday + ', only today\'s columns listed (TT 1, not the old 2025-01-05 one); "today" and "all days" links',
+    dsT.includes('id="rc-ds-day" type="date" value="' + nyToday + '"') && /<b>1<\/b> column · avg <b>5 min<\/b>/.test(dsT) && !/2025-01-05<\/td>/.test(dsT) && />today<\/a>/.test(dsT) && />all days<\/a>/.test(dsT), dsT.slice(0, 900));
   check('🧩 Pages & Tabs check mark for the search', /key: 'recountsearch', label: '[^']+', sel: '#rc-report \.rc-daysearch'/.test(xa), null);
   sq.exec("DELETE FROM recount_columns WHERE location LIKE 'ZZA=%'");
 }
