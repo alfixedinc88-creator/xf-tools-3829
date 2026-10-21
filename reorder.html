@@ -4070,7 +4070,7 @@ function rvoWhy(sku) {
     + '\nFamily needs to order: ' + n(c.famNeed) + ' pcs\n'
     + r.sku + ' gets: ' + n(c.rowNeedPcs) + ' pcs = ' + n(r.needUnits) + ' × ' + r.packSize + (r.cases ? ' → ' + r.cases + ' case(s) of ' + n(r.casePcs || r.caseQty * r.packSize) + ' pcs' : ''));
 }
-function rvoQty(r) { return RVO.edits[r.sku] != null ? RVO.edits[r.sku] : r.orderUnits; }
+function rvoQty(r) { return r.discontinued ? 0 : RVO.edits[r.sku] != null ? RVO.edits[r.sku] : r.orderUnits; } // 🚫 discontinued: never in the vendor file
 function rvoVisible() {
   var v = document.getElementById('rvo-vendor').value, q = (document.getElementById('rvo-q').value || '').trim().toUpperCase();
   var all = document.getElementById('rvo-all').checked;
@@ -4098,11 +4098,13 @@ function rvoCols() {
   var cols = [
     { k: 'chk', label: '<input type="checkbox" checked onchange="rvoAll(this.checked)">', w: 44, cell: function (r) { return '<input type="checkbox" ' + (RVO.off[r.sku] ? '' : 'checked') + ' onchange="rvoToggle(\'' + escHtml(r.sku) + '\',this.checked)">'; } },
     { k: 'edit', label: '', w: 84, cell: function (r) { return '<button onclick="rvoOpenEdit(' + RVO.rows.indexOf(r) + ')" title="Fix part #, UPC, description, vendor, ASIN, case qty" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">✏️</button>'
-      + ' <button onclick="rvoCaseOf(' + RVO.rows.indexOf(r) + ')" title="📦 Sold as a whole case of another part # (e.g. =100X is a case of =10X): don\'t order it, add its sales to that part #' + ((r.caseFrom || []).length ? ' — incl. ' + r.caseFrom.map(function (x) { return x.sku; }).join(', ') : '') + '" style="border:1px solid ' + ((r.caseFrom || []).length ? '#15803d' : 'var(--border)') + ';background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">📦</button>'; } },
+      + ' <button onclick="rvoCaseOf(' + RVO.rows.indexOf(r) + ')" title="📦 Sold as a whole case of another part # (e.g. =100X is a case of =10X): don\'t order it, add its sales to that part #' + ((r.caseFrom || []).length ? ' — incl. ' + r.caseFrom.map(function (x) { return x.sku; }).join(', ') : '') + '" style="border:1px solid ' + ((r.caseFrom || []).length ? '#15803d' : 'var(--border)') + ';background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">📦</button>'
+      + ' <button onclick="rvoDisc(' + RVO.rows.indexOf(r) + ')" title="' + (r.discontinued ? 'Discontinued — tap to sell it again' : '🚫 Discontinued: sells too slow, we stop selling it — never ordered again (its stock still counts)') + '" style="border:1px solid ' + (r.discontinued ? 'var(--red)' : 'var(--border)') + ';background:' + (r.discontinued ? 'var(--red-bg,#fdf0ee)' : 'var(--bg2)') + ';border-radius:6px;padding:2px 6px;cursor:pointer">🚫</button>'; } },
     { k: 'sku', label: 'Part #', w: 190, sort: function (r) { return r.sku; }, cell: function (r) { var iss = r.issues || [];
       return (rvoInlOn() ? rvoInlBox(r, 'part', '150px') : '<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>') + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
         + (r.urgent ? ' <span title="Runs out in ' + r.daysLeft + ' days — before this order can get here. The vendor CSV says: URGENT — ship in the FIRST container." style="font-size:10px;font-weight:800;color:#fff;background:var(--red);border-radius:4px;padding:0 4px">🔥 URGENT · ' + r.daysLeft + 'd</span>' : '')
         + (r.fixed ? ' <span title="Has your saved fixes" style="font-size:10px;color:var(--green)">✎</span>' : '')
+        + (r.discontinued ? ' <span class="rvo-disc-tag" title="Discontinued' + (r.discontinued.by ? ' by ' + escHtml(r.discontinued.by) : '') + (r.discontinued.note ? ': ' + escHtml(r.discontinued.note) : '') + ' — not ordered" style="font-size:10px;font-weight:800;color:#fff;background:#6b7280;border-radius:4px;padding:0 4px">🚫 DISCONTINUED</span>' : '')
         + (r.amazonCode ? ' <span title="A code Amazon made up when the listing was created without our part #. Open the ASIN to see the listing, then ✏️ to map it to the right part #." style="font-size:10px;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:0 3px">Amazon seller SKU</span>' : '')
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
         + (Object.keys(r.channels || {}).length ? '<div style="font-size:10.5px;color:var(--text3)" title="Units sold in the window, by channel">Sales: ' + Object.keys(r.channels).map(function (c) { return c + ' ' + fmt0(r.channels[c]); }).join(' · ') + '</div>' : '')
@@ -4150,6 +4152,7 @@ function rvoCols() {
     { k: 'need', label: 'Need', tip: 'Units of this part # (after stock, FBA and on the way) — 🔍 shows how the whole family was worked out', w: 90, num: true, sort: function (r) { return r.needUnits; }, cell: function (r) { return (r.calc ? '<span style="cursor:pointer" title="How was this worked out?" onclick="rvoWhy(\'' + escHtml(r.sku).replace(/'/g, '') + '\')">🔍</span> ' : '') + fmt0(r.needUnits); } },
     { k: 'case', label: 'Case qty', tip: 'Units of this part # per case', w: 90, num: true, sort: function (r) { return r.caseQty || 0; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'case_qty', '64px'); return r.caseQty ? fmt0(r.caseQty) + (r.caseSrc && r.caseSrc !== 'SKU Mgr' ? '<div style="font-size:10px;color:var(--text3)">' + escHtml(r.caseSrc) + '</div>' : '') : '—'; } },
     { k: 'order', label: 'Order', w: 95, sort: function (r) { return rvoQty(r); }, cell: function (r) { var ed = RVO.edits[r.sku] != null;
+      if (r.discontinued) return '<span style="font-size:11px;font-weight:700;color:#6b7280">🚫 0</span>';
       return '<input type="number" min="0" value="' + rvoQty(r) + '" onchange="rvoEdit(\'' + escHtml(r.sku) + '\',this.value)" style="width:72px;font-size:12px;padding:3px 5px;border-radius:5px;border:1px solid ' + (ed ? '#b45309' : 'var(--border)') + ';font-weight:700">'; } },
     { k: 'note', label: 'Note', w: 260, wrap: true, sort: function (r) { return r.note || '~'; }, cell: function (r) { var ed = RVO.edits[r.sku] != null;
       return '<span style="font-size:11px;color:var(--text3)">' + escHtml((ed ? 'Changed by hand (was ' + r.orderUnits + ')' + (r.note ? ' · ' : '') : '') + (r.note || '')) + '</span>'; } }
@@ -4193,6 +4196,9 @@ function rvoRender() {
         + (late.length ? ' · <b style="color:var(--red)">⚠ ' + late.map(escHtml).join(', ') + ' sales are more than 10 days behind — those sales are missing, so it would order too little: sync them first</b>' : ''); })()
     + (function () { var nv = inOrder.filter(function (r) { return !r.vendor; }); return nv.length ? '<br><b style="color:var(--red)">⚠ ' + nv.length + ' part # need ordering but have NO vendor</b> — they are in no vendor\'s file until you set the vendor (✏️): '
       + nv.slice(0, 15).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span>'; }).join(', ') + (nv.length > 15 ? ' …' : '') : ''; })()
+    // 🚫 Discontinued part #s: never ordered — tap one to sell it again.
+    + (function () { var dc = (RVO.rows || []).filter(function (r) { return r.discontinued; }); return dc.length ? '<br><span class="rvo-disc-sum" style="color:#6b7280">🚫 <b>' + dc.length + '</b> part # discontinued (not ordered): '
+      + dc.slice(0, 20).map(function (r) { return '<a href="#" onclick="rvoDisc(' + RVO.rows.indexOf(r) + ');return false" title="Tap to sell it again" style="font-family:var(--mono)">' + escHtml(r.sku) + '</a>'; }).join(', ') + (dc.length > 20 ? ' …' : '') + '</span>' : ''; })()
     + (function () { var u = inOrder.filter(function (r) { return r.urgent; }); return u.length ? '<br><b style="color:var(--red)">🔥 ' + u.length + ' URGENT</b> — runs out before this order can get here (' + m.lead + ' mo): '
       + u.slice(0, 12).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span> (' + r.daysLeft + ' days left)'; }).join(', ') + (u.length > 12 ? ' …' : '')
       + '. The vendor CSV puts them at the top marked <b>"URGENT — ship in the FIRST container"</b>.' : ''; })();
@@ -4833,10 +4839,10 @@ async function rvoTemplate() {
 // 🕘 History — everything done on this tab (worker table reorder_history).
 // 🕘 Every kind of change in plain words (owner 2026-10-20: "I want anything I change to keep in history too").
 var RVO_HIST_ICON = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇', incoming: '🚢', received: '📦', 'incoming-line': '✏️', take: '🔗', pallets: '🧱',
-  weights: '⚖️', 'case-of': '📦', 'upc-ok': '✔', 'upc-retired': '🚫', sales_fix: '🧮', sales_fix_undo: '↩️', note: '📝' };
+  weights: '⚖️', 'case-of': '📦', 'upc-ok': '✔', 'upc-retired': '🚫', sales_fix: '🧮', sales_fix_undo: '↩️', note: '📝', discontinued: '🚫', undiscontinued: '↩️' };
 var RVO_HIST_LAB = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV', incoming: 'On the way', received: 'Received',
   'incoming-line': 'Sheet line changed', take: 'Taken off order', pallets: 'Pallets', weights: 'Weights', 'case-of': 'Sold as a case', 'upc-ok': 'UPC marked right',
-  'upc-retired': 'Not used anymore', sales_fix: 'Sales fixed', sales_fix_undo: 'Sales fix undone', note: 'Note' };
+  'upc-retired': 'Not used anymore', sales_fix: 'Sales fixed', sales_fix_undo: 'Sales fix undone', note: 'Note', discontinued: 'Discontinued', undiscontinued: 'Sold again' };
 // 🕘 This sheet's own changes, inside its 📋 Import check (imports, ✏️ / 🗑 lines, taken off orders, received, removed).
 async function rvoSheetHistory(title) {
   var box = document.getElementById('rvo-ck-hist'); if (!box || !title) return;
@@ -5571,6 +5577,24 @@ function rvoPartMissing() {
 }
 // 📦 Owner (2026-10-17): "24-2-1&2=100X we sell as a whole case of =10X — we don't order =100X, add its quantities to =10X;
 // give a button so I can let the system know which one we sell as a case". Saved on the server (Reorder 🕘 History).
+// 🚫 Owner (2026-10-21): "something I can change the part # as discontinued — it sells too slow, we are not going to sell it anymore".
+async function rvoDisc(i) {
+  var r = RVO.rows[i]; if (!r) return;
+  var on = !r.discontinued, note;
+  if (on) {
+    note = prompt('🚫 ' + r.sku + ' — DISCONTINUED?\n\nThe planner never orders it again and it is left out of every vendor file. Its stock still counts for the part (sold off first). Kept in 🕘 History.\n\nWhy? (e.g. sells too slow)', 'sells too slow');
+    if (note == null) return;
+  } else {
+    if (!confirm('↩ Sell ' + r.sku + ' again?\n\nDiscontinued' + (r.discontinued.by ? ' by ' + r.discontinued.by : '') + (r.discontinued.at ? ' ' + String(r.discontinued.at).slice(0, 10) : '') + (r.discontinued.note ? ': ' + r.discontinued.note : '') + '.\nThe planner orders it again when it needs it.')) return;
+    note = '';
+  }
+  try {
+    var res = await wFetch(W + '/reorder/fix/discontinued', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: r.sku, on: on, note: note }) });
+    var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Not saved');
+    showToast(on ? '🚫 ' + d.part + ' discontinued — not ordered' : '↩ ' + d.part + ' sold again');
+    rvoLoad();
+  } catch (e) { alert('Not saved: ' + e.message); }
+}
 async function rvoCaseOf(i) {
   var r = RVO.rows[i]; if (!r) return;
   var fam = (RVO.rows || []).filter(function (x) { return x.baseSku === r.baseSku && x.sku !== r.sku; }).map(function (x) { return x.sku; });
