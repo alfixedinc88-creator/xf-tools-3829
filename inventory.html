@@ -14367,6 +14367,12 @@ window.invCredLogin = async function() {
       var T = function(x) { return x ? xfrFmtT(x) : '—'; }, M = function(m) { return m == null ? '—' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
       var th = 'style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
       var h = '<div style="color:var(--text2);margin-bottom:6px">This recount (since ' + ckE(T(d.roundStart)) + '): <b>' + d.spotsDone + ' of ' + d.spotsWithStock + '</b> spots with stock done. <a href="#" onclick="rcReport();return false">↻ Refresh</a></div>';
+      // ⏱ Owner (2026-10-21): "any column that takes longer than 10 minutes in a different color, and the main report shows how many".
+      var over = (d.columns || []).filter(rcOver10);
+      h += '<div class="rc-over10" style="margin-bottom:6px;font-weight:700;color:' + (over.length ? 'var(--red)' : 'var(--green)') + '">⏱ ' + over.length + ' column' + (over.length === 1 ? '' : 's') + ' took more than 10 minutes'
+        + (over.length ? ' <span style="font-weight:400;color:var(--text2)">(' + over.slice(0, 12).map(function(c) { return ckE(c.location) + ' ' + ckE(c.by) + ' ' + M(c.minutes); }).join(' · ') + (over.length > 12 ? ' …' : '') + ')</span>' : '') + '</div>';
+      // 🔎 Owner (2026-10-21): "search by name, date — how many columns they did in one day, and the average per column".
+      h += rcDaySearchHtml(d);
       // 🗺 By area (owner 2026-10-17): tap C1 → every C1 spot: 🟩 done · 🟨 scanned / started, not done · 🟥 not scanned.
       RC.rep = d;
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">🗺 By area — tap one to see every spot</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
@@ -14390,15 +14396,20 @@ window.invCredLogin = async function() {
             + ' · ' + (a.closedHow === 'all done' ? '✅ closed by itself: every spot done ' : '✕ cancelled by ' + ckE(a.closedBy || '') + ' ') + ckE(xfrFmtT(a.closedAt))
             + (a.seenAt ? ' · 👀 opened ' + ckE(xfrFmtT(a.seenAt)) : ' · ⏳ never opened') + '</div>'; }).join('') + '</details>';
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">👷 By person</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
-        + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
-        + (d.people.length ? d.people.map(function(p) { return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
-          : '<tr><td ' + td + ' colspan="9">No column done yet in this recount.</td></tr>') + '</table></div>';
-      h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first)</div><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px;color:var(--text)"><tr>'
-        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
+        + ['Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Over 10 min', 'Skipped to scan', 'Stopped', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr>'
+        + (d.people.length ? d.people.map(function(p) { var o10 = over.filter(function(c) { return c.by === p.by; }).length;
+            return '<tr><td ' + td + '><b>' + ckE(p.by) + '</b></td><td ' + td + '>' + p.columns + '</td><td ' + td + '>' + ckE(xfrN(p.boxes)) + '</td><td ' + td + '>' + M(p.minutes) + '</td><td ' + td + '>' + M(p.avgMinutes) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">' + o10 + '</b>' : '0') + '</td><td ' + td + '>' + p.skipped + '</td><td ' + td + '>' + (p.stopped || '') + '</td><td ' + td + '>' + ckE(T(p.first)) + '</td><td ' + td + '>' + ckE(T(p.last)) + '</td></tr>'; }).join('')
+          : '<tr><td ' + td + ' colspan="10">No column done yet in this recount.</td></tr>') + '</table></div>';
+      // 📌 Owner (2026-10-21): "when scrolling down keep the Column / Who / Started line on the top, only the info scrolls" — the
+      // header row stays on top (and the Column name on the left when sliding sideways); a column over 10 minutes is red.
+      h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
+        + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table style="border-collapse:separate;border-spacing:0;width:100%;font-size:12px;color:var(--text)"><thead><tr>'
+        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
         + d.columns.map(function(c) {
             var sk = !c.howKnown && !c.skipped.length ? '<span style="color:var(--text3)">not recorded (before 10-17)</span>' : c.skipped.length ? c.skipped.map(function(x) { return '<div>' + (x.how === 'none' ? '✗ None found: ' : '✓ Found: ') + ckE(x.part) + ' × ' + ckE(xfrN(x.pcs)) + ' pcs (system ' + ckE(xfrN(x.system)) + ' → ' + ckE(xfrN(x.counted)) + ')</div>'; }).join('') : '<span style="color:var(--green)">none — every line scanned</span>';
-            return '<tr' + (c.stopped ? ' style="background:var(--orange-bg,#fff7ed)"' : '') + '><td ' + td + '><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + M(c.minutes) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td></tr>';
-          }).join('') + '</table></div>';
+            var o10 = rcOver10(c), bg = c.stopped ? 'var(--orange-bg,#fff7ed)' : o10 ? 'var(--red-bg,#fdf0ee)' : 'var(--bg)';
+            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
       var nd = d.aisles.filter(function(a) { return a.notDone.length; });
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">⬜ Not done yet (' + (d.spotsWithStock - d.spotsDone) + ' spots with stock)</div>'
         + (nd.length ? nd.map(function(a) { return '<details style="margin-bottom:4px"><summary style="cursor:pointer;color:var(--text)"><b style="font-family:var(--mono)">' + ckE(a.aisle) + '</b>: ' + a.done + ' of ' + a.total + ' done — ' + a.notDone.length + ' not done</summary><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'
@@ -14408,6 +14419,43 @@ window.invCredLogin = async function() {
     }).catch(function() { box.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
 
+  // ⏱ A finished column that took more than 10 minutes (a stopped one isn't a finished column).
+  function rcOver10(c) { return !!c && !c.stopped && c.minutes != null && c.minutes > 10; }
+  // 🔎 Search by name / day (New York day) over every column ever done: per person per day — columns, boxes, time, avg / column, over 10 min.
+  function rcNyDay(iso) { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); } catch (e) { return String(iso || '').slice(0, 10); } }
+  function rcDaySearchHtml(d) {
+    var who = {}; (d.history || []).forEach(function(c) { who[c.by] = 1; });
+    return '<div class="rc-daysearch" style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
+      + '<div style="font-weight:800;color:var(--text);margin-bottom:6px">🔎 Search by name / day</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">'
+      + '<select id="rc-ds-who" onchange="rcDaySearch()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px"><option value="">Everyone</option>'
+      + Object.keys(who).sort().map(function(n) { return '<option value="' + ckE(n) + '">' + ckE(n) + '</option>'; }).join('') + '</select>'
+      + '<input id="rc-ds-day" type="date" onchange="rcDaySearch()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">'
+      + '<a href="#" onclick="var x=document.getElementById(\'rc-ds-day\');x.value=\'\';rcDaySearch();return false" style="font-size:12px">all days</a></div>'
+      + '<div id="rc-ds-out" style="margin-top:6px">' + rcDaySearchOut(d, '', '') + '</div></div>';
+  }
+  function rcDaySearchOut(d, who, day) {
+    var M = function(m) { return m == null ? '—' : m < 60 ? (Math.round(m * 10) / 10) + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
+    var cols = (d.history || []).filter(function(c) { return !c.stopped && (!who || c.by === who) && (!day || rcNyDay(c.doneAt) === day); });
+    if (!cols.length) return '<div style="color:var(--text3)">No column done' + (who ? ' by ' + ckE(who) : '') + (day ? ' on ' + ckE(day) : '') + '.</div>';
+    var g2 = {}; cols.forEach(function(c) { var k = rcNyDay(c.doneAt) + '|' + c.by;
+      var x = g2[k] = g2[k] || { day: rcNyDay(c.doneAt), by: c.by, n: 0, boxes: 0, mins: 0, timed: 0, over: 0, first: c.startedAt || c.doneAt, last: c.doneAt };
+      x.n++; x.boxes += c.boxes || 0; if (c.minutes != null) { x.mins += c.minutes; x.timed++; } if (rcOver10(c)) x.over++;
+      if ((c.startedAt || c.doneAt) < x.first) x.first = c.startedAt || c.doneAt; if (c.doneAt > x.last) x.last = c.doneAt; });
+    var rows = Object.keys(g2).map(function(k) { return g2[k]; }).sort(function(a, b) { return b.day.localeCompare(a.day) || b.n - a.n; });
+    var th = 'style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2)"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border)"';
+    var tot = rows.reduce(function(a, r) { a.n += r.n; a.mins += r.mins; a.timed += r.timed; a.over += r.over; return a; }, { n: 0, mins: 0, timed: 0, over: 0 });
+    return '<div class="rc-ds-sum" style="margin-bottom:4px;color:var(--text)"><b>' + tot.n + '</b> column' + (tot.n === 1 ? '' : 's') + ' · avg <b>' + M(tot.timed ? tot.mins / tot.timed : null) + '</b> / column · '
+      + (tot.over ? '<b style="color:var(--red)">' + tot.over + ' over 10 min</b>' : '0 over 10 min') + '</div>'
+      + '<div style="overflow:auto;max-height:50vh"><table style="border-collapse:separate;border-spacing:0;width:100%;font-size:12px;color:var(--text)"><thead><tr>'
+      + ['Day', 'Who', 'Columns done', 'Boxes', 'Time', 'Avg / column', 'Over 10 min', 'First start', 'Last done'].map(function(x) { return '<th ' + th + '>' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+      + rows.map(function(r) { return '<tr><td ' + td + '>' + ckE(r.day) + '</td><td ' + td + '><b>' + ckE(r.by) + '</b></td><td ' + td + '><b>' + r.n + '</b></td><td ' + td + '>' + ckE(xfrN(Math.round(r.boxes * 100) / 100)) + '</td><td ' + td + '>' + M(r.mins) + '</td><td ' + td + '><b>' + M(r.timed ? r.mins / r.timed : null) + '</b></td><td ' + td + '>'
+          + (r.over ? '<b style="color:var(--red)">' + r.over + '</b>' : '0') + '</td><td ' + td + '>' + ckE(xfrFmtT(r.first)) + '</td><td ' + td + '>' + ckE(xfrFmtT(r.last)) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  window.rcDaySearch = function() {
+    var o = g('rc-ds-out'); if (!o || !RC.rep) return;
+    o.innerHTML = rcDaySearchOut(RC.rep, (g('rc-ds-who') || {}).value || '', (g('rc-ds-day') || {}).value || '');
+  };
   function rcAreaGrid() {
     var d = RC.rep;
     if (d && RC.area === '__bad') return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--orange);border-radius:10px;background:var(--bg2);color:var(--text)">'
@@ -15344,6 +15392,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261020a"></script>
+<script src="xf-access.js?v=20261021a"></script>
 </body>
 </html>

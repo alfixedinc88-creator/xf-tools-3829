@@ -7673,7 +7673,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261020a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261021a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -8223,6 +8223,55 @@ console.log('\n🔍 SKU Mgr "Got here": the last Audit of the spot (matched · c
     /🔍 Audit [^<]* · Mg: 16 cs ✓ matched/.test(ha) && /0 → 2 cs \(SKU Mgr changed\)/.test(hb) && /color:var\(--red\)[^>]*>⏳ Audit [^<]*: 10 → 6 cs waiting in Review — SKU Mgr not changed yet/.test(hc) && /never audited/.test(hz)
       && /16 cs: no record of getting here/.test(ha), [ha, hc]);
   sq.exec("DELETE FROM inventory_log WHERE part_num = '729-1-2=OLD'");
+}
+
+// Owner (2026-10-21): "1. under Audit search by name, date — how many columns they did in one day, and the avg per column; 2. a column
+// that takes longer than 10 minutes in a different color, and the main report shows how many took more than 10 minutes; 3. Columns
+// (newest first): when scrolling down keep the Column / Who / Started line on top, only the info scrolls".
+console.log('\n🔎 Recount report: search by name / day (columns a day, avg / column), ⏱ over 10 minutes in red + counted, header stays on top');
+{
+  const { readFileSync: rfR } = await import('node:fs');
+  const ih = rfR(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfR(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  await get('/inventory/recount/report'); // tables
+  const det = n => JSON.stringify([{ part: '1-1-1=10', pcs: 10, system: n, counted: n, how: 'scan' }]);
+  const ins = sq.prepare('INSERT INTO recount_columns (ts, started_at, location, by_user, items, changed, detail, stopped) VALUES (?,?,?,?,1,0,?,?)');
+  // 10-20 (New York): AA 6 min + 12 min (over), BB 4 min · 10-21: AA 8 min · AA stopped after 30 min (not a finished column)
+  ins.run('2026-10-20T13:06:00.000Z', '2026-10-20T13:00:00.000Z', 'ZZA=1-1-1', 'AA', det(3), 0);
+  ins.run('2026-10-20T13:30:00.000Z', '2026-10-20T13:18:00.000Z', 'ZZA=1-1-2', 'AA', det(5), 0);
+  ins.run('2026-10-20T14:04:00.000Z', '2026-10-20T14:00:00.000Z', 'ZZA=1-1-3', 'BB', det(2), 0);
+  ins.run('2026-10-21T13:08:00.000Z', '2026-10-21T13:00:00.000Z', 'ZZA=1-1-4', 'AA', det(4), 0);
+  ins.run('2026-10-21T14:30:00.000Z', '2026-10-21T14:00:00.000Z', 'ZZA=1-1-5', 'AA', det(1), 1);
+  const d = await get('/inventory/recount/report'), H = (d.history || []).filter(c => /^ZZA=/.test(c.location));
+  check('report: every column ever done is in "history" (5 rows, minutes 6 / 12 / 4 / 8 / 30, boxes from what was counted)',
+    H.length === 5 && H.find(c => c.location === 'ZZA=1-1-2').minutes === 12 && H.find(c => c.location === 'ZZA=1-1-1').boxes === 3 && H.find(c => c.location === 'ZZA=1-1-5').stopped === true, H);
+  const fnOf = n => { const i = ih.indexOf('  function ' + n + '('); const j = ih.indexOf('\n  }\n', i); return ih.slice(i, j + 4); };
+  const lib = new Function('ckE', 'xfrN', 'xfrFmtT', fnOf('rcOver10') + fnOf('rcNyDay') + fnOf('rcDaySearchOut') + '\nreturn { rcOver10, rcNyDay, rcDaySearchOut };')(x => String(x), x => String(x), x => String(x).slice(0, 16));
+  const dz = { history: H };
+  const aa20 = lib.rcDaySearchOut(dz, 'AA', '2026-10-20'), all = lib.rcDaySearchOut(dz, '', ''), bb = lib.rcDaySearchOut(dz, 'BB', '2026-10-21');
+  check('🔎 AA on 2026-10-20: 2 columns, avg 9 min / column (6 + 12), 1 over 10 min (the stopped one not counted)',
+    /<b>2<\/b> columns · avg <b>9 min<\/b> \/ column · <b style="color:var\(--red\)">1 over 10 min<\/b>/.test(aa20) && /<td [^>]*>2026-10-20<\/td><td [^>]*><b>AA<\/b><\/td><td [^>]*><b>2<\/b><\/td>/.test(aa20), aa20.slice(0, 600));
+  check('…everyone, all days: 4 columns (avg 7.5 min), one row per person per day: 10-21 AA 1 · 10-20 AA 2 · 10-20 BB 1 (newest day first)',
+    /<b>4<\/b> columns · avg <b>7\.5 min<\/b>/.test(all) && (all.match(/<tr><td /g) || []).length === 3 && all.indexOf('2026-10-21') < all.indexOf('2026-10-20'), all.slice(0, 400));
+  check('…BB on 10-21 → "No column done by BB on 2026-10-21"', /No column done by BB on 2026-10-21/.test(bb), bb);
+  check('⏱ over 10 minutes = a finished column over 10 min (12 yes; 8 no; stopped 30 no)', lib.rcOver10({ minutes: 12 }) && !lib.rcOver10({ minutes: 8 }) && !lib.rcOver10({ minutes: 30, stopped: true }) && !lib.rcOver10({ minutes: 10 }), null);
+  check('page: "⏱ N columns took more than 10 minutes" on top of the report; red rows (rc-col-over10) + "⏱" time; "Over 10 min" per person; the 🔎 search box',
+    /⏱ ' \+ over\.length \+ ' column' \+ \(over\.length === 1 \? '' : 's'\) \+ ' took more than 10 minutes/.test(ih) && /rc-col-over10/.test(ih) && /'Avg \/ column', 'Over 10 min', 'Skipped to scan'/.test(ih) && /h \+= rcDaySearchHtml\(d\);/.test(ih), null);
+  check('📌 Columns (newest first): the header row (Column · Who · Started …) stays on top while scrolling (sticky, its own scroll box), Column name stays on the left',
+    /class="rc-cols-scroll" style="overflow:auto;max-height:70vh/.test(ih) && /class="rc-sticky-h" style="[^"]*position:sticky;top:0/.test(ih) && /position:sticky;left:0;z-index:1;background:' \+ bg/.test(ih), null);
+  // the whole report draws (the real rcReport, with this report's answer) — red rows, the ⏱ count, the 🔎 box
+  const winR = ih.indexOf('  window.rcReport = function() {'), winE = ih.indexOf('\n  };\n', winR);
+  const box = { innerHTML: '', textContent: '' }, rep = { ...d, columns: [{ id: 1, location: 'ZZA=1-1-2', by: 'AA', startedAt: '2026-10-20T13:18:00.000Z', doneAt: '2026-10-20T13:30:00.000Z', minutes: 12, items: 1, changed: 0, boxes: 5, skipped: [], howKnown: true, stopped: false },
+    { id: 2, location: 'ZZA=1-1-1', by: 'AA', startedAt: '2026-10-20T13:00:00.000Z', doneAt: '2026-10-20T13:06:00.000Z', minutes: 6, items: 1, changed: 0, boxes: 3, skipped: [], howKnown: true, stopped: false }],
+    people: [{ by: 'AA', columns: 2, stopped: 0, boxes: 8, minutes: 18, avgMinutes: 9, skipped: 0, first: '2026-10-20T13:00:00.000Z', last: '2026-10-20T13:30:00.000Z' }] };
+  await new Function('g', 'wFetch', 'W', 'RC', 'ckE', 'xfrN', 'xfrFmtT', 'rcAreaGrid', 'invPullWalkCompare', fnOf('rcOver10') + fnOf('rcNyDay') + fnOf('rcDaySearchHtml') + fnOf('rcDaySearchOut') + 'var window = {};\n' + ih.slice(winR, winE + 5) + '\nreturn window.rcReport();')(
+    id => id === 'rc-report-body' ? box : null, () => Promise.resolve({ json: () => rep }), '', {}, x => String(x), x => String(x), x => String(x).slice(0, 16), () => '', (a, b) => a.localeCompare(b));
+  await new Promise(r => setTimeout(r, 20));
+  const RH = box.innerHTML;
+  check('…the report draws: "⏱ 1 column took more than 10 minutes (ZZA=1-1-2 AA 12 min)", that row red with ⏱ 12 min, AA "Over 10 min" 1, the 🔎 search box with AA in it',
+    /⏱ 1 column took more than 10 minutes <span[^>]*>\(ZZA=1-1-2 AA 12 min\)/.test(RH) && /<tr class="rc-col-over10" style="background:var\(--red-bg,#fdf0ee\)">/.test(RH) && /⏱ 12 min/.test(RH) && /<tr class="" style="background:var\(--bg\)">/.test(RH)
+      && /<b style="color:var\(--red\)">1<\/b>/.test(RH) && /class="rc-daysearch"/.test(RH) && /<option value="AA">AA<\/option>/.test(RH), RH.slice(0, 1500));
+  check('🧩 Pages & Tabs check mark for the search', /key: 'recountsearch', label: '[^']+', sel: '#rc-report \.rc-daysearch'/.test(xa), null);
+  sq.exec("DELETE FROM recount_columns WHERE location LIKE 'ZZA=%'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

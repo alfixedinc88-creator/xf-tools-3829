@@ -7898,7 +7898,15 @@ async function recountReport(env) {
     Object.values(areas).forEach(a => a.spots.forEach(s => { const k = pre(s); cnt[k] = cnt[k] || {}; cnt[k][segs(s)] = (cnt[k][segs(s)] || 0) + 1; }));
     const mode = {}; Object.keys(cnt).forEach(k => { mode[k] = +Object.keys(cnt[k]).sort((x, y) => cnt[k][y] - cnt[k][x] || y - x)[0]; });
     Object.values(areas).forEach(a => a.spots.forEach(s => { if (s.l.includes('=') && segs(s) < mode[pre(s)]) s.odd = true; })); }
-  return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
+  // 🔎 Owner (2026-10-21): "search by name and date: how many columns they did in one day, and the average per column" — every
+  // column ever finished or stopped (not only this recount round), newest first; the page groups them by person and New York day.
+  const history = (await d1All(env, 'SELECT id, ts, started_at, location, by_user, detail, COALESCE(stopped, 0) AS stopped FROM recount_columns ORDER BY ts DESC LIMIT 5000', []).catch(() => [])).map(r => {
+    let d = []; try { d = JSON.parse(r.detail || '[]') || []; } catch (e) { d = []; }
+    return { id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, stopped: !!r.stopped,
+      minutes: r.started_at ? Math.max(0, Math.round((Date.parse(r.ts) - Date.parse(r.started_at)) / 6000) / 10) : null,
+      boxes: Math.round(d.reduce((a, x) => a + (parseFloat(x.counted) || 0), 0) * 100) / 100 };
+  });
+  return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: cols, people: ppl, history, aisles: Object.values(aisles).sort((a, b) => a.aisle.localeCompare(b.aisle)),
     areas: Object.values(areas).sort((a, b) => a.area.localeCompare(b.area, undefined, { numeric: true })), notSpots: Object.values(badSpots),
     assigned: await recountAssignList(env, '', []).catch(() => []),
     // closed in the last 3 days (all done by itself / cancelled) — so a list that "disappeared" can be found
