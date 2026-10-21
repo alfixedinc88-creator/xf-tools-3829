@@ -8334,5 +8334,40 @@ console.log('\n☑ Recount report → 📤 Send: tick which unfinished spots to 
   check('page: the area button says "📤 Send the N unfinished (pick which) to…"', /unfinished \(pick which\) to…/.test(ih), null);
 }
 
+// Owner (2026-10-21): "Reorder → Download sheet for vendor: something I can change the part # as 'discontinued' — some items sell too
+// slow, we are not going to sell them anymore".
+console.log('\n🚫 Reorder: mark a part # Discontinued → never ordered / not in the vendor file; its other-channel share goes to the part #s still sold');
+{
+  const { readFileSync: rfD } = await import('node:fs');
+  const rh = rfD(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  await call('/reorder/fix/history', { headers: H });
+  // 85-5-5: FBA =10 (Amazon 30 bags = 300 pcs) and FBA =50 (Amazon 10 bags = 500 pcs); eBay =2 100 bags = 200 pcs shared by Amazon sales (10 : 40)
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('85-5-5=10','B0T85510','tee',0), ('85-5-5=50','B0T85550','tee',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('85-5-5=10',?,30,'B0T85510'), ('85-5-5=50',?,10,'B0T85550')").run(wk, wk);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('85-5-5=2',?,100)").run(wk);
+  const rows = async () => { const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'); const f = k => (d.rows || []).find(r => r.sku === k) || {}; return { a: f('85-5-5=10'), b: f('85-5-5=50') }; };
+  const r0 = await rows();
+  check('before: =10 sold 300 + 150 (its share of eBay 200, by bags sold 30 : 10) = 450 pcs, =50 sold 500 + 50 = 550; both ordered', r0.a.soldPcs === 450 && r0.b.soldPcs === 550 && r0.a.orderUnits > 0 && r0.b.orderUnits > 0 && !r0.b.discontinued, [r0.a.soldPcs, r0.b.soldPcs]);
+  const p1 = await (await call('/reorder/fix/discontinued', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ part: '85-5-5=50', on: true, note: 'sells too slow' }) })).json();
+  const r1 = await rows();
+  check('🚫 =50 discontinued ("sells too slow") → its row: need 0, order 0, "🚫 Discontinued … sells too slow — not ordered" (who / when kept)',
+    p1.ok && r1.b.discontinued && r1.b.discontinued.note === 'sells too slow' && r1.b.needUnits === 0 && r1.b.orderUnits === 0 && /🚫 Discontinued by \S+ \d{4}-\d\d-\d\d: sells too slow — not ordered; its stock still counts/.test(r1.b.note), r1.b);
+  check('…the eBay 200 pcs all go to =10 now (300 + 200 = 500), every sale still counted once (500 + 500 = 1,000 = 300 + 500 + 200)', r1.a.soldPcs === 500 && r1.b.soldPcs === 500 && r1.a.orderUnits > r0.a.orderUnits, [r1.a.soldPcs, r1.b.soldPcs]);
+  const hist = await get('/reorder/fix/history');
+  const hl = ((hist.history || [])).find(x => x.action === 'discontinued' && x.part === '85-5-5=50');
+  check('…kept in 🕘 Reorder History (Discontinued, why)', !!hl && /sells too slow/.test(hl.detail || ''), hist && Object.keys(hist));
+  const qty = new Function('RVO', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\nreturn rvoQty;')({ edits: { '85-5-5=50': 20 } });
+  check('…the vendor file never has it, even with a number typed by hand (rvoQty 0)', qty({ sku: '85-5-5=50', orderUnits: 5, discontinued: { by: 'x' } }) === 0 && qty({ sku: '85-5-5=50', orderUnits: 5 }) === 20, null);
+  await call('/reorder/fix/discontinued', { method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify({ part: '85-5-5=50', on: false }) });
+  const r2 = await rows(), hist2 = await get('/reorder/fix/history');
+  check('↩ sold again → back to before (=10 450 / =50 550, ordered again), "Sold again" in History', r2.a.soldPcs === 450 && r2.b.soldPcs === 550 && !r2.b.discontinued && r2.b.orderUnits === r0.b.orderUnits
+    && ((hist2.history || [])).some(x => x.action === 'undiscontinued' && x.part === '85-5-5=50'), [r2.a.soldPcs, r2.b.soldPcs]);
+  check('page: 🚫 button on each row, "🚫 DISCONTINUED" tag, Order shows 🚫 0, the summary lists the discontinued ones (tap to sell again); History labels',
+    /onclick="rvoDisc\(' \+ RVO\.rows\.indexOf\(r\) \+ '\)"/.test(rh) && /🚫 DISCONTINUED<\/span>/.test(rh) && /if \(r\.discontinued\) return '<span[^']*>🚫 0<\/span>'/.test(rh) && /class="rvo-disc-sum"/.test(rh)
+      && /discontinued: 'Discontinued', undiscontinued: 'Sold again'/.test(rh) && /discontinued: '🚫', undiscontinued: '↩️'/.test(rh), null);
+  sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '85-5-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '85-5-5%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '85-5-5%'; DELETE FROM reorder_discontinued WHERE part LIKE '85-5-5%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

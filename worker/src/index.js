@@ -2446,6 +2446,7 @@ async function reorderUpcCheck(env) {
   okList.sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }));
   return { ok: true, checked: ours.size, rows, confirmed: okList, retired: retList, caseOf: caseRows, counts: { swapped: cnt('swapped'), typo: cnt('typo'), nobox: cnt('nobox'), same: cnt('same'), differs: cnt('differs'), shared: cnt('shared') } };
 }
+const REORDER_DISC_TABLE = 'CREATE TABLE IF NOT EXISTS reorder_discontinued (part TEXT PRIMARY KEY, by_user TEXT, at TEXT, note TEXT)';
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   const days = Math.round(num('days', 90, 7, 730));
@@ -2506,6 +2507,10 @@ async function reorderVendorOrder(env, url) {
   // 📦 Owner (2026-10-17): "=100X we sell as a whole case of =10X — don't order =100X, add its quantity to =10X". Saved per part #.
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS reorder_case_of (part TEXT PRIMARY KEY, target TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
   const caseOf = {}; (await all('SELECT part, target FROM reorder_case_of')).forEach(r => { caseOf[N(r.part)] = N(r.target); });
+  // 🚫 Discontinued part #s (owner 2026-10-21): never ordered; their stock still counts for the family; other channels' sales
+  // that were shared over the FBA rows go to the part #s still sold.
+  await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {});
+  const disc = {}; (await all('SELECT part, by_user, at, note FROM reorder_discontinued')).forEach(r => { disc[N(r.part)] = { by: r.by_user || '', at: r.at || '', note: r.note || '' }; });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
   // link to the listing too. Keyed by the raw SKU and by the corrected part #.
@@ -2759,7 +2764,8 @@ async function reorderVendorOrder(env, url) {
       }
       shelf.forEach(o => { pool -= o.pcs; });
       pool = Math.max(0, pool);
-      targets = v.map(x => ({ ...x, demand: x.amzPieces + pool * (w > 0 ? x.amzUnits / w : 1 / v.length), fbaSku: true,
+      const live = v.filter(x => !disc[x.sku]), lv = live.length ? live : v, wl = lv.reduce((a, x) => a + x.amzUnits, 0);
+      targets = v.map(x => ({ ...x, demand: x.amzPieces + (live.length && disc[x.sku] ? 0 : pool * (wl > 0 ? x.amzUnits / wl : 1 / lv.length)), fbaSku: true,
         ...(shelf.length ? { shelfMoved: shelf.map(o => ({ sku: o.sku, pcs: Math.round(o.pcs) })) } : {}) }));
       shelf.forEach(o => targets.push({ sku: o.sku, asin: '', demand: o.pcs, fbaAvailPieces: 0, fbaSku: false,
         shelfPack: { pack: o.pack, fbaPacks, unitsPerMonth: Math.round(o.perMonth * 10) / 10, box: o.box, boxSrc: o.boxSrc, boxes: Math.round(o.boxes * 10) / 10, skus: o.skus } }));
@@ -2796,7 +2802,7 @@ async function reorderVendorOrder(env, url) {
     const sc = salesCheckOf(b, dSum / months), f = sc.factor;
     const famRows = targets.map(x => {
       const xs = bySku[x.sku] || { units: 0 }, xps = pack(x.sku);
-      const target = (x.demand || 0) / months * f * H;
+      const target = disc[x.sku] ? 0 : (x.demand || 0) / months * f * H; // 🚫 discontinued: nothing more to have on hand
       const have = xs.units * xps + incUnitsOf(x.sku) * xps + (countFba ? x.fbaAvailPieces : 0);
       return { sku: x.sku, target, have, short: Math.max(0, target - have) };
     });
@@ -2875,6 +2881,7 @@ async function reorderVendorOrder(env, url) {
       if (sc.high) notes.push(`📈 Sales check (pcs a month, whole ${b}): ${scTxt()} — the last ${days} days sold more than normal (another seller out of stock?): ordered for ${nf(sc.normal)} a month (normal: the middle of 30 d · 30–90 d · 3–6 mo · 6–12 mo), not ${nf(sc.chosen)}`);
       if (sc.flag30 === 'low') notes.push(`📉 The last 30 days sold much LESS than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — out of stock, or a seller came back? Check before ordering`);
       if (sc.flag30 === 'high') notes.push(`📈 The last 30 days sold much MORE than normal (${nf(sc.r30)} vs ${nf(sc.normal)} pcs a month: ${scTxt()}) — not normal yet, not ordered for it; check if it keeps up`);
+      if (disc[t.sku]) notes.push(`🚫 Discontinued${disc[t.sku].by ? ' by ' + disc[t.sku].by : ''}${disc[t.sku].at ? ' ' + String(disc[t.sku].at).slice(0, 10) : ''}${disc[t.sku].note ? ': ' + disc[t.sku].note : ''} — not ordered; its stock still counts`);
       if (t.shelfPack) notes.push(`🏬 For our shelves: our other channels sell ${nf(t.shelfPack.unitsPerMonth)} bags of =${t.shelfPack.pack} a month = ${t.shelfPack.boxes} boxes (box ${t.shelfPack.box} bags, ${t.shelfPack.boxSrc}; 4 or more → own row) — FBA has only =${t.shelfPack.fbaPacks.join(' / =')}; ordered as =${t.shelfPack.pack} so those bags aren't cut open and rebagged (${Math.round(t.demand)} pcs of sales, not on the FBA row)`);
       (t.shelfMoved || []).forEach(x => notes.push(`🏬 ${x.sku} sales (${nf(x.pcs)} pcs) are ordered on its own row for our shelves, not on this FBA row`));
       if (!t.fbaSku && t.onePack) notes.push(`No FBA listing — ONE pack for the whole part #: =${t.onePack.pack}, the size most orders are in (${t.onePack.byPack.map(x => '=' + x.pack + ' ' + x.units + ' sold').join(', ')}); it carries every piece sold (${Math.round(demandPcs)} pcs) — other sizes are cut / repacked from it`);
@@ -2934,7 +2941,7 @@ async function reorderVendorOrder(env, url) {
           famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
         sales: sales3090(t.sku),
         salesCheck: sc,
-        onePack: t.onePack || null, shelfPack: t.shelfPack || null,
+        onePack: t.onePack || null, shelfPack: t.shelfPack || null, discontinued: disc[t.sku] || null,
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
@@ -9466,6 +9473,26 @@ const _app = {
         else await env.DB.prepare('DELETE FROM reorder_case_of WHERE part = ?').bind(part).run();
         await reorderLog(env, who, 'case-of', part, target ? `sold as a case of ${target} (ordered as ${target})` + (before ? ` — was ${before.target}` : '') : `not sold as a case any more` + (before ? ` (was ${before.target})` : ''));
         return _roResp({ ok: true, part, target: target || '' });
+      }
+      // 🚫 Owner (2026-10-21): "something to mark a part # as discontinued — it sells too slow, we are not going to sell it anymore".
+      // POST { part, on, note }: on → the Reorder Planner never orders it (its stock still counts); off → ordered again. Every change
+      // is kept in Reorder History (who, when, why).
+      if (url.pathname === '/reorder/fix/discontinued' && method === 'POST') {
+        const b = await request.json().catch(() => ({}));
+        const part = reorderDashFix(reorderCleanPart(String(b.part || '').trim().toUpperCase()));
+        if (!part) return _roResp({ ok: false, error: 'Part # needed' }, 400);
+        await env.DB.prepare(REORDER_DISC_TABLE).run();
+        const who = _roWho(roCs || session), now = new Date().toISOString(), note = String(b.note || '').trim().slice(0, 300);
+        const before = await env.DB.prepare('SELECT part FROM reorder_discontinued WHERE part = ?').bind(part).first().catch(() => null);
+        if (b.on) await env.DB.prepare('INSERT INTO reorder_discontinued (part, by_user, at, note) VALUES (?,?,?,?) ON CONFLICT(part) DO UPDATE SET by_user = excluded.by_user, at = excluded.at, note = excluded.note')
+          .bind(part, who, now, note).run();
+        else await env.DB.prepare('DELETE FROM reorder_discontinued WHERE part = ?').bind(part).run();
+        await reorderLog(env, who, b.on ? 'discontinued' : 'undiscontinued', part, b.on ? 'Discontinued — not ordered any more' + (note ? ': ' + note : '') + (before ? ' (was already)' : '') : 'Sold again — the planner orders it again' + (note ? ': ' + note : ''));
+        return _roResp({ ok: true, part, on: !!b.on });
+      }
+      if (url.pathname === '/reorder/fix/discontinued' && method === 'GET') {
+        await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {});
+        return _roResp({ ok: true, list: ((await env.DB.prepare('SELECT part, by_user, at, note FROM reorder_discontinued ORDER BY part').all()).results || []) });
       }
       if (url.pathname === '/reorder/fix/case-of' && method === 'GET') {
         await env.DB.prepare('CREATE TABLE IF NOT EXISTS reorder_case_of (part TEXT PRIMARY KEY, target TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
