@@ -813,7 +813,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div style="background:linear-gradient(135deg,#EEF2FD,#E8F7EE);border:1.5px solid #1A56DB;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
           <div>
             <div style="font-size:14px;font-weight:700;color:#1A56DB;margin-bottom:3px">&#x26A1; Sync from Amazon SP-API</div>
-            <div style="font-size:12px;color:#4B5563">Pulls live FBA inventory, AWD inventory &amp; reserves directly. No CSV downloads needed.</div>
+            <div style="font-size:12px;color:#4B5563">All 4 reports come in by themselves every morning (FBA Inventory Health, FBA Live, FBA Reserved, AWD inventory). Tap to get them right now. No CSV downloads needed.</div>
+            <div id="awd-auto-status" style="font-size:11.5px;color:#374151;margin-top:6px;line-height:1.6"></div>
             <div id="awd-sync-status" style="font-size:11px;color:#9CA3AF;margin-top:4px;font-family:'DM Mono',monospace"></div>
             <div id="awd-velocity-status" style="font-size:11px;color:#9CA3AF;margin-top:2px;font-family:'DM Mono',monospace;display:none"></div>
           </div>
@@ -1758,57 +1759,59 @@ function awdCheckPendingVelocity() {
   } catch(e) {}
 }
 
+// 📡 Owner (2026-10-21): "all those 4 reports — can the system get them by itself?" The server gets them every morning; ⚡ Sync gets
+// them now. Inventory Health (units shipped 7 / 30 / 60 / 90 days) takes Amazon a few minutes: this page checks every 30 s and loads
+// it when it is in.
+var _awdAutoTimer = null;
+function awdH(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function awdAutoStatusHtml(d) {
+  var T = function(x) { try { return new Date(x).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' }); } catch (e) { return ''; } };
+  var line = function(lbl, o, extra) {
+    if (!o) return '<div>⬜ ' + lbl + ': not yet</div>';
+    if (o.error && !o.pending) return '<div style="color:#B91C1C">⚠ ' + lbl + ': ' + awdH(o.error) + (o.at ? ' <span style="color:#9CA3AF">(last good ' + awdH(T(o.at)) + ')</span>' : '') + '</div>';
+    return '<div>' + (o.pending ? '⏳' : '✅') + ' ' + lbl + ': ' + (o.at ? awdH(T(o.at)) + (o.count != null ? ' · ' + o.count + ' SKUs' : '') : 'not yet') + (extra || '') + '</div>';
+  };
+  var h = d && d.health || null;
+  return line('FBA Live + FBA Reserved', d && d.fba)
+    + line('AWD inventory', d && d.awd)
+    + line('FBA Inventory Health (sales 7 / 30 / 60 / 90 days)', h, h && h.pending ? ' <span style="color:#1A56DB">— Amazon is making the newest one (asked ' + awdH(T(h.pending.at)) + '), it loads by itself</span>' : '');
+}
+async function awdAutoStatusLoad() {
+  var box = ge('awd-auto-status'); if (!box) return null;
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports')).json(); if (d && d.ok) box.innerHTML = awdAutoStatusHtml(d); return d; } catch (e) { return null; }
+}
+function awdAutoWatch() {
+  if (_awdAutoTimer) clearInterval(_awdAutoTimer);
+  _awdAutoTimer = setInterval(async function() {
+    // the server picks the report up on its own tick too; asking here just makes it show sooner
+    try { await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports?check=1'); } catch (e) {}
+    var d = await awdAutoStatusLoad();
+    if (d && d.health && !d.health.pending) {
+      clearInterval(_awdAutoTimer); _awdAutoTimer = null;
+      S.fbaFromCSV = false; loadReportsFromSheet();
+      awd_planner_toast('Inventory Health is in — sales 7 / 30 / 60 / 90 days loaded', 'success');
+    }
+  }, 30000);
+}
 async function awdAmazonSync() {
-  var btn    = ge('awd-amazon-sync-btn');
-  var status = ge('awd-sync-status');
-  var vstatus = ge('awd-velocity-status');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing inventory…'; }
-  if (status) status.textContent = 'Calling Amazon SP-API…';
-  if (vstatus) vstatus.style.display = 'none';
-
-  // Step 1: Sync inventory quantities
+  var btn = ge('awd-amazon-sync-btn'), status = ge('awd-sync-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Getting the 4 reports…'; }
+  if (status) status.textContent = 'Asking Amazon…';
   try {
-    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-sync', { method: 'POST' });
-    var data = await res.json();
-    if (data.ok) {
-      var ts = new Date(data.syncedAt).toLocaleString('en-US',{ month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
-      if (status) status.textContent = '✓ Inventory synced at ' + ts + ' · ' + data.fbaCount + ' FBA · ' + data.awdCount + ' AWD SKUs';
-      if (btn) { btn.textContent = '⏳ Requesting velocity…'; }
-      [['fba', data.fbaCount+' SKUs'],['live', data.fbaCount+' SKUs'],['awd', data.awdCount+' SKUs'],['res', data.fbaCount+' SKUs']].forEach(function(x){
-        var ico=ge('ico-'+x[0]); if(ico) ico.textContent='✅';
-        var st=ge('st-'+x[0]); if(st){ st.textContent=x[1]+' (from API)'; st.className='ust ok'; }
-        var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
-      });
-      if(ge('proc-btn')) ge('proc-btn').disabled=false;
-      // Don't reload from sheet here — would overwrite manually uploaded CSV data
-    } else {
-      if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
-      if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
-      return;
-    }
-  } catch(e) {
+    var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports', { method: 'POST' })).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'unknown');
+    var box = ge('awd-auto-status'); if (box && d.status) box.innerHTML = awdAutoStatusHtml(d.status);
+    if (status) status.textContent = '';
+    S.fbaFromCSV = false; // the reports just written win over an older CSV upload
+    await loadReportsFromSheet();
+    var bad = ['fba', 'awd'].filter(function(k) { return d.inv && d.inv[k] && d.inv[k].error; });
+    awd_planner_toast(bad.length ? '⚠ ' + bad.map(function(k) { return k.toUpperCase(); }).join(' + ') + ' could not be read — see the card' : 'FBA + AWD inventory in — sales report on its way', bad.length ? 'error' : 'success');
+    if (d.status && d.status.health && d.status.health.pending) awdAutoWatch();
+  } catch (e) {
     if (status) status.textContent = 'Error: ' + e.message;
-    if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
-    return;
-  }
-
-  // Step 2: Request velocity report
-  try {
-    var vres  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-request', { method: 'POST' });
-    var vdata = await vres.json();
-    if (vdata.ok && vdata.reportId) {
-      localStorage.setItem(AWD_VELOCITY_POLL_KEY, JSON.stringify({ reportId: vdata.reportId, requestedAt: vdata.requestedAt, status: 'IN_QUEUE' }));
-      if (vstatus) { vstatus.style.display = 'block'; vstatus.textContent = '⏳ Velocity report requested — processing (est. 2–30 min)…'; }
-      if (btn) { btn.disabled=false; btn.style.background=''; btn.textContent='⚡ Sync from Amazon'; }
-      awd_planner_toast('Inventory synced — velocity report processing in background', 'success');
-      awdStartVelocityPolling(vdata.reportId);
-    } else {
-      if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request failed: ' + (vdata.error||'unknown'); }
-      if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
-    }
-  } catch(e) {
-    if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request error: ' + e.message; }
-    if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
+    if (btn) btn.style.background = 'var(--red)';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Sync from Amazon'; }
   }
 }
 
@@ -2032,6 +2035,16 @@ async function loadWarehouseStock() {
 }
 
 // ── LOAD DISCONTINUED SKUS ──
+// 🚫 Owner (2026-10-21): discontinued in Reorder = "ship in whatever we have; after it sells off, don't reorder". So it is NOT hidden
+// here (the ✕ list below still hides): its rows just say so. Matched by part # (=10-X = =10X, a trailing "-" dropped).
+var REO_DISC = { loaded: false, map: {} };
+function reorderDiscKey(sku) { return String(sku || '').trim().toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }
+function reorderDiscOf(sku) { return REO_DISC.map[reorderDiscKey(sku)] || null; }
+async function loadReorderDiscontinued() {
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/reorder/fix/discontinued')).json();
+    REO_DISC.map = {}; ((d && d.list) || []).forEach(function(x) { REO_DISC.map[reorderDiscKey(x.part)] = x; }); REO_DISC.loaded = true;
+    if (S.loaded) renderRecs(); } catch (e) {}
+}
 async function loadDiscontinuedSKUs() {
   try {
     var url = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs';
@@ -2206,6 +2219,8 @@ function launchApp(which) {
     loadCfg();
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
+    awdAutoStatusLoad().then(function(d) { if (d && d.health && d.health.pending) awdAutoWatch(); });
+    if (!REO_DISC.loaded) loadReorderDiscontinued();
   } else if (which === 'inventory') {
     document.getElementById('inv-app').style.display = 'flex';
     console.log('[INV] invSetMode defined:', typeof window.invSetMode);
@@ -2344,9 +2359,10 @@ function renderRecs() {
       ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' :
       ws.status === 'unknown'  ? '<span style="color:var(--gray-400);font-size:11px">Loading…</span>' : '';
     const discBtn = `<button onclick="toggleDiscontinued('${esc(r.sku)}')" class="badge-disc" title="Mark as discontinued">✕</button>`;
+    const reoDisc = reorderDiscOf(r.sku);
     return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
       <td><input type="checkbox" ${inB ? 'checked' : ''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
-      <td class="sku">${r.sku}</td>
+      <td class="sku">${r.sku}${reoDisc ? '<div class="awd-reo-disc" title="Discontinued in Reorder' + (reoDisc.note ? ': ' + awdH(reoDisc.note) : '') + '" style="font-size:10px;font-weight:700;color:#6b7280">🚫 discontinued — ship what we have, not reordered</div>' : ''}</td>
       <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="${r.name||''}">${r.name||'—'}</td>
       <td class="asin">${r.asin||'—'}</td>
       <td>${db(r.netDays)}</td>

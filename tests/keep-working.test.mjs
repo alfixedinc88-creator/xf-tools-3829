@@ -8401,5 +8401,61 @@ console.log('\n🗓 SKU Mgr search: out of stock (In Stock Only shows no rows) �
   sq.exec("DELETE FROM master_list WHERE base_sku = '731-3-3'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '731-3-3%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '731-3-3%'");
 }
 
+// Owner (2026-10-21): "FBA Inventory Health, AWD inventory, FBA Live inventory, FBA Reserved inventory — all 4 reports: can the system
+// get them by itself instead of us downloading them?" (the old ⚡ Sync left units shipped BLANK and put FC processing in "FC Transfer").
+console.log('\n📡 AWD planner: the 4 Amazon reports by themselves (FBA Live / Reserved / Inventory Health / AWD) into the sheets the page reads');
+{
+  const realFetch = globalThis.fetch, writes = {}, asked = [];
+  let healthStatus = 'IN_QUEUE', awdDeny = false;
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/fba/inventory/v1/summaries')) { asked.push('fba'); return J({ payload: { inventorySummaries: [
+      { sellerSku: '27-1-1=10X', asin: 'B0A1', fnSku: 'X1', productName: 'tee', condition: 'NewItem', totalQuantity: 140, inventoryDetails: { fulfillableQuantity: 100, inboundWorkingQuantity: 5, inboundShippedQuantity: 6, inboundReceivingQuantity: 7,
+        reservedQuantity: { totalReservedQuantity: 22, pendingCustomerOrderQuantity: 3, pendingTransshipmentQuantity: 12, fcProcessingQuantity: 7 }, unfulfillableQuantity: { totalUnfulfillableQuantity: 1 } } },
+      { sellerSku: '27-1-2=5', asin: 'B0A2', fnSku: 'X2', productName: 'cap', condition: 'NewItem', totalQuantity: 9, inventoryDetails: { fulfillableQuantity: 9, reservedQuantity: {} } }] }, pagination: {} }); }
+    if (u.includes('/awd/2024-05-09/inventory')) { asked.push('awd'); return awdDeny ? J({ errors: [{ code: 'Unauthorized', message: 'Access to requested resource is denied.' }] }, 403)
+      : J({ inventory: [{ sku: '27-1-1=10X', totalOnhandQuantity: 60, totalInboundQuantity: 40, inventoryDetails: { availableDistributableQuantity: 50, reservedDistributableQuantity: 10, replenishmentQuantity: 8 } }] }); }
+    if (u.endsWith('/reports/2021-06-30/reports') && m === 'POST') { asked.push('health-ask:' + JSON.parse(o.body).reportType); return J({ reportId: 'R1' }, 202); }
+    if (u.includes('/reports/2021-06-30/reports/R1')) return J({ processingStatus: healthStatus, reportDocumentId: healthStatus === 'DONE' ? 'D1' : undefined });
+    if (u.includes('/reports/2021-06-30/documents/D1')) return J({ url: 'https://amazon-report-file/D1' });
+    if (u === 'https://amazon-report-file/D1') return new Response('snapshot-date\tsku\tasin\tunits-shipped-t7\tunits-shipped-t30\tunits-shipped-t60\tunits-shipped-t90\n2026-10-21\t27-1-1=10X\tB0A1\t4\t20\t41\t63\n2026-10-21\t27-1-2=5\tB0A2\t0\t1\t1\t2\n');
+    if (u.includes('sheets.googleapis.com') && u.includes('/values/') && m === 'PUT') { const tab = decodeURIComponent(u.split('/values/')[1].split('?')[0]); writes[tab] = JSON.parse(o.body).values; return J({}); }
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  const sync = await (await call('/awd/auto-reports', { method: 'POST', headers: H })).json();
+  const F = writes.FBA_Inventory || [[]], fh = F[0], frow = k => (F.find(r => r[0] === k) || []), col = (r, n) => r[fh.indexOf(n)];
+  check('⚡ / every morning: FBA Live (2 SKUs), FBA Reserved, AWD and FBA_Inventory written; Inventory Health asked for (GET_FBA_INVENTORY_PLANNING_DATA)',
+    sync.ok && sync.ran && (writes.FBA_Live || []).length === 3 && (writes.FBA_Reserve || []).length === 3 && (writes.AWD_Inventory || []).length === 2 && F.length === 3 && asked.includes('health-ask:GET_FBA_INVENTORY_PLANNING_DATA') && sync.status.health.pending, { sync, asked });
+  const R = (writes.FBA_Reserve || []).find(r => r[0] === '27-1-1=10X') || [], Rh = (writes.FBA_Reserve || [[]])[0];
+  check('FBA Reserved: customer orders 3 · FC transfers 12 · FC processing 7 (in the columns the page reads); FBA_Inventory "Reserved FC Transfer" = 12 (it used to get the FC processing 7)',
+    R[Rh.indexOf('reserved_customerorders')] === 3 && R[Rh.indexOf('reserved_fc-transfers')] === 12 && R[Rh.indexOf('reserved_fc-processing')] === 7 && col(frow('27-1-1=10X'), 'Reserved FC Transfer') === 12, { R, f: frow('27-1-1=10X') });
+  check('…FBA inbound kept (working 5 · shipped 6 · receiving 7); units shipped empty only until the first Inventory Health is in', col(frow('27-1-1=10X'), 'afn-inbound-working-quantity') === 5 && col(frow('27-1-1=10X'), 'afn-inbound-receiving-quantity') === 7 && col(frow('27-1-1=10X'), 'units-shipped-t90') === '', frow('27-1-1=10X'));
+  const A = writes.AWD_Inventory || [[]], Ah = A[0], a1 = A[1] || [];
+  check('AWD: available 50 · inbound to AWD 40 · reserved 10 · outbound to FBA 8 (the column names of the AWD CSV)',
+    a1[0] === '27-1-1=10X' && a1[Ah.indexOf('Available in AWD (units)')] === 50 && a1[Ah.indexOf('Inbound to AWD (units)')] === 40 && a1[Ah.indexOf('Reserved in AWD (units)')] === 10 && a1[Ah.indexOf('Outbound to FBA (units)')] === 8, A);
+  const st1 = await get('/awd/auto-reports?check=1');
+  check('Amazon still making the report → ⏳ still pending, nothing rewritten', st1.health && st1.health.pending && st1.fba.count === 2 && st1.awd.count === 1, st1);
+  healthStatus = 'DONE'; delete writes.FBA_Inventory;
+  const st2 = await get('/awd/auto-reports?check=1'), F2 = writes.FBA_Inventory || [[]], g = k => F2.find(r => r[0] === k) || [];
+  check('report DONE → units shipped 7 / 30 / 60 / 90 days filled in FBA_Inventory (27-1-1=10X: 4 / 20 / 41 / 63; 27-1-2=5: t90 2); ✅ 2 SKUs, not pending',
+    st2.health && !st2.health.pending && st2.health.count === 2 && g('27-1-1=10X')[F2[0].indexOf('units-shipped-t90')] === 63 && g('27-1-1=10X')[F2[0].indexOf('units-shipped-t7')] === 4 && g('27-1-2=5')[F2[0].indexOf('units-shipped-t90')] === 2
+      && g('27-1-1=10X')[F2[0].indexOf('Reserved FC Transfer')] === 12, { st2, F2 });
+  // next morning's inventory run keeps the sales from the last Inventory Health (never blank again)
+  awdDeny = true; for (const k of Object.keys(writes)) delete writes[k];
+  const s3 = await (await call('/awd/auto-reports', { method: 'POST', headers: H })).json(), F3 = writes.FBA_Inventory || [[]];
+  check('…the next run keeps the last sales (t90 63) while the new report is made — never blank', (F3.find(r => r[0] === '27-1-1=10X') || [])[F3[0].indexOf('units-shipped-t90')] === 63, F3);
+  check('AWD refused by Amazon → ⚠ says why (the seller-API app needs the AWD role), the AWD sheet is NOT emptied', s3.status.awd.error && /Amazon Warehousing and Distribution/.test(s3.status.awd.error) && !writes.AWD_Inventory, s3.status.awd);
+  const old = await (await call('/awd/amazon-sync', { method: 'POST', headers: H })).json();
+  check('the old ⚡ Sync route does the same 4-report run now (fbaCount 2)', old.ok && old.fbaCount === 2, old);
+  const { readFileSync: rfW } = await import('node:fs');
+  const ah = rfW(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), wk = rfW(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('page: the card says all 4 come in by themselves every morning, shows when each came in (⏳ while Amazon makes Inventory Health, loads by itself); the 30-minute timer runs it',
+    /id="awd-auto-status"/.test(ah) && /All 4 reports come in by themselves every morning/.test(ah) && /\/awd\/auto-reports', \{ method: 'POST' \}/.test(ah) && /function awdAutoWatch\(\)/.test(ah) && /ctx\.waitUntil\(awdAutoTick\(env, false\)/.test(wk), null);
+  check('🚫 discontinued in Reorder → AWD still recommends it (ship what we have) with a "🚫 discontinued — ship what we have, not reordered" tag; =10-X matches =10X',
+    /🚫 discontinued — ship what we have, not reordered/.test(ah) && new Function(ah.match(/function reorderDiscKey\(sku\) \{[^\n]*\}/)[0] + '\nreturn reorderDiscKey;')()('27-1-1=10-X-') === '27-1-1=10X', null);
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  sq.exec('DELETE FROM awd_auto');
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
