@@ -8194,5 +8194,36 @@ console.log('\n📗 Vendor sheet: "Order" sheet = the order only; SALES BY PART 
   check('…no Excel (.csv, one sheet only): the sales list still comes, under the order as before', L.some(l => /SALES BY PART #/.test(l)) && L.includes('728-1-1,728-1-1=OLD,eBay,0,20') && L.findIndex(l => /^"?TOTAL/.test(l)) < L.findIndex(l => /SALES BY PART #/.test(l)), L.slice(-5));
 }
 
+// Owner (2026-10-21, 29-1-2=OLD at C4=1-3-29: "16 cs: no record of getting here (older, or an SKU Mgr edit)" — "we already scanned that
+// column in Audit. Did Audit change SKU Mgr? That's what Audit is for"). The 📅 Got here column now shows the spot's last Audit:
+// ✓ matched / corrected (SKU Mgr changed) / ⏳ waiting in Review (SKU Mgr not changed yet) / never audited.
+console.log('\n🔍 SKU Mgr "Got here": the last Audit of the spot (matched · corrected · ⏳ waiting in Review · never audited)');
+{
+  const ago = d => new Date(Date.now() - d * 864e5).toISOString();
+  const L = (ts, type, loc, cases, ini, notes, status) => sq.prepare(`INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status) VALUES (0,?,?,?,?,?,?,?,?)`)
+    .run(ts, type, '729-1-2=OLD', loc, cases, ini, notes, status);
+  L(ago(120), 'OUT', 'C4=1-3-29', 1, 'SP', 'pull', 'Verified');
+  L(ago(5), 'IN', 'C4=1-3-29', 0, 'Mg', '[AUDIT] Confirmed: 16 cases verified correct', 'Verified');      // matched
+  L(ago(5), 'IN', 'C4=1-3-28', 2, 'Mg', '[AUDIT] System: 0 → Actual: 2 (diff: +2.0)', 'Verified');      // corrected, approved
+  L(ago(3), 'OUT', 'C4=1-3-27', 4, 'Mg', '[AUDIT] System: 10 → Actual: 6 (diff: -4.0)', 'Pending');     // waiting in Review
+  L(ago(2), 'IN', 'C4=1-3-26', 5, 'Mg', '[AUDIT] System: 0 → Actual: 5 (diff: +5.0)', 'Rejected');      // rejected → not shown
+  const d = await post('/inventory/arrivals', { rows: [{ part: '729-1-2=OLD', loc: 'C4=1-3-29', cases: 16 }, { part: '729-1-2=OLD', loc: 'C4=1-3-28', cases: 2 },
+    { part: '729-1-2=OLD', loc: 'C4=1-3-27', cases: 10 }, { part: '729-1-2=OLD', loc: 'C4=1-3-26', cases: 1 }] });
+  const R = k => (d.rows || {})['729-1-2=OLD|' + k] || {};
+  const a = R('C4=1-3-29'), b = R('C4=1-3-28'), c = R('C4=1-3-27'), z = R('C4=1-3-26');
+  check('C4=1-3-29: 16 cs no record of getting here, but the Audit (Mg) matched 16 ✓', a.noRecordCases === 16 && a.audit && a.audit.matched === 16 && a.audit.by === 'Mg' && !a.audit.pending, a);
+  check('C4=1-3-28: Audit 0 → 2 approved (SKU Mgr changed); its 2 cs got here by "🔍 Audit (found more)"', b.audit && b.audit.from === 0 && b.audit.to === 2 && !b.audit.pending && b.since && b.since.from === '🔍 Audit (found more)', b);
+  check('C4=1-3-27: Audit 10 → 6 still ⏳ waiting in Review (SKU Mgr not changed yet); C4=1-3-26: a rejected Audit is not shown', c.audit && c.audit.pending === true && c.audit.to === 6 && !z.audit, [c.audit, z.audit]);
+  const { readFileSync: rfG } = await import('node:fs');
+  const ih = rfG(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const i0 = ih.indexOf('  function skumgrGotHtml(a) {'), i1 = ih.indexOf('\n  }\n', i0);
+  const gh = new Function('invEsc', ih.slice(i0, i1 + 4) + '\nreturn skumgrGotHtml;')(x => String(x));
+  const ha = gh(a), hb = gh(b), hc = gh(c), hz = gh(z);
+  check('…screen: "🔍 Audit … · Mg: 16 cs ✓ matched" · "0 → 2 cs (SKU Mgr changed)" · "⏳ Audit … waiting in Review — SKU Mgr not changed yet" (red) · "never audited"',
+    /🔍 Audit [^<]* · Mg: 16 cs ✓ matched/.test(ha) && /0 → 2 cs \(SKU Mgr changed\)/.test(hb) && /color:var\(--red\)[^>]*>⏳ Audit [^<]*: 10 → 6 cs waiting in Review — SKU Mgr not changed yet/.test(hc) && /never audited/.test(hz)
+      && /16 cs: no record of getting here/.test(ha), [ha, hc]);
+  sq.exec("DELETE FROM inventory_log WHERE part_num = '729-1-2=OLD'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
