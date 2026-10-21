@@ -5384,6 +5384,10 @@ function rvoPartFind() {
         + d.upcDup.map(function (x) { return 'box ' + e(x.outside_upc || '—') + ' · bag ' + e(x.inside_upc || '—'); }).join(' / ') + ' — check the boxes below and 💾 Save once: every row and the vendor file get them.</div>' : '')
       + '<div style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">' + (d.caseOf ? '<span style="color:var(--text);font-weight:600">📦 Sold as a whole case of <span style="font-family:var(--mono)">' + e(d.caseOf) + '</span> (Big Company ships a whole case; Reorder orders it as ' + e(d.caseOf) + ')</span>' : '')
         + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoCaseOfPart(\'' + e(d.part).replace(/'/g, '') + '\', \'' + e(d.caseOf || '').replace(/'/g, '') + '\')">📦 ' + (d.caseOf ? 'Change / undo' : 'Sold as a whole case of…') + '</button></div>'
+      // 🚫 Owner (2026-10-21): "put discontinued under Barcode / vendor for a part # — search it and set it there".
+      + '<div class="rvo-p-disc" style="margin-bottom:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        + (d.discontinued ? '<span style="color:#6b7280;font-weight:700">🚫 DISCONTINUED — Reorder never orders it, not in any vendor file' + (d.discontinued.note ? ' (' + e(d.discontinued.note) + ')' : '') + ' · ' + e(d.discontinued.by_user || '') + ' ' + e(String(d.discontinued.at || '').slice(0, 10)) + '</span>' : '')
+        + '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;' + (d.discontinued ? '' : 'color:var(--red);border-color:var(--red)') + '" onclick="rvoDiscPart(\'' + e(d.part).replace(/'/g, '') + '\', ' + (d.discontinued ? 'false' : 'true') + ')">' + (d.discontinued ? '↩ Sell it again' : '🚫 Discontinued (stop ordering it)…') + '</button></div>'
       + (d.retired ? '<div style="margin-bottom:8px;color:var(--orange);font-weight:600">🚫 Marked not used anymore' + (d.retired.note ? ' — ' + e(d.retired.note) : '') + ' (' + e(d.retired.by_user || '') + ' ' + e(String(d.retired.at || '').slice(0, 10)) + ')</div>' : '')
       + (function () { var o = d.edit || d.upc || {}, c = function (v) { return String(v || '').replace(/\D/g, ''); }, miss = [];
           if (c(n.outside_upc) && c(n.outside_upc) !== c(o.outside_upc)) miss.push('📦 box');
@@ -5593,6 +5597,19 @@ async function rvoDisc(i) {
     var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Not saved');
     showToast(on ? '🚫 ' + d.part + ' discontinued — not ordered' : '↩ ' + d.part + ' sold again');
     rvoLoad();
+  } catch (e) { alert('Not saved: ' + e.message); }
+}
+// 🏷 Barcode / vendor → 🚫 Discontinued / ↩ Sell it again (same save as the 🚫 on a planner row).
+async function rvoDiscPart(part, on) {
+  var note = '';
+  if (on) { note = prompt('🚫 ' + part + ' — DISCONTINUED?\n\nThe planner never orders it again and it is left out of every vendor file. Its stock still counts for the part (sold off first). Kept in 🕘 History.\n\nWhy? (e.g. sells too slow)', 'sells too slow'); if (note == null) return; }
+  else if (!confirm('↩ Sell ' + part + ' again? The planner orders it again when it needs it.')) return;
+  try {
+    var res = await wFetch(W + '/reorder/fix/discontinued', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, on: !!on, note: note }) });
+    var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Not saved');
+    showToast(on ? '🚫 ' + d.part + ' discontinued — not ordered' : '↩ ' + d.part + ' sold again');
+    rvoPartFind();
+    if (RVO.loaded) rvoLoad();
   } catch (e) { alert('Not saved: ' + e.message); }
 }
 async function rvoCaseOf(i) {
