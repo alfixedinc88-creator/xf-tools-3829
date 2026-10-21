@@ -14472,7 +14472,7 @@ window.invCredLogin = async function() {
     return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
       + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
       + '<span>🟩 done ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
-      + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished to…</button>' : '')
+      + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished (pick which) to…</button>' : '')
       + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
       // 🧭 Owner (2026-10-21): "each aisle on its own line — 1A stays with 1A: 1A-1-1, 1A-1-2 … 1A-2-1, 1A-2-2 …". One row per aisle
       // (the part after "=" up to the first "-"), its spots in walking order; the aisles in walking order too.
@@ -14532,19 +14532,51 @@ window.invCredLogin = async function() {
     var spots = a.spots.filter(function(sp) { return sp.st !== 'done'; }).map(function(sp) { return sp.l; });
     wFetch(W + '/inventory/recount/people').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { invFlash((d && d.error) || 'Could not load people', 'error'); return; }
-      xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">📤 Send ' + spots.length + ' unfinished ' + ckE(area) + ' spot' + (spots.length === 1 ? '' : 's') + '</div>'
-        + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;max-height:90px;overflow:auto;font-family:var(--mono)">' + spots.slice().sort(invPullWalkCompare).map(ckE).join(' · ') + '</div>'
+      xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">📤 Send unfinished ' + ckE(area) + ' spots</div>'
+        + rcAssignPickHtml(spots, (RC.rep && RC.rep.assigned) || [])
         + '<div style="font-size:13px;font-weight:700;margin-bottom:4px">To who?</div><select id="rc-as-to" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:15px;margin-bottom:8px;background:var(--bg);color:var(--text)"><option value="">— pick a person —</option>'
         + d.people.map(function(p) { return '<option value="' + p.id + '">' + ckE(p.name) + '</option>'; }).join('') + '</select>'
         + '<input id="rc-as-note" placeholder="Note (optional), e.g. pull the boxes out and recount" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px;background:var(--bg);color:var(--text)">'
-        + '<button type="button" onclick="rcAssignSend(this.dataset.a)" data-a="' + ckE(area) + '" style="width:100%;padding:13px;border-radius:11px;border:none;background:var(--accent);color:#fff;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:6px">📤 Send</button>'
+        + '<button type="button" id="rc-as-send" onclick="rcAssignSend(this.dataset.a)" data-a="' + ckE(area) + '" style="width:100%;padding:13px;border-radius:11px;border:none;background:var(--accent);color:#fff;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:6px">📤 Send</button>'
         + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:11px;border-radius:11px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:14px;cursor:pointer">Cancel</button>');
-      RC._asSpots = spots;
+      RC._asSpots = spots; rcAssignCount();
     }).catch(function() { invFlash('📶 Could not load — check WiFi', 'error'); });
   };
+  // ☑ Owner (2026-10-21): "BARN is a big section — let me pick which unfinished spots to send, and to who". Every unfinished spot
+  // with a tick box, one line per aisle + row (as in By area) with a tick for the whole line; All / None. A spot already on someone's
+  // open list says so and starts unticked (so it isn't sent twice by mistake); the rest start ticked (same as before: send all).
+  function rcAssignPickHtml(spots, assigned) {
+    var sentTo = {}; (assigned || []).forEach(function(a) { (a.spots || []).forEach(function(x) { if (x.st !== 'done') sentTo[String(x.l).toUpperCase()] = a.to; }); });
+    var order = [], by = {};
+    spots.slice().sort(function(x, y) { return rcSpotCompare(x, y); }).forEach(function(l) { var k = rcAisleKey(l); if (!by[k]) { by[k] = []; order.push(k); } by[k].push(l); });
+    order.sort(function(x, y) { return rcSpotCompare('=' + x, '=' + y); });
+    return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:13px"><b id="rc-as-count">0 picked</b>'
+      + '<a href="#" onclick="rcAssignAll(true);return false">✓ All</a><a href="#" onclick="rcAssignAll(false);return false">✗ None</a></div>'
+      + '<div class="rc-as-pick" style="max-height:45vh;overflow:auto;border:1px solid var(--border);border-radius:9px;padding:4px 6px;margin-bottom:8px">'
+      + order.map(function(k, li) {
+          return '<div style="padding:4px 0;border-top:' + (li ? '1px solid var(--border)' : 'none') + '"><label style="font-family:var(--mono);font-weight:800;font-size:13px;cursor:pointer"><input type="checkbox" class="rc-as-line" data-line="' + li + '" onchange="rcAssignLine(this)"> ' + ckE(k) + '</label>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">' + by[k].map(function(l) { var st = sentTo[String(l).toUpperCase()];
+                return '<label style="display:inline-flex;align-items:center;gap:3px;padding:3px 6px;border-radius:7px;border:1.5px solid ' + (st ? 'var(--orange)' : 'var(--border)') + ';font-family:var(--mono);font-size:12px;cursor:pointer;background:var(--bg)">'
+                  + '<input type="checkbox" class="rc-as-spot" data-line="' + li + '" value="' + ckE(l) + '"' + (st ? '' : ' checked') + ' onchange="rcAssignCount()">' + ckE(l.slice(l.indexOf('=') + 1) || l)
+                  + (st ? ' <span style="color:var(--orange);font-family:var(--sans);font-size:10px">📤 ' + ckE(st) + '</span>' : '') + '</label>'; }).join('') + '</div></div>';
+        }).join('') + '</div>';
+  }
+  window.rcAssignCount = function() {
+    var all = document.querySelectorAll('.rc-as-spot'), n = 0, lines = {};
+    all.forEach(function(c) { if (c.checked) n++; var k = c.getAttribute('data-line'); lines[k] = lines[k] || { n: 0, on: 0 }; lines[k].n++; if (c.checked) lines[k].on++; });
+    document.querySelectorAll('.rc-as-line').forEach(function(c) { var x = lines[c.getAttribute('data-line')] || { n: 0, on: 0 }; c.checked = x.n > 0 && x.on === x.n; c.indeterminate = x.on > 0 && x.on < x.n; });
+    var el = g('rc-as-count'); if (el) el.textContent = n + ' of ' + all.length + ' picked';
+    var b = g('rc-as-send'); if (b) b.textContent = '📤 Send ' + n + ' spot' + (n === 1 ? '' : 's');
+  };
+  window.rcAssignLine = function(box) { var k = box.getAttribute('data-line'); document.querySelectorAll('.rc-as-spot[data-line="' + k + '"]').forEach(function(c) { c.checked = box.checked; }); rcAssignCount(); };
+  window.rcAssignAll = function(on) { document.querySelectorAll('.rc-as-spot').forEach(function(c) { c.checked = on; }); rcAssignCount(); };
   window.rcAssignSend = function(area) {
     var to = (g('rc-as-to') || {}).value; if (!to) { invFlash('Pick who gets it', 'error'); return; }
-    wFetch(W + '/inventory/recount/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, spots: RC._asSpots || [], toUserId: to, note: (g('rc-as-note') || {}).value || '' }) })
+    var boxes = document.querySelectorAll('.rc-as-spot'), picked = [];
+    boxes.forEach(function(c) { if (c.checked) picked.push(c.value); });
+    var spots = boxes.length ? picked : (RC._asSpots || []);
+    if (!spots.length) { invFlash('Tick at least one spot to send', 'error'); return; }
+    wFetch(W + '/inventory/recount/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, spots: spots, toUserId: to, note: (g('rc-as-note') || {}).value || '' }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('✗ ' + ((d && d.error) || 'Not sent'), 'error'); return; }
         xfrPopupClose(); invFlash('📤 Sent ' + d.spots + ' spot' + (d.spots === 1 ? '' : 's') + ' to ' + d.to + ' — they see it on Audit → 📋 Recount', 'success'); rcReport();
