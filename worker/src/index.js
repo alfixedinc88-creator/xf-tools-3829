@@ -62,6 +62,245 @@ const SCOPES     = 'https://www.googleapis.com/auth/spreadsheets';
 const TOKEN_URL  = 'https://oauth2.googleapis.com/token';
 const SHEETS_URL = 'https://sheets.googleapis.com/v4/spreadsheets';
 
+// ── 🗄 OUR OWN DATABASE INSTEAD OF GOOGLE SHEETS (owner 2026-10-22) ─────────
+// "Don't use the Google Sheet anymore — create our own database, a database is better to work with." Every Google Sheets
+// call in this file goes through fetch() below. A tab that has been moved (Admin → 🗄 Database: copied once from Google,
+// rows + cells checked ✅) is answered from D1 (xs_row: one row per sheet row, the cells as JSON) in exactly the shape
+// Google answers — read, write, append, clear, batchGet, batchUpdate — so every screen keeps working the same way.
+// A tab not moved yet still goes to Google. Cell colours / sheet properties of a moved tab are skipped (looks only).
+let _xsEnv = null, _xsTabs = null, _xsTabsAt = 0;
+async function fetch(input, init) { // shadows the global fetch for this file only
+  const u = typeof input === 'string' ? input : (input && input.url) || String(input);
+  if (_xsEnv && _xsEnv.DB && u.startsWith('https://sheets.googleapis.com/v4/spreadsheets/')) {
+    try { const r = await xsHandle(_xsEnv, u, init || (typeof input === 'object' ? input : {})); if (r) return r; }
+    catch (e) { console.error('[xs]', e.message); return new Response(JSON.stringify({ error: { code: 500, message: 'Database sheet store: ' + e.message } }), { status: 500, headers: { 'Content-Type': 'application/json' } }); }
+  }
+  return globalThis.fetch(input, init);
+}
+async function xsTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS xs_tab (book TEXT NOT NULL, tab TEXT NOT NULL, copied_at TEXT, by_user TEXT, rows INTEGER, cells INTEGER, chk TEXT, PRIMARY KEY (book, tab))').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS xs_row (book TEXT NOT NULL, tab TEXT NOT NULL, r INTEGER NOT NULL, v TEXT, PRIMARY KEY (book, tab, r))').run();
+}
+async function xsMoved(env, book) {
+  if (!_xsTabs || Date.now() - _xsTabsAt > 30000) {
+    await xsTables(env);
+    const m = {}; ((await env.DB.prepare('SELECT book, tab FROM xs_tab').all()).results || []).forEach(x => { (m[x.book] = m[x.book] || new Set()).add(x.tab); });
+    _xsTabs = m; _xsTabsAt = Date.now();
+  }
+  return _xsTabs[book] || new Set();
+}
+function xsReset() { _xsTabs = null; }
+const xsColN = s => { let n = 0; for (const ch of String(s).toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64); return n; }; // A → 1
+const xsColL = n => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+// "Tab!A2:G5000", "'My Tab'!A:N", "Tab!I23", "Tab", "Tab!B12:D" → { tab, c1, r1, c2, r2 } (1-based, open ends = Infinity)
+function xsRange(a1) {
+  a1 = String(a1 || '');
+  let tab = a1, ref = '';
+  const bang = a1.lastIndexOf('!');
+  if (bang >= 0) { tab = a1.slice(0, bang); ref = a1.slice(bang + 1); }
+  tab = tab.replace(/^'(.*)'$/, '$1').replace(/''/g, "'");
+  const cell = x => { const m = /^([A-Za-z]*)(\d*)$/.exec(x || ''); return m ? { c: m[1] ? xsColN(m[1]) : null, r: m[2] ? parseInt(m[2], 10) : null } : { c: null, r: null }; };
+  if (!ref) return { tab, c1: 1, r1: 1, c2: Infinity, r2: Infinity };
+  const [p, q] = ref.split(':'), A = cell(p), B = q === undefined ? A : cell(q);
+  return { tab, c1: A.c || 1, r1: A.r || 1, c2: B.c || (q === undefined ? A.c || Infinity : Infinity), r2: B.r || (q === undefined ? A.r || Infinity : Infinity) };
+}
+const xsCell = v => v === null || v === undefined ? '' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : String(v);
+async function xsRows(env, book, tab, r1, r2) {
+  const q = r2 === Infinity ? await env.DB.prepare('SELECT r, v FROM xs_row WHERE book = ? AND tab = ? AND r >= ? ORDER BY r').bind(book, tab, r1).all()
+    : await env.DB.prepare('SELECT r, v FROM xs_row WHERE book = ? AND tab = ? AND r >= ? AND r <= ? ORDER BY r').bind(book, tab, r1, r2).all();
+  return (q.results || []).map(x => ({ r: x.r, v: JSON.parse(x.v || '[]') }));
+}
+async function xsGet(env, book, a1) {
+  const R = xsRange(a1), rows = await xsRows(env, book, R.tab, R.r1, R.r2), out = [];
+  for (const x of rows) {
+    const cells = x.v.slice(R.c1 - 1, R.c2 === Infinity ? undefined : R.c2).map(xsCell);
+    while (cells.length && cells[cells.length - 1] === '') cells.pop();
+    out[x.r - R.r1] = cells;
+  }
+  for (let i = 0; i < out.length; i++) if (!out[i]) out[i] = [];
+  while (out.length && !out[out.length - 1].length) out.pop(); // Google leaves out empty rows at the end
+  const ref = R.r1 === 1 && R.r2 === Infinity && R.c1 === 1 && R.c2 === Infinity ? '' : '!' + xsColL(R.c1) + R.r1 + (R.c2 === Infinity && R.r2 === Infinity ? '' : ':' + (R.c2 === Infinity ? '' : xsColL(R.c2)) + (R.r2 === Infinity ? '' : R.r2));
+  return { range: R.tab + ref, majorDimension: 'ROWS', values: out };
+}
+async function xsWrite(env, book, tab, r0, c0, values) { // values[i][j] → row r0 + i, column c0 + j (null = leave as is)
+  const n = values.length; if (!n) return 0;
+  const have = {}; (await xsRows(env, book, tab, r0, r0 + n - 1)).forEach(x => { have[x.r] = x.v; });
+  const st = [];
+  for (let i = 0; i < n; i++) {
+    const row = Array.isArray(values[i]) ? values[i] : [values[i]], cur = (have[r0 + i] || []).slice();
+    row.forEach((v, j) => { if (v === null || v === undefined) return; while (cur.length < c0 - 1 + j) cur.push(''); cur[c0 - 1 + j] = xsCell(v); });
+    while (cur.length && cur[cur.length - 1] === '') cur.pop();
+    st.push(cur.length ? env.DB.prepare('INSERT INTO xs_row (book, tab, r, v) VALUES (?,?,?,?) ON CONFLICT(book, tab, r) DO UPDATE SET v = excluded.v').bind(book, tab, r0 + i, JSON.stringify(cur))
+      : env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ? AND r = ?').bind(book, tab, r0 + i));
+  }
+  for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
+  return n;
+}
+async function xsUpdate(env, book, a1, values) {
+  const R = xsRange(a1); await xsWrite(env, book, R.tab, R.r1, R.c1, values || []);
+  const w = Math.max(0, ...(values || []).map(r => (Array.isArray(r) ? r.length : 1)));
+  return { spreadsheetId: book, updatedRange: R.tab + '!' + xsColL(R.c1) + R.r1 + ':' + xsColL(R.c1 + Math.max(1, w) - 1) + (R.r1 + Math.max(1, (values || []).length) - 1), updatedRows: (values || []).length, updatedColumns: w };
+}
+async function xsAppend(env, book, a1, values) {
+  const R = xsRange(a1);
+  const last = await env.DB.prepare('SELECT MAX(r) m FROM xs_row WHERE book = ? AND tab = ?').bind(book, R.tab).first();
+  const r0 = Math.max((last && last.m) || 0, R.r1 - 1) + 1;
+  await xsWrite(env, book, R.tab, r0, R.c1, values || []);
+  const w = Math.max(1, ...(values || []).map(r => (Array.isArray(r) ? r.length : 1)));
+  const updatedRange = R.tab + '!' + xsColL(R.c1) + r0 + ':' + xsColL(R.c1 + w - 1) + (r0 + Math.max(1, (values || []).length) - 1);
+  return { spreadsheetId: book, tableRange: R.tab + '!A1:' + xsColL(R.c1 + w - 1) + (r0 - 1), updates: { spreadsheetId: book, updatedRange, updatedRows: (values || []).length, updatedColumns: w } };
+}
+async function xsClear(env, book, a1) {
+  const R = xsRange(a1);
+  if (R.c1 === 1 && R.c2 === Infinity) {
+    if (R.r2 === Infinity) await env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ? AND r >= ?').bind(book, R.tab, R.r1).run();
+    else await env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ? AND r >= ? AND r <= ?').bind(book, R.tab, R.r1, R.r2).run();
+  } else {
+    const rows = await xsRows(env, book, R.tab, R.r1, R.r2);
+    const blank = rows.map(x => { const w = Math.min(x.v.length, R.c2 === Infinity ? x.v.length : R.c2) - R.c1 + 1; return w > 0 ? { r: x.r, cells: Array(w).fill('') } : null; }).filter(Boolean);
+    for (const b of blank) await xsWrite(env, book, R.tab, b.r, R.c1, [b.cells]);
+  }
+  return { spreadsheetId: book, clearedRange: a1 };
+}
+const xsJ = o => new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } });
+// One Google Sheets REST call → answered from the database when its tab(s) moved; null = send to Google.
+async function xsHandle(env, url, init) {
+  const U = new URL(url), method = String((init && init.method) || 'GET').toUpperCase();
+  const m = /^\/v4\/spreadsheets\/([^/:?]+)(.*)$/.exec(U.pathname); if (!m) return null;
+  const book = decodeURIComponent(m[1]), rest = m[2], moved = await xsMoved(env, book);
+  if (!moved.size) return null;
+  const body = async () => { try { return JSON.parse(typeof init.body === 'string' ? init.body : await new Response(init.body).text()); } catch (_) { return {}; } };
+  const tabOf = a1 => xsRange(a1).tab;
+  let v;
+  if ((v = /^\/values\/(.+?)(:append|:clear)?$/.exec(rest))) {
+    const a1 = decodeURIComponent(v[1]); if (!moved.has(tabOf(a1))) return null;
+    if (v[2] === ':append') return xsJ(await xsAppend(env, book, a1, (await body()).values));
+    if (v[2] === ':clear') return xsJ(await xsClear(env, book, a1));
+    if (method === 'PUT') return xsJ(await xsUpdate(env, book, a1, (await body()).values));
+    return xsJ(await xsGet(env, book, a1));
+  }
+  if (rest === '/values:batchGet') {
+    const ranges = U.searchParams.getAll('ranges'); if (!ranges.length || !ranges.every(a => moved.has(tabOf(a)))) return null;
+    return xsJ({ spreadsheetId: book, valueRanges: await Promise.all(ranges.map(a => xsGet(env, book, a))) });
+  }
+  if (rest === '/values:batchUpdate') {
+    const b = await body(), data = b.data || []; if (!data.length || !data.every(d => moved.has(tabOf(d.range)))) return null;
+    const responses = []; for (const d of data) responses.push(await xsUpdate(env, book, d.range, d.values));
+    return xsJ({ spreadsheetId: book, totalUpdatedRows: responses.reduce((a, r) => a + r.updatedRows, 0), responses });
+  }
+  if (rest === ':batchUpdate') {
+    // Rows deleted / inserted (the eBay threads + customer-service log clean-ups) are done in the database for a moved tab;
+    // colours / sheet properties / adding a tab that is already here = nothing to do. A request for a tab still in Google → Google.
+    const b = await body(), reqs = b.requests || [];
+    const adds = reqs.filter(r => r.addSheet).map(r => r.addSheet.properties && r.addSheet.properties.title).filter(Boolean);
+    if (adds.length && !adds.every(t => moved.has(t))) return null;
+    const dims = reqs.filter(r => r.deleteDimension || r.insertDimension);
+    if (dims.length) {
+      const ids = await xsSheetIds(env, book, url, init);
+      const tabs = dims.map(r => ids[String(((r.deleteDimension || r.insertDimension).range || {}).sheetId || 0)]);
+      if (!tabs.every(t => t && moved.has(t))) return tabs.some(t => t && moved.has(t)) ? xsJ({ error: { code: 400, message: 'Mixed moved / not moved tabs in one request' } }) : null;
+      for (let i = 0; i < dims.length; i++) {
+        const d = dims[i].deleteDimension || dims[i].insertDimension, R = d.range || {};
+        if (R.dimension !== 'ROWS') continue; // columns: nothing in the app does that
+        const a = (R.startIndex || 0) + 1, k = (R.endIndex || 0) - (R.startIndex || 0); if (!(k > 0)) continue;
+        await xsShiftRows(env, book, tabs[i], a, k, !!dims[i].deleteDimension);
+      }
+    }
+    return xsJ({ spreadsheetId: book, replies: reqs.map(() => ({})) });
+  }
+  if (rest === '' && method === 'GET') return xsJ({ sheets: await xsSheetList(env, book, url, init) }); // ?fields=sheets.properties — the tab list
+  return null;
+}
+// The tab list (Google's numeric sheetId ↔ tab name): Google's when it answers, plus moved tabs it doesn't know; kept so a
+// later delete / insert-rows request (which names the tab by its number) finds the tab.
+const _xsIds = {};
+async function xsSheetList(env, book, url, init) {
+  const moved = [...(await xsMoved(env, book))];
+  let real = []; try { const g = await globalThis.fetch(url.split('?')[0] + '?fields=sheets.properties', init); if (g.ok) real = ((await g.json()).sheets || []); } catch (_) {}
+  const have = new Set(real.map(s => s.properties && s.properties.title));
+  const all = real.concat(moved.filter(n => !have.has(n)).map(n => { let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 900000; return { properties: { sheetId: 1000000 + h, title: n } }; }));
+  const m = _xsIds[book] = _xsIds[book] || {}; all.forEach(s => { m[String(s.properties.sheetId)] = s.properties.title; });
+  return all;
+}
+async function xsSheetIds(env, book, url, init) {
+  if (!_xsIds[book]) await xsSheetList(env, book, url.replace(/:batchUpdate$/, ''), { headers: (init && init.headers) || {} });
+  return _xsIds[book] || {};
+}
+// Rows a … a+k−1 deleted (the ones below move up k) or k empty rows inserted at a (the ones from a move down k).
+async function xsShiftRows(env, book, tab, a, k, del) {
+  if (del) {
+    await env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ? AND r >= ? AND r < ?').bind(book, tab, a, a + k).run();
+    await env.DB.prepare('UPDATE xs_row SET r = -(r - ?) WHERE book = ? AND tab = ? AND r >= ?').bind(k, book, tab, a + k).run();
+  } else {
+    await env.DB.prepare('UPDATE xs_row SET r = -(r + ?) WHERE book = ? AND tab = ? AND r >= ?').bind(k, book, tab, a).run();
+  }
+  await env.DB.prepare('UPDATE xs_row SET r = -r WHERE book = ? AND tab = ? AND r < 0').bind(book, tab).run();
+}
+// 🗄 Admin → Database: every Google spreadsheet the app uses, each tab moved into our database or still in Google.
+const XS_BOOKS = [['SHEET_ID', '📦 Inventory'], ['SALES_SHEET_ID', '📈 Sales'], ['AMAZON_SHEET_ID', '🚛 Amazon / AWD'], ['SHEET_ID_REPRICER', '💲 Repricer'], ['SHIP_SHEET_ID', '🚚 Shipping'], ['MSG_SHEET_ID', '💬 Messages']];
+function xsBooks(env) {
+  const seen = new Map();
+  for (const [k, name] of XS_BOOKS) { const id = env[k] || (k === 'SALES_SHEET_ID' || k === 'AMAZON_SHEET_ID' || k === 'SHEET_ID_REPRICER' ? env.SHEET_ID : ''); if (!id) continue;
+    if (seen.has(id)) seen.get(id).names.push(name); else seen.set(id, { key: k, id, names: [name] }); }
+  return [...seen.values()];
+}
+async function adminDbMoveList(env) {
+  await xsTables(env);
+  const moved = {}; ((await env.DB.prepare('SELECT * FROM xs_tab').all()).results || []).forEach(t => { moved[t.book + '|' + t.tab] = t; });
+  let token = null; try { token = await getToken(env); } catch (_) {}
+  const books = [];
+  for (const b of xsBooks(env)) {
+    let tabs = [], err = '';
+    try { const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(b.id)}?fields=sheets.properties(title,gridProperties(rowCount,columnCount))`, { headers: { Authorization: 'Bearer ' + token } });
+      const d = await g.json(); if (d.error) throw new Error(d.error.message); tabs = (d.sheets || []).map(x => x.properties.title); } catch (e) { err = String(e.message || e).slice(0, 160); }
+    Object.values(moved).filter(t => t.book === b.id && !tabs.includes(t.tab)).forEach(t => tabs.push(t.tab));
+    books.push({ key: b.key, name: b.names.join(' + '), err, tabs: tabs.map(t => { const m = moved[b.id + '|' + t]; return { tab: t, moved: !!m, rows: m ? m.rows : null, cells: m ? m.cells : null, at: m ? m.copied_at : null, by: m ? m.by_user : null }; }) });
+  }
+  return cors(new Response(JSON.stringify({ ok: true, books }), { headers: { 'Content-Type': 'application/json' } }));
+}
+async function adminDbMoveDo(undo, request, env, s) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const book = xsBooks(env).find(x => x.key === b.book); if (!book) return J({ ok: false, error: 'Unknown spreadsheet' }, 400);
+  const tab = String(b.tab || '').trim(); if (!tab) return J({ ok: false, error: 'Tab?' }, 400);
+  const who = String((s && (s.displayName || s.username)) || 'admin').slice(0, 40);
+  await xsTables(env);
+  if (undo) { // back to Google (what was saved in the database for this tab since the move stays only here — said on the page)
+    await env.DB.prepare('DELETE FROM xs_tab WHERE book = ? AND tab = ?').bind(book.id, tab).run(); xsReset();
+    if (s && s.userId) await logUserActivity(env, s.userId, 'db_move_undo', { book: book.key, tab }).catch(() => {});
+    return J({ ok: true, undone: true, tab });
+  }
+  try {
+    const r = await xsCopyTab(env, book.id, tab, who);
+    if (s && s.userId) await logUserActivity(env, s.userId, 'db_move_copy', { book: book.key, tab, ok: r.ok, rows: r.rows, cells: r.cells }).catch(() => {});
+    return J(r);
+  } catch (e) { return J({ ok: false, tab, error: String(e.message || e).slice(0, 300) }, 500); }
+}
+// Copy one tab from Google into the database (once), then check it: same rows, same filled cells, same text.
+async function xsCopyTab(env, book, tab, who) {
+  await xsTables(env);
+  const token = await getToken(env);
+  const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(book)}/values/${encodeURIComponent("'" + tab.replace(/'/g, "''") + "'")}?valueRenderOption=FORMATTED_VALUE`, { headers: { Authorization: 'Bearer ' + token } });
+  const d = await g.json().catch(() => ({}));
+  if (!g.ok || d.error) throw new Error((d.error && d.error.message) || 'Google answered ' + g.status);
+  const vals = d.values || [];
+  const sum = rows => { let cells = 0, len = 0; rows.forEach(r => (r || []).forEach(c => { const s = xsCell(c); if (s !== '') { cells++; len += s.length; } })); return { rows: rows.length, cells, len }; };
+  const want = sum(vals);
+  await env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ?').bind(book, tab).run();
+  const recs = []; // 25 rows per INSERT (D1: at most 100 values per command), 40 commands per call → big tabs move in one go
+  vals.forEach((row, i) => { const cur = (row || []).map(xsCell); while (cur.length && cur[cur.length - 1] === '') cur.pop(); if (cur.length) recs.push([book, tab, i + 1, JSON.stringify(cur)]); });
+  const st = [];
+  for (let i = 0; i < recs.length; i += 25) { const ch = recs.slice(i, i + 25); st.push(env.DB.prepare('INSERT INTO xs_row (book, tab, r, v) VALUES ' + ch.map(() => '(?,?,?,?)').join(',')).bind(...ch.flat())); }
+  for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+  const back = (await xsGet(env, book, tab)).values, got = sum(back);
+  const ok = got.rows === want.rows && got.cells === want.cells && got.len === want.len;
+  if (!ok) { await env.DB.prepare('DELETE FROM xs_row WHERE book = ? AND tab = ?').bind(book, tab).run(); return { ok: false, tab, want, got }; }
+  await env.DB.prepare('INSERT INTO xs_tab (book, tab, copied_at, by_user, rows, cells, chk) VALUES (?,?,?,?,?,?,?) ON CONFLICT(book, tab) DO UPDATE SET copied_at = excluded.copied_at, by_user = excluded.by_user, rows = excluded.rows, cells = excluded.cells, chk = excluded.chk')
+    .bind(book, tab, new Date().toISOString(), who || '', want.rows, want.cells, String(want.len)).run();
+  xsReset();
+  return { ok: true, tab, rows: want.rows, cells: want.cells };
+}
+
 const ALLOWED_TABS = new Set([
   'Master_List','Products','AWD_Master','UPC','Out_of_Stock',
   'JQ_Vendor','EFF_Vendor','COGS',
@@ -9119,6 +9358,8 @@ const _app = {
         return cors(new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       }
       if (url.pathname === '/admin/users/list' && method === 'GET')            return await adminListUsers(env, credSession);
+      if (url.pathname === '/admin/db-move' && method === 'GET')               return await adminDbMoveList(env);
+      if ((url.pathname === '/admin/db-move/copy' || url.pathname === '/admin/db-move/undo') && method === 'POST') return await adminDbMoveDo(url.pathname.endsWith('undo'), request, env, credSession);
       if (url.pathname === '/admin/users/create' && method === 'POST')        return await adminCreateUser(request, env, credSession);
       if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
       if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
@@ -10439,6 +10680,15 @@ async function handleWebhook(request, env, url) {
 // ─── EXISTING Google token (unchanged — uses CLIENT_EMAIL / PRIVATE_KEY) ─────
 let _token = null, _tokenExp = 0;
 async function getToken(env) {
+  // 🗄 Google down / its key removed: a tab moved into our database never needs Google — the call goes on and the database
+  // answers it (a tab still in Google then gets Google's own "not signed in" error, as before).
+  try { return await getTokenGoogle(env); }
+  catch (e) {
+    try { if (env.DB) { await xsTables(env); const n = await env.DB.prepare('SELECT COUNT(*) n FROM xs_tab').first(); if (n && n.n > 0) { console.error('[getToken] Google:', e.message, '— moved tabs are answered from the database'); return 'xs-db'; } } } catch (_) {}
+    throw e;
+  }
+}
+async function getTokenGoogle(env) {
   const now = Date.now() / 1000;
   if (_token && now < _tokenExp - 60) return _token;
   const iat = Math.floor(now);
@@ -25837,7 +26087,9 @@ async function csMsgLogClean(env) {
   const meta  = await metaR.json();
   const sheetId = ((meta.sheets || []).find(s => s.properties?.title === CS_LOG_TAB) || {}).properties?.sheetId;
   if (sheetId === undefined) return cors(new Response(JSON.stringify({ ok: true, deleted: 0 }), { headers: { 'Content-Type': 'application/json' } }));
-  const requests = toDelete.map(i => ({ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: i + 1, endIndex: i + 2 } } }));
+  // toDelete holds 0-based row numbers already (rows[i] is sheet row i + 2 = index i + 1) — it said "i + 1" again and deleted the
+  // row BELOW each old one (found 2026-10-22 moving this tab into our database).
+  const requests = toDelete.map(i => ({ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: i, endIndex: i + 1 } } }));
   for (let i = 0; i < requests.length; i += 100) {
     await fetch(`${SHEETS_URL}/${sid}:batchUpdate`, {
       method: 'POST',
@@ -33095,6 +33347,6 @@ async function soldoutAddListing(request, env) {
 
 // Every reply goes through the vendor-code mask (owner sees real names).
 export default {
-  async fetch(request, env, ctx) { request = await locAliasRequest(request); request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await shipPhotoResponse(request, env, await _app.fetch(request, env, ctx))); },
-  async scheduled(event, env, ctx) { return await _app.scheduled(event, env, ctx); },
+  async fetch(request, env, ctx) { _xsEnv = env; request = await locAliasRequest(request); request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await shipPhotoResponse(request, env, await _app.fetch(request, env, ctx))); },
+  async scheduled(event, env, ctx) { _xsEnv = env; return await _app.scheduled(event, env, ctx); },
 };
