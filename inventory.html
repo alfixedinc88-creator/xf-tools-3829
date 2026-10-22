@@ -14435,7 +14435,14 @@ window.invCredLogin = async function() {
     var h = '<div style="color:var(--text2);margin-bottom:6px;line-height:1.5">Every column finished in this recount, each part # at that spot: <b>what was counted + what moved in / out there after the count = what SKU Mgr should have now</b>. <a href="#" onclick="rcNumCheck();return false">↻ Check again</a></div>'
       + '<div class="rc-nc-sum" style="font-size:14px;font-weight:800;margin-bottom:8px">✅ ' + d.okColumns + ' of ' + d.columns + ' columns add up'
       + (P.length ? ' · <span style="color:var(--red)">⚠ ' + Object.keys(spots).length + ' column' + (Object.keys(spots).length === 1 ? '' : 's') + ' to look at (' + P.length + ' line' + (P.length === 1 ? '' : 's') + ')</span>' : ' — nothing to fix') + '</div>';
-    if (!P.length) return h;
+    // 🧹 Owner's screenshot (2026-10-22, "moves: OUT 0 NB 10-21"): counted with boxes, then someone moving boxes found the shelf
+    // EMPTY (Transfer → None found on shelf → set to 0). SKU Mgr = 0 is right for that; the count and the shelf disagreed.
+    var E = d.emptied || [];
+    var emptyH = E.length ? '<details class="rc-nc-empty" style="margin-top:10px"><summary style="cursor:pointer;font-weight:800;color:var(--orange)">🧹 ' + E.length + ' found EMPTY after the count — SKU Mgr is 0 (right for that), but the count had boxes: where did they go? (tap)</summary>'
+      + '<div style="overflow-x:auto;margin-top:6px"><table style="border-collapse:collapse;width:100%"><tr><th ' + th + '>Spot</th><th ' + th + '>Part #</th><th ' + th + '>Counted</th><th ' + th + '>Found empty by</th><th ' + th + '>Note</th></tr>'
+      + E.map(function(x) { return '<tr><td ' + td + '><b style="font-family:var(--mono)">' + ckE(x.location) + '</b><div style="color:var(--text3)">' + ckE(x.by || '') + ' ' + ckE(xfrFmtT(x.at)) + '</div></td><td ' + td + '><span style="font-family:var(--mono)">' + ckE(x.part) + '</span></td><td ' + td + '>' + n(x.counted)
+        + '</td><td ' + td + '><b>' + ckE(x.emptiedBy) + '</b> ' + ckE(xfrFmtT(x.emptiedAt)) + '</td><td ' + td + ' style="color:var(--text3)">' + ckE(x.note) + '</td></tr>'; }).join('') + '</table></div></details>' : '';
+    if (!P.length) return h + emptyH;
     h += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%"><tr><th ' + th + '>Spot</th><th ' + th + '>Part #</th><th ' + th + '>Counted</th><th ' + th + '>Moved since</th><th ' + th + '>Should be</th><th ' + th + '>SKU Mgr now</th><th ' + th + '>Why</th></tr>'
       + P.map(function(p) {
         var why = p.why === 'not counted' ? '<b style="color:var(--red)">not counted</b> — in SKU Mgr at this spot, but the column\'s count never had it (an old list on the phone?)'
@@ -14444,7 +14451,7 @@ window.invCredLogin = async function() {
           + '<td ' + td + '><span style="font-family:var(--mono)">' + ckE(p.part) + '</span></td><td ' + td + '>' + n(p.counted) + '</td><td ' + td + '>' + (p.moved ? (p.moved > 0 ? '+' : '') + n(p.moved) : '0') + '</td>'
           + '<td ' + td + '>' + n(p.expected) + '</td><td ' + td + '><b>' + n(p.now) + '</b></td><td ' + td + '>' + why + (p.edits ? ' · ✏️ edited in SKU Mgr after the count' : '') + '</td></tr>';
       }).join('') + '</table></div>'
-      + '<div style="margin-top:6px;color:var(--text2)">Recount those spots (or send them with 📤 to someone) — the new count makes them right.</div>';
+      + '<div style="margin-top:6px;color:var(--text2)">Recount those spots (or send them with 📤 to someone) — the new count makes them right.</div>' + emptyH;
     return h;
   };
   window.rcReport = function() {
