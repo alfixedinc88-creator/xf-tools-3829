@@ -7272,13 +7272,14 @@ async function inventoryLocationSearch(url, env) {
         // the same physical shelf): sheet_row is commonly 0 for rows
         // created directly in D1 (Receive PO inserts), so multiple such
         // rows would collide on rowIndex too. masterId is always unique.
+        // Owner (2026-10-22): a read that fails must never look like "nothing here" (d1All answers [] on an error) — an empty
+        // column on 📋 Recount makes every box a NEW line (counted twice). The error is returned instead (ok: false).
         const [d1Rows, pMap] = await Promise.all([
-          d1All(env,
+          env.DB.prepare(
             `SELECT id,sku,name,part_num,location,cases,units_per_case,sheet_row FROM master_list
              WHERE UPPER(TRIM(location)) = ?
                 OR UPPER(TRIM(location)) LIKE ?
-                OR UPPER(TRIM(location)) LIKE ?`,
-            [q, q + '-%', q + '=%']),
+                OR UPPER(TRIM(location)) LIKE ?`).bind(q, q + '-%', q + '=%').all().then(r => r.results || []),
           buildPendingMap(env)
         ]);
         for (const r of d1Rows) {
@@ -7291,7 +7292,11 @@ async function inventoryLocationSearch(url, env) {
         pendingMap = pMap;
         mlRows.sort((a,b) => a.location.localeCompare(b.location)||a.partNum.localeCompare(b.partNum));
         return cors(new Response(JSON.stringify({ ok:true, results:mlRows, count:mlRows.length, source:'d1' }), { headers:{'Content-Type':'application/json'} }));
-      } catch(e) { console.error('[D1] locSearch fallback:',e.message); mlRows=[]; }
+      } catch(e) {
+        console.error('[D1] locSearch:', e.message);
+        // Not the old Google Sheet (it is out of date): SKU Mgr could not be read — said so, nothing is listed.
+        return cors(new Response(JSON.stringify({ ok: false, error: 'SKU Mgr could not be read just now — try again', d1Error: String(e.message || e).slice(0, 200) }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
+      }
     }
     // Sheets fallback
     const [mlData, pMapFb] = await Promise.all([
@@ -7315,7 +7320,8 @@ async function inventoryLocationSearch(url, env) {
       results.push({ rowIndex: i+1, partNum, location: loc, cases, casesNum, adjustedCases: Math.max(0, casesNum-pending), pendingCases: pending, name, eachQty: parseFloat(r[9]) || 0 });
     }
     results.sort((a,b) => a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum));
-    return cors(new Response(JSON.stringify({ ok: true, results, count: results.length }), { headers: { 'Content-Type': 'application/json' } }));
+    // ⚠ Not SKU Mgr: the old Google Sheet (SKU Mgr could not be read). Said so — 📋 Recount never counts against it.
+    return cors(new Response(JSON.stringify({ ok: true, results, count: results.length, source: 'sheets' }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
   }

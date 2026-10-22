@@ -597,7 +597,9 @@ window.invCredLogin = async function() {
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit<span class="ibadge" id="rc-foryou-badge" style="display:none">0</span></button>
-  <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
+  <!-- Owner (2026-10-22): "no more Review, everything is auto approve now — take Review off". Hidden; it comes back only while
+       something is waiting for approval (the count on it), so nothing can be stuck where nobody sees it. -->
+  <button class="itab" id="inv-tab-review" style="display:none" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
   <button class="itab" id="inv-tab-location" onclick="invSwitchTab('location')">📍 Location Plan</button>
   <button class="itab" id="inv-tab-history" onclick="invSwitchTab('history')">&#x1F4DC; History</button>
@@ -4389,6 +4391,7 @@ window.invCredLogin = async function() {
         var n = d.count || 0;
         var b = g("inv-pending-badge");
         if (b) { b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+        var rt = g("inv-tab-review"); if (rt) rt.style.display = n > 0 ? "" : "none";
       }).catch(function() {});
   };
 
@@ -14038,18 +14041,42 @@ window.invCredLogin = async function() {
   function rcSaveState() {
     try {
       if (!RC.loc) { localStorage.removeItem(rcStateKey()); return; }
-      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, startedAt: RC.startedAt || '', at: Date.now() }));
+      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, startedAt: RC.startedAt || '', src: RC.src || null, at: Date.now() }));
     } catch (e) {}
   }
   window.rcRestore = function() {
     if (RC.loc) return;
     var st = null; try { st = JSON.parse(localStorage.getItem(rcStateKey()) || 'null'); } catch (e) {}
     if (!st || !st.loc || st.done) return;
+    // Owner (2026-10-22, C1=1-1-21): the phone brought back a column opened earlier with its OLD list (202-1-10 ×3, "0 checked")
+    // while SKU Mgr had 201-1-11=2XX / =5XX there — they were never on the list, so the recount never touched them. Nothing
+    // counted yet → the column is simply opened again from SKU Mgr now; something counted → kept, and the list is read again.
+    var counted = (st.rows || []).some(function(r) { return r._rc; }) || (st.extra || []).length;
+    if (!counted) { rcStart(st.loc, true); return; }
     RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null; RC.startedAt = st.startedAt || '';
     // A save that was still going when the page closed went through the phone outbox — it is not lost.
     RC.rows.forEach(function(r) { if (r._rc) r._rc.saving = false; }); RC.extra.forEach(function(x) { x.saving = false; });
     rcRender(); rcStatus(rcAisleOf(RC.loc));
     invFlash('Back to ' + RC.loc + ' — carry on where you left off', 'warn');
+    rcRefreshRows();
+  };
+  // The restored column read again from SKU Mgr: what is on record NOW is listed (a row counted on this phone keeps its count;
+  // a row no longer there and not counted is dropped; a new one is added) — never an old list.
+  window.rcRefreshRows = function() {
+    var loc = RC.loc; if (!loc) return Promise.resolve();
+    return rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
+      if (RC.loc !== loc || !d || d._old || d.source === 'sheets' || d.ok === false) return;
+      RC.src = { at: Date.now(), old: false };
+      var fresh = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
+      var K = function(r) { return r.masterId ? 'id' + r.masterId : String(r.partNum).toUpperCase() + '|' + ckNum(r.eachQty) + '|' + String(r.location).toUpperCase(); };
+      var old = {}; RC.rows.forEach(function(r) { old[K(r)] = r; });
+      var added = 0, gone = 0, keep = {};
+      fresh.forEach(function(r) { var o = old[K(r)]; if (o) { keep[K(r)] = 1; if (o._rc) r._rc = o._rc; } else added++; });
+      RC.rows.forEach(function(r) { if (keep[K(r)]) return; if (r._rc) fresh.push(r); else gone++; });
+      RC.rows = fresh; rcRender();
+      if (added || gone) invFlash('⚠ ' + loc + ' changed since this phone opened it (' + (added ? added + ' new on record' : '') + (added && gone ? ', ' : '') + (gone ? gone + ' no longer there' : '') + ') — the list is up to date now', 'warn');
+    }).catch(function() {});
   };
   // Offline: what this phone saw before (column contents, box lookups).
   function rcCache(kind, key, d) {
@@ -14062,10 +14089,14 @@ window.invCredLogin = async function() {
     return null;
   }
   function rcFetchJson(url, kind, key) {
-    return wFetch(url).then(function(r) { return r.json(); }).then(function(d) { if (d && (d.ok !== false)) rcCache(kind, key, d); return d; }, function(err) {
+    return wFetch(url).then(function(r) {
+      // 📴 the phone's saved answer (no internet) — say how old it is, never keep it as a fresh one.
+      var off = r.headers && r.headers.get && r.headers.get('X-XF-Offline');
+      return r.json().then(function(d) { if (off && d) { d._old = true; invFlash('📶 No WiFi — ' + key + ' is what this phone saw before' + (r.headers.get('Date') ? ' (' + xfrFmtT(new Date(r.headers.get('Date')).toISOString()) + ')' : '') + ' — scan it again when WiFi is back', 'warn'); } return d; });
+    }).then(function(d) { if (d && (d.ok !== false) && !d._old) rcCache(kind, key, d); return d; }, function(err) {
       var c = rcCache(kind, key); if (!c) throw err;
       invFlash('📶 No WiFi — using what this phone saw ' + xfrFmtT(new Date(c.at).toISOString()) + '. Counts are saved on the phone.', 'warn');
-      return c.d;
+      return Object.assign({}, c.d, { _old: true });
     });
   }
   window.rcClear = function() {
@@ -14158,16 +14189,22 @@ window.invCredLogin = async function() {
     if (typeof invObRead !== 'function') return 0;
     return invObRead().filter(function(x) { return x.state !== 'sent' && x.state !== 'old' && x.body && String(x.body.location || '').toUpperCase() === loc; }).length;
   }
-  function rcStart(loc) {
+  function rcStart(loc, reopened) {
     var waiting = rcWaitingFor(loc), doneAt = rcDoneGet()[loc];
     if (waiting) { invFlash('📶 ' + loc + ' has ' + waiting + ' count(s) still waiting on this phone for WiFi — recount it after they are sent', 'error'); return; }
     if (doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
     RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null, startedAt: new Date().toISOString() }; // 📊 start time for the report
     rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
     rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
+      // Owner (2026-10-22): "SKU Mgr shows 201-1-11 at C1=1-1-21, the phone Audit shows 202-1-10 there". A list that is not
+      // SKU Mgr's now (the old Google Sheet answered because SKU Mgr could not be read) is never counted against.
+      // …and a read that failed (ok: false) is never an empty column (every box would become a new line, counted twice).
+      if (!d || d.source === 'sheets' || d.ok === false) { RC.loc = ''; rcSaveState(); rcOut('<div class="icard" style="border:2px solid var(--red);color:var(--red);font-weight:700">⚠ SKU Mgr could not be read just now, so ' + ckE(loc) + ' is NOT opened — nothing is counted against a wrong list. Scan the column again in a minute.</div>'); return; }
+      RC.src = { at: Date.now(), old: !!(d && d._old) };
       RC.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
         .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
       rcRender();
+      if (reopened && !(d && d._old)) invFlash('Back to ' + loc + ' — opened again from SKU Mgr (what is on record now)', 'warn');
       ckPhotoLoad(RC.rows.map(function(r) { return r.partNum; }));
       rcStatus(rcAisleOf(loc));
       // Keep each part # here (and its box UPCs) on the phone, so a box still scans if WiFi drops.
@@ -14315,7 +14352,8 @@ window.invCredLogin = async function() {
     var left = RC.rows.filter(function(r) { return !r._rc; }).length;
     var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
       + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
-      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>';
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>'
+      + (RC.src ? '<div class="rc-src" style="font-size:11px;margin-top:2px;' + (RC.src.old ? 'color:var(--red);font-weight:700">⚠ list saved on this phone (no WiFi) — scan the column again when WiFi is back' : 'color:var(--text3)">list from SKU Mgr · ' + ckE(xfrFmtT(new Date(RC.src.at).toISOString()))) + '</div>' : '');
     // This aisle: columns done (green) / not yet (grey), in walking order.
     // Owner: at the bottom, folded — tap to open (stays open / closed while counting).
     var A = RC.aisle && RC.aisle.spots, aisleH = '';

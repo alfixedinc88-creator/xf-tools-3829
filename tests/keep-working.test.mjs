@@ -1565,6 +1565,43 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
   const sp2 = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'C2=1-1-2' }] });
   check('…and the last ✏️ pieces-per-case change at the spot (who / when / old → new)', sp2.spots['77-7-1=10|C2=1-1-2'] && sp2.spots['77-7-1=10|C2=1-1-2'].pack && sp2.spots['77-7-1=10|C2=1-1-2'].pack.to === 12 && sp2.spots['77-7-1=10|C2=1-1-2'].pack.by === 'TS', sp2);
+  // Owner (2026-10-22, photo of C1=1-1-21 on the phone: 202-1-10=2XX / =5XX / =10XX "0 checked", while SKU Mgr had 201-1-11=2XX /
+  // =5XX there): the phone brought back a column opened before with its OLD list, so 201-1-11 was never on it and never counted.
+  {
+    const Q = 'Q6=1-1-21';
+    sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('702-1-10','elbow','702-1-10=2XX',?,2,100), ('702-1-10','elbow','702-1-10=5XX',?,2,100), ('702-1-10','elbow','702-1-10=10XX',?,1,100)`).run(Q, Q, Q);
+    ck = mk(true); w = globalThis.__ckWin; w.rcGo(Q); await settle(); await settle(); await settle();
+    const h0 = el('rc-out').innerHTML;
+    // since then SKU Mgr changed: the 702-1-10 boxes moved away, 711-1-11=2XX / =5XX are there now
+    sq.prepare("UPDATE master_list SET location = 'Q6=9-9-9' WHERE base_sku = '702-1-10'").run();
+    sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('711-1-11','elbow','711-1-11=2XX',?,2,250), ('711-1-11','elbow','711-1-11=5XX',?,2,250)`).run(Q, Q);
+    ck = mk(true); w = globalThis.__ckWin; w.rcRestore(); await settle(); await settle(); await settle();
+    let h1 = el('rc-out').innerHTML;
+    check('the owner\'s C1=1-1-21 case: a column opened before (nothing counted) comes back opened again from SKU Mgr — 711-1-11=2XX / =5XX on the list, the old 702-1-10 lines gone',
+      /702-1-10=2XX/.test(h0) && /711-1-11=2XX/.test(h1) && /711-1-11=5XX/.test(h1) && !/702-1-10/.test(h1) && /2 on record · 0 checked/.test(h1) && flashes.some(f => /Back to Q6=1-1-21 — opened again from SKU Mgr/.test(f)), h1.slice(0, 600));
+    // something counted, then SKU Mgr changes again → the counted line is kept, a new one added, one no longer there dropped
+    w.rcGo('711-1-11=2XX'); await settle(); await settle(); w.rcCases(2); w.rcPcs(250); await settle(); await settle();
+    sq.prepare("UPDATE master_list SET cases = 0 WHERE part_num = '711-1-11=5XX'").run();
+    sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('712-1-1','tee','712-1-1=5',?,3,5)").run(Q);
+    ck = mk(true); w = globalThis.__ckWin; w.rcRestore(); await settle(); await settle(); await settle(); await settle();
+    h1 = el('rc-out').innerHTML;
+    check('…a column with counts comes back with them (✓ counted 2) and is read again: 712-1-1=5 added, 711-1-11=5XX (now 0) dropped, "changed since this phone opened it (1 new on record, 1 no longer there)"',
+      /✓ counted 2 case\(s\)/.test(h1) && /712-1-1=5 /.test(h1) && !/711-1-11=5XX/.test(h1) && flashes.some(f => /Q6=1-1-21 changed since this phone opened it \(1 new on record, 1 no longer there\)/.test(f))
+        && sq.prepare("SELECT cases c FROM master_list WHERE part_num = '711-1-11=2XX'").get().c === 2, h1.slice(0, 600));
+    // …and a list that is not SKU Mgr's (SKU Mgr could not be read → the old Google Sheet answered) is never opened for counting
+    sq.exec('ALTER TABLE master_list RENAME TO master_list_away');
+    const fb = await get('/inventory/location-search?loc=' + Q);
+    ck = mk(true); w = globalThis.__ckWin; w.rcGo(Q); await settle(); await settle(); await settle();
+    const hs = el('rc-out').innerHTML;
+    sq.exec('ALTER TABLE master_list_away RENAME TO master_list');
+    check('…SKU Mgr can\'t be read → the server says so (ok: false — not an empty column, not the old Google Sheet) and the recount does NOT open the column ("⚠ SKU Mgr could not be read just now")',
+      fb.ok === false && !fb.results && /could not be read/.test(fb.error) && /⚠ SKU Mgr could not be read just now, so Q6=1-1-21 is NOT opened/.test(hs) && !/on record/.test(hs), { fb, hs: hs.slice(0, 300) });
+    w.rcGo(Q); await settle(); await settle(); await settle();
+    check('…read again from SKU Mgr → it opens, and says where the list came from ("list from SKU Mgr · time")', /class="rc-src"[^>]*>list from SKU Mgr · /.test(el('rc-out').innerHTML), el('rc-out').innerHTML.slice(0, 500));
+    globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; await settle();
+    globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; await settle();
+    sq.exec("DELETE FROM master_list WHERE base_sku IN ('702-1-10','711-1-11','712-1-1'); DELETE FROM inventory_log WHERE part_num LIKE '711-1-11%' OR part_num LIKE '712-1-1%'; DELETE FROM recount_columns WHERE location LIKE 'Q6=%'");
+  }
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
 }
 
@@ -8789,6 +8826,15 @@ console.log('\n⏳ SKU Mgr shows what is waiting in Review (the C1=1-1-21 recoun
   check('…a spot saved with spaces around it is still on the recount / Audit list for that column', (ls2.results || []).some(r => r.partNum === '711-1-11=10'), ls2);
   sq.exec("DELETE FROM master_list WHERE base_sku = '711-1-11'; DELETE FROM inventory_log WHERE part_num LIKE '711-1-11%'");
   await post('/inventory/review-mode', { mode: mode0 || 'auto' });
+}
+
+// Owner (2026-10-22, Review empty, Approval Mode Auto): "no more Review — everything is auto approve now, take Review off".
+console.log('\nReview tab off (everything auto approved) — back only while something waits for approval');
+{
+  const { readFileSync: rfR } = await import('node:fs');
+  const ih = rfR(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('the Review tab is hidden; the pending count shows it again (with the number) when anything waits, so nothing is stuck unseen',
+    /<button class="itab" id="inv-tab-review" style="display:none" onclick="invSwitchTab\('review'\)">Review/.test(ih) && /var rt = g\("inv-tab-review"\); if \(rt\) rt\.style\.display = n > 0 \? "" : "none";/.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
