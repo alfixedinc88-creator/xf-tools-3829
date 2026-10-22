@@ -795,6 +795,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Recommendations
       <span class="tbadge" id="rec-badge" style="display:none">0</span>
     </div>
+    <div class="tab" onclick="awd_switchTab('notrecv')" id="tab-notrecv">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Not Received
+      <span class="tbadge" id="nr-badge" style="display:none;background:var(--red)">0</span>
+    </div>
     <div class="tab" onclick="awd_switchTab('asin')" id="tab-asin">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>ASIN Lookup
     </div>
@@ -1036,6 +1040,16 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             </div></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 📭 Owner (2026-10-22): items we shipped to FBA / AWD that were never received (10+ days, the rest of the shipment in) -->
+    <div class="page" id="page-notrecv">
+      <div style="max-width:1100px">
+        <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">📭 Not Received</h2>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Items we shipped to FBA or AWD where everything else in the shipment was received (or Amazon closed it) but this item is still short <b>10+ days</b> later.
+          They are <b>no longer counted</b> as stock in FBA / AWD, so the recommendations ask you to ship more. Tap what happened.</p>
+        <div id="nr-out"></div>
       </div>
     </div>
 
@@ -1328,10 +1342,12 @@ async function processData(skipSave){
   try{
     // AWD map
     const awdMap={};
+    // 📭 items shipped to AWD that AWD never received (10+ days, rest of the shipment in) are not "inbound to AWD" any more
+    const awdNR={}; (S.notRecv||[]).forEach(x=>{ if(x.where==='AWD'){ const k=String(x.sku).toUpperCase(); awdNR[k]=(awdNR[k]||0)+(+x.missing||0); } });
     S.awd.forEach(r=>{
       const sku=(gf(r,'SKU')||'').trim().toUpperCase();if(!sku)return;
       awdMap[sku]={
-        avail:pn(gf(r,'Available in AWD (units)'))+pn(gf(r,'Inbound to AWD (units)')),
+        avail:pn(gf(r,'Available in AWD (units)'))+Math.max(0,pn(gf(r,'Inbound to AWD (units)'))-(awdNR[sku]||0)),
         reserved:pn(gf(r,'Reserved in AWD (units)')),
         outbound:pn(gf(r,'Outbound to FBA (units)'))
       };
@@ -1380,7 +1396,8 @@ async function processData(skipSave){
     loadShipmentFromSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
-function awdInbCounts(r){ const id=gf(r,'shipment-id'), o=(S.inbCount||{})[id]; return o ? !!o.count : String(gf(r,'from-awd')||'').toLowerCase()!=='yes'; }
+// 📭 an item Amazon never received (10+ days, rest of the shipment in) is not coming → never counted
+function awdInbCounts(r){ if(String(gf(r,'not-received')||'').toLowerCase()==='yes') return false; const id=gf(r,'shipment-id'), o=(S.inbCount||{})[id]; return o ? !!o.count : String(gf(r,'from-awd')||'').toLowerCase()!=='yes'; }
 function buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap){
   const sku=skuOf(r),skuU=sku.toUpperCase();
   const asin=(gf(r,'asin')||gf(r,'ASIN')||'').trim();
@@ -2117,6 +2134,34 @@ window.awdSaveAsinMapping = async function(asin) {
 // Check for pending velocity report on load
 (function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
 
+// ── 📭 NOT RECEIVED ──
+function awdNrHtml() {
+  var items = (S.notRecv || []).slice().sort(function(a, b) { return (b.days || 0) - (a.days || 0); }), D = S.notRecvDecide || {};
+  var T = function(x) { try { return new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }); } catch (e) { return ''; } };
+  if (!items.length) return '<div style="color:var(--green);font-weight:700">✓ Nothing missing — every item we shipped was received' + (S.notRecvAt ? ' <span style="font-weight:400;color:var(--gray-400)">(checked ' + awdH(T(S.notRecvAt)) + ')</span>' : '') + '</div>';
+  var open = items.filter(function(x) { return !D[x.key]; }).length;
+  return (open ? '<div style="background:#FEF2F2;border:1.5px solid var(--red);border-radius:10px;padding:8px 12px;margin-bottom:10px;color:#7F1D1D;font-weight:700">⚠ ' + open + ' item' + (open === 1 ? '' : 's') + ' not received — tap what happened</div>' : '')
+    + '<div class="card"><div class="tw"><table><thead><tr><th>Where</th><th>Shipment</th><th>SKU</th><th class="r">Shipped</th><th class="r">Received</th><th class="r">Missing</th><th>Receiving since</th><th>What happened?</th></tr></thead><tbody>'
+    + items.map(function(x) { var d = D[x.key], k = awdH(x.key).replace(/'/g, '');
+      return '<tr class="nr-row" style="' + (d ? 'opacity:.7' : 'background:#FFF7F7') + '"><td><b>' + awdH(x.where) + '</b></td><td>' + awdH(x.name || x.shipmentId) + '<div style="font-size:11px;color:var(--gray-500)">' + awdH(x.shipmentId) + ' · ' + awdH(x.status) + (x.fc ? ' · → ' + awdH(x.fc) : '') + '</div></td>'
+        + '<td class="sku">' + awdH(x.sku) + '</td><td class="r">' + fn(x.shipped) + '</td><td class="r">' + fn(x.received) + '</td><td class="r"><b style="color:var(--red)">' + fn(x.missing) + '</b></td>'
+        + '<td>' + awdH(T(x.receivingSince)) + ' <span style="color:var(--gray-500)">(' + x.days + ' days)</span></td><td style="white-space:nowrap">'
+        + (d ? '<b>' + (d.decision === 'not-shipped' ? '✗ We did not ship it' : '📦 We shipped it — Amazon is missing it (open a case)') + '</b><div style="font-size:11px;color:var(--gray-500)">' + awdH(d.by) + ' · ' + awdH(T(d.at)) + ' · <a href="#" onclick="awdNrSet(\'' + k + '\',null);return false">undo</a></div>'
+          : '<span style="color:var(--red);font-weight:700">⚠ Not received</span><br><button class="btn btn-sm btn-secondary" onclick="awdNrSet(\'' + k + '\',\'not-shipped\')">✗ We did not ship it</button> <button class="btn btn-sm btn-secondary" onclick="awdNrSet(\'' + k + '\',\'shipped\')">📦 We shipped it</button>')
+        + '</td></tr>'; }).join('') + '</tbody></table></div></div>'
+    + '<div style="font-size:12px;color:var(--gray-500);margin-top:8px">Either way they are not counted as stock in FBA / AWD any more. "We shipped it" = Amazon lost it → open a case in Seller Central for those units.</div>';
+}
+function awdNrRender() {
+  var el = ge('nr-out'); if (el) el.innerHTML = awdNrHtml();
+  var open = (S.notRecv || []).filter(function(x) { return !(S.notRecvDecide || {})[x.key]; }).length, b = ge('nr-badge');
+  if (b) { b.textContent = open; b.style.display = open ? '' : 'none'; }
+}
+async function awdNrSet(key, decision) {
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/not-received', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key, decision: decision }) })).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Not saved');
+    S.notRecvDecide = d.notRecvDecide || {}; awdNrRender(); awd_planner_toast(decision ? 'Saved' : 'Back to ⚠ not received', 'success');
+  } catch (e) { awd_planner_toast('Not saved: ' + e.message, 'error'); }
+}
 // ── 🔎 ASIN LOOKUP ──
 var AWDQ = { months: 3, info: null };
 try { var _m = parseFloat(localStorage.getItem('awdq_months')); if (_m > 0) AWDQ.months = _m; } catch (e) {}
@@ -2759,7 +2804,8 @@ async function loadReportsFromSheet() {
     ]);
     // 🚚 open FBA inbound shipments (straight from our warehouse) + which ones count — never blocks the rest
     try { const [ri, rs] = await Promise.all([wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inbound').then(r=>r.json()), wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports').then(r=>r.json())]);
-      S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {}; } catch (e) { S.inb = []; }
+      S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {};
+      S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {}; } catch (e) { S.inb = []; }
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
     if (!fbaData.length) {
@@ -2777,7 +2823,7 @@ async function loadReportsFromSheet() {
       const zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
     });
     if (ge('proc-btn')) ge('proc-btn').disabled = false;
-    awdInbRender();
+    awdInbRender(); awdNrRender();
     // BUGFIX: processData() is async but was called without await, then
     // loadShipmentFromSheet() fired on a fixed 500ms timer regardless
     // of whether processData had actually finished. If the real load
@@ -5644,6 +5690,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261022a"></script>
+<script src="xf-access.js?v=20261022b"></script>
 </body>
 </html>

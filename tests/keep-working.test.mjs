@@ -7673,7 +7673,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261022a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261022b/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -8653,6 +8653,59 @@ console.log('\n👪 AWD: per part (all sizes) — Builder warns past our stock; 
     mk(S4, AW).awdFamWarnHtml() === '' && /keep 60 for our other channels \(60 days\) → <b>40 pcs<\/b> to send/.test(mk({ joined: [], shipment: { '31-1-5=25': { qty: 3 } }, cpackMap: {} }, AW).awdFamWarnHtml()), null);
   check('page: the settings line on Recommendations ("Save for everyone"), the warning on top of the Builder, and the note under each row', /id="awd-plan-cfg"/.test(ah) && /Save for everyone/.test(ah) && /fw\.innerHTML = awdFamWarnHtml\(\)/.test(ah) && /\+ awdPlanNote\(r\);/.test(ah), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '31-1-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM reorder_incoming WHERE title = 'CT-31 10/9'; DELETE FROM reorder_title WHERE title = 'CT-31 10/9'; DELETE FROM inventory_log WHERE part_num LIKE '31-1-5%'; DELETE FROM awd_auto");
+}
+
+// Owner (2026-10-22): "one more tab: items we shipped from our warehouse to FBA or AWD — if everything else got received but after 10 days
+// that item still isn't, clear it out, don't count it as stock in FBA / AWD (likely we sold out and didn't ship it). List them with a
+// 'not received' warning so I can click shipped / not shipped, so next time we ship more instead of thinking more is coming".
+console.log('\n📭 AWD planner → Not Received: an item still short 10+ days after the rest of its shipment was received is not counted; tap what happened');
+{
+  const realFetch = globalThis.fetch, writes = {};
+  const ago = n => new Date(Date.now() - n * 864e5).toISOString();
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/fba/inventory/v1/summaries')) return J({ payload: { inventorySummaries: [{ sellerSku: '32-1-1=10', asin: 'B0N1', totalQuantity: 1, inventoryDetails: { fulfillableQuantity: 1, reservedQuantity: {} } }] }, pagination: {} });
+    if (u.includes('/awd/2024-05-09/inventory')) return J({ inventory: [{ sku: '32-1-4=10', totalOnhandQuantity: 0, totalInboundQuantity: 5, inventoryDetails: { availableDistributableQuantity: 0, reservedDistributableQuantity: 0, replenishmentQuantity: 0 } }] });
+    if (u.includes('/fba/inbound/v0/shipments?')) return J({ payload: { ShipmentData: [
+      { ShipmentId: 'FBA7', ShipmentName: 'Direct 10/1', ShipmentStatus: 'RECEIVING', DestinationFulfillmentCenterId: 'ABE8', ShipFromAddress: { Name: 'XFitting', City: 'Edison' } },
+      { ShipmentId: 'FBA8', ShipmentName: 'Direct 10/18', ShipmentStatus: 'RECEIVING', DestinationFulfillmentCenterId: 'ABE8', ShipFromAddress: { Name: 'XFitting', City: 'Edison' } },
+      { ShipmentId: 'FBA9', ShipmentName: 'Direct 10/2', ShipmentStatus: 'RECEIVING', DestinationFulfillmentCenterId: 'ABE8', ShipFromAddress: { Name: 'XFitting', City: 'Edison' } }] } });
+    // FBA7 (receiving 12 days): =10 all in, =5 none of 6 → NOT RECEIVED · FBA8 (3 days): same but too soon · FBA9 (12 days): both still short → still receiving
+    if (u.includes('/shipments/FBA7/items')) return J({ payload: { ItemData: [{ SellerSKU: '32-1-1=10', QuantityShipped: 10, QuantityReceived: 10 }, { SellerSKU: '32-1-2=5', QuantityShipped: 6, QuantityReceived: 0 }] } });
+    if (u.includes('/shipments/FBA8/items')) return J({ payload: { ItemData: [{ SellerSKU: '32-1-1=10', QuantityShipped: 4, QuantityReceived: 4 }, { SellerSKU: '32-1-3=2', QuantityShipped: 9, QuantityReceived: 0 }] } });
+    if (u.includes('/shipments/FBA9/items')) return J({ payload: { ItemData: [{ SellerSKU: '32-1-1=10', QuantityShipped: 5, QuantityReceived: 1 }, { SellerSKU: '32-1-2=5', QuantityShipped: 7, QuantityReceived: 0 }] } });
+    if (u.includes('/awd/2024-05-09/inboundShipments?')) return J({ shipments: [{ shipmentId: 'AWDIN1', shipmentStatus: 'CLOSED' }] });
+    if (u.includes('/awd/2024-05-09/inboundShipments/AWDIN1')) return J({ shipmentId: 'AWDIN1', shipmentName: 'AWD 9/30', shipmentSkuQuantities: [
+      { sku: '32-1-1=10', expectedQuantity: { quantity: 20 }, receivedQuantity: { quantity: 20 } }, { sku: '32-1-4=10', expectedQuantity: { quantity: 5 }, receivedQuantity: { quantity: 0 } }] });
+    if (u.endsWith('/reports/2021-06-30/reports') && m === 'POST') return J({ reportId: 'RX' }, 202);
+    if (u.includes('sheets.googleapis.com') && u.includes('/values/') && m === 'PUT') { const tab = decodeURIComponent(u.split('/values/')[1].split('?')[0]); writes[tab] = JSON.parse(o.body).values; return J({}); }
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
+  sq.prepare("INSERT OR REPLACE INTO awd_auto (k, v) VALUES ('inbSeen', ?)").run(JSON.stringify({ 'FBA|FBA7': ago(12), 'FBA|FBA8': ago(3), 'FBA|FBA9': ago(12), 'AWD|AWDIN1': ago(11) }));
+  await call('/awd/auto-reports', { method: 'POST', headers: H });
+  const st = await get('/awd/auto-reports'), NR = (st.notRecv || {}).items || [], key = k => NR.find(x => x.key === k);
+  check('FBA7 (rest received, 12 days): 32-1-2=5 6 not received ⚠; FBA8 (only 3 days) and FBA9 (others still short) not flagged; AWD shipment AWDIN1 (closed, 11 days): 32-1-4=10 5 not received',
+    NR.length === 2 && key('FBA|FBA7|32-1-2=5') && key('FBA|FBA7|32-1-2=5').missing === 6 && key('FBA|FBA7|32-1-2=5').days === 12 && key('AWD|AWDIN1|32-1-4=10') && key('AWD|AWDIN1|32-1-4=10').missing === 5, NR);
+  const IB = writes.FBA_Inbound || [[]], h0 = IB[0], row = (id, sku) => IB.find(r => r[0] === id && r[5] === sku) || [];
+  check('…not counted as on the way any more: FBA7 =5 → 0 (marked not-received); FBA8 =2 still 9 on the way; FBA9 still 4 + 7',
+    row('FBA7', '32-1-2=5')[h0.indexOf('on-the-way')] === 0 && row('FBA7', '32-1-2=5')[h0.indexOf('not-received')] === 'yes' && row('FBA8', '32-1-3=2')[h0.indexOf('on-the-way')] === 9 && row('FBA9', '32-1-2=5')[h0.indexOf('on-the-way')] === 7, IB);
+  const d1 = await post('/awd/not-received', { key: 'FBA|FBA7|32-1-2=5', decision: 'not-shipped' });
+  const d2 = await post('/awd/not-received', { key: 'AWD|AWDIN1|32-1-4=10', decision: 'shipped' });
+  check('tap "✗ We did not ship it" / "📦 We shipped it" → saved for everyone (who); bad answer refused', d1.ok && d2.ok && d2.notRecvDecide['FBA|FBA7|32-1-2=5'].decision === 'not-shipped' && d2.notRecvDecide['AWD|AWDIN1|32-1-4=10'].by === 'TS'
+    && (await post('/awd/not-received', { key: 'x', decision: 'maybe' })).ok === false, d2);
+  const { readFileSync: rfN } = await import('node:fs');
+  const ah = rfN(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = rfN(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
+  const html = new Function('S', 'fn', 'awdH', fnOf('awdNrHtml') + '\nreturn awdNrHtml();')({ notRecv: NR, notRecvDecide: { 'AWD|AWDIN1|32-1-4=10': d2.notRecvDecide['AWD|AWDIN1|32-1-4=10'] } }, n => String(n), x => String(x));
+  check('tab: "⚠ 1 item not received — tap what happened"; FBA7 32-1-2=5 missing 6 with ✗ We did not ship it / 📦 We shipped it; the decided AWD one shows the answer + undo',
+    /⚠ 1 item not received — tap what happened/.test(html) && /32-1-2=5<\/td><td class="r">6<\/td><td class="r">0<\/td><td class="r"><b style="color:var\(--red\)">6<\/b>/.test(html) && /⚠ Not received<\/span><br><button[^>]*>✗ We did not ship it/.test(html)
+      && /📦 We shipped it — Amazon is missing it \(open a case\)/.test(html) && /undo<\/a>/.test(html), html.slice(0, 2500));
+  check('…AWD: a not-received item comes off "Inbound to AWD" in the planner; the FBA one is never counted on the way; tab + 🧩 Pages & Tabs check mark + red badge',
+    /Math\.max\(0,pn\(gf\(r,'Inbound to AWD \(units\)'\)\)-\(awdNR\[sku\]\|\|0\)\)/.test(ah) && /if\(String\(gf\(r,'not-received'\)\|\|''\)\.toLowerCase\(\)==='yes'\) return false;/.test(ah) && /id="tab-notrecv"/.test(ah) && /id="nr-badge"/.test(ah)
+      && /key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv'/.test(xa), null);
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  sq.exec('DELETE FROM awd_auto');
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

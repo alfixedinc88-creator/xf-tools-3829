@@ -48,6 +48,7 @@ document.addEventListener('input', function (e) {
         { key: 'demo', label: 'Load Demo Data', sel: '#page-upload button[onclick="loadDemo()"]' },
         { key: 'clear', label: 'Clear Saved Data', sel: '#page-upload button[onclick="clearReportData()"]' } ] },
       { key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin' },
+      { key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv' },
       { key: 'dashboard', label: 'Dashboard', sel: '#tab-dashboard', parts: [
         { key: 'stats', label: 'Stats', sel: '#stats-grid' },
         { key: 'critical', label: '🚨 Critical SKUs', sel: '#dash-body .card:has(#crit-tbody)' },
