@@ -7673,7 +7673,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261021a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261022a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -8485,6 +8485,43 @@ console.log('\n📡 AWD planner: the 4 Amazon reports by themselves (FBA Live / 
     /🚫 discontinued — ship what we have, not reordered/.test(ah) && new Function(ah.match(/function reorderDiscKey\(sku\) \{[^\n]*\}/)[0] + '\nreturn reorderDiscKey;')()('27-1-1=10-X-') === '27-1-1=10X', null);
   globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
   sq.exec('DELETE FROM awd_auto');
+}
+
+// Owner (2026-10-22): "AWD planner: one more tab — search an ASIN and see the quantities we have where (AWD, FBA now, transfers from where
+// to where), how many we sell in 30 / 90 days, half a year and a year, how many we should ship in for 1 month or more (we pick), and check
+// unusual months — one search with all the info instead of going all over Amazon".
+console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 / 90 / 180 / 365 days + month by month (unusual flagged), how many to ship now');
+{
+  const { readFileSync: rfQ } = await import('node:fs');
+  const ah = rfQ(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = rfQ(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const ago = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
+  sq.prepare("INSERT OR REPLACE INTO awd_auto (k, v) VALUES ('fbaBase', ?)").run(JSON.stringify([['28-2-2=10X', 'B0TQ000001', 'XQ1', 'pex tee 10 pack', 'NewItem', 20, 0, 0, 20, '', 0, 0, 0, '', '', '', '', 0]]));
+  // a sale every 30 days for 13 months: 30 sets each, one spike of 150 sets 65 days ago (another seller out of stock?)
+  for (let k = 0; k <= 13; k++) sq.prepare('INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES (?,?,?,?)').run('28-2-2=10X', ago(k * 30 + 5), k === 2 ? 150 : 30, 'B0TQ000001');
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('28-2-2','tee','28-2-2=10X','C1=1-1-1',2,100), ('28-2-2','tee','28-2-2=2','C1=1-1-2',1,50)").run();
+  const d = await get('/awd/asin-info?q=b0tq000001');
+  check('search the ASIN → its FBA SKU 28-2-2=10X; sold 30 d 30 · 90 d 210 · 6 mo 300 · 12 mo 510 sets (× 10 = pieces)',
+    d.ok && d.asin === 'B0TQ000001' && d.fbaSkus[0] === '28-2-2=10X' && d.sales.units.d30 === 30 && d.sales.units.d90 === 210 && d.sales.units.d180 === 300 && d.sales.units.d365 === 510 && d.sales.pcs.d90 === 2100, d.sales);
+  check('…normal month 32.5 (middle of 30 d 30 · 30–90 d 90 · 3–6 mo 30 · 6–12 mo 35) — the 150 spike can\'t make itself normal; that month flagged ▲ unusual (1 month)',
+    d.normal.enough && d.normal.perMonth === 32.5 && d.months.filter(m => m.flag === 'high').length === 1 && d.months.filter(m => m.flag === 'high')[0].units >= 150 && d.months.length === 13 && d.months[12].partial, { n: d.normal, m: d.months.filter(m => m.flag) });
+  check('…our shelf: 28-2-2=10X 2 boxes × 100 = 200 pcs = 20 sets; the =2 pack listed apart (50 pcs)', d.shelf.find(x => x.same && x.sets === 20 && x.pcs === 200) && d.shelf.find(x => !x.same && x.part === '28-2-2=2' && x.pcs === 50), d.shelf);
+  check('…the SKU works too (28-2-2=10X → the same ASIN)', (await get('/awd/asin-info?q=28-2-2%3D10X')).asin === 'B0TQ000001', null);
+  // the page: Amazon has 20 (FBA) + 5 AWD + 8 AWD → FBA + 7 our warehouse → FBA = 40; 3 months × 32.5 = 98 → 58 → boxes of 10 → 6 boxes = 60; only 20 on the shelf
+  const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
+  const S = { loaded: true, joined: [{ sku: '28-2-2=10X', fbaFul: 20, fcProc: 0, fcTrans: 0, awdAvail: 5, awdReserved: 0, awdOutbound: 8, fbaInb: 7, totalNetwork: 40 }], awd: [{ SKU: '28-2-2=10X', 'Available in AWD (units)': '5', 'Inbound to AWD (units)': '0' }],
+    inb: [{ 'shipment-id': 'FBA9', 'shipment-name': 'Holiday direct', status: 'SHIPPED', 'ship-from': 'XFitting, Edison', fc: 'ABE8', sku: '28-2-2=10X', 'on-the-way': '7', 'from-awd': '' }], inbCount: {}, cpackMap: { '28-2-2=10X': { unitsPerBox: 10 } } };
+  const lib = new Function('S', 'AWDQ', 'gf', 'pn', 'fn', 'awdH', 'esc', fnOf('awdInbCounts') + fnOf('awdqWhere') + fnOf('awdqHtml') + '\nreturn awdqHtml;');
+  const fnum = (n, dg = 0) => n == null || isNaN(n) ? '—' : Number(n.toFixed(dg)).toLocaleString();
+  const html = lib(S, { months: 3 }, (r, k) => r[k], v => parseFloat(v) || 0, fnum, x => String(x == null ? '' : x), x => String(x))(d);
+  check('page: where — shelf 20 · AWD 5 · AWD → FBA 8 · our warehouse → FBA 7 (Holiday direct · SHIPPED · XFitting, Edison → ABE8) · FBA 20 · total 40',
+    /Our shelf \(SKU Mgr\)[\s\S]*?>20<\/td>/.test(html) && /AWD → FBA \(on its way\)<\/td><td[^>]*>8</.test(html) && /Holiday direct · SHIPPED · XFitting, Edison → ABE8: <b>7<\/b>/.test(html) && /= Amazon has in total \(AWD \+ on the way \+ FBA\)<\/td><td[^>]*>40</.test(html), html.slice(0, 2500));
+  check('…3 months at a normal 32.5 a month = 98 → ship in 60 sets (6 boxes × 10, rounded up from 58); by the last 90 days only it would be 170; ⚠ only 20 on the shelf',
+    /need <b>98<\/b>/.test(html) && /ship in 60 sets<\/span> <span[^>]*>\(6 boxes × 10, rounded up from 58\)/.test(html) && /it would be 170 — the last 90 days sold more than normal/.test(html) && /⚠ We only have 20 sets of this on the shelf/.test(html) && /➕ Add 28-2-2=10X × 60 to the shipment/.test(html), html.slice(-2500));
+  const h1 = lib(S, { months: 1 }, (r, k) => r[k], v => parseFloat(v) || 0, fnum, x => String(x == null ? '' : x), x => String(x))(d);
+  check('…pick 1 month → 33 needed, Amazon has 40 → "nothing to ship — Amazon has enough"', /need <b>33<\/b>/.test(h1) && /nothing to ship — Amazon has enough/.test(h1), null);
+  check('…tab + 🧩 Pages & Tabs check mark; months 1 / 2 / 3 / 4 / 6 or any number', /id="tab-asin"/.test(ah) && /id="page-asin"/.test(ah) && /\[1, 2, 3, 4, 6\]/.test(ah) && /key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin'/.test(xa), null);
+  sq.exec("DELETE FROM amazon_sales_weekly WHERE sku LIKE '28-2-2%'; DELETE FROM master_list WHERE base_sku = '28-2-2'; DELETE FROM awd_auto");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
