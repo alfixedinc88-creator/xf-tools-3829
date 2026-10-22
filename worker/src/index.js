@@ -8100,16 +8100,24 @@ async function recountColumnDone(request, env, session) {
 //   counted (the column's own lines) + what moved there AFTER that part # was counted (approved Stock In / Out / Transfer)
 //   = what SKU Mgr should have now. Not equal → listed. A part # in SKU Mgr at that spot that the column never counted (and no
 //   move after the count explains) → listed as "not counted". A ✏️ SKU Mgr edit of it afterwards → said, so it can be judged.
-async function recountCheck(env) {
+// 📜 Owner (2026-10-22): "check all the Audit — we started on 10/16/26 — go through History time by time from 10/16, make sure
+// everything matches the Audit number, including all the inventory out too". ?from=2026-10-16 (midnight New York; default this
+// round's start): every column counted since then; for each part # there, its count, then EVERY approved History line after it
+// in time order (Stock In / Out / Transfer, 🧹 found empty = 0, ✏️ SKU Mgr edit = its Part Total change) → should be = SKU Mgr now.
+// Each line carries its step-by-step timeline; ?all=1 also returns the ones that match (for the ⬇ CSV).
+async function recountCheck(env, url) {
   await recountTables(env);
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
-  const roundStart = await recountRoundStart(env), r3 = x => Math.round((x || 0) * 1000) / 1000;
+  await ensureTotalTrackingColumns(env).catch(() => {});
+  const from = url && /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('from') || '') ? url.searchParams.get('from') : '';
+  const roundStart = from ? nyDateRangeUTC(from).start : await recountRoundStart(env), r3 = x => Math.round((x || 0) * 1000) / 1000;
+  const wantAll = !!(url && url.searchParams.get('all') === '1'), allLines = [];
   // Owner's screenshot (2026-10-22): "PR= 2 - 2 - 1" (saved with spaces) is PR=2-2-1, and "12X15 BAG" (renamed later) is 12X15=BAG —
   // the same spot / part #, not a difference. Spots: no spaces; a part # with no "=": its space is the "=".
   const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
   const cols = await d1All(env, 'SELECT id, ts, started_at, location, by_user, detail FROM recount_columns WHERE ts >= ? AND COALESCE(stopped, 0) = 0 ORDER BY ts', [roundStart]);
   const last = {}; cols.forEach(c => { last[UL(c.location)] = c; }); // the latest finished count of each column
-  const logs = await d1All(env, `SELECT id, timestamp, type, part_num, location, cases, initials, notes, status FROM inventory_log
+  const logs = await d1All(env, `SELECT id, timestamp, type, part_num, location, cases, initials, notes, status, total_before, total_after FROM inventory_log
     WHERE timestamp >= ? AND COALESCE(status, '') = 'Verified' AND cancelled_at IS NULL ORDER BY timestamp, id`, [roundStart]);
   const byKey = {}; logs.forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (byKey[k] = byKey[k] || []).push(l); });
   const edits = logs.filter(l => l.type === 'EDIT');
@@ -8129,28 +8137,37 @@ async function recountCheck(env) {
       // when this part # was counted: its last recount line at the spot up to the column's finish (else the start / finish)
       const rc = ls.filter(l => isRc(l) && l.timestamp <= c.ts);
       const t0 = rc.length ? rc[rc.length - 1].timestamp : (c.started_at || c.ts);
-      const after = ls.filter(l => !isRc(l) && l.timestamp > t0 && sign(l.type));
+      // ✏️ a SKU Mgr edit of this part # at this spot: its Part Total Before → After is what it changed here
+      const edD = l => l.type === 'EDIT' && l.total_before != null && l.total_after != null ? (parseFloat(l.total_after) || 0) - (parseFloat(l.total_before) || 0) : null;
+      const after = ls.filter(l => !isRc(l) && l.timestamp > t0 && (sign(l.type) || (edD(l) !== null && Math.abs(edD(l)) > 1e-9)));
       // 🧹 "checked empty" (Transfer → the grab spot was empty: None Found on shelf, logged as OUT 0) SETS the spot to 0.
       const empty = l => l.type === 'OUT' && /NONE FOUND/i.test(String(l.notes || ''));
       const ed = edits.filter(l => l.timestamp > t0 && UP(l.part_num) === p && (UL(l.location) === L || UL(l.notes).includes(L)));
       const has = r3(now[k] || 0), mv = l => ({ at: l.timestamp, type: empty(l) ? 'EMPTY' : l.type, cases: l.cases, by: l.initials });
       let val = p in counted ? counted[p] : 0, moved = 0, emptied = null;
-      after.forEach(l => { if (empty(l)) { moved += -val; val = 0; emptied = l; } else { const d = sign(l.type) * (parseFloat(l.cases) || 0); val += d; moved += d; } });
+      const steps = [{ at: rc.length ? rc[rc.length - 1].timestamp : c.ts, what: p in counted ? 'COUNTED' : 'NOT COUNTED', d: null, by: c.by_user, run: r3(val) }];
+      after.forEach(l => {
+        let d;
+        if (empty(l)) { d = -val; val = 0; emptied = l; } else if (l.type === 'EDIT') { d = edD(l); val += d; } else { d = sign(l.type) * (parseFloat(l.cases) || 0); val += d; }
+        moved += d;
+        steps.push({ at: l.timestamp, what: empty(l) ? 'FOUND EMPTY' : l.type, d: r3(d), by: l.initials || '', run: r3(val), note: String(l.notes || '').slice(0, 120) });
+      });
       moved = r3(moved);
       partsChecked++;
+      if (wantAll) allLines.push({ location: L, part: p, by: c.by_user, at: c.ts, counted: p in counted ? r3(counted[p]) : null, moved, expected: r3(val), now: r3(now[k] || 0), diff: r3((now[k] || 0) - val), steps });
       if (!(p in counted)) {
-        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), edits: ed.length });
+        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), edits: ed.length, steps });
         continue;
       }
       const expected = r3(val);
       if (Math.abs(expected - has) > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'off', counted: r3(counted[p]), moved, expected, now: has, diff: r3(has - expected),
-        moves: after.slice(-6).map(mv), edits: ed.length });
+        moves: after.slice(-6).map(mv), edits: ed.length, steps });
       else if (emptied && counted[p] > 1e-9) emptiedList.push({ location: L, by: c.by_user, at: c.ts, part: p, counted: r3(counted[p]), now: has,
         emptiedBy: emptied.initials || '', emptiedAt: emptied.timestamp, note: String(emptied.notes || '').slice(0, 200) });
     }
   }
   problems.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }) || String(a.part).localeCompare(String(b.part)));
-  return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems, emptied: emptiedList }), { headers: { 'Content-Type': 'application/json' } }));
+  return cors(new Response(JSON.stringify({ ok: true, roundStart, from: from || null, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems, emptied: emptiedList, ...(wantAll ? { lines: allLines } : {}) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 async function recountReport(env) {
   await recountTables(env);
@@ -10236,7 +10253,7 @@ const _app = {
       }
       if (path === '/inventory/recount/check' && method === 'GET') {
         if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount check' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
-        return await recountCheck(env);
+        return await recountCheck(env, url);
       }
       if (path === '/inventory/recount/assigned' || path === '/inventory/recount/people' || path === '/inventory/recount/assign' || path === '/inventory/recount/assign/close') return await inventoryRecountAssign(path, request, env, session);
       if (path === '/inventory/spot/delete' && method === 'POST') {
