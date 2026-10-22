@@ -14258,6 +14258,7 @@ async function awdAmazonSync(env) {
 // Written to the same 4 sheets the planner page reads (FBA_Inventory, FBA_Live, FBA_Reserve, AWD_Inventory), in the same columns as
 // the CSV uploads. Fixes on the way: the old sync left units shipped BLANK (every SKU looked unsold) and put FC processing in the
 // "Reserved FC Transfer" column. A report that can't be read keeps the sheet as it was and says why — never written empty.
+const AWD_MAX_PAGES = 400;
 const AWD_AUTO_TABLE = 'CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)';
 async function awdAutoGet(env) {
   await env.DB.prepare(AWD_AUTO_TABLE).run();
@@ -14289,11 +14290,15 @@ async function awdReportText(env, token, docId) {
 }
 const AWD_FBA_HEAD = ['sku','asin','fnsku','product-name','condition','afn-fulfillable-quantity','afn-unsellable-quantity','afn-reserved-quantity','afn-total-quantity','per-unit-volume','afn-inbound-working-quantity','afn-inbound-shipped-quantity','afn-inbound-receiving-quantity','units-shipped-t7','units-shipped-t30','units-shipped-t60','units-shipped-t90','Reserved FC Transfer'];
 // FBA_Inventory = the FBA Inventory API numbers + units shipped from the newest Inventory Health report (never blank when we have one).
-async function awdWriteFbaInventory(env, items, health) {
-  await awdSheetWrite(env, 'FBA_Inventory', [AWD_FBA_HEAD, ...items.map(i => { const d = i.inventoryDetails || {}, res = d.reservedQuantity || {}, h = (health || {})[String(i.sellerSku || '').trim().toUpperCase()] || null;
-    return [i.sellerSku || '', i.asin || '', i.fnSku || '', i.productName || '', i.condition || '', d.fulfillableQuantity || 0, (d.unfulfillableQuantity && d.unfulfillableQuantity.totalUnfulfillableQuantity) || 0,
-      res.totalReservedQuantity || 0, i.totalQuantity || 0, '', d.inboundWorkingQuantity || 0, d.inboundShippedQuantity || 0, d.inboundReceivingQuantity || 0,
-      h ? h.t7 : '', h ? h.t30 : '', h ? h.t60 : '', h ? h.t90 : '', res.pendingTransshipmentQuantity || 0]; })]);
+// `base` rows are AWD_FBA_HEAD rows with the 4 units-shipped cells empty (kept in D1 so a later Inventory Health can fill them).
+function awdFbaBaseRows(items) {
+  return items.map(i => { const d = i.inventoryDetails || {}, res = d.reservedQuantity || {};
+    return [i.sellerSku || '', i.asin || '', i.fnSku || '', String(i.productName || '').slice(0, 120), i.condition || '', d.fulfillableQuantity || 0, (d.unfulfillableQuantity && d.unfulfillableQuantity.totalUnfulfillableQuantity) || 0,
+      res.totalReservedQuantity || 0, i.totalQuantity || 0, '', d.inboundWorkingQuantity || 0, d.inboundShippedQuantity || 0, d.inboundReceivingQuantity || 0, '', '', '', '', res.pendingTransshipmentQuantity || 0]; });
+}
+async function awdWriteFbaInventory(env, base, health) {
+  await awdSheetWrite(env, 'FBA_Inventory', [AWD_FBA_HEAD, ...base.map(r => { const h = (health || {})[String(r[0] || '').trim().toUpperCase()] || null, o = r.slice();
+    if (h) { o[13] = h.t7; o[14] = h.t30; o[15] = h.t60; o[16] = h.t90; } return o; })]);
 }
 // Inventory now: FBA (Live + Reserved + FBA_Inventory) and AWD. Then asks Amazon for a fresh Inventory Health report.
 async function awdAutoInventory(env) {
@@ -14307,14 +14312,18 @@ async function awdAutoInventory(env) {
       const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inventory/v1/summaries?${p}`);
       items = items.concat((d.payload && d.payload.inventorySummaries) || []);
       next = d.pagination && d.pagination.nextToken ? d.pagination.nextToken : null;
-    } while (next && ++pages < 60);
+    } while (next && ++pages < AWD_MAX_PAGES);
+    // Owner's first real Sync (2026-10-22) came back with exactly 3,000 FBA SKUs = the old 60-page stop (50 a page): every SKU
+    // after that was cut off. Now up to 400 pages (20,000 SKUs); if Amazon still has more, it is said — never cut off silently.
     if (!items.length) throw new Error('Amazon sent no FBA SKUs — sheets kept as they were');
-    await awdWriteFbaInventory(env, items, st.healthRows || null);
+    if (next) out.fbaCut = items.length;
+    const base = awdFbaBaseRows(items);
+    await awdWriteFbaInventory(env, base, st.healthRows || null);
     await awdSheetWrite(env, 'FBA_Live', [['sku', 'asin', 'product-name', 'afn-fulfillable-quantity', 'afn-total-quantity'], ...items.map(i => { const d = i.inventoryDetails || {}; return [i.sellerSku || '', i.asin || '', i.productName || '', d.fulfillableQuantity || 0, i.totalQuantity || 0]; })]);
     await awdSheetWrite(env, 'FBA_Reserve', [['sku', 'fnsku', 'asin', 'product-name', 'reserved_qty', 'reserved_customerorders', 'reserved_fc-transfers', 'reserved_fc-processing'],
       ...items.map(i => { const r = (i.inventoryDetails || {}).reservedQuantity || {}; return [i.sellerSku || '', i.fnSku || '', i.asin || '', i.productName || '', r.totalReservedQuantity || 0, r.pendingCustomerOrderQuantity || 0, r.pendingTransshipmentQuantity || 0, r.fcProcessingQuantity || 0]; })]);
-    await awdAutoSet(env, 'fbaItems', items.map(i => ({ sellerSku: i.sellerSku, asin: i.asin, fnSku: i.fnSku, productName: i.productName, condition: i.condition, totalQuantity: i.totalQuantity, inventoryDetails: i.inventoryDetails })));
-    out.fba = { at: now, count: items.length };
+    await awdAutoSet(env, 'fbaBase', base.map(r => { const o = r.slice(); o[3] = String(o[3]).slice(0, 60); return o; })); // small enough for one D1 row (thousands of SKUs)
+    out.fba = { at: now, count: items.length, ...(out.fbaCut ? { warn: 'Amazon has more than ' + items.length + ' FBA SKUs — only the first ' + items.length + ' were read' } : {}) };
   } catch (e) { out.fba = { at: now, error: String(e.message || e).slice(0, 300) }; }
   await awdAutoSet(env, 'fba', out.fba);
   // AWD
@@ -14324,7 +14333,7 @@ async function awdAutoInventory(env) {
       const p = new URLSearchParams({ details: 'SHOW', maxResults: '200' }); if (next) p.set('nextToken', next);
       const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inventory?${p}`);
       inv = inv.concat(d.inventory || []); next = d.nextToken || null;
-    } while (next && ++pages < 60);
+    } while (next && ++pages < AWD_MAX_PAGES);
     if (!inv.length) throw new Error('Amazon sent no AWD SKUs — sheet kept as it was');
     await awdSheetWrite(env, 'AWD_Inventory', [['SKU', 'Available in AWD (units)', 'Inbound to AWD (units)', 'Reserved in AWD (units)', 'Outbound to FBA (units)', 'On hand in AWD (units)'],
       ...inv.map(x => { const dt = x.inventoryDetails || {}; const res = dt.reservedDistributableQuantity || 0, onh = x.totalOnhandQuantity || 0;
@@ -14368,7 +14377,7 @@ async function awdAutoHealth(env) {
   lines.slice(1).forEach(l => { const c = l.split('\t'), k = String(c[iS] || '').trim().toUpperCase(); if (!k) return;
     rows[k] = { t7: num(c[i7]), t30: num(c[i30]), t60: num(c[i60]), t90: num(c[i90]) }; });
   await awdAutoSet(env, 'healthRows', rows);
-  if (Array.isArray(st.fbaItems) && st.fbaItems.length) await awdWriteFbaInventory(env, st.fbaItems, rows);
+  if (Array.isArray(st.fbaBase) && st.fbaBase.length) await awdWriteFbaInventory(env, st.fbaBase, rows);
   const done = { at: now, count: Object.keys(rows).length, pending: null, error: '' };
   await awdAutoSet(env, 'health', done);
   return { pending: false, status: 'DONE', count: done.count };
