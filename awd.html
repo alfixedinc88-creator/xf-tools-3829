@@ -1769,6 +1769,7 @@ function awdAutoStatusHtml(d) {
   var line = function(lbl, o, extra) {
     if (!o) return '<div>⬜ ' + lbl + ': not yet</div>';
     if (o.error && !o.pending) return '<div style="color:#B91C1C">⚠ ' + lbl + ': ' + awdH(o.error) + (o.at ? ' <span style="color:#9CA3AF">(last good ' + awdH(T(o.at)) + ')</span>' : '') + '</div>';
+    if (o.warn) return '<div style="color:#B91C1C">⚠ ' + lbl + ': ' + awdH(o.warn) + (o.at ? ' · ' + awdH(T(o.at)) : '') + '</div>';
     return '<div>' + (o.pending ? '⏳' : '✅') + ' ' + lbl + ': ' + (o.at ? awdH(T(o.at)) + (o.count != null ? ' · ' + o.count + ' SKUs' : '') : 'not yet') + (extra || '') + '</div>';
   };
   var h = d && d.health || null;
