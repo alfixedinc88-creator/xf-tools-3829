@@ -8418,6 +8418,12 @@ console.log('\n📡 AWD planner: the 4 Amazon reports by themselves (FBA Live / 
       { sellerSku: '27-1-2=5', asin: 'B0A2', fnSku: 'X2', productName: 'cap', condition: 'NewItem', totalQuantity: 9, inventoryDetails: { fulfillableQuantity: 9, reservedQuantity: {} } }] } }); }
     if (u.includes('/awd/2024-05-09/inventory')) { asked.push('awd'); return awdDeny ? J({ errors: [{ code: 'Unauthorized', message: 'Access to requested resource is denied.' }] }, 403)
       : J({ inventory: [{ sku: '27-1-1=10X', totalOnhandQuantity: 60, totalInboundQuantity: 40, inventoryDetails: { availableDistributableQuantity: 50, reservedDistributableQuantity: 10, replenishmentQuantity: 8 } }] }); }
+    // 🚚 open FBA inbound shipments: FBA1 from our warehouse (27-1-1=10X shipped 30, received 10 → 20 on the way), FBA2 an AWD → FBA transfer (8)
+    if (u.includes('/fba/inbound/v0/shipments?')) { asked.push('inbound'); return J({ payload: { ShipmentData: [
+      { ShipmentId: 'FBA1', ShipmentName: 'Holiday direct 10/20', ShipmentStatus: 'RECEIVING', DestinationFulfillmentCenterId: 'ABE8', ShipFromAddress: { Name: 'XFitting Warehouse', City: 'Edison', StateOrProvinceCode: 'NJ' } },
+      { ShipmentId: 'FBA2', ShipmentName: 'AWD replenish', ShipmentStatus: 'IN_TRANSIT', DestinationFulfillmentCenterId: 'TEB9', ShipFromAddress: { Name: 'Amazon AWD Facility', City: 'Wilmington', StateOrProvinceCode: 'DE' } }] } }); }
+    if (u.includes('/fba/inbound/v0/shipments/FBA1/items')) return J({ payload: { ItemData: [{ SellerSKU: '27-1-1=10X', QuantityShipped: 30, QuantityReceived: 10 }, { SellerSKU: '27-1-2=5', QuantityShipped: 4, QuantityReceived: 4 }] } });
+    if (u.includes('/fba/inbound/v0/shipments/FBA2/items')) return J({ payload: { ItemData: [{ SellerSKU: '27-1-1=10X', QuantityShipped: 8, QuantityReceived: 0 }] } });
     if (u.endsWith('/reports/2021-06-30/reports') && m === 'POST') { asked.push('health-ask:' + JSON.parse(o.body).reportType); return J({ reportId: 'R1' }, 202); }
     if (u.includes('/reports/2021-06-30/reports/R1')) return J({ processingStatus: healthStatus, reportDocumentId: healthStatus === 'DONE' ? 'D1' : undefined });
     if (u.includes('/reports/2021-06-30/documents/D1')) return J({ url: 'https://amazon-report-file/D1' });
@@ -8437,6 +8443,25 @@ console.log('\n📡 AWD planner: the 4 Amazon reports by themselves (FBA Live / 
   const A = writes.AWD_Inventory || [[]], Ah = A[0], a1 = A[1] || [];
   check('AWD: available 50 · inbound to AWD 40 · reserved 10 · outbound to FBA 8 (the column names of the AWD CSV)',
     a1[0] === '27-1-1=10X' && a1[Ah.indexOf('Available in AWD (units)')] === 50 && a1[Ah.indexOf('Inbound to AWD (units)')] === 40 && a1[Ah.indexOf('Reserved in AWD (units)')] === 10 && a1[Ah.indexOf('Outbound to FBA (units)')] === 8, A);
+  // Owner (2026-10-22): "holidays — AWD may limit shipments, so we ship straight from our warehouse to FBA: add those so we know exactly
+  // how many we can ship next time".
+  const IB = writes.FBA_Inbound || [[]], ih0 = IB[0], ib = (id, sku) => IB.find(r => r[0] === id && r[5] === sku) || [];
+  check('🚚 open FBA inbound shipments written (FBA_Inbound): FBA1 27-1-1=10X shipped 30 · received 10 · on the way 20; 27-1-2=5 fully received → 0; FBA2 shipped from AWD marked "from-awd"',
+    ib('FBA1', '27-1-1=10X')[ih0.indexOf('on-the-way')] === 20 && ib('FBA1', '27-1-2=5')[ih0.indexOf('on-the-way')] === 0 && ib('FBA2', '27-1-1=10X')[ih0.indexOf('from-awd')] === 'yes' && ib('FBA1', '27-1-1=10X')[ih0.indexOf('from-awd')] === ''
+      && sync.status.inbound.count === 2 && sync.status.inbound.units === 20, { IB, inb: sync.status.inbound });
+  const { readFileSync: rfI } = await import('node:fs');
+  const ahI = rfI(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const lib = new Function('S', 'gf', ahI.match(/function awdInbCounts\(r\)\{[^\n]*\}/)[0] + '\nreturn awdInbCounts;');
+  const gfx = (r, k) => r[k], S0 = { inbCount: {} }, cnt = lib(S0, gfx), rowOf = (id, sku) => { const r = ib(id, sku); const o = {}; ih0.forEach((h, i) => { o[h] = r[i]; }); return o; };
+  const sumWay = S => IB.slice(1).map(r => { const o = {}; ih0.forEach((h, i) => { o[h] = r[i]; }); return o; }).filter(r => r.sku === '27-1-1=10X' && lib(S, gfx)(r)).reduce((a, r) => a + r['on-the-way'], 0);
+  check('…planner: 27-1-1=10X gets 20 on the way to FBA (our shipment FBA1); the AWD → FBA transfer FBA2 (8) is NOT added again — it is already AWD Outbound',
+    cnt(rowOf('FBA1', '27-1-1=10X')) && !cnt(rowOf('FBA2', '27-1-1=10X')) && sumWay(S0) === 20, null);
+  const sw = await (await call('/awd/inbound-count', { method: 'POST', headers: H, body: JSON.stringify({ shipmentId: 'FBA2', count: true }) })).json();
+  check('…a shipment switched on by hand (FBA2) counts for everyone (who kept): 20 + 8 = 28; back to automatic → 20',
+    sw.ok && sw.inboundCount.FBA2.count === true && sw.inboundCount.FBA2.by && sumWay({ inbCount: sw.inboundCount }) === 28
+      && sumWay({ inbCount: (await (await call('/awd/inbound-count', { method: 'POST', headers: H, body: JSON.stringify({ shipmentId: 'FBA2', count: null }) })).json()).inboundCount }) === 20, sw);
+  check('…Total Network adds 🚚 To FBA (so the recommendation subtracts it); the row says "incl. 🚚 N on the way to FBA"; the card lists every open shipment with a Counted switch',
+    /const totalNetwork=fbaFul\+fcProc\+fcTrans\+awdAvail\+awdReserved\+awdOutbound\+fbaInb;/.test(ahI) && /incl\. 🚚 ' \+ fn\(r\.fbaInb\) \+ ' on the way to FBA/.test(ahI) && /id="awd-inb-list"/.test(ahI) && /onchange="awdInbSet\(/.test(ahI) && /🚚 To FBA<span/.test(ahI), null);
   const st1 = await get('/awd/auto-reports?check=1');
   check('Amazon still making the report → ⏳ still pending, nothing rewritten', st1.health && st1.health.pending && st1.fba.count === 4 && st1.awd.count === 1, st1);
   healthStatus = 'DONE'; delete writes.FBA_Inventory;

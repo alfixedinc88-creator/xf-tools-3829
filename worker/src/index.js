@@ -9286,7 +9286,17 @@ const _app = {
         catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })); } }
       if (url.searchParams.get('check') === '1' && env.AMAZON_REFRESH_TOKEN) await awdAutoHealth(env).catch(() => {}); // the page is waiting on Inventory Health
       const o = await awdAutoGet(env);
-      return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
+      return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, inboundCount: o.inboundCount || {}, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
+    }
+    // 🚚 Count / don't count one inbound shipment in the AWD planner (e.g. an AWD → FBA transfer shipped from our own address).
+    // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
+    if (url.pathname === '/awd/inbound-count' && method === 'POST') {
+      const b = await request.json().catch(() => ({})), id = String(b.shipmentId || '').trim().slice(0, 40);
+      if (!id) return cors(new Response(JSON.stringify({ ok: false, error: 'shipmentId needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      const o = await awdAutoGet(env), m = o.inboundCount || {};
+      if (b.count === null || b.count === undefined) delete m[id]; else m[id] = { count: !!b.count, by: String((session && (session.displayName || session.username)) || '?').slice(0, 40), at: new Date().toISOString() };
+      await awdAutoSet(env, 'inboundCount', m);
+      return cors(new Response(JSON.stringify({ ok: true, inboundCount: m }), { headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.pathname === '/awd/amazon-velocity-request'  && method === 'POST') return await awdVelocityRequest(env);
     if (url.pathname === '/awd/amazon-velocity-status'   && method === 'GET')  return await awdVelocityStatus(url, env);
@@ -14344,6 +14354,30 @@ async function awdAutoInventory(env) {
     out.awd = { at: now, error: (/HTTP 40[13]/.test(m) ? 'Amazon refused AWD (the seller-API app needs the "Amazon Warehousing and Distribution" role) — ' : '') + m.slice(0, 250) };
   }
   await awdAutoSet(env, 'awd', out.awd);
+  // 🚚 Owner (2026-10-22): "since it's the holidays AWD may limit shipments, so we ship straight from our warehouse to FBA — add those so
+  // we know exactly how many we can ship next time". Every open FBA inbound shipment (FBA Inbound API): per SKU shipped − received =
+  // still on the way (what FBA already received is in FBA available / processing — never counted twice). A shipment shipped FROM an
+  // Amazon / AWD address is an AWD → FBA transfer (already "Outbound to FBA") → not counted unless switched on.
+  try {
+    const shipments = []; let next = null, pages = 0;
+    do {
+      const p = new URLSearchParams({ MarketplaceId: mid }); if (next) { p.set('QueryType', 'NEXT_TOKEN'); p.set('NextToken', next); }
+      else { p.set('QueryType', 'SHIPMENT'); p.set('ShipmentStatusList', 'WORKING,READY_TO_SHIP,SHIPPED,IN_TRANSIT,DELIVERED,CHECKED_IN,RECEIVING'); }
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments?${p}`);
+      shipments.push(...(((d.payload || {}).ShipmentData) || [])); next = (d.payload || {}).NextToken || null;
+    } while (next && ++pages < 40);
+    const rows = []; let units = 0;
+    for (const sh of shipments.slice(0, 150)) {
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments/${encodeURIComponent(sh.ShipmentId)}/items?MarketplaceId=${mid}`);
+      const fa = sh.ShipFromAddress || {}, from = [fa.Name, fa.City, fa.StateOrProvinceCode].filter(Boolean).join(', '), fromAwd = /amazon|awd/i.test(String(fa.Name || ''));
+      (((d.payload || {}).ItemData) || []).forEach(it => { const shipped = +it.QuantityShipped || 0, rec = +it.QuantityReceived || 0, way = Math.max(0, shipped - rec);
+        if (!fromAwd) units += way;
+        rows.push([sh.ShipmentId || '', sh.ShipmentName || '', sh.ShipmentStatus || '', from, sh.DestinationFulfillmentCenterId || '', it.SellerSKU || '', shipped, rec, way, fromAwd ? 'yes' : '']); });
+    }
+    await awdSheetWrite(env, 'FBA_Inbound', [['shipment-id', 'shipment-name', 'status', 'ship-from', 'fc', 'sku', 'shipped', 'received', 'on-the-way', 'from-awd'], ...rows]);
+    out.inbound = { at: now, count: shipments.length, units, ...(shipments.length > 150 ? { warn: 'More than 150 open shipments — only the first 150 were read' } : {}) };
+  } catch (e) { out.inbound = { at: now, error: String(e.message || e).slice(0, 250) }; }
+  await awdAutoSet(env, 'inbound', out.inbound);
   // Inventory Health: ask for it now, pick it up on a later tick.
   try {
     const r = await fetch('https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports', { method: 'POST', headers: { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' },
@@ -14390,7 +14424,7 @@ async function awdAutoTick(env, force) {
   let inv = null;
   if (force || ((!st.lastRun || st.lastRun.day !== nyDay) && nyHour >= 5)) inv = await awdAutoInventory(env);
   let health = null; try { health = await awdAutoHealth(env); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
-  return { ok: true, ran: !!inv, inv, health, status: await awdAutoGet(env).then(o => ({ fba: o.fba || null, awd: o.awd || null, health: o.health || null, lastRun: o.lastRun || null })) };
+  return { ok: true, ran: !!inv, inv, health, status: await awdAutoGet(env).then(o => ({ fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, inboundCount: o.inboundCount || {}, health: o.health || null, lastRun: o.lastRun || null })) };
 }
 
 async function awdVelocityRequest(env) {

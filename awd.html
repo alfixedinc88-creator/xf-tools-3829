@@ -815,6 +815,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div style="font-size:14px;font-weight:700;color:#1A56DB;margin-bottom:3px">&#x26A1; Sync from Amazon SP-API</div>
             <div style="font-size:12px;color:#4B5563">All 4 reports come in by themselves every morning (FBA Inventory Health, FBA Live, FBA Reserved, AWD inventory). Tap to get them right now. No CSV downloads needed.</div>
             <div id="awd-auto-status" style="font-size:11.5px;color:#374151;margin-top:6px;line-height:1.6"></div>
+            <details id="awd-inb-box" style="font-size:12px;margin-top:4px"><summary style="cursor:pointer;color:#1A56DB;font-weight:700">🚚 Open shipments to FBA — tap to see / switch</summary><div id="awd-inb-list" style="margin-top:6px"></div></details>
             <div id="awd-sync-status" style="font-size:11px;color:#9CA3AF;margin-top:4px;font-family:'DM Mono',monospace"></div>
             <div id="awd-velocity-status" style="font-size:11px;color:#9CA3AF;margin-top:2px;font-family:'DM Mono',monospace;display:none"></div>
           </div>
@@ -937,6 +938,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <th class="r"><span class="tt">AWD Available<span class="tt-ico">?</span><span class="tt-box">Available in AWD (units) + Inbound to AWD (units)</span></span></th>
         <th class="r"><span class="tt">AWD Reserved<span class="tt-ico">?</span><span class="tt-box">Reserved in AWD (units)</span></span></th>
         <th class="r"><span class="tt">AWD Outbound<span class="tt-ico">?</span><span class="tt-box">Outbound to FBA (units)</span></span></th>
+        <th class="r"><span class="tt">🚚 To FBA<span class="tt-ico">?</span><span class="tt-box">On the way to FBA from our warehouse: shipped − received, open FBA inbound shipments (AWD transfers not counted twice)</span></span></th>
         <th class="r">Total Network</th>
         <th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Target 120d</th><th class="r">Rec Send</th>
         <th></th>
@@ -1160,7 +1162,7 @@ function saveSettings(){
 }
 
 // ── STATE ──
-const S={fba:[],live:[],awd:[],res:[],joined:[],cpackMap:{},cpackDate:null,cpackCount:0,shipment:{},loaded:false};
+const S={fba:[],live:[],awd:[],res:[],inb:[],inbCount:{},joined:[],cpackMap:{},cpackDate:null,cpackCount:0,shipment:{},loaded:false};
 
 // ── FILE UPLOAD ──
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
@@ -1322,12 +1324,16 @@ async function processData(skipSave){
       const fct=pn(gf(r,'Reserved FC Transfer'));
       if(fct>0) fcTransMap[sku]=fct;
     });
+    // 🚚 Still on the way to FBA per SKU (shipped − received), only the shipments that count (straight from our warehouse; an
+    // AWD → FBA transfer is already "AWD Outbound" — unless switched on / off by hand).
+    const inbMap={};
+    (S.inb||[]).forEach(r=>{ if(!awdInbCounts(r))return; const sku=(gf(r,'sku')||'').trim().toUpperCase(); if(!sku)return; inbMap[sku]=(inbMap[sku]||0)+pn(gf(r,'on-the-way')); });
     // Primary SKU list from FBA_Live (mirrors FILTER on FBA_Live!A)
     const source=S.live.length?S.live:S.fba;
     const seen=new Set();
     S.joined=source
       .filter(r=>{const s=skuOf(r);if(!s||seen.has(s))return false;seen.add(s);return true;})
-      .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap));
+      .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap));
     S.loaded=true;
     renderDashboard();renderInv();renderRecs();updateBadges();
     const pill=ge('data-pill');
@@ -1346,7 +1352,8 @@ async function processData(skipSave){
     loadShipmentFromSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
-function buildRow(r,invMap,awdMap,resMap,fcTransMap){
+function awdInbCounts(r){ const id=gf(r,'shipment-id'), o=(S.inbCount||{})[id]; return o ? !!o.count : String(gf(r,'from-awd')||'').toLowerCase()!=='yes'; }
+function buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap){
   const sku=skuOf(r),skuU=sku.toUpperCase();
   const asin=(gf(r,'asin')||gf(r,'ASIN')||'').trim();
   const name=gf(r,'product-name')||'';
@@ -1360,10 +1367,11 @@ function buildRow(r,invMap,awdMap,resMap,fcTransMap){
   const sold90=invMap[skuU]||pn(gf(r,'units-shipped-t90'));
   const dailySales=sold90>0?sold90/90:0;
   const target=dailySales>0?Math.ceil(dailySales*C.targetDays):0;
-  const totalNetwork=fbaFul+fcProc+fcTrans+awdAvail+awdReserved+awdOutbound;
+  const fbaInb=(inbMap&&inbMap[skuU])||0; // 🚚 on the way to FBA from our warehouse
+  const totalNetwork=fbaFul+fcProc+fcTrans+awdAvail+awdReserved+awdOutbound+fbaInb;
   const recSend=Math.max(0,target-totalNetwork);
   const netDays=dailySales>0?totalNetwork/dailySales:999;
-  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,sold90,dailySales,target,totalNetwork,recSend,netDays};
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,fbaInb,sold90,dailySales,target,totalNetwork,recSend,netDays};
 }
 function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
 
@@ -1447,7 +1455,7 @@ function renderInv(){
     <td class="asin">${r.asin||'—'}</td>
     <td class="r">${db(r.netDays)}</td>
     <td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.fcProc)}</td><td class="r">${fn(r.fcTrans)}</td>
-    <td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.awdReserved)}</td><td class="r">${fn(r.awdOutbound)}</td>
+    <td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.awdReserved)}</td><td class="r">${fn(r.awdOutbound)}</td><td class="r">${fn(r.fbaInb||0)}</td>
     <td class="r"><strong>${fn(r.totalNetwork)}</strong></td>
     <td class="r">${fn(r.sold90)}</td>
     <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
@@ -1775,7 +1783,28 @@ function awdAutoStatusHtml(d) {
   var h = d && d.health || null;
   return line('FBA Live + FBA Reserved', d && d.fba)
     + line('AWD inventory', d && d.awd)
+    + line('🚚 Shipments on the way to FBA (from our warehouse)', d && d.inbound, d && d.inbound && d.inbound.units != null ? ' · ' + d.inbound.units + ' units still on the way' : '')
     + line('FBA Inventory Health (sales 7 / 30 / 60 / 90 days)', h, h && h.pending ? ' <span style="color:#1A56DB">— Amazon is making the newest one (asked ' + awdH(T(h.pending.at)) + '), it loads by itself</span>' : '');
+}
+// 🚚 Each open FBA inbound shipment: status, from where, units still on the way, counted or not (switch shared by everyone).
+function awdInbListHtml() {
+  const by={}, order=[];
+  (S.inb||[]).forEach(r=>{ const id=gf(r,'shipment-id'); if(!id)return; if(!by[id]){by[id]={id,name:gf(r,'shipment-name'),status:gf(r,'status'),from:gf(r,'ship-from'),fc:gf(r,'fc'),awd:String(gf(r,'from-awd')||'').toLowerCase()==='yes',skus:0,way:0,shipped:0,rec:0,row:r};order.push(id);}
+    const x=by[id]; x.skus++; x.way+=pn(gf(r,'on-the-way')); x.shipped+=pn(gf(r,'shipped')); x.rec+=pn(gf(r,'received')); });
+  if(!order.length) return '<div style="color:#6B7280">No open shipments to FBA.</div>';
+  return '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tr style="text-align:left;color:#6B7280"><th>Shipment</th><th>Status</th><th>From</th><th style="text-align:right">Shipped</th><th style="text-align:right">Received</th><th style="text-align:right">On the way</th><th>Counted</th></tr>'
+    + order.map(id=>{ const x=by[id], on=awdInbCounts(x.row), o=(S.inbCount||{})[id];
+      return '<tr class="awd-inb-row" style="border-top:1px solid #E5E7EB'+(on?'':';opacity:.6')+'"><td><b>'+awdH(x.name||id)+'</b><div style="color:#9CA3AF">'+awdH(id)+' · '+x.skus+' SKU'+(x.skus===1?'':'s')+' · '+awdH(x.fc)+'</div></td><td>'+awdH(x.status)+'</td><td>'+awdH(x.from)+(x.awd?' <span style="color:#B45309">(AWD → FBA)</span>':'')+'</td>'
+        +'<td style="text-align:right">'+fn(x.shipped)+'</td><td style="text-align:right">'+fn(x.rec)+'</td><td style="text-align:right"><b>'+fn(x.way)+'</b></td>'
+        +'<td><label style="cursor:pointer"><input type="checkbox" '+(on?'checked':'')+' onchange="awdInbSet(\''+awdH(id)+'\',this.checked)"> '+(on?'counted':(x.awd?'not counted (already AWD Outbound)':'not counted'))+'</label>'+(o?'<div style="color:#9CA3AF;font-size:10px">set by '+awdH(o.by)+'</div>':'')+'</td></tr>'; }).join('')+'</table>';
+}
+function awdInbRender(){ const el=ge('awd-inb-list'); if(el) el.innerHTML=awdInbListHtml(); }
+async function awdInbSet(id, on) {
+  try { const d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/inbound-count', { method: 'POST', body: JSON.stringify({ shipmentId: id, count: !!on }) })).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Not saved');
+    S.inbCount = d.inboundCount || {}; awdInbRender(); if (S.loaded) { await processData(true); awd_switchTab('upload'); }
+    awd_planner_toast(on ? '🚚 ' + id + ' counted' : id + ' not counted', 'success');
+  } catch (e) { awd_planner_toast('Not saved: ' + e.message, 'error'); }
 }
 async function awdAutoStatusLoad() {
   var box = ge('awd-auto-status'); if (!box) return null;
@@ -2372,7 +2401,7 @@ function renderRecs() {
       <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
       <td class="r">${fn(r.fbaFul)}</td>
       <td class="r">${fn(r.awdAvail)}</td>
-      <td class="r">${fn(r.totalNetwork)}</td>
+      <td class="r">${fn(r.totalNetwork)}${r.fbaInb ? '<div style="font-size:10px;color:#1A56DB" title="Already counted in Total Network">incl. 🚚 ' + fn(r.fbaInb) + ' on the way to FBA</div>' : ''}</td>
       <td>${statusBadge}</td>
       <td style="white-space:nowrap">
         ${inB
@@ -2495,6 +2524,9 @@ async function loadReportsFromSheet() {
       wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(r=>r.json()),
       wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(r=>r.json()),
     ]);
+    // 🚚 open FBA inbound shipments (straight from our warehouse) + which ones count — never blocks the rest
+    try { const [ri, rs] = await Promise.all([wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inbound').then(r=>r.json()), wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports').then(r=>r.json())]);
+      S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {}; } catch (e) { S.inb = []; }
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
     if (!fbaData.length) {
@@ -2512,6 +2544,7 @@ async function loadReportsFromSheet() {
       const zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
     });
     if (ge('proc-btn')) ge('proc-btn').disabled = false;
+    awdInbRender();
     // BUGFIX: processData() is async but was called without await, then
     // loadShipmentFromSheet() fired on a fixed 500ms timer regardless
     // of whether processData had actually finished. If the real load
