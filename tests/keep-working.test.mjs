@@ -8921,5 +8921,57 @@ console.log('\n🗄 Off the Google Sheet, step 1: SKU Mgr new row / ✏️ Edit 
   sq.exec("DELETE FROM master_list WHERE base_sku = '706-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '706-1-1%'");
 }
 
+// Owner (2026-10-22): "don't use the Google Sheet anymore — create our own database". Step 1b: Admin → 🗄 Database moves each
+// Google Sheet tab into our database (copied once, rows + cells checked); from then on the app reads / saves it there.
+console.log('\n🗄 Off the Google Sheet, step 1b: tabs moved into our database keep working with Google DOWN (same answers)');
+{
+  const realF = globalThis.fetch;
+  const G = { // a fake Google spreadsheet "TEST"
+    Config: [['key', 'value'], ['audit_mode', 'auto']],
+    Prefixes: [['Prefix'], ['C1='], ['BO='], ['PR=']], // row 1 = header (the app reads A2:A100)
+    Discontinued_SKUs: [['SKU', 'Note'], ['9-9-9', 'old one'], [], ['9-9-8', 'gone', 'x']],
+  };
+  let googleUp = true, googleCalls = 0;
+  globalThis.fetch = async (u, o = {}) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('oauth2')) { if (!googleUp) throw new Error('Google is down'); return J({ access_token: 't', expires_in: 3600 }); }
+    if (!u.includes('sheets.googleapis.com')) return realF(u, o);
+    googleCalls++;
+    if (!googleUp) throw new Error('Google is down');
+    const m = /\/spreadsheets\/TEST(\/values\/([^?:]+))?/.exec(u);
+    if (m && !m[1]) return J({ sheets: Object.keys(G).map((t, i) => ({ properties: { sheetId: i, title: t } })) });
+    if (m && m[2] && (o.method || 'GET') === 'GET') { const tab = decodeURIComponent(m[2]).split('!')[0].replace(/^'(.*)'$/, '$1'); return J({ values: G[tab] || [] }); }
+    return J({ values: [], updates: { updatedRange: 'X!A9:B9' } }); };
+  const list = await get('/admin/db-move'), bk = (list.books || [])[0] || { tabs: [] };
+  check('Admin → 🗄 Database lists the Google spreadsheet\'s tabs, all "☁ still in Google"', list.ok && bk.key === 'SHEET_ID' && ['Config', 'Prefixes', 'Discontinued_SKUs'].every(t => bk.tabs.some(x => x.tab === t && !x.moved)), list);
+  const mv = {}; for (const t of ['Config', 'Prefixes', 'Discontinued_SKUs']) mv[t] = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: t });
+  const xs = Object.fromEntries(sq.prepare("SELECT tab, rows, cells FROM xs_tab WHERE book = 'TEST'").all().map(r => [r.tab, r]));
+  check('📥 Move: each tab copied + checked — Config 2 rows / 4 cells, Prefixes 4 / 4, Discontinued_SKUs 4 rows / 7 cells (an empty row kept) ✅',
+    mv.Config.ok && mv.Prefixes.ok && mv.Discontinued_SKUs.ok && xs.Config.rows === 2 && xs.Config.cells === 4 && xs.Prefixes.rows === 4 && xs.Discontinued_SKUs.rows === 4 && xs.Discontinued_SKUs.cells === 7, { mv, xs });
+  googleUp = false; const calls0 = googleCalls;
+  const am = await get('/inventory/audit-mode'), pf = await get('/inventory/prefixes'), ds = await get('/sheets?sheet=Discontinued_SKUs');
+  check('Google DOWN → the moved tabs still answer the same: audit mode "auto", prefixes C1= / BO= / PR=, Discontinued_SKUs with its empty row',
+    am.mode === 'auto' && JSON.stringify(pf.prefixes) === '["C1=","BO=","PR="]' && JSON.stringify(ds.values) === JSON.stringify(G.Discontinued_SKUs), { am, pf, ds });
+  const am2 = await post('/inventory/audit-mode', { mode: 'manual' }), am3 = await get('/inventory/audit-mode');
+  const put = await call('/sheets?sheet=Discontinued_SKUs', { method: 'PUT', headers: H, body: JSON.stringify({ values: [['SKU', 'Note'], ['7-7-7', 'new']] }) });
+  const ds2 = await get('/sheets?sheet=Discontinued_SKUs');
+  check('…and saves go to our database: audit mode → manual (read back manual); Discontinued_SKUs replaced by the new list (old rows gone)',
+    am2.ok !== false && am3.mode === 'manual' && put.status === 200 && JSON.stringify(ds2.values) === '[["SKU","Note"],["7-7-7","new"]]' && googleCalls === calls0, { am3, ds2, put: put.status, calls: googleCalls - calls0 });
+  // the customer-service log clean-up deletes rows older than 30 days — in our database (Google down), the right rows
+  const old = new Date(Date.now() - 40 * 864e5).toISOString(), nw = new Date().toISOString();
+  googleUp = true; G.CS_MsgLog = [['id', 'ts'], ['a-old', old], ['b-new', nw], ['c-old', old], ['d-new', nw]];
+  const mvCs = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: 'CS_MsgLog' }); googleUp = false;
+  const cl = await post('/cs-tool/log-clean', {});
+  const csNow = sq.prepare("SELECT r, v FROM xs_row WHERE book = 'TEST' AND tab = 'CS_MsgLog' ORDER BY r").all().map(x => x.r + ':' + JSON.parse(x.v)[0]).join(' ');
+  check('…a clean-up that deletes rows works in our database too: CS log older than 30 days (a-old, c-old) deleted, the rest move up — and the RIGHT rows (it used to delete the row below each old one)',
+    mvCs.ok && cl.ok && cl.deleted === 2 && / 2:b-new 3:d-new$/.test(csNow) && /^1:/.test(csNow), { cl, csNow }); // row 1 = the app's own header
+  const un = await post('/admin/db-move/undo', { book: 'SHEET_ID', tab: 'Prefixes' });
+  check('…↩ Back to Google puts a tab back on the Google Sheet (asks Google again)', un.ok && !sq.prepare("SELECT 1 FROM xs_tab WHERE book = 'TEST' AND tab = 'Prefixes'").get(), un);
+  globalThis.fetch = realF;
+  sq.exec("DELETE FROM xs_tab; DELETE FROM xs_row");
+  const { readFileSync: rfD } = await import('node:fs');
+  const ah = rfD(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8');
+  check('…Admin page: 🗄 Database tab (📥 Move / 📥 Move all / ↩ Back to Google, "N of M tabs are in our database")', /id="ad-tab-db" onclick="adSwitchTab\('db'\)">🗄 Database/.test(ah) && /window\.adDbMoveAll = /.test(ah) && /tabs are in our database/.test(ah) && /↩ Back to Google/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

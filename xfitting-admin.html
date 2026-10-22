@@ -166,6 +166,7 @@
       <div class="ad-tab" id="ad-tab-devices" onclick="adSwitchTab('devices')">📱 Scanners</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
       <div class="ad-tab" id="ad-tab-test" onclick="adSwitchTab('test')">🧪 Test</div>
+      <div class="ad-tab" id="ad-tab-db" onclick="adSwitchTab('db')">🗄 Database</div>
     </div>
 
     <div id="ad-panel-users">
@@ -266,6 +267,20 @@
           </select>
         </div>
         <div id="ad-activity-table-wrap"><div class="ad-empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- 🗄 Owner (2026-10-22): "don't use the Google Sheet anymore — create our own database". Each Google spreadsheet tab the
+         app uses: move it into our database (copied once, rows + cells checked ✅); from then on the app reads / writes it there. -->
+    <div id="ad-panel-db" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header"><h2>🗄 Our database — moving off the Google Sheet</h2></div>
+        <div style="font-size:12.5px;color:var(--text3);line-height:1.6;margin-bottom:12px">
+          Each tab of each Google spreadsheet the app uses. <b>📥 Move</b> copies the tab into our database once and checks it (same rows, same filled cells, same text → ✅);
+          from then on every page reads and saves that tab in our database — the Google Sheet is not used for it any more (it stays as it was, as an old copy).
+          <b>↩ Back to Google</b> undoes it (anything saved since the move stays only in the database). Best done when nobody is using that screen.
+        </div>
+        <div id="ad-db-body"><div class="ad-empty">Loading…</div></div>
       </div>
     </div>
 
@@ -455,7 +470,7 @@ function adShowDenied() {
 }
 
 window.adSwitchTab = function(name) {
-  ['users','levels','pages','logins','devices','activity','test'].forEach(function(n) {
+  ['users','levels','pages','logins','devices','activity','test','db'].forEach(function(n) {
     ge('ad-tab-' + n).classList.toggle('active', n === name);
     ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
   });
@@ -465,6 +480,48 @@ window.adSwitchTab = function(name) {
   if (name === 'levels') adRenderLevels();
   if (name === 'pages') adLoadPages();
   if (name === 'test') adLoadTest();
+  if (name === 'db') adLoadDb();
+};
+// 🗄 Database: move each Google Sheet tab into our database.
+function adEsc(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+var AD_DB = null;
+window.adLoadDb = async function() {
+  var box = ge('ad-db-body'); if (!box) return;
+  box.innerHTML = '<div class="ad-empty">Loading…</div>';
+  var r = await adFetch('/admin/db-move'); AD_DB = r.data;
+  box.innerHTML = adDbHtml(r.data);
+};
+window.adDbHtml = function(d) {
+  if (!d || !d.ok) return '<div class="ad-empty" style="color:var(--red)">' + adEsc((d && d.error) || 'Could not load') + '</div>';
+  var all = 0, mv = 0; d.books.forEach(function(b) { b.tabs.forEach(function(t) { all++; if (t.moved) mv++; }); });
+  return '<div class="ad-db-sum" style="font-size:15px;font-weight:800;margin-bottom:12px">' + (mv === all && all ? '✅ ' : '') + mv + ' of ' + all + ' tabs are in our database</div>'
+    + d.books.map(function(b, bi) {
+      var n = b.tabs.filter(function(t) { return t.moved; }).length;
+      return '<details class="ad-li" style="border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:8px;background:var(--bg2)"' + (n < b.tabs.length ? ' open' : '') + '><summary style="cursor:pointer;font-weight:800">' + adEsc(b.name) + ' — ' + n + ' of ' + b.tabs.length + ' moved'
+        + (b.err ? ' <span style="color:var(--red);font-weight:600">(Google: ' + adEsc(b.err) + ')</span>' : '') + '</summary>'
+        + (n < b.tabs.length ? '<button class="ad-btn ad-btn-sm" style="width:auto;margin:8px 0" onclick="adDbMoveAll(' + bi + ', this)">📥 Move all ' + (b.tabs.length - n) + ' to our database</button>' : '')
+        + '<table class="ad-table"><tr><th>Tab</th><th>Where</th><th></th></tr>' + b.tabs.map(function(t, ti) {
+          return '<tr class="ad-db-row"><td><b>' + adEsc(t.tab) + '</b></td><td id="ad-db-st-' + bi + '-' + ti + '">' + (t.moved ? '✅ in our database · ' + t.rows + ' rows · ' + t.cells + ' cells <span style="color:var(--text3)">(' + adEsc(String(t.at || '').slice(0, 16).replace('T', ' ')) + ' ' + adEsc(t.by || '') + ')</span>' : '☁ still in Google') + '</td>'
+            + '<td style="white-space:nowrap">' + (t.moved ? '<button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', true, this)">↩ Back to Google</button>' : '<button class="ad-btn ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', false, this)">📥 Move</button>') + '</td></tr>';
+        }).join('') + '</table></details>';
+    }).join('');
+};
+window.adDbOne = async function(bi, ti, undo, btn) {
+  var b = AD_DB.books[bi], t = b.tabs[ti], st = ge('ad-db-st-' + bi + '-' + ti);
+  if (undo && !confirm('Put "' + t.tab + '" back on the Google Sheet?\n\nAnything saved in it since it moved stays only in our database.')) return;
+  if (btn) btn.disabled = true; if (st) st.textContent = '⏳ ' + (undo ? 'putting back' : 'copying + checking') + '…';
+  var r = await adFetch('/admin/db-move/' + (undo ? 'undo' : 'copy'), { method: 'POST', body: JSON.stringify({ book: b.key, tab: t.tab }) });
+  var d = r.data || {};
+  if (!d.ok) { if (st) st.innerHTML = '<b style="color:var(--red)">❌ ' + adEsc(d.error || (d.want ? 'check failed — Google ' + d.want.rows + ' rows / ' + d.want.cells + ' cells, database ' + d.got.rows + ' / ' + d.got.cells + ' (not moved)' : 'failed')) + '</b>'; if (btn) btn.disabled = false; return false; }
+  if (undo) { t.moved = false; } else { t.moved = true; t.rows = d.rows; t.cells = d.cells; t.at = new Date().toISOString(); t.by = (AD.user && AD.user.displayName) || ''; }
+  return true;
+};
+window.adDbMoveAll = async function(bi, btn) {
+  var b = AD_DB.books[bi]; if (btn) btn.disabled = true;
+  var ok = 0, bad = 0;
+  for (var ti = 0; ti < b.tabs.length; ti++) { if (b.tabs[ti].moved) continue; if (await adDbOne(bi, ti, false, null)) ok++; else bad++; }
+  adToast('📥 ' + ok + ' moved' + (bad ? ' · ❌ ' + bad + ' not moved (see the red lines)' : ' ✅'), bad ? 'error' : 'success');
+  ge('ad-db-body').innerHTML = adDbHtml(AD_DB);
 };
 
 var ROLE_LABELS = { admin:'Admin', mgmt:'Mgmt', ops:'Ops', mobile:'Mobile', price:'Price', owner:'Owner' };
