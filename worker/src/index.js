@@ -9290,6 +9290,7 @@ const _app = {
     }
     // 🚚 Count / don't count one inbound shipment in the AWD planner (e.g. an AWD → FBA transfer shipped from our own address).
     // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
+    if (url.pathname === '/awd/asin-info' && method === 'GET') return await awdAsinInfo(url, env);
     if (url.pathname === '/awd/inbound-count' && method === 'POST') {
       const b = await request.json().catch(() => ({})), id = String(b.shipmentId || '').trim().slice(0, 40);
       if (!id) return cors(new Response(JSON.stringify({ ok: false, error: 'shipmentId needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -14425,6 +14426,66 @@ async function awdAutoTick(env, force) {
   if (force || ((!st.lastRun || st.lastRun.day !== nyDay) && nyHour >= 5)) inv = await awdAutoInventory(env);
   let health = null; try { health = await awdAutoHealth(env); } catch (e) { health = { error: String(e.message || e).slice(0, 200) }; }
   return { ok: true, ran: !!inv, inv, health, status: await awdAutoGet(env).then(o => ({ fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, inboundCount: o.inboundCount || {}, health: o.health || null, lastRun: o.lastRun || null })) };
+}
+
+// 🔎 Owner (2026-10-22): "a tab where I search an ASIN and see the quantities we have where (AWD, FBA now, transfers from where to where),
+// how many we sell in 30 / 90 days / half a year / a year, how many we should ship in for 1 month or more (we pick), and check unusual
+// months — one search with all the info instead of going all over Amazon". GET /awd/asin-info?q=ASIN (or a SKU): Amazon sales of every
+// SKU on that ASIN (the weekly sales table: units = sets; pieces = units × the pack after "="), month by month (last 13 months) with
+// unusual months flagged, the "normal month" (the middle of last 30 d · 30–90 d · 3–6 mo · 6–12 mo, as the Reorder sales check), the
+// newest Inventory Health 7 / 30 / 60 / 90, our shelf (SKU Mgr) for its part #, what is ordered / on the water, and Reorder 🚫.
+// The FBA / AWD / transfer numbers come from the planner's own sheets on the page (the same numbers the other tabs use).
+async function awdAsinInfo(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const q = String(url.searchParams.get('q') || '').trim().toUpperCase();
+  if (!q) return J({ ok: false, error: 'Type an ASIN (B0…) or a SKU' });
+  const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const st = await awdAutoGet(env).catch(() => ({}));
+  const base = Array.isArray(st.fbaBase) ? st.fbaBase : [];
+  // the ASIN: typed, or the ASIN of the SKU typed (FBA list first, then the sales table)
+  let asin = /^B0[0-9A-Z]{8}$/.test(q) || /^[0-9]{9}[0-9X]$/.test(q) ? q : '';
+  if (!asin) { const b = base.find(r => String(r[0]).toUpperCase() === q); asin = b ? String(b[1] || '').toUpperCase() : ''; }
+  if (!asin) { const r = (await all('SELECT asin FROM amazon_sales_weekly WHERE UPPER(sku) = ? AND asin IS NOT NULL AND asin != \'\' ORDER BY period_start DESC LIMIT 1', q))[0]; asin = r ? String(r.asin).toUpperCase() : ''; }
+  const fbaSkus = base.filter(r => asin ? String(r[1] || '').toUpperCase() === asin : String(r[0]).toUpperCase() === q).map(r => ({ sku: String(r[0]), name: String(r[3] || '') }));
+  const rows = asin ? await all('SELECT sku, period_start, units_ordered, ordered_product_sales FROM amazon_sales_weekly WHERE UPPER(asin) = ? ORDER BY period_start', asin)
+    : await all('SELECT sku, period_start, units_ordered, ordered_product_sales FROM amazon_sales_weekly WHERE UPPER(sku) = ? ORDER BY period_start', q);
+  const skuSet = new Set([...fbaSkus.map(x => x.sku.toUpperCase()), ...rows.map(r => String(r.sku).toUpperCase())]);
+  if (!skuSet.size && !asin) return J({ ok: false, error: 'Nothing found for ' + q + ' — press ⚡ Sync on Import Reports first, or check the ASIN' });
+  const part = s => reorderDashFix(reorderCleanPart(String(s || '').toUpperCase())), pack = s => reorderExtractPackSize(part(s)) || 1;
+  const now = Date.now(), dAgo = n => new Date(now - n * 864e5).toISOString().slice(0, 10), firstSale = rows.length ? String(rows[0].period_start).slice(0, 10) : null;
+  const win = { d30: dAgo(30), d90: dAgo(90), d180: dAgo(180), d365: dAgo(365) };
+  const W = { u30: 0, u90: 0, u180: 0, u365: 0, p30: 0, p90: 0, p180: 0, p365: 0, sales365: 0 }, months = {}, bySku = {};
+  rows.forEach(r => { const d = String(r.period_start).slice(0, 10), u = parseFloat(r.units_ordered) || 0, pk = pack(r.sku), m = d.slice(0, 7);
+    if (d >= win.d365) { W.u365 += u; W.p365 += u * pk; W.sales365 += parseFloat(r.ordered_product_sales) || 0; const k = bySku[r.sku] = bySku[r.sku] || { sku: r.sku, pack: pk, u30: 0, u90: 0, u365: 0 }; k.u365 += u; if (d >= win.d90) k.u90 += u; if (d >= win.d30) k.u30 += u; }
+    if (d >= win.d180) { W.u180 += u; W.p180 += u * pk; }
+    if (d >= win.d90) { W.u90 += u; W.p90 += u * pk; }
+    if (d >= win.d30) { W.u30 += u; W.p30 += u * pk; }
+    const mo = months[m] = months[m] || { month: m, units: 0, pcs: 0 }; mo.units += u; mo.pcs += u * pk; });
+  // a window counts only when the sales history reaches back that far (else "—", never a made-up 0)
+  const reach = d => !!firstSale && firstSale <= dAgo(d - 7);
+  const segs = [reach(30) ? W.u30 : null, reach(90) ? (W.u90 - W.u30) / 2 : null, reach(180) ? (W.u180 - W.u90) / 3 : null, reach(365) ? (W.u365 - W.u180) / 6 : null];
+  const have = segs.filter(x => x != null).sort((a, b) => a - b), L = have.length, normal = !L ? 0 : L % 2 ? have[(L - 1) / 2] : (have[L / 2 - 1] + have[L / 2]) / 2;
+  const r1 = x => Math.round((x || 0) * 10) / 10;
+  // month by month, the last 13 months (the current one marked as not finished); unusual = more than 1.5× or less than half the normal month
+  const monthList = [];
+  for (let i = 12; i >= 0; i--) { const d = new Date(new Date().getFullYear(), new Date().getMonth() - i, 1), m = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), mo = months[m] || { month: m, units: 0, pcs: 0 };
+    const full = i > 0, before = !firstSale || m < firstSale.slice(0, 7);
+    monthList.push({ month: m, units: r1(mo.units), pcs: r1(mo.pcs), partial: !full, noData: before,
+      flag: !full || before || !(normal > 0) || L < 3 ? '' : mo.units > 1.5 * normal ? 'high' : mo.units < 0.5 * normal ? 'low' : '' }); }
+  // our shelf (SKU Mgr) for each FBA SKU's part #: boxes × Ea/Case = pieces; ÷ pack = sets of this listing; other packs of the part apart
+  const parts = [...new Set([...skuSet].map(part).filter(Boolean))], fam = [...new Set(parts.map(p => String(reorderGetBaseSku(p)).toUpperCase()))];
+  const ml = fam.length ? await all(`SELECT part_num, location, cases, units_per_case FROM master_list WHERE cases > 0 AND (${fam.map(() => 'UPPER(TRIM(part_num)) LIKE ?').join(' OR ')})`, ...fam.map(f => f + '=%')) : [];
+  const shelf = ml.map(r => { const p = part(r.part_num), c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
+    return { part: p, location: r.location, cases: c, pcs: ea > 0 ? c * ea : null, sets: ea > 0 ? Math.round(c * ea / (pack(p) || 1) * 100) / 100 : null, same: parts.includes(p) }; });
+  const inc = parts.length ? await all(`SELECT i.title, i.part, i.qty, i.cases, t.stage FROM reorder_incoming i LEFT JOIN reorder_title t ON t.title = i.title WHERE ${parts.map(() => 'UPPER(i.part) = ?').join(' OR ')}`, ...parts) : [];
+  await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {});
+  const disc = parts.length ? await all(`SELECT part, by_user, at, note FROM reorder_discontinued WHERE ${parts.map(() => 'part = ?').join(' OR ')}`, ...parts) : [];
+  const health = {}; [...skuSet].forEach(k => { const h = (st.healthRows || {})[k]; if (h) health[k] = h; });
+  return J({ ok: true, q, asin, name: (fbaSkus[0] || {}).name || '', fbaSkus: fbaSkus.map(x => x.sku), skus: [...skuSet],
+    sales: { units: { d30: r1(W.u30), d90: r1(W.u90), d180: reach(180) ? r1(W.u180) : null, d365: reach(365) ? r1(W.u365) : null }, pcs: { d30: r1(W.p30), d90: r1(W.p90), d180: reach(180) ? r1(W.p180) : null, d365: reach(365) ? r1(W.p365) : null },
+      salesFrom: firstSale, bySku: Object.values(bySku).map(k => ({ ...k, u30: r1(k.u30), u90: r1(k.u90), u365: r1(k.u365) })) },
+    normal: { perMonth: r1(normal), parts: segs.map(x => x == null ? null : r1(x)), enough: L >= 3, last90PerMonth: r1(W.u90 / 3) }, months: monthList, health, healthAt: (st.health || {}).at || null,
+    shelf, incoming: inc.map(r => ({ title: r.title, part: r.part, units: r.qty, cases: r.cases, stage: r.stage || '' })), discontinued: disc });
 }
 
 async function awdVelocityRequest(env) {

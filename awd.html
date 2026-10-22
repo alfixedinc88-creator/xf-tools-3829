@@ -792,6 +792,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Recommendations
       <span class="tbadge" id="rec-badge" style="display:none">0</span>
     </div>
+    <div class="tab" onclick="awd_switchTab('asin')" id="tab-asin">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>ASIN Lookup
+    </div>
     <div class="tab" onclick="awd_switchTab('builder')" id="tab-builder">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Shipment Builder
       <span class="tbadge" id="bld-badge" style="display:none">0</span>
@@ -1024,6 +1027,21 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             </div></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 🔎 Owner (2026-10-22): one search for an ASIN — where every unit is, what we sell, unusual months, how many to ship in now. -->
+    <div class="page" id="page-asin">
+      <div style="max-width:1000px">
+        <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">🔎 ASIN Lookup</h2>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">One search: where every unit is (our shelf · AWD · on the way · FBA), what we sell (30 / 90 days, half a year, a year, month by month), unusual months, and how many to ship in now.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <input id="awdq-inp" type="text" placeholder="ASIN (B0…) or SKU" autocomplete="off" onkeydown="if(event.key==='Enter')awdAsinSearch()"
+            style="flex:1;min-width:200px;padding:10px 12px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px;font-family:'DM Mono',monospace">
+          <button class="btn btn-primary" onclick="awdAsinSearch()">Search</button>
+        </div>
+        <div id="awdq-months" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-size:13px"></div>
+        <div id="awdq-out"></div>
       </div>
     </div>
 
@@ -1976,6 +1994,97 @@ window.awdSaveAsinMapping = async function(asin) {
 // Check for pending velocity report on load
 (function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
 
+// ── 🔎 ASIN LOOKUP ──
+var AWDQ = { months: 3, info: null };
+try { var _m = parseFloat(localStorage.getItem('awdq_months')); if (_m > 0) AWDQ.months = _m; } catch (e) {}
+function awdqMonthsHtml() {
+  return '<b>Ship in enough for:</b> ' + [1, 2, 3, 4, 6].map(function(m) { return '<button class="btn btn-sm ' + (AWDQ.months === m ? 'btn-primary' : 'btn-secondary') + '" onclick="awdqSetMonths(' + m + ')">' + m + ' month' + (m === 1 ? '' : 's') + '</button>'; }).join('')
+    + ' <input id="awdq-mcustom" type="number" min="0.5" step="0.5" value="' + ([1, 2, 3, 4, 6].indexOf(AWDQ.months) < 0 ? AWDQ.months : '') + '" placeholder="other" onchange="awdqSetMonths(parseFloat(this.value))" style="width:70px;padding:5px 8px;border:1.5px solid var(--gray-200);border-radius:7px"> months';
+}
+function awdqSetMonths(m) { if (!(m > 0)) return; AWDQ.months = m; try { localStorage.setItem('awdq_months', String(m)); } catch (e) {} ge('awdq-months').innerHTML = awdqMonthsHtml(); if (AWDQ.info) ge('awdq-out').innerHTML = awdqHtml(AWDQ.info); }
+async function awdAsinSearch() {
+  var q = (ge('awdq-inp').value || '').trim(); if (!q) return;
+  ge('awdq-months').innerHTML = awdqMonthsHtml();
+  var out = ge('awdq-out'); out.innerHTML = '<div style="color:var(--gray-500)">Looking…</div>';
+  try {
+    var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/asin-info?q=' + encodeURIComponent(q))).json();
+    if (!d || !d.ok) { out.innerHTML = '<div style="color:var(--red)">' + awdH((d && d.error) || 'Not found') + '</div>'; return; }
+    AWDQ.info = d; out.innerHTML = awdqHtml(d);
+  } catch (e) { out.innerHTML = '<div style="color:var(--red)">📶 Could not load — ' + awdH(e.message) + '</div>'; }
+}
+// Where every unit is, from the planner's own numbers (the same ones the other tabs use), for this ASIN's FBA SKUs.
+function awdqWhere(d) {
+  var skus = (d.fbaSkus && d.fbaSkus.length ? d.fbaSkus : d.skus).map(function(x) { return String(x).toUpperCase(); });
+  var rows = (S.joined || []).filter(function(r) { return skus.indexOf(String(r.sku).toUpperCase()) >= 0; });
+  var awdRaw = (S.awd || []).filter(function(r) { return skus.indexOf(String(gf(r, 'SKU') || '').trim().toUpperCase()) >= 0; });
+  var sum = function(f) { return rows.reduce(function(a, r) { return a + (r[f] || 0); }, 0); }, sumA = function(k) { return awdRaw.reduce(function(a, r) { return a + pn(gf(r, k)); }, 0); };
+  var ships = (S.inb || []).filter(function(r) { return skus.indexOf(String(gf(r, 'sku') || '').trim().toUpperCase()) >= 0 && pn(gf(r, 'on-the-way')) > 0; });
+  return { skus: skus, rows: rows, loaded: !!S.loaded, fbaFul: sum('fbaFul'), fcProc: sum('fcProc'), fcTrans: sum('fcTrans'), awdAvailOnly: sumA('Available in AWD (units)'), awdInbound: sumA('Inbound to AWD (units)'),
+    awdAvail: sum('awdAvail'), awdReserved: sum('awdReserved'), awdOutbound: sum('awdOutbound'), fbaInb: sum('fbaInb'), network: sum('totalNetwork'), ships: ships,
+    upb: (skus.map(function(k) { return (S.cpackMap[k] || {}).unitsPerBox || 0; }).filter(function(x) { return x > 0; })[0]) || 0 };
+}
+function awdqHtml(d) {
+  var w = awdqWhere(d), M = AWDQ.months, N = d.normal || {}, n0 = function(v) { return v == null ? '—' : fn(v); };
+  var card = function(t, body) { return '<div class="card" style="margin-bottom:12px"><div class="card-hdr"><div class="card-title">' + t + '</div></div><div style="padding:10px 14px;font-size:13px">' + body + '</div></div>'; };
+  var line = function(ico, lbl, v, sub) { return '<tr><td style="padding:4px 8px">' + ico + ' ' + lbl + (sub ? '<div style="font-size:11px;color:var(--gray-500)">' + sub + '</div>' : '') + '</td><td style="padding:4px 8px;text-align:right;font-weight:700">' + n0(v) + '</td></tr>'; };
+  var h = '<div style="margin-bottom:10px"><span style="font-family:\'DM Mono\',monospace;font-weight:800;font-size:16px">' + awdH(d.asin || d.q) + '</span> ' + (d.name ? '<span style="color:var(--gray-600)">' + awdH(d.name) + '</span>' : '')
+    + '<div style="font-size:12px;color:var(--gray-500)">FBA SKU' + (w.skus.length === 1 ? '' : 's') + ': <b style="font-family:\'DM Mono\',monospace">' + w.skus.map(awdH).join(', ') + '</b>' + (d.asin ? ' · <a href="https://www.amazon.com/dp/' + encodeURIComponent(d.asin) + '" target="_blank" rel="noopener">Amazon page ↗</a>' : '') + '</div>'
+    + ((d.discontinued || []).length ? '<div style="margin-top:4px;font-weight:700;color:#6b7280">🚫 Discontinued in Reorder — ship in what we have, it is not reordered</div>' : '') + '</div>';
+  // 1. where
+  var shelfSame = (d.shelf || []).filter(function(x) { return x.same; }), shelfOther = (d.shelf || []).filter(function(x) { return !x.same; });
+  var shelfSets = shelfSame.reduce(function(a, x) { return a + (x.sets || 0); }, 0), shelfNoEa = shelfSame.filter(function(x) { return x.pcs == null; }).reduce(function(a, x) { return a + x.cases; }, 0);
+  var shipTxt = w.ships.map(function(r) { var on = awdInbCounts(r); return '<div style="font-size:11px;color:' + (on ? 'var(--gray-600)' : '#9CA3AF') + '">' + awdH(gf(r, 'shipment-name') || gf(r, 'shipment-id')) + ' · ' + awdH(gf(r, 'status')) + ' · ' + awdH(gf(r, 'ship-from')) + ' → ' + awdH(gf(r, 'fc')) + ': <b>' + fn(pn(gf(r, 'on-the-way'))) + '</b>' + (on ? '' : ' (not counted)') + '</div>'; }).join('');
+  var where = !w.loaded ? '<div style="color:var(--red)">The Amazon numbers are not loaded yet — open Import Reports and press ⚡ Sync from Amazon.</div>' : !w.rows.length ? '<div style="color:var(--orange)">No FBA listing for this in the Amazon reports (FBM only, or a new listing).</div>' : '';
+  where += '<table style="width:100%;border-collapse:collapse"><tbody>'
+    + line('🏬', 'Our shelf (SKU Mgr)', shelfSets, shelfSame.map(function(x) { return awdH(x.location) + ' ' + fn(x.cases) + ' box' + (x.cases === 1 ? '' : 'es') + (x.pcs != null ? ' = ' + fn(x.pcs) + ' pcs' : ' (no Ea/Case — not counted)'); }).join(' · ') + (shelfOther.length ? '<br>other packs of the part: ' + shelfOther.map(function(x) { return awdH(x.part) + ' ' + (x.pcs != null ? fn(x.pcs) + ' pcs' : fn(x.cases) + ' boxes') + ' @ ' + awdH(x.location); }).join(' · ') : '') + (shelfNoEa ? '<br><span style="color:var(--red)">⚠ ' + fn(shelfNoEa) + ' boxes with no Ea/Case not counted</span>' : ''))
+    + line('🏭', 'AWD available', w.awdAvailOnly) + line('📥', 'On the way into AWD', w.awdInbound) + line('🔒', 'AWD reserved', w.awdReserved)
+    + line('🔁', 'AWD → FBA (on its way)', w.awdOutbound)
+    + line('🚚', 'Our warehouse → FBA (on its way)', w.fbaInb, shipTxt)
+    + line('🔄', 'FBA: moving between Amazon warehouses', w.fcTrans) + line('⚙️', 'FBA: being processed', w.fcProc) + line('✅', 'FBA available to sell', w.fbaFul)
+    + '<tr style="border-top:2px solid var(--gray-200)"><td style="padding:6px 8px;font-weight:800">= Amazon has in total (AWD + on the way + FBA)</td><td style="padding:6px 8px;text-align:right;font-weight:800;color:#1A56DB">' + fn(w.network) + '</td></tr>'
+    + '</tbody></table>'
+    + ((d.incoming || []).length ? '<div style="font-size:12px;margin-top:6px;color:var(--gray-600)">Coming to our warehouse: ' + d.incoming.map(function(x) { return (x.stage === 'shipped' ? '🚢 on the water' : '🏭 still making') + ' ' + awdH(x.part) + ' ' + fn(x.units); }).join(' · ') + '</div>' : '');
+  h += card('📍 Where the units are (sets of this listing)', where);
+  // 2. sales
+  var U = d.sales.units, P = d.sales.pcs, he = (d.health || {})[w.skus[0]];
+  var sales = '<table style="width:100%;border-collapse:collapse;text-align:right"><tr style="color:var(--gray-500);font-size:12px"><th></th><th>30 days</th><th>90 days</th><th>6 months</th><th>12 months</th></tr>'
+    + '<tr><td style="text-align:left">Sets sold (Amazon)</td><td><b>' + n0(U.d30) + '</b></td><td><b>' + n0(U.d90) + '</b></td><td><b>' + n0(U.d180) + '</b></td><td><b>' + n0(U.d365) + '</b></td></tr>'
+    + '<tr><td style="text-align:left">Pieces</td><td>' + n0(P.d30) + '</td><td>' + n0(P.d90) + '</td><td>' + n0(P.d180) + '</td><td>' + n0(P.d365) + '</td></tr>'
+    + '<tr><td style="text-align:left">A month</td><td>' + n0(U.d30) + '</td><td>' + (U.d90 != null ? fn(U.d90 / 3, 1) : '—') + '</td><td>' + (U.d180 != null ? fn(U.d180 / 6, 1) : '—') + '</td><td>' + (U.d365 != null ? fn(U.d365 / 12, 1) : '—') + '</td></tr></table>'
+    + (he ? '<div style="font-size:12px;color:var(--gray-500);margin-top:4px">Amazon Inventory Health (units shipped): 7 d ' + fn(he.t7) + ' · 30 d ' + fn(he.t30) + ' · 60 d ' + fn(he.t60) + ' · 90 d ' + fn(he.t90) + '</div>' : '')
+    + (d.sales.salesFrom ? '<div style="font-size:11px;color:var(--gray-400)">sales kept since ' + awdH(d.sales.salesFrom) + '</div>' : '<div style="color:var(--orange)">No Amazon sales on record for this.</div>');
+  // month by month bars, unusual ones flagged
+  var mx = Math.max.apply(null, (d.months || []).map(function(m) { return m.units; }).concat([1]));
+  sales += '<div style="margin-top:10px;font-weight:700">Month by month (sets)</div><div style="display:flex;gap:4px;align-items:flex-end;height:120px;margin-top:6px">'
+    + (d.months || []).map(function(m) { var col = m.noData ? '#E5E7EB' : m.flag === 'high' ? '#F59E0B' : m.flag === 'low' ? '#EF4444' : m.partial ? '#93C5FD' : '#1A56DB';
+      return '<div title="' + awdH(m.month) + ': ' + fn(m.units) + ' sets' + (m.partial ? ' (this month so far)' : '') + (m.flag === 'high' ? ' — unusual: much MORE than normal' : m.flag === 'low' ? ' — unusual: much LESS than normal' : '') + '" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">'
+        + '<div style="font-size:10px">' + (m.noData ? '' : fn(m.units)) + '</div><div style="width:100%;background:' + col + ';height:' + Math.max(2, Math.round(m.units / mx * 90)) + 'px;border-radius:3px 3px 0 0"></div><div style="font-size:9px;color:var(--gray-500)">' + awdH(m.month.slice(2)) + (m.flag === 'high' ? '▲' : m.flag === 'low' ? '▼' : '') + '</div></div>'; }).join('') + '</div>'
+    + '<div style="font-size:11px;color:var(--gray-500);margin-top:4px">🟧 ▲ unusual: more than 1.5× a normal month · 🟥 ▼ unusual: less than half · light blue = this month so far · grey = before our sales history</div>';
+  var odd = (d.months || []).filter(function(m) { return m.flag; });
+  sales += N.enough ? '<div style="margin-top:6px"><b>Normal month: ' + fn(N.perMonth, 1) + ' sets</b> <span style="font-size:12px;color:var(--gray-500)">(the middle of last 30 d ' + n0(N.parts[0]) + ' · 30–90 d ' + n0(N.parts[1]) + ' · 3–6 mo ' + n0(N.parts[2]) + ' · 6–12 mo ' + n0(N.parts[3]) + ' a month — one unusual stretch can\'t fool it)</span>'
+      + (odd.length ? '<div style="color:#B45309;font-size:12px">⚠ Unusual months: ' + odd.map(function(m) { return awdH(m.month) + ' ' + fn(m.units) + (m.flag === 'high' ? ' ▲' : ' ▼'); }).join(' · ') + '</div>' : '<div style="color:var(--green);font-size:12px">✓ No unusual month in the last 12</div>') + '</div>'
+    : '<div style="margin-top:6px;color:var(--orange)">Less than 6 months of sales history — nothing to compare with; the last 90 days are used (' + fn(N.last90PerMonth, 1) + ' a month).</div>';
+  h += card('📈 What we sell', sales);
+  // 3. ship now
+  var perMo = N.enough ? N.perMonth : N.last90PerMonth, target = Math.ceil(perMo * M), need = Math.max(0, target - (w.network || 0));
+  var boxes = w.upb > 0 ? Math.ceil(need / w.upb) : null, send = boxes != null ? boxes * w.upb : need, alt = Math.max(0, Math.ceil((N.last90PerMonth || 0) * M) - (w.network || 0));
+  var days = perMo > 0 ? Math.floor((w.network || 0) / (perMo / 30)) : null;
+  var ship = '<div style="font-size:15px">Amazon has <b>' + fn(w.network) + '</b> sets' + (days != null ? ' = about <b>' + days + ' days</b> of sales' : '') + '.</div>'
+    + '<div style="margin-top:6px">For <b>' + M + ' month' + (M === 1 ? '' : 's') + '</b> at a normal ' + fn(perMo, 1) + ' a month we need <b>' + fn(target) + '</b> → '
+    + (need > 0 ? '<span style="font-size:20px;font-weight:800;color:#1A56DB">ship in ' + fn(send) + ' sets</span>' + (boxes != null ? ' <span style="color:var(--gray-600)">(' + boxes + ' box' + (boxes === 1 ? '' : 'es') + ' × ' + w.upb + (send !== need ? ', rounded up from ' + fn(need) : '') + ')</span>' : ' <span style="color:var(--gray-500)">(no box size saved — not rounded)</span>')
+      : '<span style="font-size:18px;font-weight:800;color:var(--green)">nothing to ship — Amazon has enough</span>') + '</div>'
+    + (N.enough && Math.abs(alt - need) >= 1 ? '<div style="font-size:12px;color:var(--gray-500);margin-top:4px">By the last 90 days only (' + fn(N.last90PerMonth, 1) + ' a month) it would be ' + fn(alt) + ' — ' + (alt > need ? 'the last 90 days sold more than normal' : 'the last 90 days sold less than normal') + '.</div>' : '')
+    + (need > 0 ? (send > shelfSets ? '<div style="margin-top:6px;color:var(--red);font-weight:700">⚠ We only have ' + fn(shelfSets) + ' sets of this on the shelf' + (shelfOther.length ? ' (other packs of the part are listed above — they need rebagging)' : '') + '</div>'
+      : '<div style="margin-top:6px;color:var(--green)">✓ We have ' + fn(shelfSets) + ' on the shelf</div>') : '')
+    + (need > 0 && w.rows.length ? '<div style="margin-top:8px">' + w.rows.map(function(r) { return '<button class="btn btn-primary btn-sm" onclick="awdqAdd(\'' + esc(r.sku) + '\',' + (w.rows.length === 1 ? send : 0) + ')">➕ Add ' + awdH(r.sku) + (w.rows.length === 1 ? ' × ' + fn(send) : '') + ' to the shipment</button> '; }).join('') + '</div>' : '');
+  h += card('🚀 How many to ship in now', ship);
+  return h;
+}
+function awdqAdd(sku, qty) {
+  var r = findRow(sku); if (!r) { awd_planner_toast('Not in the Amazon reports: ' + sku, 'error'); return; }
+  stage(r); if (qty > 0) updQty(sku, qty); updateBadges(); renderRecs(); renderBuilder();
+  awd_planner_toast('➕ ' + sku + (qty > 0 ? ' × ' + qty : '') + ' added to the shipment (Builder)', 'success');
+}
 function awd_switchTab(n) {
   // Remove active state from all tabs and pages
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1989,6 +2098,7 @@ function awd_switchTab(n) {
   if (pageEl) pageEl.classList.add('active');
 
   // Render discontinued panel only when opening settings
+  if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
   }
@@ -5382,6 +5492,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261021a"></script>
+<script src="xf-access.js?v=20261022a"></script>
 </body>
 </html>
