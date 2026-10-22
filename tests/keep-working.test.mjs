@@ -8979,5 +8979,14 @@ console.log('\n🗄 Off the Google Sheet, step 1b: tabs moved into our database 
   check('…Admin page: 🗄 Database tab (📥 Move / 📥 Move all / ↩ Back to Google, "N of M tabs are in our database")', /id="ad-tab-db" onclick="adSwitchTab\('db'\)">🗄 Database/.test(ah) && /window\.adDbMoveAll = /.test(ah) && /tabs are in our database/.test(ah) && /↩ Back to Google/.test(ah), null);
 }
 
+// Owner (2026-10-22, screenshot of the home page: "Offline" at the top left — "no, I have internet").
+console.log('\n📶 Home page: the "Offline" notice is hidden unless the internet is really down');
+{
+  const { readFileSync: rfO } = await import('node:fs');
+  const files = ['index.html', 'awd.html', 'reorder.html', 'sales.html'].map(f => [f, rfO(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8')]);
+  const bad = files.filter(([, h]) => /id="xf-offline-banner"/.test(h) && !/#xf-offline-banner\s*\{[^}]*display:\s*none/.test(h)).map(([f]) => f);
+  check('every page with the 📶 Offline notice also has its style (hidden until really offline) — index.html had none, so "Offline" always showed', !bad.length, bad);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
