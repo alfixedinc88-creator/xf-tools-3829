@@ -8575,6 +8575,10 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
   check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 8\)\}`;/.test(ah), null);
+  // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
+  check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
+    o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
+      && /class="awd-our-name"[^>]*>' \+ awdH\(ours\)/.test(ah), o.name);
   sq.exec("DELETE FROM master_list WHERE base_sku = '29-9-9'; DELETE FROM reorder_incoming WHERE title IN ('PO-Q 10/1','CT-Q 10/9'); DELETE FROM reorder_title WHERE title IN ('PO-Q 10/1','CT-Q 10/9')");
 }
 

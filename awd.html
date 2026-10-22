@@ -1696,6 +1696,13 @@ function awdStockLine(r) {
     + ' = <b>' + P(r.totalNetwork || 0) + '</b>';
   return '<div class="awd-stock-line" style="font-size:11px;line-height:1.5;color:var(--gray-600);white-space:normal">' + ours + '<br>' + amz + '</div>';
 }
+// 🏷 Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also" — the whole Amazon title (up to 3 lines, no
+// longer cut at 120 px) and our own name from SKU Mgr under it.
+function awdNameCell(r) {
+  var o = AWDSS.rows[String((r && r.sku) || '').toUpperCase()], ours = o && o.name ? String(o.name) : '';
+  return '<div class="awd-name" style="white-space:normal;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + awdH(r && r.name ? r.name : '—') + '</div>'
+    + (ours ? '<div class="awd-our-name" style="font-size:11px;color:#1A56DB;font-weight:600;margin-top:2px">' + awdH(ours) + '</div>' : '');
+}
 function awdStockRow(r, cols) {
   if (!r) return '';
   if (!AWDSS.loaded) setTimeout(awdStockEnsure, 0);
@@ -1764,7 +1771,7 @@ function renderBuilder(){
 
     return`<tr>
       <td class="sku">${sku}${stockWarning ? `<div style="font-size:10px;color:#C2410C;font-weight:600;margin-top:2px">${stockWarning}</div>` : ''}</td>
-      <td style="font-size:12px;color:var(--gray-600);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
+      <td style="font-size:12px;color:var(--gray-600);min-width:170px;max-width:280px" title="${r.name||''}">${awdNameCell(r)}</td>
       <td class="r">${db(r.netDays)}</td>
       <td class="r">${fn(r.recSend)}</td>
       <td><input type="number" class="qty-inp" value="${item.qty}" min="0" oninput="updQty('${esc(sku)}',this.value)"></td>
@@ -2537,7 +2544,7 @@ function renderRecs() {
     return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
       <td><input type="checkbox" ${inB ? 'checked' : ''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
       <td class="sku">${r.sku}${reoDisc ? '<div class="awd-reo-disc" title="Discontinued in Reorder' + (reoDisc.note ? ': ' + awdH(reoDisc.note) : '') + '" style="font-size:10px;font-weight:700;color:#6b7280">🚫 discontinued — ship what we have, not reordered</div>' : ''}</td>
-      <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="${r.name||''}">${r.name||'—'}</td>
+      <td style="font-size:12px;min-width:170px;max-width:280px;color:var(--gray-600)" title="${r.name||''}">${awdNameCell(r)}</td>
       <td class="asin">${r.asin||'—'}</td>
       <td>${db(r.netDays)}</td>
       <td class="r">${fn(r.sold90)}</td>
