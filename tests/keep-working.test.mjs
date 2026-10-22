@@ -8847,7 +8847,7 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
     ('705-1-1','tee','705-1-1=10','Q5=1-1-1',5,10), ('705-1-2','tee','705-1-2=10','Q5=1-1-2',6,10), ('705-1-3','tee','705-1-3=2','Q5=1-1-3',1,2), ('705-1-4','tee','705-1-4=5','Q5=1-1-3',2,5)`).run();
   const id = p => sq.prepare('SELECT id FROM master_list WHERE part_num = ?').get(p).id;
-  const tot = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku LIKE '705-1-%'").get().c;
+  const tot = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku IN ('705-1-1','705-1-2','705-1-3','705-1-4')").get().c;
   const t0 = tot(); // 5 + 6 + 1 + 2 = 14
   // A) Q5=1-1-1 counted right (5 = 5), then the next day 2 cases taken out → SKU Mgr 3 = 5 − 2 ✅
   await post('/inventory/log', { type: 'IN', partNum: '705-1-1=10', sku: '705-1-1', location: 'Q5=1-1-1', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 5 cases verified correct (📋 Recount)', masterId: id('705-1-1=10'), clientTimestamp: t(10) });
@@ -8859,11 +8859,23 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   // C) Q5=1-1-3: the list had only 705-1-3=2 (counted 1); 705-1-4=5 (2 cases in SKU Mgr) was never on it
   await post('/inventory/log', { type: 'IN', partNum: '705-1-3=2', sku: '705-1-3', location: 'Q5=1-1-3', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', masterId: id('705-1-3=2'), clientTimestamp: t(30) });
   await post('/inventory/recount/column-done', { location: 'Q5=1-1-3', items: 1, changed: 0, doneAt: t(31), startedAt: t(29), detail: [{ part: '705-1-3=2', pcs: 2, system: 1, counted: 1, how: 'scan' }] });
+  // Owner's screenshot of the check (2026-10-22): D) a column saved as "Q5= 1 - 1 - 4" is Q5=1-1-4; E) "705 BAG" counted, renamed
+  // later to "705=BAG" — the same; F) counted 3, then a Transfer found the shelf EMPTY (OUT 0, None found → set to 0).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('705-1-5','tee','705-1-5=10','Q5=1-1-4',2,10), ('705','bag','705=BAG','Q5=1-1-5',6,1), ('705-1-6','tee','705-1-6=10','Q5=1-1-6',3,10)`).run();
+  await post('/inventory/recount/column-done', { location: 'Q5= 1 - 1 - 4', items: 1, changed: 0, doneAt: t(41), startedAt: t(39), detail: [{ part: '705-1-5=10', pcs: 10, system: 2, counted: 2, how: 'scan' }] });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-5', items: 1, changed: 0, doneAt: t(51), startedAt: t(49), detail: [{ part: '705 BAG', pcs: 1, system: 6, counted: 6, how: 'scan' }] });
+  await post('/inventory/log', { type: 'IN', partNum: '705-1-6=10', sku: '705-1-6', location: 'Q5=1-1-6', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 3 cases verified correct (📋 Recount)', masterId: id('705-1-6=10'), clientTimestamp: t(60) });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-6', items: 1, changed: 0, doneAt: t(61), startedAt: t(59), detail: [{ part: '705-1-6=10', pcs: 10, system: 3, counted: 3, how: 'scan' }] });
+  await post('/inventory/log', { type: 'OUT', partNum: '705-1-6=10', sku: '705-1-6', location: 'Q5=1-1-6', cases: 0, initials: 'NB', notes: '[NONE FOUND ON SHELF] [TRANSFER] Q5=1-1-6 checked empty after taking 0 — 3 of the 3 on record not found', masterId: id('705-1-6=10'), noneFound: true, clientTimestamp: t(80) });
   const d = await get('/inventory/recount/check'), P = (d.problems || []).filter(p => /^Q5=/.test(p.location)), by = Object.fromEntries(P.map(p => [p.location + ' ' + p.part, p]));
   const B = by['Q5=1-1-2 705-1-2=10'] || {}, C = by['Q5=1-1-3 705-1-4=5'] || {};
   check('A) counted 5, then 2 taken out the next day → 5 − 2 = 3 = SKU Mgr ✅ (not listed)', !by['Q5=1-1-1 705-1-1=10'] && +sq.prepare("SELECT cases c FROM master_list WHERE part_num = '705-1-1=10'").get().c === 3, P);
   check('B) counted 4 against an OLD 8 on the phone → SKU Mgr 2, should be 4: listed "-2 off"', B.why === 'off' && B.counted === 4 && B.expected === 4 && B.now === 2 && B.diff === -2, B);
   check('C) 705-1-4=5 in SKU Mgr at Q5=1-1-3 (2 cases) but never on the column\'s list → listed "not counted"; 705-1-3=2 counted right is not', C.why === 'not counted' && C.now === 2 && !by['Q5=1-1-3 705-1-3=2'], C);
+  const F = (d.emptied || []).find(x => x.location === 'Q5=1-1-6') || {};
+  check('D) E) a spot saved with spaces ("Q5= 1 - 1 - 4") and a part # renamed later ("705 BAG" → "705=BAG") add up — not listed', !P.some(p => /^Q5=1-1-[45]$/.test(p.location)), P);
+  check('F) counted 3, then the Transfer found Q5=1-1-6 EMPTY (OUT 0, None found) → SKU Mgr 0 is right for that: not "off", listed under 🧹 found empty (NB, when)',
+    !P.some(p => p.location === 'Q5=1-1-6') && F.counted === 3 && F.now === 0 && F.emptiedBy === 'NB' && +sq.prepare("SELECT cases c FROM master_list WHERE part_num = '705-1-6=10'").get().c === 0, { F, P });
   check('…totals behind it add up: 14 − 2 (stock out) − 4 (the recount\'s −4) = ' + tot(), t0 === 14 && tot() === 8, { t0, now: tot() });
   const pk = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   check('…Admin / Owner only (a picker gets 403)', (await call('/inventory/recount/check', { headers: { 'X-Cred-Token': pk } })).status === 403, null);
@@ -8874,7 +8886,9 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   check('…screen (Audit, under the Recount report): "✅ 1 of 3 columns add up · ⚠ 2 columns to look at", each line: spot, part #, counted, moved since, should be, SKU Mgr now, why; 🧩 check mark',
     /✅ 1 of 3 columns add up · <span[^>]*>⚠ 2 columns to look at \(2 lines\)/.test(html) && (html.match(/class="rc-nc-row"/g) || []).length === 2 && /-2 off/.test(html) && /not counted<\/b>/.test(html)
       && /id="rc-numcheck"/.test(ih) && /sel: '#rc-numcheck'/.test(rfN(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), html.slice(0, 600));
-  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%'; DELETE FROM recount_columns WHERE location LIKE 'Q5=%'");
+  const htmlE = new Function('ckE', 'xfrN', 'xfrFmtT', 'var window = {};\n' + fn + '\nreturn window.rcNumCheckHtml;')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x))({ ...d, problems: [], emptied: [F], okColumns: 3, columns: 3 });
+  check('…screen: "🧹 1 found EMPTY after the count — SKU Mgr is 0 … where did they go?" (folded, tap)', /<details class="rc-nc-empty"[^>]*><summary[^>]*>🧹 1 found EMPTY after the count/.test(htmlE) && /<b>NB<\/b>/.test(htmlE), htmlE);
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");
   await post('/inventory/review-mode', { mode: mode0 || 'auto' });
 }
 
