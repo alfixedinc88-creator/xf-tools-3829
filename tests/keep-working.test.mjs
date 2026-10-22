@@ -8634,8 +8634,8 @@ console.log('\n👪 AWD: per part (all sizes) — Builder warns past our stock; 
   L.awdApplyPlan();
   // need (pieces): 50×2 + 50×5 + 50×10 + 50×25 = 2,100; spare = 100 − 60 (1 a day × 60 days) = 40 → shared by need: =2 0.95 / =5 0.95 … → whole sets
   const sent = rows.reduce((a, r) => a + r.recSend * Number(r.sku.split('=')[1]), 0);
-  check('recommendations: 🚢 → aim at 60 days (50 each, not 110); all its sizes together never more than the 40 pcs to spare (100 shelf − 60 kept): sent ' + sent + ' pcs ≤ 40; each row says why',
-    rows.every(r => r.plan && r.plan.days === 60 && r.plan.wanted === 50 && r.plan.spare === 40 && r.plan.reserve === 60) && sent <= 40 && rows[0].recSend >= 0
+  check('recommendations: 🚢 → aim at 60 days (50 each, not 110); all its sizes together use the 40 pcs to spare (100 shelf − 60 kept) and never more: sent ' + sent + ' pcs (35–40); each row says why',
+    rows.every(r => r.plan && r.plan.days === 60 && r.plan.wanted === 50 && r.plan.spare === 40 && r.plan.reserve === 60) && sent <= 40 && sent >= 35 && rows.every(r => r.recSend <= 50)
       && /⚠ lowered 50 → \d+: 31-1-5 has 100 pcs on the shelf, keep 60 for our other channels \(60 days\) → 40 pcs to spare/.test(L.awdPlanNote(rows[1])) && /🚢 200 pcs on the water \(~45 days\) — sending 60 days' worth now/.test(L.awdPlanNote(rows[1]))
       && /📦 3 boxes of 31-1-5 received 2 days ago — more to ship now/.test(L.awdPlanNote(rows[1])), rows.map(r => [r.sku, r.recSend, r.plan && r.plan.wanted]));
   // plenty on the shelf, nothing on the water → the normal number (110), nothing lowered

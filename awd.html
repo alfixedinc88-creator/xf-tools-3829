@@ -1714,8 +1714,14 @@ function awdApplyPlan() {
     list.forEach(function(x) { var r = x.r, days = water ? Math.min(C.targetDays, c.bridgeDays) : C.targetDays;
       x.days = days; x.needU = r.dailySales > 0 ? Math.max(0, Math.ceil(r.dailySales * days) - (r.totalNetwork || 0)) : 0; x.needPcs = x.needU * x.pk; });
     var need = list.reduce(function(a, x) { return a + x.needPcs; }, 0), capped = need > spare;
+    list.forEach(function(x) { x.u = capped ? (need > 0 ? Math.floor(spare * x.needPcs / need / x.pk) : 0) : x.needU; });
+    if (capped) { // whole sets rounded down leave pieces over → to the most urgent rows first (fewest days left, then the smaller bag), never past what a row needs
+      var left = spare - list.reduce(function(a, x) { return a + x.u * x.pk; }, 0);
+      list.slice().sort(function(a, b) { return ((a.r.netDays || 0) - (b.r.netDays || 0)) || (a.pk - b.pk); }).forEach(function(x) {
+        var add = Math.min(x.needU - x.u, Math.floor(left / x.pk)); if (add > 0) { x.u += add; left -= add * x.pk; } });
+    }
     list.forEach(function(x) {
-      var r = x.r, u = capped ? (need > 0 ? Math.floor(spare * x.needPcs / need / x.pk) : 0) : x.needU;
+      var r = x.r, u = x.u;
       r.recSend = u;
       r.plan = { fam: f, shelfPcs: F.shelfPcs, reserve: reserve, spare: spare, keepDays: c.keepDays, otherDaily: F.otherDailyPcs, famNeedPcs: need, capped: capped && x.needU > u,
         water: water ? F.waterPcs : 0, making: F.makingPcs || 0, days: x.days, arriveDays: c.arriveDays, bridged: water && x.days < C.targetDays, wanted: x.needU, received: F.received || null };
