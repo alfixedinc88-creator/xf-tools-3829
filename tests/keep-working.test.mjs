@@ -5532,7 +5532,9 @@ console.log('\n📄 Close Batch → Print scan forms: every form not printed yet
   const { readFileSync } = await import('node:fs');
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   const panel = (ph.match(/<div class="ps-panel" id="ps-panel-closebatch">([\s\S]*?)<div id="ps-closed-banners">/) || [])[1] || '';
-  check('Close Batch has 📄 Print scan forms next to 🚚 Leaving for USPS', /onclick="psCbPrintScanForms\(this\)">📄 Print scan forms</.test(panel) && /psUspsRunStart\(\)/.test(panel), null);
+  // Owner (2026-10-22): "take off the Print scan forms we have right now" → the button is gone; Close Batch has the 📄 USPS scan
+  // form list instead (checked below). 🚚 Leaving for USPS stays.
+  check('Close Batch: 📄 Print scan forms button taken off (owner 2026-10-22), 🚚 Leaving for USPS still there', !/psCbPrintScanForms\(this\)/.test(ph) && /psUspsRunStart\(\)/.test(panel), null);
   const from = (ph.match(/var PS_SF_PRINT_FROM = '([^']+)';/) || [])[1];
   const fnSrc = (ph.match(/window\.psCbPrintScanForms = async function\(btn\) \{[\s\S]*?\n\};/) || [])[0];
   let printed = null, alerted = '';
@@ -8706,6 +8708,42 @@ console.log('\n📭 AWD planner → Not Received: an item still short 10+ days a
       && /key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv'/.test(xa), null);
   globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
   sq.exec('DELETE FROM awd_auto');
+}
+
+// Owner (2026-10-22): "under Auto Label → USPS scan form (end of day), I want under Close Batch to have that too, so our guy can
+// print the scan form there".
+console.log('\n📄 Close Batch → USPS scan form (end of day): the forms made, each with 🖨 Print / Reprint, + Make scan form now');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const panel = ph.slice(ph.indexOf('<div class="ps-panel" id="ps-panel-closebatch">'), ph.indexOf('🔒 USPS Run Report (Admin)'));
+  check('Close Batch has the 📄 USPS scan form card (↻ Refresh, 📄 Make scan form now, the list); it loads when the tab opens; 🧩 Pages & Tabs check mark',
+    /id="ps-cb-sf-card"/.test(panel) && /📄 USPS scan form \(end of day\)/.test(panel) && /onclick="psCbScanFormMake\(this\)"/.test(panel) && /id="ps-cb-sf-list"/.test(panel)
+      && /if \(name === 'closebatch'\)  \{ _psUpdateBatchBar\(\); psUspsRunLoadOpen\(\); psCbLoadScanForms\(\); \}/.test(ph)
+      && /sel: '#ps-cb-sf-card'/.test(readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  const grab = n => { const i = ph.indexOf('window.' + n + ' = async function'); return ph.slice(i, ph.indexOf('\n};\n', i) + 3); };
+  const els = { 'ps-cb-sf-status': { innerHTML: '' }, 'ps-cb-sf-list': { innerHTML: '' } };
+  const today = '2026-10-22', at = (d, h) => d + 'T' + h + ':00:00Z';
+  const forms = [
+    { id: 11, ok: 1, kind: 'scheduled', parts: 2, shipments: 40, day: today, created_at: at(today, '20'), printed_at: null },
+    { id: 10, ok: 1, kind: 'hand', parts: 1, shipments: 5, day: today, created_at: at(today, '18'), printed_at: at(today, '18'), print_count: 2 },
+    { id: 9, ok: 0, kind: 'scheduled', parts: 0, day: today, created_at: at(today, '17'), detail: 'x' },          // not made → not listed
+    { id: 8, ok: 1, kind: 'night_ok', parts: 0, day: '2026-10-21', created_at: at('2026-10-21', '23') },          // night check → not listed
+    { id: 7, ok: 1, kind: 'scheduled', parts: 1, shipments: 30, day: '2026-10-21', created_at: at('2026-10-21', '20'), printed_at: at('2026-10-21', '21') },
+    { id: 6, ok: 1, kind: 'scheduled', parts: 1, day: '2026-10-20', created_at: at('2026-10-20', '20'), printed_at: at('2026-10-20', '21') },
+    { id: 5, ok: 1, kind: 'scheduled', parts: 1, day: '2026-10-19', created_at: at('2026-10-19', '20'), printed_at: at('2026-10-19', '21') } ]; // 4th day back → not listed
+  const load = new Function('document', '_psAlFetch', '_psAlEsc', 'psTodayKey', 'window', grab('psCbLoadScanForms') + '; return window.psCbLoadScanForms;')(
+    { getElementById: id => els[id] }, async () => ({ ok: true, forms, missing: { labels: [{}, {}, {}] } }), x => String(x == null ? '' : x).replace(/</g, '&lt;'), () => today, {});
+  await load();
+  const L = els['ps-cb-sf-list'].innerHTML, S = els['ps-cb-sf-status'].innerHTML, ids = (L.match(/psCbScanFormPrint\((\d+),/g) || []).map(x => +x.match(/\d+/)[0]);
+  check('…lists the forms of the last 3 days, newest first (not the failed one, not the 🌙 night check, not older days); 🖨 Print (not printed) / Reprint (printed); a 2-form one prints both',
+    JSON.stringify(ids) === '[11,10,7,6]' && (L.match(/class="ps-cb-sf-row"/g) || []).length === 4 && /psCbScanFormPrint\(11, this, 2\)">🖨 Print</.test(L) && /psCbScanFormPrint\(10, this, 1\)">🖨 Reprint</.test(L)
+      && /<b>Today<\/b>/.test(L) && /40 packages · 2 forms/.test(L) && /not printed/.test(L), L);
+  check('…⚠ 3 USPS labels today not on a scan form yet · 1 scan form not printed yet', /⚠ 3 USPS labels today not on a scan form yet/.test(S) && /1 scan form not printed yet/.test(S), S);
+  let sent = null;
+  const pr = new Function('_psSfPrintSomewhere', 'alert', 'setTimeout', 'psCbLoadScanForms', 'window', grab('psCbScanFormPrint') + '; return window.psCbScanFormPrint;')(async l => { sent = l; }, () => {}, () => {}, () => {}, {});
+  await pr(11, null, 2);
+  check('…🖨 Print sends that form (both pages) the same way as Auto Label (📄 Scan Form Station / ink printer)', JSON.stringify(sent) === '[{"id":11,"parts":2}]', sent);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

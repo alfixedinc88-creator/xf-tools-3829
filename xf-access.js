@@ -166,6 +166,7 @@ document.addEventListener('input', function (e) {
       { key: 'closebatch', label: '🚐 Close Batch', sel: '#ps-tab-closebatch', parts: [
         { key: 'uspsrun', label: '🚚 USPS Drop-off', sel: '#ps-panel-closebatch > .ps-batch-close-bar' },
         { key: 'banners', label: 'Closed batch banners', sel: '#ps-closed-banners' },
+        { key: 'scanforms', label: '📄 USPS scan form (print)', sel: '#ps-cb-sf-card' },
         { key: 'runreport', label: '🔒 USPS Run Report', sel: '#ps-panel-closebatch > .ps-card:has(#ps-usps-report-section)' } ] },
       { key: 'cancellation', label: '🗑️ Cancellation', sel: '#ps-tab-cancellation', parts: [
         { key: 'add', label: '🗑️ Mark an Order for Cancellation', sel: '#ps-panel-cancellation > .ps-card:has(#ps-cancelorder-tracking)' },
