@@ -956,6 +956,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
         <span><strong>Rec Send Qty</strong> = MAX(0, Target <strong id="tgt-lbl">120</strong>d − Total Network). Matches your AWD_Planner formula exactly.</span>
       </div>
+      <!-- 👪 Owner (2026-10-22): keep some for our shelf / other channels; a vendor container on the water → send Amazon ~60 days meanwhile. Shared by everyone. -->
+      <div id="awd-plan-cfg" class="alert" style="background:#F8FAFC;border:1px solid var(--gray-200);font-size:12.5px;flex-wrap:wrap;gap:6px;align-items:center">
+        🏬 Keep on our shelf <input id="pc-keep" type="number" min="0" style="width:56px;padding:3px 6px"> days of our other channels' sales (eBay, Walmart, Shopify, FBM) ·
+        🚢 a vendor container takes ~<input id="pc-arrive" type="number" min="0" style="width:56px;padding:3px 6px"> days → meanwhile send Amazon <input id="pc-bridge" type="number" min="7" style="width:56px;padding:3px 6px"> days' worth
+        <button class="btn btn-sm btn-secondary" onclick="awdPlanCfgSave()">Save for everyone</button> <span id="pc-by" style="color:var(--gray-400)"></span>
+      </div>
       <div class="fbar">
         <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="rec-q" placeholder="Search SKU, ASIN, product…" oninput="renderRecs()"></div>
         <select class="fsel" id="rec-f" onchange="renderRecs()"><option value="all">All</option><option value="critical">🔴 Critical (≤30d)</option><option value="warning">🟠 Warning (31–60d)</option><option value="ok">🟡 OK (61–120d)</option></select>
@@ -1356,6 +1362,7 @@ async function processData(skipSave){
       .filter(r=>{const s=skuOf(r);if(!s||seen.has(s))return false;seen.add(s);return true;})
       .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap));
     S.loaded=true;
+    if (AWDSS.loaded) awdApplyPlan();
     renderDashboard();renderInv();renderRecs();updateBadges();
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
@@ -1530,7 +1537,7 @@ function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:r
 
 function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
-function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();}
+function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();var fw=ge('bld-fam-warn');if(fw)fw.innerHTML=awdFamWarnHtml();}
 
 // ── MANUAL ADD TO BUILDER ──
 function bldShowManualAdd(){
@@ -1674,15 +1681,86 @@ function calculateSharedBulkAllocation(items) {
 // 📦 Owner (2026-10-22): "Recommendations / Shipment Builder: see the total pieces of inventory we have, how many in FBA, AWD, moving
 // between, how many more we ordered and on the way — so we know whether to ship it". One line under each row: OUR side from the
 // server (shelf, still making, on the water — pieces; /awd/stock-summary) + AMAZON's side from the planner's own numbers (sets × pack).
-var AWDSS = { rows: {}, loaded: false, loading: false, key: '' };
+var AWDSS = { rows: {}, fams: {}, cfg: null, loaded: false, loading: false, key: '' };
+// 👪 Owner (2026-10-22): "we have 100 of 25-1-5 in total but ship =2, =5, =10 and =25 30 each — warn us, we don't have that much. In the
+// recommendations save something for our shelf / other channels. If the vendor already shipped (on the water, ~45 days to us), ship
+// enough for maybe 60 days, and when we have more tell us so the next shipment can send more". Per part (every size together, in pieces):
+//   spare = our shelf − (other channels' pieces a day × keep days); the part's FBA rows together never get more than the spare
+//   (shared by what each one needs); a container on the water → each row aims at "meanwhile" days (60) instead of the full target.
+function awdPlanCfg() { var c = AWDSS.cfg || {}; return { keepDays: c.keepDays != null ? +c.keepDays : 60, arriveDays: c.arriveDays != null ? +c.arriveDays : 45, bridgeDays: c.bridgeDays != null ? +c.bridgeDays : 60 }; }
+function awdPlanCfgShow() {
+  var c = awdPlanCfg(), set = function(id, v) { var el = ge(id); if (el && document.activeElement !== el) el.value = v; };
+  set('pc-keep', c.keepDays); set('pc-arrive', c.arriveDays); set('pc-bridge', c.bridgeDays);
+  var by = ge('pc-by'); if (by) by.textContent = AWDSS.cfg && AWDSS.cfg.by ? '(set by ' + AWDSS.cfg.by + ')' : '';
+}
+async function awdPlanCfgSave() {
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/plan-config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keepDays: ge('pc-keep').value, arriveDays: ge('pc-arrive').value, bridgeDays: ge('pc-bridge').value }) })).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Not saved');
+    AWDSS.cfg = d.cfg; awdPlanCfgShow(); awdApplyPlan(); renderRecs(); updateBadges(); renderBuilder(); awd_planner_toast('Saved for everyone', 'success');
+  } catch (e) { awd_planner_toast('Not saved: ' + e.message, 'error'); }
+}
+function awdApplyPlan() {
+  var c = awdPlanCfg(), byFam = {};
+  (S.joined || []).forEach(function(r) {
+    if (r.recSendRaw == null) r.recSendRaw = r.recSend;
+    var o = AWDSS.rows[String(r.sku).toUpperCase()]; r.plan = null;
+    if (!o || !o.fam || !AWDSS.fams[o.fam]) { r.recSend = r.recSendRaw; return; }
+    (byFam[o.fam] = byFam[o.fam] || []).push({ r: r, pk: o.pack || awdPackOf(r.sku) });
+  });
+  Object.keys(byFam).forEach(function(f) {
+    var F = AWDSS.fams[f], list = byFam[f], water = F.waterPcs > 0;
+    var reserve = Math.ceil((F.otherDailyPcs || 0) * c.keepDays), spare = Math.max(0, (F.shelfPcs || 0) - reserve);
+    list.forEach(function(x) { var r = x.r, days = water ? Math.min(C.targetDays, c.bridgeDays) : C.targetDays;
+      x.days = days; x.needU = r.dailySales > 0 ? Math.max(0, Math.ceil(r.dailySales * days) - (r.totalNetwork || 0)) : 0; x.needPcs = x.needU * x.pk; });
+    var need = list.reduce(function(a, x) { return a + x.needPcs; }, 0), capped = need > spare;
+    list.forEach(function(x) { x.u = capped ? (need > 0 ? Math.floor(spare * x.needPcs / need / x.pk) : 0) : x.needU; });
+    if (capped) { // whole sets rounded down leave pieces over → to the most urgent rows first (fewest days left, then the smaller bag), never past what a row needs
+      var left = spare - list.reduce(function(a, x) { return a + x.u * x.pk; }, 0);
+      list.slice().sort(function(a, b) { return ((a.r.netDays || 0) - (b.r.netDays || 0)) || (a.pk - b.pk); }).forEach(function(x) {
+        var add = Math.min(x.needU - x.u, Math.floor(left / x.pk)); if (add > 0) { x.u += add; left -= add * x.pk; } });
+    }
+    list.forEach(function(x) {
+      var r = x.r, u = x.u;
+      r.recSend = u;
+      r.plan = { fam: f, shelfPcs: F.shelfPcs, reserve: reserve, spare: spare, keepDays: c.keepDays, otherDaily: F.otherDailyPcs, famNeedPcs: need, capped: capped && x.needU > u,
+        water: water ? F.waterPcs : 0, making: F.makingPcs || 0, days: x.days, arriveDays: c.arriveDays, bridged: water && x.days < C.targetDays, wanted: x.needU, received: F.received || null };
+    });
+  });
+}
+function awdPlanNote(r) {
+  var p = r && r.plan; if (!p) return '';
+  var out = [];
+  if (p.capped) out.push('<span style="color:var(--red);font-weight:700">⚠ lowered ' + fn(p.wanted) + ' → ' + fn(r.recSend) + ': ' + awdH(p.fam) + ' has ' + fn(p.shelfPcs) + ' pcs on the shelf, keep ' + fn(p.reserve) + ' for our other channels (' + p.keepDays + ' days) → ' + fn(p.spare) + ' pcs to spare for all its sizes</span>');
+  if (p.bridged) out.push('<span style="color:#1A56DB">🚢 ' + fn(p.water) + ' pcs on the water (~' + p.arriveDays + ' days) — sending ' + p.days + ' days\' worth now, ship more when it is here</span>');
+  if (p.received) { var dd = Math.max(0, Math.floor((Date.now() - Date.parse(p.received.at)) / 864e5)); out.push('<span style="color:var(--green);font-weight:700">📦 ' + fn(p.received.boxes) + ' boxes of ' + awdH(p.fam) + ' received ' + (dd ? dd + ' day' + (dd === 1 ? '' : 's') + ' ago' : 'today') + ' — more to ship now</span>'); }
+  return out.length ? '<div class="awd-plan-note" style="font-size:11px;line-height:1.5">' + out.join('<br>') + '</div>' : '';
+}
+// Builder: per part, the pieces this shipment takes (every size: qty × the pack after "=") vs what we have / can spare.
+function awdFamUse() {
+  var c = awdPlanCfg(), use = {};
+  Object.keys(S.shipment || {}).forEach(function(sku) { var it = S.shipment[sku], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
+    var cp = S.cpackMap[String(sku).toUpperCase()], q = cp && cp.unitsPerBox > 0 ? Math.ceil(it.qty / cp.unitsPerBox) * cp.unitsPerBox : it.qty, pk = o.pack || awdPackOf(sku);
+    var u = use[o.fam] = use[o.fam] || { fam: o.fam, pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push(sku.split('=').slice(1).join('=') + ' ' + q + (pk > 1 ? '×' + pk : '')); });
+  return Object.keys(use).map(function(f) { var F = AWDSS.fams[f] || {}, u = use[f], reserve = Math.ceil((F.otherDailyPcs || 0) * c.keepDays);
+    return { fam: f, pcs: u.pcs, parts: u.parts, shelf: F.shelfPcs || 0, reserve: reserve, spare: Math.max(0, (F.shelfPcs || 0) - reserve), keepDays: c.keepDays }; });
+}
+function awdFamWarnHtml() {
+  if (!AWDSS.loaded) return '';
+  var bad = awdFamUse().filter(function(u) { return u.pcs > u.spare; });
+  if (!bad.length) return '';
+  return '<div class="awd-fam-warn" style="border:1.5px solid var(--red);background:#FEF2F2;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#7F1D1D">'
+    + bad.map(function(u) { return '⚠ <b>' + awdH(u.fam) + '</b>: this shipment takes <b>' + fn(u.pcs) + ' pcs</b> (' + u.parts.map(awdH).join(' · ') + ') but ' + (u.pcs > u.shelf ? 'we only have <b>' + fn(u.shelf) + ' pcs</b> on the shelf'
+        : 'we only have <b>' + fn(u.shelf) + ' pcs</b> and keep ' + fn(u.reserve) + ' for our other channels (' + u.keepDays + ' days) → <b>' + fn(u.spare) + ' pcs</b> to send') + ' — lower it'; }).join('<br>') + '</div>';
+}
 function awdPackOf(sku) { var m = String(sku || '').split('=').pop().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
 function awdStockEnsure() {
   var skus = (S.joined || []).map(function(r) { return r.sku; }), key = skus.length + '|' + (skus[0] || '') + '|' + (skus[skus.length - 1] || '');
   if (!skus.length || AWDSS.loading || (AWDSS.loaded && AWDSS.key === key)) return;
   AWDSS.loading = true;
   wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/stock-summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus: skus }) })
-    .then(function(r) { return r.json(); }).then(function(d) { AWDSS.loading = false; if (!d || !d.ok) return; AWDSS.rows = d.rows || {}; AWDSS.loaded = true; AWDSS.key = key;
-      if (typeof renderRecs === 'function') renderRecs(); renderBuilder(); })
+    .then(function(r) { return r.json(); }).then(function(d) { AWDSS.loading = false; if (!d || !d.ok) return; AWDSS.rows = d.rows || {}; AWDSS.fams = d.fams || {}; if (d.cfg) AWDSS.cfg = d.cfg; AWDSS.loaded = true; AWDSS.key = key;
+      awdPlanCfgShow(); awdApplyPlan(); renderDashboard(); renderInv(); if (typeof renderRecs === 'function') renderRecs(); updateBadges(); renderBuilder(); })
     .catch(function() { AWDSS.loading = false; });
 }
 function awdStockLine(r) {
@@ -1697,7 +1775,7 @@ function awdStockLine(r) {
   var amz = 'Amazon: ✅ FBA ' + fn(fba) + ' · 🏭 AWD ' + fn(awd) + ' · 🔁 moving ' + fn(moving)
     + (moving ? ' <span style="color:var(--gray-400)">(AWD→FBA ' + fn(r.awdOutbound || 0) + ' · ours→FBA ' + fn(r.fbaInb || 0) + ' · between FCs ' + fn(r.fcTrans || 0) + ')</span>' : '')
     + ' = <b>' + P(r.totalNetwork || 0) + '</b>';
-  return '<div class="awd-stock-line" style="font-size:11px;line-height:1.5;color:var(--gray-600);white-space:normal">' + ours + '<br>' + amz + '</div>';
+  return '<div class="awd-stock-line" style="font-size:11px;line-height:1.5;color:var(--gray-600);white-space:normal">' + ours + '<br>' + amz + '</div>' + awdPlanNote(r);
 }
 // 🏷 Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also" — the whole Amazon title (up to 3 lines, no
 // longer cut at 120 px) and our own name from SKU Mgr under it.
@@ -1721,6 +1799,7 @@ function renderBuilder(){
   let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
   if(_bldSortDir!==0) filt=filt.slice().sort(([a],[b])=>_bldSortDir*a.localeCompare(b));
   ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
+  { var fw = ge('bld-fam-warn'); if (!fw) { fw = document.createElement('div'); fw.id = 'bld-fam-warn'; var bb = ge('bld-body'); if (bb) bb.insertBefore(fw, bb.firstChild); } if (fw) fw.innerHTML = awdFamWarnHtml(); }
   const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
   const note=ge('cpack-note');
   if(note)note.textContent=S.cpackCount>0?'📐 '+matched+' of '+items.length+' SKUs have case pack templates':'📐 No case pack data loaded — box dims will be blank on export';

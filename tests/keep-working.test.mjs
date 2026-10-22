@@ -8569,7 +8569,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
   const fnum = (n, dg = 0) => n == null || isNaN(n) ? '—' : Number(n.toFixed(dg)).toLocaleString();
-  const line = new Function('AWDSS', 'fn', fnOf('awdPackOf') + fnOf('awdStockLine') + '\nreturn awdStockLine;')({ loaded: true, rows: d.rows }, fnum);
+  const line = new Function('AWDSS', 'fn', 'awdH', fnOf('awdPackOf') + fnOf('awdPlanNote') + fnOf('awdStockLine') + '\nreturn awdStockLine;')({ loaded: true, rows: d.rows }, fnum, x => String(x));
   const h = line({ sku: '29-9-9=10X', fbaFul: 20, fcProc: 2, fcTrans: 1, awdAvail: 5, awdReserved: 1, awdOutbound: 8, fbaInb: 7, totalNetwork: 44 });
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
@@ -8600,6 +8600,59 @@ console.log('\n⚖ AWD box template: units per box → box weight (piece weight 
   check('…no piece weight in Products → nothing made up (lb 0, no box) and the window says to type it', lib.tplCalc('9-9-9=10', '5').lb === 0 && lib.tplCalc('9-9-9=10', '5').box === null && /No piece weight for ' \+ baseSKU_awd\(sku\)\.toUpperCase\(\) \+ ' in Products/.test(ah), null);
   check('…the piece weight is read from Products column E (what Item Search shows); a box the person typed is never overwritten; the window\'s Save button has its colors (was white on white)',
     /weight: parseFloat\(String\(r\[4\]\|\|''\)\.trim\(\)\) \|\| 0/.test(ah) && /if \(!TPL_TYPED\.weight\)/.test(ah) && /oninput="TPL_TYPED\['weight'\]=1"/.test(ah) && /oninput="tplAutoFill\(\)"/.test(ah) && /#add-template-modal \{ --blue:#2563EB;--white:#fff;/.test(ah), null);
+}
+
+// Owner (2026-10-22): "we have 100 in total of 25-1-5 but ship =2, =5, =10 and =25 30 pieces each — warn us not to ship that many, we
+// don't have that much. In the recommendations save something for our shelf / other channels. If the vendor already shipped (on the
+// way, ~45 days), ship enough for maybe 60 days; when we have more, tell us so the next shipment can ship more".
+console.log('\n👪 AWD: per part (all sizes) — Builder warns past our stock; recommendations keep other channels\' days, 🚢 → 60 days meanwhile, 📦 received → ship more');
+{
+  const now = new Date().toISOString(), wk = new Date(Date.now() - 20 * 864e5).toISOString().slice(0, 10);
+  await call('/reorder/fix/history', { headers: H });
+  // 31-1-5: shelf =2 10 pcs · =5 20 · =10 30 · =25 40 = 100 pcs; eBay sold 45 bags of =2 (90 pcs) in 90 days → 1 pc a day; Amazon FBA sales of the FBA SKUs don't count
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('31-1-5','valve','31-1-5=2','C1=1-1-1',1,10),
+    ('31-1-5','valve','31-1-5=5','C1=1-1-2',1,20), ('31-1-5','valve','31-1-5=10','C1=1-1-3',1,30), ('31-1-5','valve','31-1-5=25','C1=1-1-4',1,40)`).run();
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('31-1-5=2',?,45)").run(wk);
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('31-1-5=10',?,500,'B0T3115')").run(wk);
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('CT-31 10/9','shipped',?,?)").run(now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES ('CT-31 10/9','31-1-5=10',20,'JQ',?)").run(now);
+  sq.prepare("INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status) VALUES (0,?,?,?,?,?,?,?,?)").run(new Date(Date.now() - 2 * 864e5).toISOString(), 'IN', '31-1-5=25', 'GARAGE', 3, 'KL', '[RECEIVED] CT-30 9/30 — 3 boxes', 'Verified');
+  const d = await post('/awd/stock-summary', { skus: ['31-1-5=2', '31-1-5=5', '31-1-5=10', '31-1-5=25'] }), F = (d.fams || {})['31-1-5'] || {};
+  check('31-1-5 (every size): shelf 100 pcs · 🚢 on the water 200 pcs · other channels 90 pcs / 90 days = 1 a day (the FBA SKUs\' own Amazon sales not counted) · 📦 3 boxes received 2 days ago',
+    F.shelfPcs === 100 && F.waterPcs === 200 && F.otherPcs90 === 90 && F.otherDailyPcs === 1 && F.received && F.received.boxes === 3 && d.rows['31-1-5=25'].fam === '31-1-5', F);
+  const cfgR = await post('/awd/plan-config', { keepDays: 60, arriveDays: 45, bridgeDays: 60 });
+  check('⚙ settings saved for everyone (keep 60 days · ~45 days · 60 days meanwhile, who kept)', cfgR.ok && cfgR.cfg.keepDays === 60 && cfgR.cfg.bridgeDays === 60 && cfgR.cfg.by === 'TS', cfgR);
+  const { readFileSync: rfF } = await import('node:fs');
+  const ah = rfF(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
+  const fnum = (n, dg = 0) => n == null || isNaN(n) ? '—' : Number(n.toFixed(dg)).toLocaleString();
+  const mk = (S, AWDSS) => new Function('S', 'AWDSS', 'C', 'fn', 'awdH', fnOf('awdPackOf') + fnOf('awdPlanCfg') + fnOf('awdApplyPlan') + fnOf('awdPlanNote') + fnOf('awdFamUse') + fnOf('awdFamWarnHtml')
+    + '\nreturn { awdApplyPlan, awdPlanNote, awdFamWarnHtml };')(S, AWDSS, { targetDays: 120 }, fnum, x => String(x));
+  // 4 FBA rows of 31-1-5, each sells 1 a day, Amazon has 10 of each → want 120 − 10 = 110 each; but 🚢 on the water → 60 days → 50 each
+  const rows = ['31-1-5=2', '31-1-5=5', '31-1-5=10', '31-1-5=25'].map(sku => ({ sku, dailySales: 1, totalNetwork: 10, recSend: 110 }));
+  const S = { joined: rows, shipment: {}, cpackMap: {} }, AW = { loaded: true, rows: d.rows, fams: d.fams, cfg: cfgR.cfg }, L = mk(S, AW);
+  L.awdApplyPlan();
+  // need (pieces): 50×2 + 50×5 + 50×10 + 50×25 = 2,100; spare = 100 − 60 (1 a day × 60 days) = 40 → shared by need: =2 0.95 / =5 0.95 … → whole sets
+  const sent = rows.reduce((a, r) => a + r.recSend * Number(r.sku.split('=')[1]), 0);
+  check('recommendations: 🚢 → aim at 60 days (50 each, not 110); all its sizes together use the 40 pcs to spare (100 shelf − 60 kept) and never more: sent ' + sent + ' pcs (35–40); each row says why',
+    rows.every(r => r.plan && r.plan.days === 60 && r.plan.wanted === 50 && r.plan.spare === 40 && r.plan.reserve === 60) && sent <= 40 && sent >= 35 && rows.every(r => r.recSend <= 50)
+      && /⚠ lowered 50 → \d+: 31-1-5 has 100 pcs on the shelf, keep 60 for our other channels \(60 days\) → 40 pcs to spare/.test(L.awdPlanNote(rows[1])) && /🚢 200 pcs on the water \(~45 days\) — sending 60 days' worth now/.test(L.awdPlanNote(rows[1]))
+      && /📦 3 boxes of 31-1-5 received 2 days ago — more to ship now/.test(L.awdPlanNote(rows[1])), rows.map(r => [r.sku, r.recSend, r.plan && r.plan.wanted]));
+  // plenty on the shelf, nothing on the water → the normal number (110), nothing lowered
+  const S2 = { joined: [{ sku: '31-1-5=2', dailySales: 1, totalNetwork: 10, recSend: 110 }], shipment: {}, cpackMap: {} };
+  const AW2 = { loaded: true, rows: d.rows, fams: { '31-1-5': { ...F, shelfPcs: 5000, waterPcs: 0, received: null } }, cfg: cfgR.cfg };
+  mk(S2, AW2).awdApplyPlan();
+  check('…enough on the shelf and nothing on the water → unchanged (110), no note', S2.joined[0].recSend === 110 && !S2.joined[0].plan.capped && !S2.joined[0].plan.bridged && mk(S2, AW2).awdPlanNote({ ...S2.joined[0], plan: { ...S2.joined[0].plan, received: null } }) === '', S2.joined[0]);
+  // Builder: =2 / =5 / =10 / =25 30 each = 60 + 150 + 300 + 750 = 1,260 pcs of 31-1-5, we have 100
+  const S3 = { joined: [], shipment: { '31-1-5=2': { qty: 30 }, '31-1-5=5': { qty: 30 }, '31-1-5=10': { qty: 30 }, '31-1-5=25': { qty: 30 } }, cpackMap: {} };
+  const w = mk(S3, AW).awdFamWarnHtml();
+  check('Shipment Builder: 30 each of =2 / =5 / =10 / =25 → "⚠ 31-1-5: this shipment takes 1,260 pcs … but we only have 100 pcs on the shelf — lower it"',
+    /⚠ <b>31-1-5<\/b>: this shipment takes <b>1,260 pcs<\/b> \(2 30×2 · 5 30×5 · 10 30×10 · 25 30×25\) but we only have <b>100 pcs<\/b> on the shelf — lower it/.test(w), w);
+  const S4 = { joined: [], shipment: { '31-1-5=5': { qty: 4 } }, cpackMap: {} };
+  check('…within the spare (4 × 5 = 20 ≤ 40) → no warning; over the spare but under the shelf (=25 × 3 = 75) → "keep 60 for our other channels → 40 pcs to send"',
+    mk(S4, AW).awdFamWarnHtml() === '' && /keep 60 for our other channels \(60 days\) → <b>40 pcs<\/b> to send/.test(mk({ joined: [], shipment: { '31-1-5=25': { qty: 3 } }, cpackMap: {} }, AW).awdFamWarnHtml()), null);
+  check('page: the settings line on Recommendations ("Save for everyone"), the warning on top of the Builder, and the note under each row', /id="awd-plan-cfg"/.test(ah) && /Save for everyone/.test(ah) && /fw\.innerHTML = awdFamWarnHtml\(\)/.test(ah) && /\+ awdPlanNote\(r\);/.test(ah), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '31-1-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM reorder_incoming WHERE title = 'CT-31 10/9'; DELETE FROM reorder_title WHERE title = 'CT-31 10/9'; DELETE FROM inventory_log WHERE part_num LIKE '31-1-5%'; DELETE FROM awd_auto");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
