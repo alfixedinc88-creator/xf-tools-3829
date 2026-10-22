@@ -14524,6 +14524,11 @@ async function awdStockSummary(request, env) {
   const U = x => String(x || '').trim().toUpperCase(), alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
   const part = raw => { const r = U(raw), c = reorderCleanPart(r); return reorderDashFix(alias[r] || alias[c] || c); };
   const pack = p => reorderExtractPackSize(p) || 1, fam = p => U(reorderGetBaseSku(p));
+  // our name for the item (owner 2026-10-22: "see the name also"): SKU Mgr's name for the part #, else the family's, else Products
+  const nameOf = {}, famName = {};
+  (await all("SELECT part_num, name FROM master_list WHERE TRIM(COALESCE(name,'')) != ''")).forEach(r => { const p = part(r.part_num); if (!p) return; const n = String(r.name).trim();
+    if (!nameOf[p]) nameOf[p] = n; if (!famName[fam(p)]) famName[fam(p)] = n; });
+  (await all("SELECT sku, name FROM products WHERE TRIM(COALESCE(name,'')) != ''")).forEach(r => { const b = U(reorderGetBaseSku(U(r.sku))); if (b && !famName[b]) famName[b] = String(r.name).trim(); });
   const shelf = {}; // part → { pcs, cases, noEa, spots }
   (await all('SELECT part_num, cases, units_per_case FROM master_list WHERE cases > 0')).forEach(r => { const p = part(r.part_num); if (!p) return;
     const o = shelf[p] = shelf[p] || { pcs: 0, cases: 0, noEa: 0, spots: 0 }, c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
@@ -14542,7 +14547,7 @@ async function awdStockSummary(request, env) {
     const pk = pack(p), me = shelf[p] || { pcs: 0, cases: 0, noEa: 0, spots: 0 }, mi = inc[p] || { making: 0, water: 0 };
     const others = (byFam[fam(p)] || []).filter(x => x !== p);
     const oShelf = others.reduce((a, x) => a + ((shelf[x] || {}).pcs || 0), 0), oMaking = others.reduce((a, x) => a + ((inc[x] || {}).making || 0), 0), oWater = others.reduce((a, x) => a + ((inc[x] || {}).water || 0), 0);
-    rows[U(sku)] = { part: p, pack: pk, shelfPcs: r2(me.pcs), shelfSets: r2(me.pcs / pk), shelfCases: r2(me.cases), shelfSpots: me.spots, noEaCases: r2(me.noEa),
+    rows[U(sku)] = { part: p, name: nameOf[p] || famName[fam(p)] || '', pack: pk, shelfPcs: r2(me.pcs), shelfSets: r2(me.pcs / pk), shelfCases: r2(me.cases), shelfSpots: me.spots, noEaCases: r2(me.noEa),
       makingPcs: r2(mi.making), waterPcs: r2(mi.water), otherShelfPcs: r2(oShelf), otherMakingPcs: r2(oMaking), otherWaterPcs: r2(oWater),
       otherParts: others.filter(x => ((shelf[x] || {}).pcs || 0) + ((inc[x] || {}).making || 0) + ((inc[x] || {}).water || 0) > 0).slice(0, 8), discontinued: disc.has(p) };
   }
