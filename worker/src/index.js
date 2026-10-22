@@ -9277,7 +9277,7 @@ const _app = {
     // Completely isolated — no shared state with existing routes.
     // ── AWD routes /awd/* ──
     if (url.pathname === '/awd/cpack'                    && method === 'GET')  return await awdCpackSync(env);
-    if (url.pathname === '/awd/cpack-add'                 && method === 'POST') return await awdCpackAdd(request, env);
+    if (url.pathname === '/awd/cpack-add'                 && method === 'POST') return await awdCpackAdd(request, env, session);
     // ⚡ Sync from Amazon = the same 4-report run as every morning (the old sync left units shipped blank).
     if (url.pathname === '/awd/amazon-sync'              && method === 'POST') { try { const r = await awdAutoTick(env, true); return cors(new Response(JSON.stringify({ ...r, ok: !!(r.ok && r.inv && r.inv.fba && !r.inv.fba.error), error: r.error || (r.inv && r.inv.fba && r.inv.fba.error) || '', fbaCount: (r.inv && r.inv.fba && r.inv.fba.count) || 0, awdCount: (r.inv && r.inv.awd && r.inv.awd.count) || 0, syncedAt: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } })); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })); } }
     // 📡 The 4 reports by themselves: GET = when each one came in (and any problem); POST = get them now (⚡ Sync).
@@ -10795,7 +10795,7 @@ async function awdCpackSync(env) {
 // order), since awdCpackSync itself reads this same sheet by header
 // name - staying consistent with how the sheet is actually structured
 // rather than guessing at column positions.
-async function awdCpackAdd(request, env) {
+async function awdCpackAdd(request, env, session) {
   try {
     const body = await request.json().catch(() => ({}));
     const { sku, unitsPerBox, weightLb, lengthIn, widthIn, heightIn } = body;
@@ -10811,12 +10811,13 @@ async function awdCpackAdd(request, env) {
     // real, already-proven awdCpackSync function never assumes this -
     // it searches every row for whichever one actually contains "SKU".
     // Matching that same approach here instead of assuming.
-    const r = await fetch(`${SHEETS_URL}/${sheetId}/values/AWD_Data!A1:Z20`, { headers: { Authorization: `Bearer ${token}` } });
+    // the whole sheet: the header row (first 20 rows) and an existing row of this SKU (✏️ edit replaces it — owner 2026-10-22)
+    const r = await fetch(`${SHEETS_URL}/${sheetId}/values/AWD_Data!A1:Z`, { headers: { Authorization: `Bearer ${token}` } });
     const data = await r.json();
     if (data.error) throw new Error(data.error.message);
     const allRows = data.values || [];
     let headerIdx = -1;
-    for (let i = 0; i < allRows.length; i++) {
+    for (let i = 0; i < Math.min(20, allRows.length); i++) {
       if (allRows[i].some(c => String(c||'').trim().toLowerCase() === 'sku')) { headerIdx = i; break; }
     }
     if (headerIdx === -1) {
@@ -10854,14 +10855,34 @@ async function awdCpackAdd(request, env) {
     if (colMap.widthIn  !== -1 && widthIn)   newRow[colMap.widthIn]  = widthIn;
     if (colMap.heightIn !== -1 && heightIn)  newRow[colMap.heightIn] = heightIn;
 
-    await fetch(`${SHEETS_URL}/${sheetId}/values/${encodeURIComponent('AWD_Data!A:Z')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: [newRow] })
-    });
-
+    // ✏️ This SKU already has a row → that row is changed (its other cells kept); none → a new row. The LAST row of a SKU is the
+    // one the planner uses, so with old duplicate rows the last one is changed.
+    const key = String(sku).trim().toUpperCase();
+    let at = -1; for (let i = allRows.length - 1; i > headerIdx; i--) if (String((allRows[i] || [])[colMap.sku] || '').trim().toUpperCase() === key) { at = i; break; }
+    let before = null;
+    if (at >= 0) {
+      const old = allRows[at].slice(); while (old.length < headers.length) old.push('');
+      before = { unitsPerBox: old[colMap.unitsPerBox], weightLb: colMap.weightLb >= 0 ? old[colMap.weightLb] : '', lengthIn: colMap.lengthIn >= 0 ? old[colMap.lengthIn] : '', widthIn: colMap.widthIn >= 0 ? old[colMap.widthIn] : '', heightIn: colMap.heightIn >= 0 ? old[colMap.heightIn] : '' };
+      newRow.forEach((v, i) => { if (v === '' || v == null) newRow[i] = old[i] == null ? '' : old[i]; }); // fields left empty keep what was there
+      const colL = n => { let s = ''; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+      await fetch(`${SHEETS_URL}/${sheetId}/values/${encodeURIComponent(`AWD_Data!A${at + 1}:${colL(headers.length - 1)}${at + 1}`)}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [newRow] }) });
+    } else {
+      await fetch(`${SHEETS_URL}/${sheetId}/values/${encodeURIComponent('AWD_Data!A:Z')}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [newRow] })
+      });
+    }
+    // 🕘 every add / change kept: who, when, before → after
+    if (env.DB) {
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_template_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, sku TEXT, before TEXT, after TEXT)').run().catch(() => {});
+      await env.DB.prepare('INSERT INTO awd_template_log (at, by_user, sku, before, after) VALUES (?,?,?,?,?)').bind(new Date().toISOString(), String((session && (session.displayName || session.username)) || '?').slice(0, 40), key,
+        before ? JSON.stringify(before) : null, JSON.stringify({ unitsPerBox: newRow[colMap.unitsPerBox], weightLb: colMap.weightLb >= 0 ? newRow[colMap.weightLb] : '', lengthIn: colMap.lengthIn >= 0 ? newRow[colMap.lengthIn] : '', widthIn: colMap.widthIn >= 0 ? newRow[colMap.widthIn] : '', heightIn: colMap.heightIn >= 0 ? newRow[colMap.heightIn] : '' })).run().catch(() => {});
+    }
+    const pf = x => parseFloat(x) || 0;
     return cors(new Response(JSON.stringify({
-      ok: true, sku: newRow[colMap.sku],
-      template: { unitsPerBox: parseFloat(unitsPerBox)||0, weightLb: parseFloat(weightLb)||0, lengthIn: parseFloat(lengthIn)||0, widthIn: parseFloat(widthIn)||0, heightIn: parseFloat(heightIn)||0 },
+      ok: true, sku: newRow[colMap.sku], updated: at >= 0, before,
+      template: { unitsPerBox: pf(newRow[colMap.unitsPerBox]), weightLb: colMap.weightLb >= 0 ? pf(newRow[colMap.weightLb]) : 0, lengthIn: colMap.lengthIn >= 0 ? pf(newRow[colMap.lengthIn]) : 0, widthIn: colMap.widthIn >= 0 ? pf(newRow[colMap.widthIn]) : 0, heightIn: colMap.heightIn >= 0 ? pf(newRow[colMap.heightIn]) : 0 },
     }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));

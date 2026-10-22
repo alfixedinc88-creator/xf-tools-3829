@@ -8524,5 +8524,32 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
   sq.exec("DELETE FROM amazon_sales_weekly WHERE sku LIKE '28-2-2%'; DELETE FROM master_list WHERE base_sku = '28-2-2'; DELETE FROM awd_auto");
 }
 
+// Owner (2026-10-22): "1. able to edit the box template  2. change the $ sign to 'need label'".
+console.log('\n✏️ AWD Builder: edit a box template (that SKU\'s row changed, not a 2nd row; who / before → after kept); "$" → "need label"');
+{
+  const realFetch = globalThis.fetch, puts = [], appends = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('/values/AWD_Data!A1:Z') && m === 'GET') return J({ values: [['AWD box templates'], ['SKU', 'Units per box', 'Box weight (lb)', 'Box length (inch)', 'Box width (inch)', 'Box height (inch)'],
+      ['2-3-4=2XX-', '10', '6.5', '12', '10', '8'], ['9-9-9=1', '20', '', '', '', '']] });
+    if (u.includes('/values/AWD_Data') && m === 'PUT') { puts.push({ u: decodeURIComponent(u), v: JSON.parse(o.body).values[0] }); return J({}); }
+    if (u.includes('/values/AWD_Data') && u.includes(':append')) { appends.push(JSON.parse(o.body).values[0]); return J({}); }
+    return realFetch(u, o); };
+  const ed = await (await call('/awd/cpack-add', { method: 'POST', headers: H, body: JSON.stringify({ sku: '2-3-4=2xx-', unitsPerBox: '5', weightLb: '', lengthIn: '', widthIn: '', heightIn: '' }) })).json();
+  check('✏️ 2-3-4=2XX- 10 → 5 per box: ITS row (row 3) is changed — not a 2nd row; weight 6.5 and 12×10×8 kept (left empty in the window)',
+    ed.ok && ed.updated && puts.length === 1 && /AWD_Data!A3:F3/.test(puts[0].u) && puts[0].v.join('|') === '2-3-4=2XX-|5|6.5|12|10|8' && appends.length === 0 && ed.template.unitsPerBox === 5 && ed.template.weightLb === 6.5 && ed.before.unitsPerBox === '10', { ed, puts });
+  const nw = await (await call('/awd/cpack-add', { method: 'POST', headers: H, body: JSON.stringify({ sku: '5-5-5=10', unitsPerBox: '8', weightLb: '3' }) })).json();
+  check('…a SKU with no template yet → a new row (as before)', nw.ok && !nw.updated && appends.length === 1 && appends[0][0] === '5-5-5=10' && appends[0][1] === '8', { nw, appends });
+  const lg = sq.prepare("SELECT * FROM awd_template_log WHERE sku = '2-3-4=2XX-'").all();
+  check('…kept in the AWD template log: who (TS), before 10 per box → after 5', lg.length === 1 && lg[0].by_user === 'TS' && JSON.parse(lg[0].before).unitsPerBox === '10' && JSON.parse(lg[0].after).unitsPerBox === '5', lg);
+  globalThis.fetch = realFetch;
+  const { readFileSync: rfT } = await import('node:fs');
+  const ah = rfT(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('page: ✏️ next to the green box template opens it filled in ("Edit Case Pack Template", Save Changes)',
+    /onclick="openAddTemplateModal\('\$\{esc\(sku\)\}', true\)">✏️<\/button>/.test(ah) && /Edit Case Pack Template/.test(ah) && /'Save Changes'/.test(ah), null);
+  check('"$" → "need label": the 📋 label button says "2/1 need label" / "3 need label"; the badge says "🏷 Need label" (no "$ Needs label" left)',
+    (ah.match(/' need label'/g) || []).length === 4 && !/\+ '\$'/.test(ah) && (ah.match(/🏷 Need label/g) || []).length === 2 && !/\$ Needs label/.test(ah), null);
+  sq.exec("DELETE FROM awd_template_log");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
