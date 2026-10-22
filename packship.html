@@ -1397,14 +1397,25 @@ body {
         <input type="text" class="ps-field-input" id="ps-usps-run-name" placeholder="Name" style="max-width:220px; margin:0;">
         <button class="ps-btn-batch" id="ps-usps-run-start-btn" onclick="psUspsRunStart()">🚚 Leaving for USPS</button>
       </div>
-      <!-- Owner (2026-10-10): "one more button to print the scan form — every scan form not printed yet starts to print;
-           before today don't worry, already printed everything". -->
-      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-        <button class="ps-btn-batch" id="ps-cb-sf-print-btn" onclick="psCbPrintScanForms(this)">📄 Print scan forms</button>
-        <span style="font-size:12px;color:var(--text3)">Prints every USPS scan form not printed yet (on the ink printer).</span>
-      </div>
+      <!-- Owner (2026-10-22): "take off the 📄 Print scan forms we have right now" — replaced by the 📄 USPS scan form list
+           below (each form with 🖨 Print / Reprint). -->
     </div>
     <div id="ps-closed-banners"></div>
+
+    <!-- 📄 Owner (2026-10-22): "under Close Batch have the USPS scan form (end of day) too, so our guy can print the scan
+         form there" — the scan forms made (today first), each with 🖨 Print / Reprint, and 📄 Make scan form now. -->
+    <div class="ps-card" id="ps-cb-sf-card" style="margin-top:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+        <div style="font-size:13px;font-weight:700;color:var(--text)">📄 USPS scan form (end of day)</div>
+        <button class="ps-btn-sm" onclick="psCbLoadScanForms()">↻ Refresh</button>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">One sheet with one barcode for the day's USPS packages — print it and give it to the USPS driver with the packages. It prints on the ink printer (📄 Scan Form Station).</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <button class="ps-btn-batch" id="ps-cb-sf-make-btn" onclick="psCbScanFormMake(this)">📄 Make scan form now</button>
+      </div>
+      <div id="ps-cb-sf-status" style="font-size:12px;margin-bottom:6px;line-height:1.6"></div>
+      <div id="ps-cb-sf-list" style="font-size:12px;overflow-x:auto"></div>
+    </div>
 
     <!-- USPS Run Report — collapsed behind a click, then behind an Admin
          login (separate from whoever's actively signed into this device;
@@ -6123,7 +6134,7 @@ window.psSwitchTab = function(name) {
     psPickSummaryDate = null;
     psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount(); psLoadCancelOrders();
   }
-  if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
+  if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); psCbLoadScanForms(); }
   if (name === 'labelcheck')  { psLcFocus(); }
   if (name === 'cancellation') { psLoadCancelOrders(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -9770,6 +9781,48 @@ window.psCbPrintScanForms = async function(btn) {
     _psToast('📄 Printing ' + pages + ' scan form' + (pages === 1 ? '' : 's') + ' not printed yet (made ' + todo.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ') + ')');
     await _psSfPrintSomewhere(todo.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }), btn);
   } finally { if (btn) btn.disabled = false; }
+};
+// 📄 Close Batch → USPS scan form (owner 2026-10-22: "under Close Batch have the scan form too, so our guy can print it
+// there"): the forms of the last 3 days (today first), printed or not, each with 🖨 Print / Reprint — the same print as
+// Auto Label (sent to the 📄 Scan Form Station / ink printer) — and ⚠ USPS labels not on a form yet + 📄 Make scan form now.
+window.psCbLoadScanForms = async function() {
+  var st = document.getElementById('ps-cb-sf-status'), box = document.getElementById('ps-cb-sf-list'); if (!st || !box) return;
+  var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { d = { ok: false, error: e.message }; }
+  if (!d || d.ok === false) { st.innerHTML = '<span style="color:var(--red)">✗ Could not load the scan forms: ' + _psAlEsc((d && d.error) || 'no answer') + '</span>'; box.innerHTML = ''; return; }
+  var e = _psAlEsc, miss = (d.missing && d.missing.labels) || [], days = [];
+  var forms = (d.forms || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && (f.parts || 0) > 0; });
+  forms.forEach(function(f) { if (days.indexOf(f.day) < 0) days.push(f.day); });
+  days = days.sort().reverse().slice(0, 3);
+  forms = forms.filter(function(f) { return days.indexOf(f.day) >= 0; }).sort(function(a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+  var notPr = forms.filter(function(f) { return !f.printed_at; }).length;
+  st.innerHTML = (miss.length ? '<span style="color:var(--orange);font-weight:700">⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? '' : 's') + ' today not on a scan form yet — tap 📄 Make scan form now</span>'
+      : '<span style="color:var(--green)">✅ Every USPS label bought today (by Auto Label) is on a scan form</span>')
+    + (notPr ? '<br><b style="color:var(--orange)">' + notPr + ' scan form' + (notPr === 1 ? '' : 's') + ' not printed yet</b>' : '');
+  var today = psTodayKey();
+  box.innerHTML = forms.length ? '<table style="width:100%;border-collapse:collapse">' + forms.map(function(f) {
+    var td = 'style="padding:6px;border-bottom:1px solid var(--border);white-space:nowrap"';
+    return '<tr class="ps-cb-sf-row"><td ' + td + '><b>' + (f.day === today ? 'Today' : e(f.day)) + '</b> ' + e(new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + '</td>'
+      + '<td ' + td + '>' + (f.shipments != null ? e(f.shipments) + ' packages' : '') + ((f.parts || 1) > 1 ? ' · ' + f.parts + ' forms' : '') + '</td>'
+      + '<td ' + td + '>' + (f.printed_at ? '<span style="color:var(--green)">🖨 printed ' + e(new Date(f.printed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + (f.print_count > 1 ? ' ×' + f.print_count : '') + '</span>' : '<b style="color:var(--orange)">not printed</b>') + '</td>'
+      + '<td ' + td + '><button class="ps-btn-sm" onclick="psCbScanFormPrint(' + f.id + ', this, ' + (f.parts || 1) + ')">🖨 ' + (f.printed_at ? 'Reprint' : 'Print') + '</button></td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--text3)">No scan form in the last days — tap 📄 Make scan form now.</div>';
+};
+window.psCbScanFormPrint = async function(id, btn, parts) {
+  var t = btn ? btn.textContent : '';
+  try { await _psSfPrintSomewhere([{ id: id, parts: parts || 1 }], btn); }
+  catch (err) { alert('📄 Scan form not printed: ' + (err && err.message || err)); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = t; } setTimeout(psCbLoadScanForms, 2000); }
+};
+window.psCbScanFormMake = async function(btn) {
+  if (!confirm('Make the USPS scan form now?\n\nIt holds every USPS label made today that is not on a scan form yet — give it to the driver with those packages.')) return;
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Asking Veeqo…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/scanform-make', { method: 'POST', body: {} }).catch(function(err) { return { ok: false, error: err.message }; });
+    if (d.ok === false) { alert(d.nothing ? '📄 Nothing to put on a scan form — every USPS label today is already on one.' : '📄 Scan form not made: ' + (d.error || 'failed') + '\n\nMake it in Veeqo, or tell the office.'); return; }
+    _psToast('📄 Scan form made — printing ' + (d.parts || 1) + ' form' + ((d.parts || 1) > 1 ? 's' : ''));
+    var fl = (d.forms && d.forms.length) ? d.forms : [{ id: d.id, parts: d.parts }];
+    await _psSfPrintSomewhere(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; }));
+  } finally { btn.disabled = false; btn.textContent = t; psCbLoadScanForms(); }
 };
 // 🔎 Owner: "still only one scan form, but should have 2" — shows what Veeqo sent back (long files shortened), with 📋 Copy.
 window.psAlScanFormAnswer = async function(id) {
