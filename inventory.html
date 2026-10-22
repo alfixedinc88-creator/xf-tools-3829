@@ -8049,6 +8049,21 @@ window.invCredLogin = async function() {
       return _skumgrSortDir === 'asc' ? ' ↑' : ' ↓';
     }
 
+    // ⏳ Owner (2026-10-22, C1=1-1-21: "Audit fixed the column, 201-1-11=2XX / =5XX are gone there, but SKU Mgr still shows two
+    // boxes each"): a Stock In / Out / Transfer / recount waiting in Review — Audit and Checking already count it, SKU Mgr
+    // changes only when a manager approves it. Shown under the cases (the cases are not changed): what is waiting, who, when,
+    // and what it will be after approval; tap → Review.
+    function skumgrPendingHtml(row) {
+      var P = row && row.pending; if (!P || !P.length) return '';
+      var pE = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+      var pN = function(v) { return Math.round((parseFloat(v) || 0) * 100) / 100; };
+      var net = 0; P.forEach(function(p) { net += parseFloat(p.cases) || 0; });
+      var now = parseFloat(row.cases) || 0, after = Math.round((now + net) * 1000) / 1000;
+      var tip = P.map(function(p) { return (p.cases > 0 ? '+' : '') + p.cases + ' ' + p.type + ' · ' + (p.by || '?') + ' · ' + String(p.at || '').slice(0, 16).replace('T', ' ') + ' · ' + (p.note || ''); }).join('\n');
+      return '<div class="skumgr-pending" title="' + pE(tip) + '" onclick="invSwitchTab(\'review\')" style="margin-top:3px;font-size:11px;font-weight:700;color:var(--orange);white-space:nowrap;cursor:pointer;text-decoration:underline dotted">⏳ '
+        + (net > 0 ? '+' : '') + pN(net) + ' waiting in Review → ' + pN(after) + '</div>'
+        + '<div style="font-size:10px;font-weight:400;color:var(--text3);white-space:nowrap">' + P.map(function(p) { return pE((p.by || '?') + ' ' + String(p.at || '').slice(5, 10) + (/📋 Recount/.test(p.note) ? ' 📋 Recount' : '')); }).join(', ') + '</div>';
+    }
     function skumgrRenderResults() {
     var res = g('skumgr-results');
     if (!res) return;
@@ -8109,7 +8124,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (row.name||'—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap">' + skumgrLocCell(row.location) + '</td>'
         + '<td id="skumgr-got-' + idx + '" style="' + td + 'font-size:11px;color:var(--text3);min-width:130px">…</td>'
-        + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (row.cases !== undefined && row.cases !== null ? row.cases : '—') + skumgrCostHtml(row) + '</td>'
+        + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (row.cases !== undefined && row.cases !== null ? row.cases : '—') + skumgrCostHtml(row) + skumgrPendingHtml(row) + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.units_per_case||'—') + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.price ? '$' + parseFloat(row.price).toFixed(2) : '—') + '</td>'
         + '<td style="' + td + 'color:var(--text2)">' + (row.vendor||'—') + '</td>'
