@@ -499,10 +499,10 @@ window.adDbHtml = function(d) {
       var n = b.tabs.filter(function(t) { return t.moved; }).length;
       return '<details class="ad-li" style="border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:8px;background:var(--bg2)"' + (n < b.tabs.length ? ' open' : '') + '><summary style="cursor:pointer;font-weight:800">' + adEsc(b.name) + ' — ' + n + ' of ' + b.tabs.length + ' moved'
         + (b.err ? ' <span style="color:var(--red);font-weight:600">(Google: ' + adEsc(b.err) + ')</span>' : '') + '</summary>'
-        + (n < b.tabs.length ? '<button class="ad-btn ad-btn-sm" style="width:auto;margin:8px 0" onclick="adDbMoveAll(' + bi + ', this)">📥 Move all ' + (b.tabs.length - n) + ' to our database</button>' : '')
+        + (b.tabs.some(function(t) { return !t.moved && !t.hold; }) ? '<button class="ad-btn ad-btn-sm" style="width:auto;margin:8px 0" onclick="adDbMoveAll(' + bi + ', this)">📥 Move all ' + b.tabs.filter(function(t) { return !t.moved && !t.hold; }).length + ' to our database</button>' : '')
         + '<table class="ad-table"><tr><th>Tab</th><th>Where</th><th></th></tr>' + b.tabs.map(function(t, ti) {
-          return '<tr class="ad-db-row"><td><b>' + adEsc(t.tab) + '</b></td><td id="ad-db-st-' + bi + '-' + ti + '">' + (t.moved ? '✅ in our database · ' + t.rows + ' rows · ' + t.cells + ' cells <span style="color:var(--text3)">(' + adEsc(String(t.at || '').slice(0, 16).replace('T', ' ')) + ' ' + adEsc(t.by || '') + ')</span>' : '☁ still in Google') + '</td>'
-            + '<td style="white-space:nowrap">' + (t.moved ? '<button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', true, this)">↩ Back to Google</button>' : '<button class="ad-btn ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', false, this)">📥 Move</button>') + '</td></tr>';
+          return '<tr class="ad-db-row"><td><b>' + adEsc(t.tab) + '</b></td><td id="ad-db-st-' + bi + '-' + ti + '">' + (t.moved ? '✅ in our database · ' + t.rows + ' rows · ' + t.cells + ' cells <span style="color:var(--text3)">(' + adEsc(String(t.at || '').slice(0, 16).replace('T', ' ')) + ' ' + adEsc(t.by || '') + ')</span>' : t.hold ? '⏸ <span style="color:var(--text3)">later — ' + adEsc(t.hold) + '</span>' : '☁ still in Google') + '</td>'
+            + '<td style="white-space:nowrap">' + (!t.moved && t.hold ? '' : t.moved ? '<button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', true, this)">↩ Back to Google</button>' : '<button class="ad-btn ad-btn-sm" style="width:auto" onclick="adDbOne(' + bi + ',' + ti + ', false, this)">📥 Move</button>') + '</td></tr>';
         }).join('') + '</table></details>';
     }).join('');
 };
@@ -512,6 +512,7 @@ window.adDbOne = async function(bi, ti, undo, btn) {
   if (btn) btn.disabled = true; if (st) st.textContent = '⏳ ' + (undo ? 'putting back' : 'copying + checking') + '…';
   var r = await adFetch('/admin/db-move/' + (undo ? 'undo' : 'copy'), { method: 'POST', body: JSON.stringify({ book: b.key, tab: t.tab }) });
   var d = r.data || {};
+  if (!d.ok && d.hold) { t.hold = d.error.replace(/^Not moved: /, ''); if (st) st.innerHTML = '⏸ <span style="color:var(--text3)">later — ' + adEsc(t.hold) + '</span>'; return false; }
   if (!d.ok) { if (st) st.innerHTML = '<b style="color:var(--red)">❌ ' + adEsc(d.error || (d.want ? 'check failed — Google ' + d.want.rows + ' rows / ' + d.want.cells + ' cells, database ' + d.got.rows + ' / ' + d.got.cells + ' (not moved)' : 'failed')) + '</b>'; if (btn) btn.disabled = false; return false; }
   if (undo) { t.moved = false; } else { t.moved = true; t.rows = d.rows; t.cells = d.cells; t.at = new Date().toISOString(); t.by = (AD.user && AD.user.displayName) || ''; }
   return true;
@@ -519,7 +520,7 @@ window.adDbOne = async function(bi, ti, undo, btn) {
 window.adDbMoveAll = async function(bi, btn) {
   var b = AD_DB.books[bi]; if (btn) btn.disabled = true;
   var ok = 0, bad = 0;
-  for (var ti = 0; ti < b.tabs.length; ti++) { if (b.tabs[ti].moved) continue; if (await adDbOne(bi, ti, false, null)) ok++; else bad++; }
+  for (var ti = 0; ti < b.tabs.length; ti++) { if (b.tabs[ti].moved || b.tabs[ti].hold) continue; if (await adDbOne(bi, ti, false, null)) ok++; else bad++; }
   adToast('📥 ' + ok + ' moved' + (bad ? ' · ❌ ' + bad + ' not moved (see the red lines)' : ' ✅'), bad ? 'error' : 'success');
   ge('ad-db-body').innerHTML = adDbHtml(AD_DB);
 };

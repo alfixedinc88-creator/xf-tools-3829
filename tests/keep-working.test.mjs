@@ -8939,7 +8939,7 @@ console.log('\n🗄 Off the Google Sheet, step 1b: tabs moved into our database 
     if (!googleUp) throw new Error('Google is down');
     const m = /\/spreadsheets\/TEST(\/values\/([^?:]+))?/.exec(u);
     if (m && !m[1]) return J({ sheets: Object.keys(G).map((t, i) => ({ properties: { sheetId: i, title: t } })) });
-    if (m && m[2] && (o.method || 'GET') === 'GET') { const tab = decodeURIComponent(m[2]).split('!')[0].replace(/^'(.*)'$/, '$1'); return J({ values: G[tab] || [] }); }
+    if (m && m[2] && (o.method || 'GET') === 'GET') { const tab = decodeURIComponent(m[2]).split('!')[0].replace(/^'(.*)'$/, '$1'); return J({ values: /valueRenderOption=FORMULA/.test(u) && tab === 'Velocity' ? [['=SUM(A1:A9)']] : G[tab] || [] }); }
     return J({ values: [], updates: { updatedRange: 'X!A9:B9' } }); };
   const list = await get('/admin/db-move'), bk = (list.books || [])[0] || { tabs: [] };
   check('Admin → 🗄 Database lists the Google spreadsheet\'s tabs, all "☁ still in Google"', list.ok && bk.key === 'SHEET_ID' && ['Config', 'Prefixes', 'Discontinued_SKUs'].every(t => bk.tabs.some(x => x.tab === t && !x.moved)), list);
@@ -8964,6 +8964,12 @@ console.log('\n🗄 Off the Google Sheet, step 1b: tabs moved into our database 
   const csNow = sq.prepare("SELECT r, v FROM xs_row WHERE book = 'TEST' AND tab = 'CS_MsgLog' ORDER BY r").all().map(x => x.r + ':' + JSON.parse(x.v)[0]).join(' ');
   check('…a clean-up that deletes rows works in our database too: CS log older than 30 days (a-old, c-old) deleted, the rest move up — and the RIGHT rows (it used to delete the row below each old one)',
     mvCs.ok && cl.ok && cl.deleted === 2 && / 2:b-new 3:d-new$/.test(csNow) && /^1:/.test(csNow), { cl, csNow }); // row 1 = the app's own header
+  googleUp = true; G.Velocity = [['12']];
+  const fz = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: 'Velocity' }), ho = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: 'Price_Flags' });
+  check('…NOT moved: a tab Google calculates (formulas — its numbers would freeze) and a tab filled outside the app (Price_Flags) — "⏸ later", said why',
+    fz.ok === false && fz.hold && fz.formulas === 1 && /Google calculates this tab/.test(fz.error) && ho.ok === false && ho.hold && /outside the app/.test(ho.error)
+      && !sq.prepare("SELECT 1 FROM xs_tab WHERE tab IN ('Velocity','Price_Flags')").get(), { fz, ho });
+  googleUp = false;
   const un = await post('/admin/db-move/undo', { book: 'SHEET_ID', tab: 'Prefixes' });
   check('…↩ Back to Google puts a tab back on the Google Sheet (asks Google again)', un.ok && !sq.prepare("SELECT 1 FROM xs_tab WHERE book = 'TEST' AND tab = 'Prefixes'").get(), un);
   globalThis.fetch = realF;
