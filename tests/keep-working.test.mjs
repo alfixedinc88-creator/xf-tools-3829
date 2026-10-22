@@ -8551,5 +8551,32 @@ console.log('\n✏️ AWD Builder: edit a box template (that SKU\'s row changed,
   sq.exec("DELETE FROM awd_template_log");
 }
 
+// Owner (2026-10-22): "Recommendations / Shipment Builder: see the total pieces of inventory we have for it, how many in FBA, AWD, transfer
+// between, how many more we ordered and on the way — so we can see the inventory and decide to ship it or not".
+console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (our shelf · still making · on the water in pieces; FBA · AWD · moving = Amazon total)');
+{
+  const now = new Date().toISOString();
+  await call('/reorder/fix/history', { headers: H });
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('29-9-9','tee','29-9-9=10X','C1=1-1-1',3,100),
+    ('29-9-9','tee','29-9-9=10X','C1=1-1-2',1,0), ('29-9-9','tee','29-9-9=2','C1=1-1-3',2,50)`).run();
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-Q 10/1','production',?,?), ('CT-Q 10/9','shipped',?,?)").run(now, now, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES ('PO-Q 10/1','29-9-9=10X',40,'JQ',?), ('CT-Q 10/9','29-9-9=10X',20,'JQ',?), ('CT-Q 10/9','29-9-9=2',100,'JQ',?)").run(now, now, now);
+  const d = await post('/awd/stock-summary', { skus: ['29-9-9=10X', '29-9-9=10-X', 'NOPE-1'] }), o = (d.rows || {})['29-9-9=10X'] || {};
+  check('29-9-9=10X: shelf 3 boxes × 100 = 300 pcs = 30 sets (1 box with no Ea/Case shown, not counted); other sizes 100 pcs; still making 40 sets = 400 pcs; on the water 200 pcs (+200 other sizes)',
+    o.shelfPcs === 300 && o.shelfSets === 30 && o.noEaCases === 1 && o.otherShelfPcs === 100 && o.makingPcs === 400 && o.waterPcs === 200 && o.otherWaterPcs === 200 && o.pack === 10, o);
+  check('…"=10-X" reads as the same part # (29-9-9=10X); a SKU not in SKU Mgr → nothing made up', (d.rows || {})['29-9-9=10-X'] && d.rows['29-9-9=10-X'].shelfPcs === 300 && (!(d.rows || {})['NOPE-1'] || d.rows['NOPE-1'].shelfPcs === 0), d.rows);
+  const { readFileSync: rfS } = await import('node:fs');
+  const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
+  const fnum = (n, dg = 0) => n == null || isNaN(n) ? '—' : Number(n.toFixed(dg)).toLocaleString();
+  const line = new Function('AWDSS', 'fn', fnOf('awdPackOf') + fnOf('awdStockLine') + '\nreturn awdStockLine;')({ loaded: true, rows: d.rows }, fnum);
+  const h = line({ sku: '29-9-9=10X', fbaFul: 20, fcProc: 2, fcTrans: 1, awdAvail: 5, awdReserved: 1, awdOutbound: 8, fbaInb: 7, totalNetwork: 44 });
+  check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
+    /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
+      && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 8\)\}`;/.test(ah), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '29-9-9'; DELETE FROM reorder_incoming WHERE title IN ('PO-Q 10/1','CT-Q 10/9'); DELETE FROM reorder_title WHERE title IN ('PO-Q 10/1','CT-Q 10/9')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

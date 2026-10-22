@@ -1668,6 +1668,39 @@ function calculateSharedBulkAllocation(items) {
   return result;
 }
 
+// 📦 Owner (2026-10-22): "Recommendations / Shipment Builder: see the total pieces of inventory we have, how many in FBA, AWD, moving
+// between, how many more we ordered and on the way — so we know whether to ship it". One line under each row: OUR side from the
+// server (shelf, still making, on the water — pieces; /awd/stock-summary) + AMAZON's side from the planner's own numbers (sets × pack).
+var AWDSS = { rows: {}, loaded: false, loading: false, key: '' };
+function awdPackOf(sku) { var m = String(sku || '').split('=').pop().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
+function awdStockEnsure() {
+  var skus = (S.joined || []).map(function(r) { return r.sku; }), key = skus.length + '|' + (skus[0] || '') + '|' + (skus[skus.length - 1] || '');
+  if (!skus.length || AWDSS.loading || (AWDSS.loaded && AWDSS.key === key)) return;
+  AWDSS.loading = true;
+  wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/stock-summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus: skus }) })
+    .then(function(r) { return r.json(); }).then(function(d) { AWDSS.loading = false; if (!d || !d.ok) return; AWDSS.rows = d.rows || {}; AWDSS.loaded = true; AWDSS.key = key;
+      if (typeof renderRecs === 'function') renderRecs(); renderBuilder(); })
+    .catch(function() { AWDSS.loading = false; });
+}
+function awdStockLine(r) {
+  var o = AWDSS.rows[String(r.sku || '').toUpperCase()], pk = (o && o.pack) || awdPackOf(r.sku), P = function(sets) { return fn(sets) + ' sets' + (pk > 1 ? ' (' + fn(sets * pk) + ' pcs)' : ''); };
+  var moving = (r.awdOutbound || 0) + (r.fcTrans || 0) + (r.fbaInb || 0), fba = (r.fbaFul || 0) + (r.fcProc || 0), awd = (r.awdAvail || 0) + (r.awdReserved || 0);
+  var ours = !AWDSS.loaded ? '<span style="color:var(--gray-400)">our stock loading…</span>' : !o ? '<span style="color:var(--gray-400)">not in SKU Mgr</span>'
+    : '🏬 <b>Our shelf ' + fn(o.shelfPcs) + ' pcs</b>' + (pk > 1 ? ' (' + fn(o.shelfSets) + ' sets)' : '') + (o.noEaCases ? ' <span style="color:var(--red)">+ ' + fn(o.noEaCases) + ' boxes no Ea/Case</span>' : '')
+      + (o.otherShelfPcs ? ' · other sizes ' + fn(o.otherShelfPcs) + ' pcs' : '')
+      + ' · 🏭 still making ' + fn(o.makingPcs) + ' pcs' + (o.otherMakingPcs ? ' (+' + fn(o.otherMakingPcs) + ' other sizes)' : '')
+      + ' · 🚢 on the water ' + fn(o.waterPcs) + ' pcs' + (o.otherWaterPcs ? ' (+' + fn(o.otherWaterPcs) + ' other sizes)' : '')
+      + (o.discontinued ? ' · <b style="color:#6b7280">🚫 discontinued — not reordered</b>' : '');
+  var amz = 'Amazon: ✅ FBA ' + fn(fba) + ' · 🏭 AWD ' + fn(awd) + ' · 🔁 moving ' + fn(moving)
+    + (moving ? ' <span style="color:var(--gray-400)">(AWD→FBA ' + fn(r.awdOutbound || 0) + ' · ours→FBA ' + fn(r.fbaInb || 0) + ' · between FCs ' + fn(r.fcTrans || 0) + ')</span>' : '')
+    + ' = <b>' + P(r.totalNetwork || 0) + '</b>';
+  return '<div class="awd-stock-line" style="font-size:11px;line-height:1.5;color:var(--gray-600);white-space:normal">' + ours + '<br>' + amz + '</div>';
+}
+function awdStockRow(r, cols) {
+  if (!r) return '';
+  if (!AWDSS.loaded) setTimeout(awdStockEnsure, 0);
+  return '<tr class="awd-stock-tr"><td></td><td colspan="' + (cols - 1) + '" style="padding-top:0;border-top:none">' + awdStockLine(r) + '</td></tr>';
+}
 function renderBuilder(){
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -1742,9 +1775,10 @@ function renderBuilder(){
         ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>`;
+    </tr>${awdStockRow(r, 8)}`;
   }).join('');
   updateSummary();
+  awdStockEnsure();
 }
 function updateSummary(){
   const items=Object.entries(S.shipment);let tot=0;
@@ -2519,7 +2553,7 @@ function renderRecs() {
           : `<button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button>`}
         &nbsp;${discBtn}
       </td>
-    </tr>`;
+    </tr>${awdStockRow(r, 13)}`;
   }).join('');
 }
 
