@@ -9291,6 +9291,7 @@ const _app = {
     // 🚚 Count / don't count one inbound shipment in the AWD planner (e.g. an AWD → FBA transfer shipped from our own address).
     // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
     if (url.pathname === '/awd/asin-info' && method === 'GET') return await awdAsinInfo(url, env);
+    if (url.pathname === '/awd/stock-summary' && method === 'POST') return await awdStockSummary(request, env);
     if (url.pathname === '/awd/inbound-count' && method === 'POST') {
       const b = await request.json().catch(() => ({})), id = String(b.shipmentId || '').trim().slice(0, 40);
       if (!id) return cors(new Response(JSON.stringify({ ok: false, error: 'shipmentId needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -14507,6 +14508,45 @@ async function awdAsinInfo(url, env) {
       salesFrom: firstSale, bySku: Object.values(bySku).map(k => ({ ...k, u30: r1(k.u30), u90: r1(k.u90), u365: r1(k.u365) })) },
     normal: { perMonth: r1(normal), parts: segs.map(x => x == null ? null : r1(x)), enough: L >= 3, last90PerMonth: r1(W.u90 / 3) }, months: monthList, health, healthAt: (st.health || {}).at || null,
     shelf, incoming: inc.map(r => ({ title: r.title, part: r.part, units: r.qty, cases: r.cases, stage: r.stage || '' })), discontinued: disc });
+}
+
+// 📦 Owner (2026-10-22): "Recommendations / Shipment Builder: see the total pieces of inventory we have for it, how many in FBA, AWD,
+// transferring between, how many more we ordered and on the way — so we can decide to ship it or not". POST /awd/stock-summary
+// { skus: [FBA SKU…] } → per SKU, OUR side (the Amazon side is on the page already): the shelf for its part # (SKU Mgr boxes × Ea/Case =
+// pieces; ÷ the pack after "=" = sets), other bag sizes of the same part apart, and what is ordered (🏭 still making) and 🚢 on the water
+// for the part # and for its other sizes — every number in pieces, each piece in one place only (same rules as Stock Levels).
+async function awdStockSummary(request, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({})), list = (Array.isArray(b.skus) ? b.skus : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 5000);
+  if (!list.length || !env.DB) return J({ ok: true, rows: {} });
+  const all = async (sql, ...a) => { try { return (await env.DB.prepare(sql).bind(...a).all()).results || []; } catch (_) { return []; } };
+  await reorderFixTables(env).catch(() => {});
+  const U = x => String(x || '').trim().toUpperCase(), alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
+  const part = raw => { const r = U(raw), c = reorderCleanPart(r); return reorderDashFix(alias[r] || alias[c] || c); };
+  const pack = p => reorderExtractPackSize(p) || 1, fam = p => U(reorderGetBaseSku(p));
+  const shelf = {}; // part → { pcs, cases, noEa, spots }
+  (await all('SELECT part_num, cases, units_per_case FROM master_list WHERE cases > 0')).forEach(r => { const p = part(r.part_num); if (!p) return;
+    const o = shelf[p] = shelf[p] || { pcs: 0, cases: 0, noEa: 0, spots: 0 }, c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
+    o.cases += c; o.spots++; if (ea > 0) o.pcs += c * ea; else o.noEa += c; });
+  const stage = {}; (await all('SELECT title, stage FROM reorder_title')).forEach(r => { stage[r.title] = r.stage; });
+  const inc = {}; // part → { making, water } in pieces
+  (await all('SELECT title, part, qty FROM reorder_incoming')).forEach(r => { const p = part(r.part); if (!p) return;
+    const o = inc[p] = inc[p] || { making: 0, water: 0 }, pcs = (parseFloat(r.qty) || 0) * pack(p);
+    if (stage[r.title] === 'production') o.making += pcs; else o.water += pcs; });
+  await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {});
+  const disc = new Set((await all('SELECT part FROM reorder_discontinued')).map(r => U(r.part)));
+  const byFam = {}; [...new Set([...Object.keys(shelf), ...Object.keys(inc)])].forEach(p => { (byFam[fam(p)] = byFam[fam(p)] || []).push(p); });
+  const r2 = x => Math.round((x || 0) * 100) / 100, rows = {};
+  for (const sku of list) {
+    const p = part(sku); if (!p) continue;
+    const pk = pack(p), me = shelf[p] || { pcs: 0, cases: 0, noEa: 0, spots: 0 }, mi = inc[p] || { making: 0, water: 0 };
+    const others = (byFam[fam(p)] || []).filter(x => x !== p);
+    const oShelf = others.reduce((a, x) => a + ((shelf[x] || {}).pcs || 0), 0), oMaking = others.reduce((a, x) => a + ((inc[x] || {}).making || 0), 0), oWater = others.reduce((a, x) => a + ((inc[x] || {}).water || 0), 0);
+    rows[U(sku)] = { part: p, pack: pk, shelfPcs: r2(me.pcs), shelfSets: r2(me.pcs / pk), shelfCases: r2(me.cases), shelfSpots: me.spots, noEaCases: r2(me.noEa),
+      makingPcs: r2(mi.making), waterPcs: r2(mi.water), otherShelfPcs: r2(oShelf), otherMakingPcs: r2(oMaking), otherWaterPcs: r2(oWater),
+      otherParts: others.filter(x => ((shelf[x] || {}).pcs || 0) + ((inc[x] || {}).making || 0) + ((inc[x] || {}).water || 0) > 0).slice(0, 8), discontinued: disc.has(p) };
+  }
+  return J({ ok: true, rows });
 }
 
 async function awdVelocityRequest(env) {
