@@ -9286,7 +9286,8 @@ const _app = {
         catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })); } }
       if (url.searchParams.get('check') === '1' && env.AMAZON_REFRESH_TOKEN) await awdAutoHealth(env).catch(() => {}); // the page is waiting on Inventory Health
       const o = await awdAutoGet(env);
-      return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, inboundCount: o.inboundCount || {}, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
+      return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, awdInbound: o.awdInbound || null, inboundCount: o.inboundCount || {},
+        notRecv: o.notRecv || { items: [] }, notRecvDecide: o.notRecvDecide || {}, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
     }
     // 🚚 Count / don't count one inbound shipment in the AWD planner (e.g. an AWD → FBA transfer shipped from our own address).
     // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
@@ -9299,6 +9300,16 @@ const _app = {
         by: String((session && (session.displayName || session.username)) || '?').slice(0, 40), at: new Date().toISOString() };
       await awdAutoSet(env, 'planCfg', cfg);
       return cors(new Response(JSON.stringify({ ok: true, cfg }), { headers: { 'Content-Type': 'application/json' } }));
+    }
+    // 📭 What happened to an item Amazon never received: { key, decision: 'not-shipped' | 'shipped' | null } — who / when kept, for everyone.
+    if (url.pathname === '/awd/not-received' && method === 'POST') {
+      const b = await request.json().catch(() => ({})), key = String(b.key || '').trim().slice(0, 120);
+      if (!key) return cors(new Response(JSON.stringify({ ok: false, error: 'key needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      const o = await awdAutoGet(env), m = o.notRecvDecide || {};
+      if (!b.decision) delete m[key]; else if (b.decision === 'not-shipped' || b.decision === 'shipped') m[key] = { decision: b.decision, note: String(b.note || '').slice(0, 200), by: String((session && (session.displayName || session.username)) || '?').slice(0, 40), at: new Date().toISOString() };
+      else return cors(new Response(JSON.stringify({ ok: false, error: 'decision: not-shipped / shipped' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      await awdAutoSet(env, 'notRecvDecide', m);
+      return cors(new Response(JSON.stringify({ ok: true, notRecvDecide: m }), { headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.pathname === '/awd/inbound-count' && method === 'POST') {
       const b = await request.json().catch(() => ({})), id = String(b.shipmentId || '').trim().slice(0, 40);
@@ -14389,25 +14400,85 @@ async function awdAutoInventory(env) {
   // we know exactly how many we can ship next time". Every open FBA inbound shipment (FBA Inbound API): per SKU shipped − received =
   // still on the way (what FBA already received is in FBA available / processing — never counted twice). A shipment shipped FROM an
   // Amazon / AWD address is an AWD → FBA transfer (already "Outbound to FBA") → not counted unless switched on.
+  // 📭 Owner (2026-10-22, later): "the items we ship to FBA or AWD: when everything else in the shipment got received but one item still
+  // isn't after 10 days, clear it out — don't count it as stock in FBA / AWD (likely we ran out and didn't ship it) — list them in a tab
+  // with a warning so we can say shipped / not shipped, and the system asks us to ship more instead of waiting forever". Shipments that
+  // closed in the last 60 days come in too; the first time a shipment is seen receiving (or anything in it received) is kept, and an
+  // item still short 10 days after that — while the rest of the shipment is received (or Amazon closed it) — is "not received".
+  const NOTRECV_DAYS = 10;
+  const seen = st.inbSeen || {}, notRecv = [], isoDays = t => (Date.parse(now) - Date.parse(t)) / 864e5;
+  const flagItems = (where, sh, items, receivingNow, closed) => {
+    // items: [{ sku, shipped, received }]
+    const anyRec = items.some(x => x.received > 0);
+    if ((receivingNow || anyRec || closed) && !seen[where + '|' + sh.id]) seen[where + '|' + sh.id] = now;
+    const since = seen[where + '|' + sh.id] || null;
+    items.forEach(x => { x.short = Math.max(0, x.shipped - x.received); });
+    const flagged = new Set();
+    if (since && isoDays(since) >= NOTRECV_DAYS) items.forEach(x => {
+      if (!(x.short > 0)) return;
+      const othersIn = items.filter(y => y !== x).every(y => y.received >= y.shipped);
+      if (othersIn || closed) { flagged.add(x); notRecv.push({ key: where + '|' + sh.id + '|' + String(x.sku).toUpperCase(), where, shipmentId: sh.id, name: sh.name || '', status: sh.status || '', fc: sh.fc || '', from: sh.from || '',
+        sku: x.sku, shipped: x.shipped, received: x.received, missing: x.short, receivingSince: since, days: Math.floor(isoDays(since)) }); }
+    });
+    return { since, flagged };
+  };
   try {
-    const shipments = []; let next = null, pages = 0;
+    const shipments = [], ids = new Set(), addSh = list => list.forEach(x => { if (x && x.ShipmentId && !ids.has(x.ShipmentId)) { ids.add(x.ShipmentId); shipments.push(x); } });
+    let next = null, pages = 0;
     do {
       const p = new URLSearchParams({ MarketplaceId: mid }); if (next) { p.set('QueryType', 'NEXT_TOKEN'); p.set('NextToken', next); }
       else { p.set('QueryType', 'SHIPMENT'); p.set('ShipmentStatusList', 'WORKING,READY_TO_SHIP,SHIPPED,IN_TRANSIT,DELIVERED,CHECKED_IN,RECEIVING'); }
       const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments?${p}`);
-      shipments.push(...(((d.payload || {}).ShipmentData) || [])); next = (d.payload || {}).NextToken || null;
+      addSh(((d.payload || {}).ShipmentData) || []); next = (d.payload || {}).NextToken || null;
     } while (next && ++pages < 40);
+    // closed in the last 60 days (an item Amazon never received stays short there)
+    try { next = null; pages = 0;
+      do {
+        const p = new URLSearchParams({ MarketplaceId: mid }); if (next) { p.set('QueryType', 'NEXT_TOKEN'); p.set('NextToken', next); }
+        else { p.set('QueryType', 'DATE_RANGE'); p.set('ShipmentStatusList', 'CLOSED'); p.set('LastUpdatedAfter', new Date(Date.parse(now) - 60 * 864e5).toISOString()); p.set('LastUpdatedBefore', now); }
+        const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments?${p}`);
+        addSh(((d.payload || {}).ShipmentData) || []); next = (d.payload || {}).NextToken || null;
+      } while (next && ++pages < 20);
+    } catch (_) { /* closed list is extra — the open ones still count */ }
     const rows = []; let units = 0;
-    for (const sh of shipments.slice(0, 150)) {
+    for (const sh of shipments.slice(0, 200)) {
       const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments/${encodeURIComponent(sh.ShipmentId)}/items?MarketplaceId=${mid}`);
       const fa = sh.ShipFromAddress || {}, from = [fa.Name, fa.City, fa.StateOrProvinceCode].filter(Boolean).join(', '), fromAwd = /amazon|awd/i.test(String(fa.Name || ''));
-      (((d.payload || {}).ItemData) || []).forEach(it => { const shipped = +it.QuantityShipped || 0, rec = +it.QuantityReceived || 0, way = Math.max(0, shipped - rec);
+      const status = String(sh.ShipmentStatus || ''), closed = status === 'CLOSED';
+      const items = (((d.payload || {}).ItemData) || []).map(it => { const shipped = +it.QuantityShipped || 0, received = +it.QuantityReceived || 0; return { sku: it.SellerSKU || '', shipped, received, short: Math.max(0, shipped - received) }; });
+      const fl = fromAwd ? { since: null, flagged: new Set() } : flagItems('FBA', { id: sh.ShipmentId, name: sh.ShipmentName, status, fc: sh.DestinationFulfillmentCenterId, from }, items, /RECEIVING|CHECKED_IN|CLOSED/.test(status), closed);
+      items.forEach(x => { const nr = fl.flagged.has(x), way = closed || nr ? 0 : x.short; // closed / not received → nothing more is coming
         if (!fromAwd) units += way;
-        rows.push([sh.ShipmentId || '', sh.ShipmentName || '', sh.ShipmentStatus || '', from, sh.DestinationFulfillmentCenterId || '', it.SellerSKU || '', shipped, rec, way, fromAwd ? 'yes' : '']); });
+        rows.push([sh.ShipmentId || '', sh.ShipmentName || '', status, from, sh.DestinationFulfillmentCenterId || '', x.sku, x.shipped, x.received, way, fromAwd ? 'yes' : '', fl.since || '', nr ? 'yes' : '']); });
     }
-    await awdSheetWrite(env, 'FBA_Inbound', [['shipment-id', 'shipment-name', 'status', 'ship-from', 'fc', 'sku', 'shipped', 'received', 'on-the-way', 'from-awd'], ...rows]);
-    out.inbound = { at: now, count: shipments.length, units, ...(shipments.length > 150 ? { warn: 'More than 150 open shipments — only the first 150 were read' } : {}) };
+    await awdSheetWrite(env, 'FBA_Inbound', [['shipment-id', 'shipment-name', 'status', 'ship-from', 'fc', 'sku', 'shipped', 'received', 'on-the-way', 'from-awd', 'receiving-since', 'not-received'], ...rows]);
+    out.inbound = { at: now, count: shipments.length, units, ...(shipments.length > 200 ? { warn: 'More than 200 shipments — only the first 200 were read' } : {}) };
   } catch (e) { out.inbound = { at: now, error: String(e.message || e).slice(0, 250) }; }
+  // AWD inbound shipments (our warehouse → AWD), updated in the last 60 days: per SKU expected vs received (skuQuantities=SHOW).
+  try {
+    const list = []; let next = null, pages = 0;
+    do {
+      const p = new URLSearchParams({ maxResults: '100', updatedAfter: new Date(Date.parse(now) - 60 * 864e5).toISOString() }); if (next) p.set('nextToken', next);
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inboundShipments?${p}`);
+      list.push(...(d.shipments || [])); next = d.nextToken || null;
+    } while (next && ++pages < 20);
+    let read = 0;
+    for (const sh of list.slice(0, 100)) {
+      const status = String(sh.shipmentStatus || ''); if (/CANCEL|DRAFT/.test(status)) continue;
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inboundShipments/${encodeURIComponent(sh.shipmentId)}?skuQuantities=SHOW`);
+      const q = d.shipmentSkuQuantities || d.skuQuantities || [];
+      const items = q.map(x => ({ sku: x.sku || '', shipped: +((x.expectedQuantity || {}).quantity || 0), received: +((x.receivedQuantity || {}).quantity || 0) })).filter(x => x.sku);
+      if (!items.length) continue;
+      read++;
+      flagItems('AWD', { id: sh.shipmentId, name: d.shipmentName || sh.shipmentName || sh.shipmentId, status, fc: d.destinationWarehouseCode || '', from: '' }, items, /RECEIV|CLOSED|DELIVERED/.test(status), /CLOSED/.test(status));
+    }
+    out.awdInbound = { at: now, count: read };
+  } catch (e) { out.awdInbound = { at: now, error: String(e.message || e).slice(0, 250) }; }
+  // forget shipments not seen for 90 days; keep the list of not-received items (the decisions are kept apart, by item)
+  Object.keys(seen).forEach(k => { if (isoDays(seen[k]) > 120) delete seen[k]; });
+  await awdAutoSet(env, 'inbSeen', seen);
+  await awdAutoSet(env, 'notRecv', { at: now, items: notRecv });
+  await awdAutoSet(env, 'awdInbound', out.awdInbound);
   await awdAutoSet(env, 'inbound', out.inbound);
   // Inventory Health: ask for it now, pick it up on a later tick.
   try {
