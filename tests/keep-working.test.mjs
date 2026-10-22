@@ -8582,5 +8582,25 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   sq.exec("DELETE FROM master_list WHERE base_sku = '29-9-9'; DELETE FROM reorder_incoming WHERE title IN ('PO-Q 10/1','CT-Q 10/9'); DELETE FROM reorder_title WHERE title IN ('PO-Q 10/1','CT-Q 10/9')");
 }
 
+// Owner (2026-10-22): "Shipment Builder template: after we put the units per box, auto fill the box weight — each piece's weight is in
+// Warehouse Lookup → Item Search (23-4-6=2X: 0.14 lb): 0.14 × 2 (each bag is 2 pieces) × 20 bags = 5.6 lb; and the box size: under 5 lb
+// 4×3×3, under 10 lb 6×6×3, under 20 lb 7×6×5, under 25 lb 7×7×7, the rest 10×8×7". (His screenshot also showed no Save button.)
+console.log('\n⚖ AWD box template: units per box → box weight (piece weight × pieces a bag × bags) and box size filled in; Save button visible');
+{
+  const { readFileSync: rfW } = await import('node:fs');
+  const ah = rfW(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ah.indexOf('function ' + n + '('); const j = ah.indexOf('\n}\n', i); return ah.slice(i, j + 2); };
+  const lineOf = n => (ah.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[^\\n]*\\}')) || [''])[0];
+  const lib = new Function('AWD_DB', fnOf('baseSKU_awd') + fnOf('awdPackOf') + lineOf('tplPieceWeight') + lineOf('tplBoxFor') + fnOf('tplCalc') + '\nreturn { tplCalc, tplBoxFor };')(
+    { products: [{ sku: '23-4-6', weight: 0.14 }, { sku: '9-9-9', weight: 0 }] });
+  const c = lib.tplCalc('23-4-6=2X-', '20');
+  check('23-4-6=2X- × 20 bags: 0.14 lb × 2 pcs × 20 = 5.6 lb → box 6×6×3', c.pw === 0.14 && c.pk === 2 && c.lb === 5.6 && c.box.join('x') === '6x6x3', c);
+  check('box sizes: 4.99 lb → 4×3×3 · 5 → 6×6×3 · 19.9 → 7×6×5 · 24 → 7×7×7 · 25 / 40 → 10×8×7',
+    [[4.99, '4x3x3'], [5, '6x6x3'], [9.99, '6x6x3'], [10, '7x6x5'], [19.9, '7x6x5'], [24, '7x7x7'], [25, '10x8x7'], [40, '10x8x7']].every(([w, b]) => lib.tplBoxFor(w).join('x') === b), null);
+  check('…no piece weight in Products → nothing made up (lb 0, no box) and the window says to type it', lib.tplCalc('9-9-9=10', '5').lb === 0 && lib.tplCalc('9-9-9=10', '5').box === null && /No piece weight for ' \+ baseSKU_awd\(sku\)\.toUpperCase\(\) \+ ' in Products/.test(ah), null);
+  check('…the piece weight is read from Products column E (what Item Search shows); a box the person typed is never overwritten; the window\'s Save button has its colors (was white on white)',
+    /weight: parseFloat\(String\(r\[4\]\|\|''\)\.trim\(\)\) \|\| 0/.test(ah) && /if \(!TPL_TYPED\.weight\)/.test(ah) && /oninput="TPL_TYPED\['weight'\]=1"/.test(ah) && /oninput="tplAutoFill\(\)"/.test(ah) && /#add-template-modal \{ --blue:#2563EB;--white:#fff;/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
