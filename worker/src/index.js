@@ -7859,6 +7859,56 @@ async function recountColumnDone(request, env, session) {
 // each column took, when they started and finished it, how many boxes, and what is still not done; skipped to scan".
 // This recount round: every column finished (or ✕ stopped) with who, start → done, minutes, boxes counted, the lines
 // on record nobody scanned (✓ Found / ✗ None found after "look again"); each person's totals; spots not done yet by aisle.
+// 🔎 GET /inventory/recount/check (Admin / Owner) — owner (2026-10-22): "we spent many days on the audit, and between those days
+// we did stock out too — are the audit columns' numbers going to be right?". A count is saved as + / − against the number the
+// phone showed, so it is right unless that number was old (a column brought back days later / a saved copy) or a part # was
+// never on the list (C1=1-1-21: 201-1-11). Checked for every column finished this round, per part # at that spot:
+//   counted (the column's own lines) + what moved there AFTER that part # was counted (approved Stock In / Out / Transfer)
+//   = what SKU Mgr should have now. Not equal → listed. A part # in SKU Mgr at that spot that the column never counted (and no
+//   move after the count explains) → listed as "not counted". A ✏️ SKU Mgr edit of it afterwards → said, so it can be judged.
+async function recountCheck(env) {
+  await recountTables(env);
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
+  const roundStart = await recountRoundStart(env), U = x => String(x || '').trim().toUpperCase(), r3 = x => Math.round((x || 0) * 1000) / 1000;
+  const cols = await d1All(env, 'SELECT id, ts, started_at, location, by_user, detail FROM recount_columns WHERE ts >= ? AND COALESCE(stopped, 0) = 0 ORDER BY ts', [roundStart]);
+  const last = {}; cols.forEach(c => { last[U(c.location)] = c; }); // the latest finished count of each column
+  const logs = await d1All(env, `SELECT id, timestamp, type, part_num, location, cases, initials, notes, status FROM inventory_log
+    WHERE timestamp >= ? AND COALESCE(status, '') = 'Verified' AND cancelled_at IS NULL ORDER BY timestamp, id`, [roundStart]);
+  const byKey = {}; logs.forEach(l => { const k = U(l.part_num) + '|' + U(l.location); (byKey[k] = byKey[k] || []).push(l); });
+  const edits = logs.filter(l => l.type === 'EDIT');
+  const now = {}; (await d1All(env, `SELECT part_num, location, cases FROM master_list WHERE TRIM(COALESCE(location,'')) != ''`, []))
+    .forEach(r => { const k = U(r.part_num) + '|' + U(r.location); now[k] = (now[k] || 0) + (parseFloat(r.cases) || 0); });
+  const sign = t => t === 'IN' || t === 'TRANSFER_IN' ? 1 : t === 'OUT' || t === 'TRANSFER_OUT' ? -1 : 0;
+  const isRc = l => /\(📋 Recount\)/.test(String(l.notes || ''));
+  const problems = []; let checked = 0, partsChecked = 0, unreadable = 0;
+  for (const L of Object.keys(last)) {
+    const c = last[L]; let det; try { det = JSON.parse(c.detail || '[]'); } catch (_) { unreadable++; problems.push({ location: L, by: c.by_user, at: c.ts, why: 'unreadable', part: '' }); continue; }
+    checked++;
+    const counted = {}; (det || []).forEach(x => { const p = U(x.part); if (p) counted[p] = (counted[p] || 0) + (parseFloat(x.counted) || 0); });
+    const parts = new Set(Object.keys(counted));
+    Object.keys(now).forEach(k => { const [p, l] = k.split('|'); if (l === L && now[k] > 1e-9) parts.add(p); });
+    for (const p of parts) {
+      const k = p + '|' + L, ls = byKey[k] || [];
+      // when this part # was counted: its last recount line at the spot up to the column's finish (else the start / finish)
+      const rc = ls.filter(l => isRc(l) && l.timestamp <= c.ts);
+      const t0 = rc.length ? rc[rc.length - 1].timestamp : (c.started_at || c.ts);
+      const after = ls.filter(l => !isRc(l) && l.timestamp > t0 && sign(l.type));
+      const moved = r3(after.reduce((a, l) => a + sign(l.type) * (parseFloat(l.cases) || 0), 0));
+      const ed = edits.filter(l => l.timestamp > t0 && U(l.part_num) === p && (U(l.location) === L || U(l.notes).includes(L)));
+      const has = r3(now[k] || 0);
+      partsChecked++;
+      if (!(p in counted)) {
+        if (has - moved > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(moved), now: has, diff: r3(has - moved), edits: ed.length });
+        continue;
+      }
+      const expected = r3(counted[p] + moved);
+      if (Math.abs(expected - has) > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'off', counted: r3(counted[p]), moved, expected, now: has, diff: r3(has - expected),
+        moves: after.slice(-6).map(l => ({ at: l.timestamp, type: l.type, cases: l.cases, by: l.initials })), edits: ed.length });
+    }
+  }
+  problems.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }) || String(a.part).localeCompare(String(b.part)));
+  return cors(new Response(JSON.stringify({ ok: true, roundStart, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems }), { headers: { 'Content-Type': 'application/json' } }));
+}
 async function recountReport(env) {
   await recountTables(env);
   const roundStart = await recountRoundStart(env);
@@ -9938,6 +9988,10 @@ const _app = {
         // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env);
+      }
+      if (path === '/inventory/recount/check' && method === 'GET') {
+        if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount check' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountCheck(env);
       }
       if (path === '/inventory/recount/assigned' || path === '/inventory/recount/people' || path === '/inventory/recount/assign' || path === '/inventory/recount/assign/close') return await inventoryRecountAssign(path, request, env, session);
       if (path === '/inventory/spot/delete' && method === 'POST') {

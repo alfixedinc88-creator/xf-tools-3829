@@ -8837,5 +8837,46 @@ console.log('\nReview tab off (everything auto approved) — back only while som
     /<button class="itab" id="inv-tab-review" style="display:none" onclick="invSwitchTab\('review'\)">Review/.test(ih) && /var rt = g\("inv-tab-review"\); if \(rt\) rt\.style\.display = n > 0 \? "" : "none";/.test(ih), null);
 }
 
+// Owner (2026-10-22): "what happens to the audit we have done so far? we spent so many days on it, and between those days we did
+// stock out too — are the audit columns' numbers going to be right?" → 🔎 every finished column: counted + moved since = SKU Mgr now.
+console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (stock out between days is fine; an old list or a missed part # is listed)');
+{
+  const mode0 = (await get('/inventory/review-mode')).mode;
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const rs = Date.parse((await get('/inventory/recount/check')).roundStart), t = m => new Date(rs + 1000 + m * 10).toISOString(); // in order, all in this round
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('705-1-1','tee','705-1-1=10','Q5=1-1-1',5,10), ('705-1-2','tee','705-1-2=10','Q5=1-1-2',6,10), ('705-1-3','tee','705-1-3=2','Q5=1-1-3',1,2), ('705-1-4','tee','705-1-4=5','Q5=1-1-3',2,5)`).run();
+  const id = p => sq.prepare('SELECT id FROM master_list WHERE part_num = ?').get(p).id;
+  const tot = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku LIKE '705-1-%'").get().c;
+  const t0 = tot(); // 5 + 6 + 1 + 2 = 14
+  // A) Q5=1-1-1 counted right (5 = 5), then the next day 2 cases taken out → SKU Mgr 3 = 5 − 2 ✅
+  await post('/inventory/log', { type: 'IN', partNum: '705-1-1=10', sku: '705-1-1', location: 'Q5=1-1-1', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 5 cases verified correct (📋 Recount)', masterId: id('705-1-1=10'), clientTimestamp: t(10) });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-1', items: 1, changed: 0, doneAt: t(11), startedAt: t(9), detail: [{ part: '705-1-1=10', pcs: 10, system: 5, counted: 5, how: 'scan' }] });
+  await post('/inventory/log', { type: 'OUT', partNum: '705-1-1=10', sku: '705-1-1', location: 'Q5=1-1-1', cases: 2, initials: 'PK', notes: '[SHELVING]', masterId: id('705-1-1=10'), clientTimestamp: t(100) });
+  // B) Q5=1-1-2: 4 on the shelf, the phone showed an OLD 8 (opened days before) → −4 applied → SKU Mgr 2, should be 4
+  await post('/inventory/log', { type: 'OUT', partNum: '705-1-2=10', sku: '705-1-2', location: 'Q5=1-1-2', cases: 4, initials: 'MK', notes: '[AUDIT] System: 8 → Actual: 4 (diff: -4.0) (📋 Recount)', masterId: id('705-1-2=10'), clientTimestamp: t(20) });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-2', items: 1, changed: 1, doneAt: t(21), startedAt: t(19), detail: [{ part: '705-1-2=10', pcs: 10, system: 8, counted: 4, how: 'scan' }] });
+  // C) Q5=1-1-3: the list had only 705-1-3=2 (counted 1); 705-1-4=5 (2 cases in SKU Mgr) was never on it
+  await post('/inventory/log', { type: 'IN', partNum: '705-1-3=2', sku: '705-1-3', location: 'Q5=1-1-3', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', masterId: id('705-1-3=2'), clientTimestamp: t(30) });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-3', items: 1, changed: 0, doneAt: t(31), startedAt: t(29), detail: [{ part: '705-1-3=2', pcs: 2, system: 1, counted: 1, how: 'scan' }] });
+  const d = await get('/inventory/recount/check'), P = (d.problems || []).filter(p => /^Q5=/.test(p.location)), by = Object.fromEntries(P.map(p => [p.location + ' ' + p.part, p]));
+  const B = by['Q5=1-1-2 705-1-2=10'] || {}, C = by['Q5=1-1-3 705-1-4=5'] || {};
+  check('A) counted 5, then 2 taken out the next day → 5 − 2 = 3 = SKU Mgr ✅ (not listed)', !by['Q5=1-1-1 705-1-1=10'] && +sq.prepare("SELECT cases c FROM master_list WHERE part_num = '705-1-1=10'").get().c === 3, P);
+  check('B) counted 4 against an OLD 8 on the phone → SKU Mgr 2, should be 4: listed "-2 off"', B.why === 'off' && B.counted === 4 && B.expected === 4 && B.now === 2 && B.diff === -2, B);
+  check('C) 705-1-4=5 in SKU Mgr at Q5=1-1-3 (2 cases) but never on the column\'s list → listed "not counted"; 705-1-3=2 counted right is not', C.why === 'not counted' && C.now === 2 && !by['Q5=1-1-3 705-1-3=2'], C);
+  check('…totals behind it add up: 14 − 2 (stock out) − 4 (the recount\'s −4) = ' + tot(), t0 === 14 && tot() === 8, { t0, now: tot() });
+  const pk = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  check('…Admin / Owner only (a picker gets 403)', (await call('/inventory/recount/check', { headers: { 'X-Cred-Token': pk } })).status === 403, null);
+  const { readFileSync: rfN } = await import('node:fs');
+  const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const i0 = ih.indexOf('  window.rcNumCheckHtml = function(d) {'), fn = ih.slice(i0, ih.indexOf('\n  };\n', i0) + 5);
+  const html = new Function('ckE', 'xfrN', 'xfrFmtT', 'var window = {};\n' + fn + '\nreturn window.rcNumCheckHtml;')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x))({ ...d, problems: P, okColumns: 1, columns: 3 });
+  check('…screen (Audit, under the Recount report): "✅ 1 of 3 columns add up · ⚠ 2 columns to look at", each line: spot, part #, counted, moved since, should be, SKU Mgr now, why; 🧩 check mark',
+    /✅ 1 of 3 columns add up · <span[^>]*>⚠ 2 columns to look at \(2 lines\)/.test(html) && (html.match(/class="rc-nc-row"/g) || []).length === 2 && /-2 off/.test(html) && /not counted<\/b>/.test(html)
+      && /id="rc-numcheck"/.test(ih) && /sel: '#rc-numcheck'/.test(rfN(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), html.slice(0, 600));
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%'; DELETE FROM recount_columns WHERE location LIKE 'Q5=%'");
+  await post('/inventory/review-mode', { mode: mode0 || 'auto' });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
