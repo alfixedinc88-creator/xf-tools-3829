@@ -7209,52 +7209,32 @@ async function inventoryTransferVerifyInner(request, env) {
 // Writes a PO note to Master_List col H for all rows matching the base SKU
 // where col I (cases) is blank/zero — these are the "on order" placeholder rows
 // Note format: "M/D/YY order QTY" — matches existing management convention
-async function inventoryPoLog(request, env) {
+// POST /inventory/po-log { sku, note } — a PO note on the part #'s on-order rows (0 cases).
+// 🗄 Owner (2026-10-22): "our own database, not the Google Sheet". It wrote the note into the SHEET's column H — the LOCATION
+// column — which is how notes like "3/7/26 ORDER 500" / "JQ2605B-17 8/17/26" became fake "spots". Now the note goes to the
+// row's Notes (prev_notes) in the database, never the location, with a History line.
+async function inventoryPoLog(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   try {
     const body = await request.json().catch(() => ({}));
-    const { sku, note } = body;
-    if (!sku || !note) return cors(new Response(JSON.stringify({ ok: false, error: 'sku and note required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-
+    const sku = String(body.sku || '').trim(), note = String(body.note || '').trim().slice(0, 300);
+    if (!sku || !note) return J({ ok: false, error: 'sku and note required' }, 400);
+    if (!env.DB) return J({ ok: false, error: 'No database' }, 500);
     const baseSku = sku.split('=')[0].trim().toUpperCase();
-    const mlData  = await invSheetGet(env, 'Master_List!A1:I15000').catch(() => ({ values: [] }));
-    const mlRows  = mlData.values || [];
-
-    // Find all rows for this base SKU where cases (col I) is blank or 0
-    const updates = [];
-    for (let i = 1; i < mlRows.length; i++) {
-      const r       = mlRows[i];
-      const rowSku  = String(r[3] || '').trim().toUpperCase().split('=')[0];
-      const rowPart = String(r[6] || '').trim().toUpperCase().split('=')[0];
-      if (rowSku !== baseSku && rowPart !== baseSku) continue;
-      const cases = String(r[8] || '').trim();
-      // Only update rows where cases is blank or 0 (on-order rows)
-      if (cases !== '' && parseFloat(cases) > 0) continue;
-      const rowNum = i + 1;
-      const existing = String(r[7] || '').trim(); // current col H value
-      // Append note to existing (may already have a date note)
-      const newNote = existing && existing !== note
-        ? existing + '\n' + note
-        : note;
-      updates.push({ range: `Master_List!H${rowNum}`, majorDimension: 'ROWS', values: [[newNote]] });
+    const rows = (await d1All(env, `SELECT * FROM master_list WHERE (UPPER(TRIM(base_sku)) = ? OR UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ?) AND COALESCE(cases, 0) <= 0`, [baseSku, baseSku, baseSku + '=%']))
+      .filter(r => String(r.part_num || '').trim().toUpperCase().split('=')[0] === baseSku);
+    if (!rows.length) return J({ ok: false, error: 'No matching on-order rows found for ' + baseSku }, 404);
+    const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40), ts = new Date().toISOString();
+    for (const r of rows) {
+      const ex = String(r.prev_notes || '').trim();
+      if (ex.split('\n').includes(note)) continue;
+      await env.DB.prepare('UPDATE master_list SET prev_notes = ?, updated_at = ? WHERE id = ?').bind(ex ? ex + '\n' + note : note, ts, r.id).run();
+      await _skuMgrInsertLog(env, who, r, `[PO NOTE] ${String(r.part_num).toUpperCase()} @ ${r.location || ''}: notes + "${note}"`, null).catch(() => {});
     }
-
-    if (!updates.length) {
-      return cors(new Response(JSON.stringify({ ok: false, error: 'No matching on-order rows found for ' + baseSku }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
-    }
-
-    const token = await getToken(env);
-    const resp  = await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values:batchUpdate`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ valueInputOption: 'RAW', data: updates })
-    });
-    const result = await resp.json();
-    if (!resp.ok) throw new Error(result.error?.message || 'batchUpdate failed');
-
     await invalidateMasterListCache(env);
-    return cors(new Response(JSON.stringify({ ok: true, updated: updates.length, note }), { headers: { 'Content-Type': 'application/json' } }));
-  } catch(e) {
-    return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
+    return J({ ok: true, updated: rows.length, note });
+  } catch (e) {
+    return J({ ok: false, error: e.message }, 500);
   }
 }
 
@@ -9782,7 +9762,7 @@ const _app = {
       // review-mode GET: same access level as audit-mode
       if (path === '/inventory/review-mode' && method === 'GET') return await inventoryReviewModeGet(env);
       // location helpers: any valid session
-      if (path === '/inventory/po-log'     && method === 'POST') return await inventoryPoLog(request, env);
+      if (path === '/inventory/po-log'     && method === 'POST') return await inventoryPoLog(request, env, session);
       // pending-count: any valid session — just returns the number, no details
       if (path === '/inventory/pending-count' && method === 'GET') {
         return await inventoryPendingCount(env);
@@ -9942,7 +9922,7 @@ const _app = {
       }
       if (path === '/inventory/edit-row' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventoryEditRow(request, env);
+        return await inventoryEditRow(request, env, session);
       }
       if (path === '/inventory/d1-to-sheets' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -15177,55 +15157,43 @@ async function inventoryD1Verify(env) {
 // MGMT-only manual correction of cases count on a pending review item.
 // Writes to Master_List in Sheets AND D1 simultaneously.
 // Also appends an audit entry to Inventory_Log.
-async function inventoryEditRow(request, env) {
+// POST /inventory/edit-row (mgmt) — set the cases of one SKU Mgr row (Review → ✏️ Edit).
+// 🗄 Owner (2026-10-22): "don't use the Google Sheet anymore — our own database". It used to find the row in the SHEET, write
+// the sheet, then copy to the database (fire-and-forget), and its History line went to the sheet only. Now: the database row
+// (by its id, else part # + spot), its History EDIT line with Part Total Before → After like every SKU Mgr edit; the sheet
+// copy after it is best-effort until the sheet is switched off.
+async function inventoryEditRow(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   try {
     const body = await request.json().catch(() => ({}));
-    const { rowIndex, partNum, location, newCases, notes, item } = body;
-    if (!partNum || !location || newCases === undefined || newCases === null) {
-      return cors(new Response(JSON.stringify({ error: 'Missing required fields' }), {
-        status: 400, headers: { 'Content-Type': 'application/json' }
-      }));
+    const { partNum, location, newCases, notes, item } = body;
+    if (!partNum || !location || newCases === undefined || newCases === null) return J({ error: 'Missing required fields' }, 400);
+    if (!env.DB) return J({ error: 'No database' }, 500);
+    const nc = parseFloat(newCases);
+    if (isNaN(nc) || nc < 0) return J({ error: 'Enter a valid case count' }, 400);
+    const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+    const U = x => String(x || '').trim().toUpperCase();
+    const mid = parseInt((item && (item.masterId || item.masterRowId)) || body.masterId, 10) || 0;
+    let row = mid ? await d1First(env, 'SELECT * FROM master_list WHERE id = ?', [mid]) : null;
+    if (!row) {
+      const rows = await d1All(env, 'SELECT * FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [U(partNum), U(location)]);
+      const sr = parseInt(body.rowIndex, 10) || 0;
+      row = rows.length === 1 ? rows[0] : (sr ? rows.find(r => r.sheet_row === sr) : null) || null;
+      if (!row && rows.length > 1) return J({ error: rows.length + ' SKU Mgr rows of ' + U(partNum) + ' at ' + location + ' — change it in SKU Mgr (each row has its own box size)' }, 409);
     }
-    const rowIndexInt = parseInt(rowIndex) || 0;
-    const ts          = new Date().toISOString();
-    const verifiedBy  = 'MGMT';
-
-    // 1. Find the live Master_List row for this partNum+location
-    const mlData  = await invSheetGet(env, 'Master_List!A1:I15000').catch(() => ({ values: [] }));
-    const mlRows  = mlData.values || [];
-    const liveRow = findMasterRow(mlRows, partNum, location);
-
-    if (liveRow) {
-      // 2. Update cases in Sheets
-      await invSheetUpdate(env, `Master_List!I${liveRow}`, [[newCases]]);
-      // 3. Update cases in D1 — fire-and-forget
-      d1UpdateCases(env, liveRow, newCases).catch(() => {});
-      // 4. Color cell purple (cosmetic) — fire-and-forget
-      invSetPurpleCell(env, liveRow).catch(() => {});
+    if (!row) return J({ error: U(partNum) + ' at ' + location + ' is not in SKU Mgr' }, 404);
+    const old = parseFloat(row.cases) || 0;
+    const tot = await skuMgrTotalsBefore(env, row.id, 0, row.part_num);
+    await env.DB.prepare('UPDATE master_list SET cases = ?, updated_at = ? WHERE id = ?').bind(nc, new Date().toISOString(), row.id).run();
+    await _skuMgrInsertLog(env, who, { ...row, cases: nc }, `[MANUAL EDIT] ${notes || 'cases corrected'} — ${U(row.part_num)} @ ${row.location}: cases ${old} → ${nc}`, tot);
+    if (row.sheet_row > 0) { // best-effort copy to the old sheet until it is switched off
+      invSheetUpdate(env, `Master_List!I${row.sheet_row}`, [[nc]]).catch(() => {});
+      invSetPurpleCell(env, row.sheet_row).catch(() => {});
     }
-
-    // 5. Append audit log entry to Inventory_Log
-    const auditRow = [
-      ts, 'EDIT', partNum.toUpperCase(), location,
-      newCases, verifiedBy,
-      '[MANUAL EDIT] ' + (notes || 'cases corrected'),
-      'Verified', verifiedBy, ts,
-      '', 'FALSE', 'FALSE', rowIndexInt || '', '', '', '', ''
-    ];
-    invSheetAppend(env, 'Inventory_Log!A:R', [auditRow]).catch(() => {});
-
     await invalidateMasterListCache(env);
-
-    return cors(new Response(JSON.stringify({
-      ok: true,
-      partNum, location, newCases,
-      liveRow: liveRow || null
-    }), { headers: { 'Content-Type': 'application/json' } }));
-
-  } catch(e) {
-    return cors(new Response(JSON.stringify({ error: e.message || 'edit-row failed' }), {
-      status: 500, headers: { 'Content-Type': 'application/json' }
-    }));
+    return J({ ok: true, partNum: U(row.part_num), location: row.location, newCases: nc, oldCases: old, d1Id: row.id, liveRow: row.sheet_row || null });
+  } catch (e) {
+    return J({ error: e.message || 'edit-row failed' }, 500);
   }
 }
 
@@ -15577,23 +15545,28 @@ async function _invApplySkuRowInsert(env, fields) {
     vendor || '',                         // M = Vendor
     priceN                                // N = Price
   ];
-  const appendData = await invSheetAppend(env, 'Master_List!A:N', [newRow]);
-  const updatedRange = (appendData.updates && appendData.updates.updatedRange) || appendData.updatedRange || '';
-  const rowMatch = updatedRange.match(/(\d+):/);
-  const newSheetRow = rowMatch ? parseInt(rowMatch[1]) : null;
-
+  // 🗄 Owner (2026-10-22): "don't use the Google Sheet anymore — our own database". The new row is saved in the database FIRST
+  // (it was only saved there when the sheet answered with a row number — a sheet hiccup lost the row). The sheet copy after
+  // it is best-effort (a failure never undoes the save) until the sheet is switched off.
+  if (!env.DB) return { ok: false, status: 500, error: 'No database' };
+  const baseSku = mlParent(partNum); // parent always follows the Part #
   let newD1Id = null;
-  if (env.DB && newSheetRow) {
-    const baseSku = mlParent(partNum); // parent always follows the Part #
-    const insertResult = await d1Run(env,
+  try {
+    const insertResult = await env.DB.prepare(
       `INSERT INTO master_list (sku,base_sku,name,part_num,location,cases,
        units_per_case,vendor,price,prev_notes,sheet_row,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [baseSku, baseSku, name||'', partNum.toUpperCase(), location,
-       casesNum, unitsPerCaseN, vendor||'', priceN, prevNotes||'', newSheetRow, ts]
-    );
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(baseSku, baseSku, name||'', partNum.toUpperCase(), location,
+       casesNum, unitsPerCaseN, vendor||'', priceN, prevNotes||'', 0, ts).run();
     newD1Id = insertResult?.meta?.last_row_id || null;
-  }
+  } catch (e) { return { ok: false, status: 500, error: 'Not saved: ' + String(e.message || e).slice(0, 200) }; }
+  let newSheetRow = null;
+  try {
+    const appendData = await invSheetAppend(env, 'Master_List!A:N', [newRow]);
+    const updatedRange = (appendData && ((appendData.updates && appendData.updates.updatedRange) || appendData.updatedRange)) || '';
+    const rowMatch = updatedRange.match(/(\d+):/);
+    newSheetRow = rowMatch ? parseInt(rowMatch[1]) : null;
+    if (newSheetRow && newD1Id) await env.DB.prepare('UPDATE master_list SET sheet_row = ? WHERE id = ?').bind(newSheetRow, newD1Id).run();
+  } catch (_) {}
   await invalidateMasterListCache(env);
   return { ok: true, sheetRow: newSheetRow, d1Id: newD1Id };
 }
