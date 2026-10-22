@@ -8886,6 +8886,23 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   check('…screen (Audit, under the Recount report): "✅ 1 of 3 columns add up · ⚠ 2 columns to look at", each line: spot, part #, counted, moved since, should be, SKU Mgr now, why; 🧩 check mark',
     /✅ 1 of 3 columns add up · <span[^>]*>⚠ 2 columns to look at \(2 lines\)/.test(html) && (html.match(/class="rc-nc-row"/g) || []).length === 2 && /-2 off/.test(html) && /not counted<\/b>/.test(html)
       && /id="rc-numcheck"/.test(ih) && /sel: '#rc-numcheck'/.test(rfN(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), html.slice(0, 600));
+  // 📜 Owner (2026-10-22): "go through History time by time from 10/16, including all the inventory out" — from a date, SKU Mgr ✏️
+  // edits count too (their Part Total change), every line has its step-by-step timeline; ?all=1 = every spot (for the ⬇ CSV).
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('705-1-7','tee','705-1-7=10','Q5=1-1-7',4,10)").run();
+  await post('/inventory/log', { type: 'IN', partNum: '705-1-7=10', sku: '705-1-7', location: 'Q5=1-1-7', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 4 cases verified correct (📋 Recount)', masterId: id('705-1-7=10'), clientTimestamp: t(90) });
+  await post('/inventory/recount/column-done', { location: 'Q5=1-1-7', items: 1, changed: 0, doneAt: t(91), startedAt: t(89), detail: [{ part: '705-1-7=10', pcs: 10, system: 4, counted: 4, how: 'scan' }] });
+  await post('/inventory/edit-row', { partNum: '705-1-7=10', location: 'Q5=1-1-7', newCases: 5, notes: 'one more found', item: { masterId: id('705-1-7=10') } });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const dA = await get('/inventory/recount/check?all=1&from=' + today), L = Object.fromEntries((dA.lines || []).filter(x => /^Q5=/.test(x.location)).map(x => [x.location + ' ' + x.part, x]));
+  const Gl = L['Q5=1-1-7 705-1-7=10'] || {}, Al = L['Q5=1-1-1 705-1-1=10'] || {};
+  check('G) counted 4, then a ✏️ SKU Mgr edit 4 → 5 at that spot → should be 5 = SKU Mgr 5 ✅ (an edit counts by its Part Total change)', Gl.expected === 5 && Gl.now === 5 && Gl.diff === 0 && !(dA.problems || []).some(p => p.location === 'Q5=1-1-7'), Gl);
+  check('…from a date (' + today + '), time by time: A = COUNTED 5 → OUT −2 PK → 3; every counted spot is in ?all=1 (OK and OFF) for the ⬇ CSV',
+    dA.from === today && JSON.stringify((Al.steps || []).map(x => x.what + ':' + x.run)) === '["COUNTED:5","OUT:3"]' && Al.steps[1].by === 'PK' && Al.steps[1].d === -2
+      && ['Q5=1-1-1', 'Q5=1-1-2', 'Q5=1-1-3', 'Q5=1-1-7'].every(l => Object.keys(L).some(k => k.startsWith(l + ' '))) && (B.steps || []).length >= 1, { Al, keys: Object.keys(L) });
+  const tomorrow = new Date(Date.now() + 2 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  check('…a "From" date after the counts → nothing counted since then (0 columns)', (await get('/inventory/recount/check?from=' + tomorrow)).columns === 0, null);
+  check('…screen: "From" date (10/16/26 to start), 📜 time by time on each line, ⬇ CSV of every counted spot',
+    /id="rc-nc-from" value="2026-10-16"/.test(ih) && /window\.rcNumCheckCsv = /.test(ih) && /📜 time by time \(/.test(ih), null);
   const htmlE = new Function('ckE', 'xfrN', 'xfrFmtT', 'var window = {};\n' + fn + '\nreturn window.rcNumCheckHtml;')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x))({ ...d, problems: [], emptied: [F], okColumns: 3, columns: 3 });
   check('…screen: "🧹 1 found EMPTY after the count — SKU Mgr is 0 … where did they go?" (folded, tap)', /<details class="rc-nc-empty"[^>]*><summary[^>]*>🧹 1 found EMPTY after the count/.test(htmlE) && /<b>NB<\/b>/.test(htmlE), htmlE);
   sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");

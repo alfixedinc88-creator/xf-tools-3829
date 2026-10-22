@@ -1176,6 +1176,12 @@ window.invCredLogin = async function() {
        going to be right?" — every finished column checked: counted + moved since = SKU Mgr now. Admin / Owner only. -->
   <details class="icard" id="rc-numcheck" style="display:none" ontoggle="if(this.open)rcNumCheck()">
     <summary style="cursor:pointer;font-size:14px;font-weight:800;color:var(--accent)">🔎 Do the recount numbers still add up? (counted + moved since = SKU Mgr now)</summary>
+    <!-- 📜 Owner (2026-10-22): "we started the audit on 10/16/26 — go through History time by time from then, including all the
+         inventory out" — from that date, every count + every History line after it, step by step; ⬇ CSV of every spot. -->
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px">
+      <label>From <input type="date" id="rc-nc-from" value="2026-10-16" onchange="rcNumCheck()" style="padding:4px 6px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text)"></label>
+      <button type="button" onclick="rcNumCheckCsv(this)" style="padding:5px 10px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;font-size:12px">⬇ CSV — every counted spot, time by time</button>
+    </div>
     <div id="rc-numcheck-body" style="margin-top:8px;font-size:12px;color:var(--text3)">Loading…</div>
   </details>
   <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
@@ -14425,14 +14431,37 @@ window.invCredLogin = async function() {
   window.rcNumCheck = function() {
     var box = g('rc-numcheck-body'); if (!box) return;
     box.textContent = 'Checking every column…';
-    wFetch(W + '/inventory/recount/check').then(function(r) { return r.json(); }).then(function(d) { box.innerHTML = rcNumCheckHtml(d); })
+    var fr = (g('rc-nc-from') || {}).value || '';
+    wFetch(W + '/inventory/recount/check' + (fr ? '?from=' + encodeURIComponent(fr) : '')).then(function(r) { return r.json(); }).then(function(d) { box.innerHTML = rcNumCheckHtml(d); })
       .catch(function() { box.innerHTML = '<span style="color:var(--red)">📶 Could not check — try again</span>'; });
+  };
+  // One spot + part #, step by step: counted → each History line after it (who, when, ±) → should be.
+  window.rcNumCheckSteps = function(steps) {
+    return (steps || []).map(function(x) { return '<div style="font-family:var(--mono);font-size:11px;white-space:nowrap">' + ckE(String(x.at || '').slice(0, 16).replace('T', ' ')) + ' · <b>' + ckE(x.what) + '</b>'
+      + (x.d != null ? ' ' + (x.d > 0 ? '+' : '') + xfrN(x.d) : '') + ' · ' + ckE(x.by || '') + ' → <b>' + xfrN(x.run) + '</b>' + (x.note ? ' <span style="color:var(--text3)">' + ckE(x.note) + '</span>' : '') + '</div>'; }).join('');
+  };
+  window.rcNumCheckCsv = function(btn) {
+    var fr = (g('rc-nc-from') || {}).value || '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Going through History…'; }
+    wFetch(W + '/inventory/recount/check?all=1' + (fr ? '&from=' + encodeURIComponent(fr) : '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { invFlash((d && d.error) || 'Could not check', 'error'); return; }
+      var q = function(v) { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      var rows = [['Spot', 'Part #', 'Counted', 'Counted by', 'Column done', 'Moved since', 'Should be', 'SKU Mgr now', 'Difference', 'Result', 'Time by time']];
+      (d.lines || []).sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || String(a.part).localeCompare(String(b.part)); }).forEach(function(x) {
+        rows.push([x.location, x.part, x.counted == null ? 'not counted' : x.counted, x.by, x.at, x.moved, x.expected, x.now, x.diff, Math.abs(x.diff) < 1e-6 ? 'OK' : 'OFF',
+          (x.steps || []).map(function(s) { return String(s.at || '').slice(0, 16).replace('T', ' ') + ' ' + s.what + (s.d != null ? ' ' + (s.d > 0 ? '+' : '') + s.d : '') + ' ' + (s.by || '') + ' = ' + s.run; }).join(' | ')]);
+      });
+      var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.map(function(r) { return r.map(q).join(','); }).join('\n')], { type: 'text/csv' }));
+      a.download = 'audit-check-from-' + (fr || 'round') + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+      invFlash('⬇ ' + (d.lines || []).length + ' spot lines checked from ' + (fr || 'the round start'), 'success');
+    }).catch(function() { invFlash('📶 Could not check — try again', 'error'); })
+      .then(function() { if (btn) { btn.disabled = false; btn.textContent = '⬇ CSV — every counted spot, time by time'; } });
   };
   window.rcNumCheckHtml = function(d) {
     if (!d || !d.ok) return '<span style="color:var(--red)">' + ckE((d && d.error) || 'Could not check') + '</span>';
     var P = d.problems || [], spots = {}; P.forEach(function(p) { spots[p.location] = 1; });
     var n = function(v) { return v == null ? '—' : xfrN(v); }, th = 'style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
-    var h = '<div style="color:var(--text2);margin-bottom:6px;line-height:1.5">Every column finished in this recount, each part # at that spot: <b>what was counted + what moved in / out there after the count = what SKU Mgr should have now</b>. <a href="#" onclick="rcNumCheck();return false">↻ Check again</a></div>'
+    var h = '<div style="color:var(--text2);margin-bottom:6px;line-height:1.5">' + (d.from ? 'From <b>' + ckE(d.from) + '</b>: every' : 'Every') + ' column finished in this recount, each part # at that spot: <b>what was counted + what moved in / out there after the count = what SKU Mgr should have now</b>. <a href="#" onclick="rcNumCheck();return false">↻ Check again</a></div>'
       + '<div class="rc-nc-sum" style="font-size:14px;font-weight:800;margin-bottom:8px">✅ ' + d.okColumns + ' of ' + d.columns + ' columns add up'
       + (P.length ? ' · <span style="color:var(--red)">⚠ ' + Object.keys(spots).length + ' column' + (Object.keys(spots).length === 1 ? '' : 's') + ' to look at (' + P.length + ' line' + (P.length === 1 ? '' : 's') + ')</span>' : ' — nothing to fix') + '</div>';
     // 🧹 Owner's screenshot (2026-10-22, "moves: OUT 0 NB 10-21"): counted with boxes, then someone moving boxes found the shelf
@@ -14449,7 +14478,7 @@ window.invCredLogin = async function() {
           : p.why === 'unreadable' ? 'the column\'s count could not be read' : '<b style="color:var(--red)">' + (p.diff > 0 ? '+' : '') + n(p.diff) + ' off</b>' + (p.moves && p.moves.length ? ' — moves: ' + p.moves.map(function(m) { return ckE(m.type + ' ' + m.cases + ' ' + (m.by || '') + ' ' + String(m.at || '').slice(5, 10)); }).join(', ') : '');
         return '<tr class="rc-nc-row"><td ' + td + '><b style="font-family:var(--mono)">' + ckE(p.location) + '</b><div style="color:var(--text3)">' + ckE(p.by || '') + ' ' + ckE(xfrFmtT(p.at)) + '</div></td>'
           + '<td ' + td + '><span style="font-family:var(--mono)">' + ckE(p.part) + '</span></td><td ' + td + '>' + n(p.counted) + '</td><td ' + td + '>' + (p.moved ? (p.moved > 0 ? '+' : '') + n(p.moved) : '0') + '</td>'
-          + '<td ' + td + '>' + n(p.expected) + '</td><td ' + td + '><b>' + n(p.now) + '</b></td><td ' + td + '>' + why + (p.edits ? ' · ✏️ edited in SKU Mgr after the count' : '') + '</td></tr>';
+          + '<td ' + td + '>' + n(p.expected) + '</td><td ' + td + '><b>' + n(p.now) + '</b></td><td ' + td + '>' + why + (p.edits ? ' · ✏️ edited in SKU Mgr after the count' : '') + ((p.steps || []).length ? '<details class="rc-nc-steps"><summary style="cursor:pointer;color:var(--accent)">📜 time by time (' + p.steps.length + ')</summary>' + rcNumCheckSteps(p.steps) + '</details>' : '') + '</td></tr>';
       }).join('') + '</table></div>'
       + '<div style="margin-top:6px;color:var(--text2)">Recount those spots (or send them with 📤 to someone) — the new count makes them right.</div>' + emptyH;
     return h;
