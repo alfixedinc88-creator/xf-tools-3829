@@ -8892,5 +8892,34 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   await post('/inventory/review-mode', { mode: mode0 || 'auto' });
 }
 
+// Owner (2026-10-22): "don't use the Google Sheet anymore — create our own database". Step 1: the saves that still needed the
+// sheet — a new SKU Mgr row (lost if the sheet didn't answer), ✏️ Edit row (sheet first, History line only in the sheet),
+// PO notes (written into the sheet's LOCATION column — where fake "spots" like "3/7/26 ORDER 500" came from).
+console.log('\n🗄 Off the Google Sheet, step 1: SKU Mgr new row / ✏️ Edit row / PO notes are saved in our database (the sheet can be down)');
+{
+  const realF = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { if (String(u).includes('sheets.googleapis.com')) throw new Error('Google Sheets is down'); return realF(u, o); };
+  const sumC = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku = '706-1-1'").get().c || 0;
+  const add = await post('/inventory/sku-row', { mode: 'insert', partNum: '706-1-1=10', location: 'Q4=1-1-1', cases: 4, name: 'tee', unitsPerCase: 10, vendor: 'JQ' });
+  const row = sq.prepare("SELECT id, cases, sheet_row FROM master_list WHERE part_num = '706-1-1=10'").get();
+  check('the sheet is DOWN → a new SKU Mgr row is still saved in the database (4 cases), not lost', add.ok !== false && row && row.cases === 4 && row.sheet_row === 0, { add, row });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('706-1-1','tee','706-1-1=2','Q4=1-1-2',5,2)").run();
+  const id2 = sq.prepare("SELECT id FROM master_list WHERE part_num = '706-1-1=2'").get().id;
+  const t0 = sumC(); // 4 + 5 = 9
+  const ed = await post('/inventory/edit-row', { partNum: '706-1-1=2', location: 'Q4=1-1-2', newCases: 3, notes: 'counted again', item: { masterId: id2 } });
+  const log = sq.prepare("SELECT type, notes, total_before b, total_after a, initials FROM inventory_log WHERE part_num = '706-1-1=2' ORDER BY id DESC").get();
+  check('…✏️ Edit row with the sheet down: the database row 5 → 3, History EDIT line by TS with Part Total 5 → 3; total 9 − 2 = ' + sumC(),
+    ed.ok && ed.oldCases === 5 && sq.prepare('SELECT cases c FROM master_list WHERE id = ?').get(id2).c === 3 && log && log.type === 'EDIT' && /\[MANUAL EDIT\] counted again — 706-1-1=2 @ Q4=1-1-2: cases 5 → 3/.test(log.notes)
+      && log.b === 5 && log.a === 3 && log.initials === 'TS' && t0 === 9 && sumC() === 7, { ed, log, t0, now: sumC() });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('706-1-1','tee','706-1-1=5','Q4=1-1-3',0,5)").run();
+  const po = await post('/inventory/po-log', { sku: '706-1-1', note: '3/7/26 ORDER 500' });
+  const r5 = sq.prepare("SELECT location, prev_notes FROM master_list WHERE part_num = '706-1-1=5'").get();
+  check('…a PO note goes to the on-order row\'s Notes (never its location — that is how "3/7/26 ORDER 500" became a fake spot); History line',
+    po.ok && po.updated === 1 && r5.location === 'Q4=1-1-3' && r5.prev_notes === '3/7/26 ORDER 500'
+      && !!sq.prepare("SELECT 1 FROM inventory_log WHERE part_num = '706-1-1=5' AND notes LIKE '[PO NOTE]%'").get(), r5);
+  globalThis.fetch = realF;
+  sq.exec("DELETE FROM master_list WHERE base_sku = '706-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '706-1-1%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
