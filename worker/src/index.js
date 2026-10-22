@@ -254,7 +254,7 @@ async function adminDbMoveList(env) {
     try { const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(b.id)}?fields=sheets.properties(title,gridProperties(rowCount,columnCount))`, { headers: { Authorization: 'Bearer ' + token } });
       const d = await g.json(); if (d.error) throw new Error(d.error.message); tabs = (d.sheets || []).map(x => x.properties.title); } catch (e) { err = String(e.message || e).slice(0, 160); }
     Object.values(moved).filter(t => t.book === b.id && !tabs.includes(t.tab)).forEach(t => tabs.push(t.tab));
-    books.push({ key: b.key, name: b.names.join(' + '), err, tabs: tabs.map(t => { const m = moved[b.id + '|' + t]; return { tab: t, moved: !!m, rows: m ? m.rows : null, cells: m ? m.cells : null, at: m ? m.copied_at : null, by: m ? m.by_user : null }; }) });
+    books.push({ key: b.key, name: b.names.join(' + '), err, tabs: tabs.map(t => { const m = moved[b.id + '|' + t]; return { tab: t, moved: !!m, hold: XS_HOLD[t] || '', rows: m ? m.rows : null, cells: m ? m.cells : null, at: m ? m.copied_at : null, by: m ? m.by_user : null }; }) });
   }
   return cors(new Response(JSON.stringify({ ok: true, books }), { headers: { 'Content-Type': 'application/json' } }));
 }
@@ -277,9 +277,24 @@ async function adminDbMoveDo(undo, request, env, s) {
   } catch (e) { return J({ ok: false, tab, error: String(e.message || e).slice(0, 300) }, 500); }
 }
 // Copy one tab from Google into the database (once), then check it: same rows, same filled cells, same text.
+// Not moved (yet): a tab Google CALCULATES (formulas — in our database its numbers would freeze), and a tab filled or edited
+// outside the app (new rows there would never reach the app). Each needs its own database version first.
+const XS_HOLD = {
+  Price_Flags: 'filled by a tool outside the app (price alerts) — needs its own database version first',
+  PRICE_DECISION: 'filled outside the app — needs its own database version first',
+  Product_Catalog: 'edited by hand in Google, then imported — edit it in the app first',
+  Master_List: 'the live SKU Mgr is already in our database — next step answers this tab from it directly',
+  Inventory_Log: 'the live History is already in our database — next step answers this tab from it directly',
+};
 async function xsCopyTab(env, book, tab, who) {
   await xsTables(env);
+  if (XS_HOLD[tab]) return { ok: false, tab, hold: true, error: 'Not moved: ' + XS_HOLD[tab] };
   const token = await getToken(env);
+  // formulas? (Google calculates the tab — moving it would freeze the numbers)
+  const fg = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(book)}/values/${encodeURIComponent("'" + tab.replace(/'/g, "''") + "'")}?valueRenderOption=FORMULA`, { headers: { Authorization: 'Bearer ' + token } });
+  const fd = await fg.json().catch(() => ({}));
+  const nF = ((fg.ok && fd.values) || []).reduce((a, r) => a + (r || []).filter(c => typeof c === 'string' && c.startsWith('=')).length, 0);
+  if (nF) return { ok: false, tab, hold: true, formulas: nF, error: 'Not moved: Google calculates this tab (' + nF + ' formula cells) — in our database its numbers would stop updating; it needs its own database version first' };
   const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(book)}/values/${encodeURIComponent("'" + tab.replace(/'/g, "''") + "'")}?valueRenderOption=FORMATTED_VALUE`, { headers: { Authorization: 'Bearer ' + token } });
   const d = await g.json().catch(() => ({}));
   if (!g.ok || d.error) throw new Error((d.error && d.error.message) || 'Google answered ' + g.status);
