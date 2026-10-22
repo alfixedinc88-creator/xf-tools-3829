@@ -9292,6 +9292,14 @@ const _app = {
     // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
     if (url.pathname === '/awd/asin-info' && method === 'GET') return await awdAsinInfo(url, env);
     if (url.pathname === '/awd/stock-summary' && method === 'POST') return await awdStockSummary(request, env);
+    // ⚙ Shared for everyone: days of other-channel sales we keep, how long a vendor container takes, how many days to send Amazon meanwhile.
+    if (url.pathname === '/awd/plan-config' && method === 'POST') {
+      const b = await request.json().catch(() => ({})), n = (v, d, lo, hi) => { const x = parseFloat(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+      const cfg = { keepDays: n(b.keepDays, 60, 0, 365), arriveDays: n(b.arriveDays, 45, 0, 365), bridgeDays: n(b.bridgeDays, 60, 7, 365),
+        by: String((session && (session.displayName || session.username)) || '?').slice(0, 40), at: new Date().toISOString() };
+      await awdAutoSet(env, 'planCfg', cfg);
+      return cors(new Response(JSON.stringify({ ok: true, cfg }), { headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.pathname === '/awd/inbound-count' && method === 'POST') {
       const b = await request.json().catch(() => ({})), id = String(b.shipmentId || '').trim().slice(0, 40);
       if (!id) return cors(new Response(JSON.stringify({ ok: false, error: 'shipmentId needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -14541,17 +14549,41 @@ async function awdStockSummary(request, env) {
   await env.DB.prepare(REORDER_DISC_TABLE).run().catch(() => {});
   const disc = new Set((await all('SELECT part FROM reorder_discontinued')).map(r => U(r.part)));
   const byFam = {}; [...new Set([...Object.keys(shelf), ...Object.keys(inc)])].forEach(p => { (byFam[fam(p)] = byFam[fam(p)] || []).push(p); });
-  const r2 = x => Math.round((x || 0) * 100) / 100, rows = {};
+  // 👪 Owner (2026-10-22): "we have 100 of 25-1-5 in total but ship =2, =5, =10 and =25 30 each — warn us, we don't have that much; and
+  // save some for our shelf and other channels". Per part (every size together): shelf / still making / on the water in pieces, the
+  // pieces our OTHER channels sell a day (eBay, Walmart, Shopify and Amazon SKUs that are not these FBA listings, last 90 days), and
+  // boxes 📦 Received in the last 14 days (new stock came → can ship more).
+  const r2 = x => Math.round((x || 0) * 100) / 100;
+  const fbaSet = new Set(list.map(U)), famsWanted = new Set(list.map(x => fam(part(x))).filter(Boolean));
+  const fams = {};
+  famsWanted.forEach(f => { const ps = byFam[f] || [];
+    fams[f] = { shelfPcs: r2(ps.reduce((a, x) => a + ((shelf[x] || {}).pcs || 0), 0)), makingPcs: r2(ps.reduce((a, x) => a + ((inc[x] || {}).making || 0), 0)),
+      waterPcs: r2(ps.reduce((a, x) => a + ((inc[x] || {}).water || 0), 0)), noEaCases: r2(ps.reduce((a, x) => a + ((shelf[x] || {}).noEa || 0), 0)), otherPcs90: 0, otherDailyPcs: 0, received: null }; });
+  const d90 = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  for (const [t, ch] of SALES_TABLES) {
+    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, d90)) {
+      if (ch === 'Amazon' && fbaSet.has(U(r.sku))) continue; // the FBA listings' own Amazon sales are what AWD / FBA covers
+      const p = part(r.sku), f = p && fam(p); if (!f || !fams[f]) continue;
+      fams[f].otherPcs90 += (parseFloat(r.u) || 0) * pack(p);
+    }
+  }
+  Object.values(fams).forEach(o => { o.otherPcs90 = r2(o.otherPcs90); o.otherDailyPcs = r2(o.otherPcs90 / 90); });
+  const d14 = new Date(Date.now() - 14 * 864e5).toISOString();
+  (await all("SELECT part_num, cases, timestamp FROM inventory_log WHERE type = 'IN' AND notes LIKE '[RECEIVED]%' AND timestamp >= ? AND COALESCE(status,'') NOT IN ('Rejected','Pending') AND cancelled_at IS NULL", d14))
+    .forEach(r => { const p = part(r.part_num), f = p && fam(p); if (!f || !fams[f]) return; const o = fams[f].received = fams[f].received || { boxes: 0, at: '' };
+      o.boxes = r2(o.boxes + (parseFloat(r.cases) || 0)); if (String(r.timestamp) > o.at) o.at = String(r.timestamp); });
+  const rows = {};
   for (const sku of list) {
     const p = part(sku); if (!p) continue;
     const pk = pack(p), me = shelf[p] || { pcs: 0, cases: 0, noEa: 0, spots: 0 }, mi = inc[p] || { making: 0, water: 0 };
     const others = (byFam[fam(p)] || []).filter(x => x !== p);
     const oShelf = others.reduce((a, x) => a + ((shelf[x] || {}).pcs || 0), 0), oMaking = others.reduce((a, x) => a + ((inc[x] || {}).making || 0), 0), oWater = others.reduce((a, x) => a + ((inc[x] || {}).water || 0), 0);
-    rows[U(sku)] = { part: p, name: nameOf[p] || famName[fam(p)] || '', pack: pk, shelfPcs: r2(me.pcs), shelfSets: r2(me.pcs / pk), shelfCases: r2(me.cases), shelfSpots: me.spots, noEaCases: r2(me.noEa),
+    rows[U(sku)] = { part: p, fam: fam(p), name: nameOf[p] || famName[fam(p)] || '', pack: pk, shelfPcs: r2(me.pcs), shelfSets: r2(me.pcs / pk), shelfCases: r2(me.cases), shelfSpots: me.spots, noEaCases: r2(me.noEa),
       makingPcs: r2(mi.making), waterPcs: r2(mi.water), otherShelfPcs: r2(oShelf), otherMakingPcs: r2(oMaking), otherWaterPcs: r2(oWater),
       otherParts: others.filter(x => ((shelf[x] || {}).pcs || 0) + ((inc[x] || {}).making || 0) + ((inc[x] || {}).water || 0) > 0).slice(0, 8), discontinued: disc.has(p) };
   }
-  return J({ ok: true, rows });
+  const cfg = (await awdAutoGet(env).catch(() => ({}))).planCfg || null;
+  return J({ ok: true, rows, fams, cfg });
 }
 
 async function awdVelocityRequest(env) {
