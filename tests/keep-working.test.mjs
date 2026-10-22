@@ -8746,5 +8746,50 @@ console.log('\n📄 Close Batch → USPS scan form (end of day): the forms made,
   check('…🖨 Print sends that form (both pages) the same way as Auto Label (📄 Scan Form Station / ink printer)', JSON.stringify(sent) === '[{"id":11,"parts":2}]', sent);
 }
 
+// Owner (2026-10-22): "I did the Audit on C1=1-1-21, fixed the column, didn't see 201-1-11=2XX and 201-1-11=5XX anymore, but under
+// SKU Mgr each one still has two boxes there — a huge mistake, please check". The recount's "✗ None found" (Approval Mode =
+// Review) waits in Review: Audit already takes it off, SKU Mgr changed only after approval and said nothing. Now SKU Mgr shows it.
+console.log('\n⏳ SKU Mgr shows what is waiting in Review (the C1=1-1-21 recount case): Audit and SKU Mgr never silently disagree');
+{
+  const mode0 = (await get('/inventory/review-mode')).mode;
+  await post('/inventory/review-mode', { mode: 'review' });
+  const L = 'Q7=1-1-21';
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('711-1-11','tee','711-1-11=2XX',?,2,100), ('711-1-11','tee','711-1-11=5XX',?,2,40), ('711-1-11','tee','711-1-11=10',' Q7=1-1-22 ',3,10)`).run(L, L);
+  const ids = Object.fromEntries(sq.prepare("SELECT part_num p, id FROM master_list WHERE base_sku = '711-1-11'").all().map(r => [r.p, r.id]));
+  const tot0 = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku = '711-1-11'").get().c;
+  // the recount: ✗ None found on both (what the phone sends) → waiting in Review
+  const n1 = await post('/inventory/log', { type: 'OUT', partNum: '711-1-11=2XX', sku: '711-1-11', location: L, cases: 2, initials: 'MK', notes: '[AUDIT] [NONE FOUND] System: 2 → Actual: 0 (diff: -2.0) (📋 Recount)', masterId: ids['711-1-11=2XX'] });
+  const n2 = await post('/inventory/log', { type: 'OUT', partNum: '711-1-11=5XX', sku: '711-1-11', location: L, cases: 2, initials: 'MK', notes: '[AUDIT] [NONE FOUND] System: 2 → Actual: 0 (diff: -2.0) (📋 Recount)', masterId: ids['711-1-11=5XX'] });
+  const ls = await get('/inventory/location-search?loc=' + encodeURIComponent(L));
+  const aud = Object.fromEntries((ls.results || []).map(r => [r.partNum, r]));
+  const sk = await get('/inventory/sku-search?q=711-1-11'), S = Object.fromEntries((sk.results || []).map(r => [r.part_num, r]));
+  check('the owner\'s case: after the recount Audit shows 0 (2 waiting), SKU Mgr still 2 cases each (not approved yet) — and now SKU Mgr says "⏳ −2 waiting in Review → 0" with MK and 📋 Recount',
+    n1.ok !== false && !n1.autoApproved && aud['711-1-11=2XX'].adjustedCases === 0 && aud['711-1-11=2XX'].pendingCases === 2 && +S['711-1-11=2XX'].cases === 2 && +S['711-1-11=5XX'].cases === 2
+      && (S['711-1-11=2XX'].pending || []).length === 1 && S['711-1-11=2XX'].pending[0].cases === -2 && S['711-1-11=2XX'].pending[0].by === 'MK' && /📋 Recount/.test(S['711-1-11=2XX'].pending[0].note)
+      && (S['711-1-11=5XX'].pending || [])[0].cases === -2 && !S['711-1-11=10'].pending, { aud, S });
+  const loc = await get('/inventory/sku-search?location=' + encodeURIComponent(L)), ar = await get('/inventory/sku-search?location=Q7');
+  check('…the same on SKU Mgr → By Location (the spot and the whole area)', (loc.results || []).filter(r => (r.pending || []).length).length === 2 && (ar.results || []).filter(r => (r.pending || []).length).length === 2, null);
+  // the screen: under the cases, orange, tap → Review; the cases themselves are not changed
+  const { readFileSync: rfP } = await import('node:fs');
+  const ih = rfP(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const i0 = ih.indexOf('    function skumgrPendingHtml(row) {'), fn = ih.slice(i0, ih.indexOf('\n    }\n', i0) + 6);
+  const ph = new Function(fn + '; return skumgrPendingHtml;')()(S['711-1-11=2XX']);
+  check('…SKU Mgr row: the cases stay 2, under them "⏳ -2 waiting in Review → 0" · MK 📋 Recount (tap → Review)',
+    /⏳ -2 waiting in Review → 0/.test(ph) && /MK \d\d-\d\d 📋 Recount/.test(ph) && /onclick="invSwitchTab\('review'\)"/.test(ph) && /skumgrCostHtml\(row\) \+ skumgrPendingHtml\(row\) \+ '<\/td>'/.test(ih)
+      && new Function(fn + '; return skumgrPendingHtml;')()(S['711-1-11=10']) === '', ph);
+  // a manager approves in Review → SKU Mgr 0, nothing waiting; totals: 2 + 2 + 3 = 7 → 3 (−4 taken out, recorded)
+  const pend = await get('/inventory/pending');
+  for (const d of [n1, n2]) { const it = (pend.items || []).find(x => x.d1Id === d.d1Id); await post('/inventory/verify', { rowIndex: it.rowIndex, action: 'Approved', item: it }); }
+  const sk2 = await get('/inventory/sku-search?q=711-1-11'), S2 = Object.fromEntries((sk2.results || []).map(r => [r.part_num, r]));
+  const tot1 = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku = '711-1-11'").get().c;
+  check('…after approval: SKU Mgr 0 and 0, nothing waiting; total 7 − 4 = ' + tot1 + ' ✅',
+    +S2['711-1-11=2XX'].cases === 0 && +S2['711-1-11=5XX'].cases === 0 && !S2['711-1-11=2XX'].pending && !S2['711-1-11=5XX'].pending && tot0 === 7 && tot1 === 3, { S2, tot0, tot1 });
+  // a spot saved with spaces around it (" Q7=1-1-22 ") is still on that column's recount list (was left off: nothing to count)
+  const ls2 = await get('/inventory/location-search?loc=Q7=1-1-22');
+  check('…a spot saved with spaces around it is still on the recount / Audit list for that column', (ls2.results || []).some(r => r.partNum === '711-1-11=10'), ls2);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '711-1-11'; DELETE FROM inventory_log WHERE part_num LIKE '711-1-11%'");
+  await post('/inventory/review-mode', { mode: mode0 || 'auto' });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

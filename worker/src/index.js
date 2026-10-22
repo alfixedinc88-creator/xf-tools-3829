@@ -7275,9 +7275,9 @@ async function inventoryLocationSearch(url, env) {
         const [d1Rows, pMap] = await Promise.all([
           d1All(env,
             `SELECT id,sku,name,part_num,location,cases,units_per_case,sheet_row FROM master_list
-             WHERE UPPER(location) = ?
-                OR UPPER(location) LIKE ?
-                OR UPPER(location) LIKE ?`,
+             WHERE UPPER(TRIM(location)) = ?
+                OR UPPER(TRIM(location)) LIKE ?
+                OR UPPER(TRIM(location)) LIKE ?`,
             [q, q + '-%', q + '=%']),
           buildPendingMap(env)
         ]);
@@ -15227,6 +15227,22 @@ async function inventoryArrivals(request, env) {
   }
   return J({ ok: true, rows: out });
 }
+// ⏳ Owner (2026-10-22): "I did the Audit on C1=1-1-21, fixed the column, didn't see 201-1-11=2XX / =5XX anymore, but SKU Mgr
+// still shows two boxes each — a huge mistake". A recount (or any Stock In / Out / Transfer) in Approval Mode = Review waits
+// in Review: Audit / Checking already take it off (cases − waiting), but SKU Mgr changes only when a manager approves it, and
+// it said nothing. Each SKU Mgr row now carries what is waiting for it (never changes the cases — only an approval does).
+async function skuSearchAddPending(env, rows) {
+  if (!rows || !rows.length || rows.length > 5000) return rows;
+  const K = (p, l) => String(p || '').trim().toUpperCase() + '|' + String(l || '').trim().toUpperCase();
+  const want = new Set(rows.map(r => K(r.part_num, r.location)));
+  const pend = await d1All(env, `SELECT id, type, part_num, location, cases, initials, timestamp, notes FROM inventory_log WHERE status = 'Pending' ORDER BY id LIMIT 5000`, []).catch(() => []);
+  const by = {};
+  pend.forEach(l => { const k = K(l.part_num, l.location); if (!want.has(k)) return;
+    const t = String(l.type || '').toUpperCase(), c = parseFloat(l.cases) || 0, sign = /OUT/.test(t) ? -1 : 1;
+    (by[k] = by[k] || []).push({ id: l.id, type: t, cases: c * sign, by: l.initials || '', at: l.timestamp || '', note: String(l.notes || '').slice(0, 160) }); });
+  rows.forEach(r => { const p = by[K(r.part_num, r.location)]; if (p) r.pending = p; });
+  return rows;
+}
 async function inventorySkuSearch(url, env) {
   const q        = (url.searchParams.get('q') || '').trim().toUpperCase();
   const locQ     = (url.searchParams.get('location') || '').trim().toUpperCase();
@@ -15258,6 +15274,7 @@ async function inventorySkuSearch(url, env) {
               m.part_num, m.location, m.cases, m.units_per_case, m.vendor, m.price, m.prev_notes, m.sheet_row
        FROM master_list m WHERE (UPPER(TRIM(m.location)) = ? OR UPPER(TRIM(m.location)) LIKE ?) AND m.cases > 0 ORDER BY m.location, m.part_num`,
       [area, area + '=%']);
+    await skuSearchAddPending(env, rows);
     return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'area', area, summary: areaSum(rows) }),
       { headers: { 'Content-Type': 'application/json' } }));
   }
@@ -15275,6 +15292,7 @@ async function inventorySkuSearch(url, env) {
          ORDER BY m.part_num`,
         [locQ]
       );
+      await skuSearchAddPending(env, rows);
       return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'location', summary: areaSum(rows) }),
         { headers: { 'Content-Type': 'application/json' } }));
     } catch(e) {
@@ -15332,6 +15350,7 @@ async function inventorySkuSearch(url, env) {
           if (/^\d{8,14}$/.test(digits)) {
             const part = await upcToPart(env, digits).catch(() => null);
             const r2 = part ? await d1All(env, `${SEL} WHERE UPPER(TRIM(m.part_num)) = ? ${inst} ORDER BY m.location`, [String(part).toUpperCase()]) : [];
+            await skuSearchAddPending(env, r2);
             return cors(new Response(JSON.stringify({ ok: true, results: r2, source: 'd1', matchedBy: 'upc', upc: digits, upcPart: part || null }), { headers: { 'Content-Type': 'application/json' } }));
           }
           const words = q.split(/\s+/).filter(w => w.length > 0).slice(0, 8);
@@ -15339,10 +15358,12 @@ async function inventorySkuSearch(url, env) {
             const nm = `UPPER(COALESCE(NULLIF(m.name,''), (SELECT p.name FROM products p WHERE UPPER(p.sku)=UPPER(m.base_sku) LIMIT 1), ''))`;
             const r2 = await d1All(env, `${SEL} WHERE m.part_num != '' AND ${words.map(() => `${nm} LIKE ? ESCAPE '\\'`).join(' AND ')} ${inst} ORDER BY m.part_num ${sortDir}, m.location LIMIT 1000`,
               words.map(w => '%' + w.replace(/[\\%_]/g, '\\$&') + '%'));
+            await skuSearchAddPending(env, r2);
             return cors(new Response(JSON.stringify({ ok: true, results: r2, source: 'd1', matchedBy: 'name' }), { headers: { 'Content-Type': 'application/json' } }));
           }
         }
       }
+      if (!isAll) await skuSearchAddPending(env, rows);
       return cors(new Response(JSON.stringify({ ok: true, results: rows, source: 'd1' }),
         { headers: { 'Content-Type': 'application/json' } }));
     } catch(e) { console.error('[D1] sku-search:', e.message); }
