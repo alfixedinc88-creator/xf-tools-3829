@@ -8899,13 +8899,35 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   check('…from a date (' + today + '), time by time: A = COUNTED 5 → OUT −2 PK → 3; every counted spot is in ?all=1 (OK and OFF) for the ⬇ CSV',
     dA.from === today && JSON.stringify((Al.steps || []).map(x => x.what + ':' + x.run)) === '["COUNTED:5","OUT:3"]' && Al.steps[1].by === 'PK' && Al.steps[1].d === -2
       && ['Q5=1-1-1', 'Q5=1-1-2', 'Q5=1-1-3', 'Q5=1-1-7'].every(l => Object.keys(L).some(k => k.startsWith(l + ' '))) && (B.steps || []).length >= 1, { Al, keys: Object.keys(L) });
+  // Owner (2026-10-23): "everything we can think of that changes the inventory quantities" — read the way the server applied it:
+  // H) a Checking "None found count" (5 → 3) is −2, not "set to 0"; I) a cancelled Stock Out (its reversal is its own line) = back;
+  // J) a SKU Mgr edit that moves the row to another spot = gone from the counted spot (not "off"); K) a Transfer out of the spot.
+  const mk = (p, l, c) => { sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES (?,?,?,?,?,10)").run(p.split('=')[0], 'tee', p, l, c); return id(p); };
+  const cnt = async (p, l, c, m) => { await post('/inventory/log', { type: 'IN', partNum: p, sku: p.split('=')[0], location: l, cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: ' + c + ' cases verified correct (📋 Recount)', masterId: id(p), clientTimestamp: t(m) });
+    await post('/inventory/recount/column-done', { location: l, items: 1, changed: 0, doneAt: t(m + 1), startedAt: t(m - 1), detail: [{ part: p, pcs: 10, system: c, counted: c, how: 'scan' }] }); };
+  mk('705-2-1=10', 'Q5=2-1-1', 5); await cnt('705-2-1=10', 'Q5=2-1-1', 5, 100);
+  await post('/inventory/log', { type: 'OUT', partNum: '705-2-1=10', sku: '705-2-1', location: 'Q5=2-1-1', cases: 2, initials: 'CK', notes: '[AUDIT] [NONE FOUND COUNT] System: 5 → Actual: 3 (diff: -2.0)', masterId: id('705-2-1=10') });
+  mk('705-2-2=10', 'Q5=2-1-2', 5); await cnt('705-2-2=10', 'Q5=2-1-2', 5, 110);
+  const o2 = await post('/inventory/log', { type: 'OUT', partNum: '705-2-2=10', sku: '705-2-2', location: 'Q5=2-1-2', cases: 2, initials: 'PK', notes: '[SHELVING]', masterId: id('705-2-2=10') });
+  const cx = await post('/inventory/cancel-entry', { id: o2.d1Id, cancelledBy: 'TS' });
+  const j3 = mk('705-2-3=10', 'Q5=2-1-3', 3); await cnt('705-2-3=10', 'Q5=2-1-3', 3, 120);
+  await post('/inventory/sku-row', { mode: 'update', d1Id: j3, partNum: '705-2-3=10', location: 'Q5=9-9-9', cases: 3, name: 'tee', unitsPerCase: 10 });
+  mk('705-2-4=10', 'Q5=2-1-4', 4); await cnt('705-2-4=10', 'Q5=2-1-4', 4, 130);
+  await post('/inventory/transfer', { partNum: '705-2-4=10', sku: '705-2-4', fromLocation: 'Q5=2-1-4', fromMasterId: id('705-2-4=10'), toLocation: 'Q5=9-9-8', isNewLocation: true, cases: 1, initials: 'TS', notes: 'test' });
+  const dR = await get('/inventory/recount/check?all=1&from=' + today), R = Object.fromEntries((dR.lines || []).filter(x => /^Q5=2-/.test(x.location)).map(x => [x.location, x]));
+  const cm = l => (R[l] ? R[l].expected + '/' + R[l].now : 'none');
+  check('H) a Checking "None found count" 5 → 3 after the count is −2 (should be 3 = SKU Mgr 3), not "set to 0"', cm('Q5=2-1-1') === '3/3', R['Q5=2-1-1']);
+  check('I) counted 5, Stock Out 2, then that Stock Out CANCELLED → back to 5 = SKU Mgr 5 (not undone twice)', cx.ok !== false && cm('Q5=2-1-2') === '5/5', { cx, l: R['Q5=2-1-2'] });
+  check('J) counted 3, then SKU Mgr moved the row to Q5=9-9-9 → the counted spot should be 0 = SKU Mgr 0 (not "off")', cm('Q5=2-1-3') === '0/0' && /SKU MGR \(moved away\)/.test(JSON.stringify(R['Q5=2-1-3'].steps)), R['Q5=2-1-3']);
+  check('K) counted 4, then a Transfer of 1 out → 3 = SKU Mgr 3', cm('Q5=2-1-4') === '3/3', R['Q5=2-1-4']);
+  check('…none of H / I / J / K is listed as a problem', !(dR.problems || []).some(p => /^Q5=2-/.test(p.location)), (dR.problems || []).filter(p => /^Q5=2-/.test(p.location)));
   const tomorrow = new Date(Date.now() + 2 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   check('…a "From" date after the counts → nothing counted since then (0 columns)', (await get('/inventory/recount/check?from=' + tomorrow)).columns === 0, null);
   check('…screen: "From" date (10/16/26 to start), 📜 time by time on each line, ⬇ CSV of every counted spot',
     /id="rc-nc-from" value="2026-10-16"/.test(ih) && /window\.rcNumCheckCsv = /.test(ih) && /📜 time by time \(/.test(ih), null);
   const htmlE = new Function('ckE', 'xfrN', 'xfrFmtT', 'var window = {};\n' + fn + '\nreturn window.rcNumCheckHtml;')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x))({ ...d, problems: [], emptied: [F], okColumns: 3, columns: 3 });
   check('…screen: "🧹 1 found EMPTY after the count — SKU Mgr is 0 … where did they go?" (folded, tap)', /<details class="rc-nc-empty"[^>]*><summary[^>]*>🧹 1 found EMPTY after the count/.test(htmlE) && /<b>NB<\/b>/.test(htmlE), htmlE);
-  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku LIKE '705-2-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705-2-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");
   await post('/inventory/review-mode', { mode: mode0 || 'auto' });
 }
 

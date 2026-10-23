@@ -8117,14 +8117,61 @@ async function recountCheck(env, url) {
   const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
   const cols = await d1All(env, 'SELECT id, ts, started_at, location, by_user, detail FROM recount_columns WHERE ts >= ? AND COALESCE(stopped, 0) = 0 ORDER BY ts', [roundStart]);
   const last = {}; cols.forEach(c => { last[UL(c.location)] = c; }); // the latest finished count of each column
-  const logs = await d1All(env, `SELECT id, timestamp, type, part_num, location, cases, initials, notes, status, total_before, total_after FROM inventory_log
-    WHERE timestamp >= ? AND COALESCE(status, '') = 'Verified' AND cancelled_at IS NULL ORDER BY timestamp, id`, [roundStart]);
-  const byKey = {}; logs.forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (byKey[k] = byKey[k] || []).push(l); });
-  const edits = logs.filter(l => l.type === 'EDIT');
+  // 📜 Owner (2026-10-23): "everything we can think of that changes the inventory quantities". Every History line since the date, read
+  // the way the server APPLIED it (checked path by path): approved = Verified (old rows imported from the sheet: Approved); the time is
+  // when it was approved (an entry saved before the count but approved after it counts after); a cancelled entry still counts (its
+  // reversal is its own line — skipping both would undo it twice).
+  const logs = await d1All(env, `SELECT id, timestamp, verified_at, type, part_num, location, overwrite_loc, paired_location, transfer_id, cases, initials, notes, status, total_before, total_after
+    FROM inventory_log WHERE COALESCE(NULLIF(verified_at, ''), timestamp) >= ? AND (COALESCE(status, '') IN ('Verified', 'Approved') OR (type IN ('TRANSFER_IN', 'TRANSFER_OUT') AND COALESCE(status, '') = 'Pending'))
+    ORDER BY COALESCE(NULLIF(verified_at, ''), timestamp), id`, [roundStart]);
+  const te = l => l.verified_at || l.timestamp, isRc = l => /\(📋 Recount\)/.test(String(l.notes || ''));
+  const num = v => (v === null || v === undefined || v === '' ? null : parseFloat(v));
+  const fx = {}; // part|spot → [{ at, kind: 'd' (± cases, OUT never below 0) | 'set' (to cases) | 'zero', n, what, by, note }]
+  const add = (part, spot, e) => { if (!part || !spot) return; const k = UP(part) + '|' + UL(spot); (fx[k] = fx[k] || []).push(e); };
+  const ed = l => { const a = num(l.total_after), b = num(l.total_before); return a !== null && b !== null ? a - b : null; };
+  const tr = {}; logs.filter(l => /^TRANSFER_/.test(l.type || '') && l.transfer_id).forEach(l => { (tr[l.transfer_id] = tr[l.transfer_id] || []).push(l); });
+  for (const l of logs) {
+    if (isRc(l)) continue; // the count lines themselves (the count is the start)
+    const t = String(l.type || '').toUpperCase(), n = parseFloat(l.cases) || 0, notes = String(l.notes || ''), base = { at: te(l), by: l.initials || '', note: notes.slice(0, 120), id: l.id };
+    if (t === 'MOVE') continue; // Audit "📍 Location moved": approved, but nothing moves in SKU Mgr
+    if (t === 'IN' || t === 'OUT') {
+      if (l.status === 'Pending') continue;
+      const spot = (l.overwrite_loc && String(l.overwrite_loc).trim()) || l.location; // the approval changes the "put it here" spot
+      if (/\[CANCELLED ENTRY #/.test(notes)) { const d = ed(l); add(l.part_num, l.location, { ...base, kind: 'd', n: d !== null ? d : (t === 'IN' ? n : -n), what: 'CANCEL' }); continue; }
+      if (t === 'OUT' && /\[NONE FOUND ON SHELF\]/.test(notes)) { add(l.part_num, spot, { ...base, kind: 'zero', n: 0, what: 'FOUND EMPTY' }); continue; }
+      if (t === 'IN' && /^\[RECEIVE PO\]/.test(notes)) { add(l.part_num, spot, { ...base, kind: 'set', n, what: 'RECEIVE PO (set)' }); continue; }
+      add(l.part_num, spot, { ...base, kind: 'd', n: t === 'IN' ? n : -n, what: t });
+      continue;
+    }
+    if (/^TRANSFER_/.test(t)) { // both sides by transfer id: approved if either side is (the other's status update can fail)
+      const pair = l.transfer_id ? tr[l.transfer_id] || [l] : [l];
+      if (!pair.some(x => x.status === 'Verified' || x.status === 'Approved')) continue;
+      if (pair.indexOf(l) !== pair.findIndex(x => x.status === 'Verified' || x.status === 'Approved')) continue; // once per transfer
+      const o = pair.find(x => x.type === 'TRANSFER_OUT'), i = pair.find(x => x.type === 'TRANSFER_IN');
+      const c = parseFloat((o || i).cases) || 0, at = te(l);
+      if (o) add(o.part_num, o.location, { ...base, at, kind: 'd', n: -c, what: 'TRANSFER OUT' });
+      const toLoc = i ? i.location : o && o.paired_location;
+      if (toLoc) add((i || o).part_num, toLoc, { ...base, at, kind: 'd', n: c, what: 'TRANSFER IN' });
+      continue;
+    }
+    if (t === 'EDIT') {
+      if (/^\[SKU MGR EDIT\]/.test(notes)) { // Part # / Location / Cases "old → new" in the notes: the row left the old part # / spot
+        const g = re => { const m = re.exec(notes); return m ? [m[1].trim(), m[2].trim()] : null; };
+        const P = g(/Part #: (.+?) → (.+?)(?: · |$)/), Lc = g(/Location: (.+?) → (.+?)(?: · |$)/), C = g(/Cases: (.+?) → (.+?)(?: · |$)/);
+        const nP = l.part_num, oP = P ? P[0] : nP, nL = l.location, oL = Lc ? (Lc[0] === '(blank)' ? '' : Lc[0]) : nL;
+        const nC = C ? parseFloat(C[1]) || 0 : n, oC = C ? (C[0] === '(blank)' ? 0 : parseFloat(C[0]) || 0) : n;
+        if (P || Lc) { add(oP, oL, { ...base, kind: 'd', n: -oC, what: 'SKU MGR (moved away)' }); add(nP, nL, { ...base, kind: 'd', n: nC, what: 'SKU MGR (moved here)' }); }
+        else if (C) add(nP, nL, { ...base, kind: 'd', n: nC - oC, what: 'SKU MGR EDIT' });
+        continue;
+      }
+      if (/^\[SKU MGR ADD\]/.test(notes)) { add(l.part_num, l.location, { ...base, kind: 'd', n, what: 'SKU MGR ADD' }); continue; }
+      if (/^\[SKU MGR DELETE\]/.test(notes)) { add(l.part_num, l.location, { ...base, kind: 'd', n: -n, what: 'SKU MGR DELETE' }); continue; }
+      const d = ed(l); if (d !== null && Math.abs(d) > 1e-9 && l.location) add(l.part_num, l.location, { ...base, kind: 'd', n: d, what: 'EDIT' });
+    }
+  }
   const now = {}; (await d1All(env, `SELECT part_num, location, cases FROM master_list WHERE TRIM(COALESCE(location,'')) != ''`, []))
     .forEach(r => { const k = UP(r.part_num) + '|' + UL(r.location); now[k] = (now[k] || 0) + (parseFloat(r.cases) || 0); });
-  const sign = t => t === 'IN' || t === 'TRANSFER_IN' ? 1 : t === 'OUT' || t === 'TRANSFER_OUT' ? -1 : 0;
-  const isRc = l => /\(📋 Recount\)/.test(String(l.notes || ''));
+  const rcAt = {}; logs.filter(isRc).forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (rcAt[k] = rcAt[k] || []).push(te(l)); });
   const problems = [], emptiedList = []; let checked = 0, partsChecked = 0, unreadable = 0;
   for (const L of Object.keys(last)) {
     const c = last[L]; let det; try { det = JSON.parse(c.detail || '[]'); } catch (_) { unreadable++; problems.push({ location: L, by: c.by_user, at: c.ts, why: 'unreadable', part: '' }); continue; }
@@ -8132,38 +8179,35 @@ async function recountCheck(env, url) {
     const counted = {}; (det || []).forEach(x => { const p = UP(x.part); if (p) counted[p] = (counted[p] || 0) + (parseFloat(x.counted) || 0); });
     const parts = new Set(Object.keys(counted));
     Object.keys(now).forEach(k => { const [p, l] = k.split('|'); if (l === L && now[k] > 1e-9) parts.add(p); });
+    Object.keys(fx).forEach(k => { const [p, l] = k.split('|'); if (l === L) parts.add(p); });
     for (const p of parts) {
-      const k = p + '|' + L, ls = byKey[k] || [];
+      const k = p + '|' + L;
       // when this part # was counted: its last recount line at the spot up to the column's finish (else the start / finish)
-      const rc = ls.filter(l => isRc(l) && l.timestamp <= c.ts);
-      const t0 = rc.length ? rc[rc.length - 1].timestamp : (c.started_at || c.ts);
-      // ✏️ a SKU Mgr edit of this part # at this spot: its Part Total Before → After is what it changed here
-      const edD = l => l.type === 'EDIT' && l.total_before != null && l.total_after != null ? (parseFloat(l.total_after) || 0) - (parseFloat(l.total_before) || 0) : null;
-      const after = ls.filter(l => !isRc(l) && l.timestamp > t0 && (sign(l.type) || (edD(l) !== null && Math.abs(edD(l)) > 1e-9)));
-      // 🧹 "checked empty" (Transfer → the grab spot was empty: None Found on shelf, logged as OUT 0) SETS the spot to 0.
-      const empty = l => l.type === 'OUT' && /NONE FOUND/i.test(String(l.notes || ''));
-      const ed = edits.filter(l => l.timestamp > t0 && UP(l.part_num) === p && (UL(l.location) === L || UL(l.notes).includes(L)));
-      const has = r3(now[k] || 0), mv = l => ({ at: l.timestamp, type: empty(l) ? 'EMPTY' : l.type, cases: l.cases, by: l.initials });
+      const rc = (rcAt[k] || []).filter(a => a <= c.ts);
+      const t0 = rc.length ? rc[rc.length - 1] : (c.started_at || c.ts);
+      const after = (fx[k] || []).filter(e => e.at > t0);
+      const has = r3(now[k] || 0);
       let val = p in counted ? counted[p] : 0, moved = 0, emptied = null;
-      const steps = [{ at: rc.length ? rc[rc.length - 1].timestamp : c.ts, what: p in counted ? 'COUNTED' : 'NOT COUNTED', d: null, by: c.by_user, run: r3(val) }];
-      after.forEach(l => {
-        let d;
-        if (empty(l)) { d = -val; val = 0; emptied = l; } else if (l.type === 'EDIT') { d = edD(l); val += d; } else { d = sign(l.type) * (parseFloat(l.cases) || 0); val += d; }
-        moved += d;
-        steps.push({ at: l.timestamp, what: empty(l) ? 'FOUND EMPTY' : l.type, d: r3(d), by: l.initials || '', run: r3(val), note: String(l.notes || '').slice(0, 120) });
+      const steps = [{ at: t0, what: p in counted ? 'COUNTED' : 'NOT COUNTED', d: null, by: c.by_user, run: r3(val) }];
+      after.forEach(e => {
+        const was = val;
+        if (e.kind === 'zero') { val = 0; emptied = e; } else if (e.kind === 'set') val = e.n; else val = Math.max(0, val + e.n); // the server never goes below 0
+        moved += val - was;
+        steps.push({ at: e.at, what: e.what, d: r3(val - was), by: e.by, run: r3(val), note: e.note });
       });
       moved = r3(moved);
+      if (!(p in counted) && !after.length && !(has > 1e-9)) continue; // nothing here at all
       partsChecked++;
-      if (wantAll) allLines.push({ location: L, part: p, by: c.by_user, at: c.ts, counted: p in counted ? r3(counted[p]) : null, moved, expected: r3(val), now: r3(now[k] || 0), diff: r3((now[k] || 0) - val), steps });
+      if (wantAll) allLines.push({ location: L, part: p, by: c.by_user, at: c.ts, counted: p in counted ? r3(counted[p]) : null, moved, expected: r3(val), now: has, diff: r3(has - val), steps });
       if (!(p in counted)) {
-        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), edits: ed.length, steps });
+        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), steps });
         continue;
       }
       const expected = r3(val);
       if (Math.abs(expected - has) > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'off', counted: r3(counted[p]), moved, expected, now: has, diff: r3(has - expected),
-        moves: after.slice(-6).map(mv), edits: ed.length, steps });
+        moves: after.slice(-6).map(e => ({ at: e.at, type: e.what, cases: e.n, by: e.by })), steps });
       else if (emptied && counted[p] > 1e-9) emptiedList.push({ location: L, by: c.by_user, at: c.ts, part: p, counted: r3(counted[p]), now: has,
-        emptiedBy: emptied.initials || '', emptiedAt: emptied.timestamp, note: String(emptied.notes || '').slice(0, 200) });
+        emptiedBy: emptied.by || '', emptiedAt: emptied.at, note: String(emptied.note || '').slice(0, 200) });
     }
   }
   problems.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }) || String(a.part).localeCompare(String(b.part)));
