@@ -2271,7 +2271,17 @@ async function reorderPartInfo(env, raw) {
   // 🔢 Owner (2026-10-17, 26-4-3=100): the boxes show what the vendor file uses — our codes (🔢 saved here, else the UPC
   // list) first, then a ✏️ fix, the vendor's sheet, the vendor box/bag list (the same order as the vendor file's rows).
   const ours = edit || upc;
-  return { ok: true, part: P, base, known: !!(fix || catalog.length || upc || edit || builtIn || sm.length),
+  // 🏷 Owner (2026-10-23): "Barcode / vendor for a part #: I want the item name there too" — our SKU Mgr name for the part #, else another
+  // size of the same part, else Products, else the vendor sheet / saved fix description, else the Amazon listing title; says where from.
+  const nm = [];
+  const smName = sm.find(r => String(r.name || '').trim());
+  if (smName) nm.push([smName.name, 'SKU Mgr']);
+  if (!nm.length) { const f = (await all("SELECT part_num, name FROM master_list WHERE (UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ?) AND TRIM(COALESCE(name,'')) != '' LIMIT 1", like))[0]; if (f) nm.push([f.name, 'SKU Mgr (' + String(f.part_num).trim() + ')']); }
+  if (!nm.length) { const pr = (await all("SELECT name FROM products WHERE UPPER(TRIM(sku)) = ? AND TRIM(COALESCE(name,'')) != '' LIMIT 1", [base.toUpperCase()]))[0]; if (pr) nm.push([pr.name, 'Products']); }
+  if (!nm.length && fix && String(fix.description || '').trim()) nm.push([fix.description, 'saved fix']);
+  if (!nm.length) { const c = catalog.find(x => String(x.description || '').trim()); if (c) nm.push([c.description, c.vendor + ' sheet']); }
+  if (!nm.length) { const a = (await all("SELECT product_name FROM fba_catalog WHERE UPPER(TRIM(sku)) = ? AND TRIM(COALESCE(product_name,'')) != '' LIMIT 1", [P]))[0]; if (a) nm.push([a.product_name, 'Amazon listing']); }
+  return { ok: true, part: P, base, itemName: nm.length ? String(nm[0][0]).trim() : '', itemNameSrc: nm.length ? nm[0][1] : '', known: !!(fix || catalog.length || upc || edit || builtIn || sm.length),
     now: { outside_upc: pick(ours && ours.outside_upc, fix && fix.outside_upc, ...catalog.map(c => c.outside_upc), builtIn && builtIn.outside_upc),
       inside_upc: pick(ours && ours.inside_upc, fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), builtIn && builtIn.inside_upc),
       vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },

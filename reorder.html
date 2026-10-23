@@ -5376,7 +5376,10 @@ function rvoPartFind() {
     (d.links || []).forEach(function (l) { src.push('scan link: ' + l.upc + (l.by_user ? ' (' + l.by_user + ')' : '')); });
     var inp = function (id, v, ph) { return '<input type="text" id="' + id + '" value="' + e(v || '') + '" placeholder="' + ph + '" style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);margin:2px 0 8px">'; };
     body.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px"><span style="font-family:var(--mono)">' + e(d.part) + '</span>'
-      + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
+      + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
+      // 🏷 Owner (2026-10-23): "I want the item name there too"
+      + '<div class="rvo-p-name" style="font-size:14px;margin-bottom:8px;color:var(--text)">🏷 <b>' + (d.itemName ? e(d.itemName) : '<span style="color:var(--orange)">no name anywhere yet</span>') + '</b>'
+        + (d.itemNameSrc ? ' <span style="font-size:11px;color:var(--text3)">(' + e(d.itemNameSrc) + ')</span>' : '') + '</div>'
       + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
       + (d.upcWarn ? '<div style="margin-bottom:8px;color:var(--red);font-weight:600;line-height:1.5">' + e(d.upcWarn).split(' · ').join('<br>') + '</div>' : '')
       // Owner (2026-10-17, 26-4-3=100 "already fixed, the sheet still shows 810097201638"): 2 rows in our UPC list with different codes.
