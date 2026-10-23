@@ -60,6 +60,8 @@ document.addEventListener('input', function (e) {
       { key: 'builder', label: 'Shipment Builder', sel: '#tab-builder', parts: [
         { key: 'addsku', label: '＋ Add SKU (manual)', sel: '#page-builder button[onclick="bldShowManualAdd()"], #bld-manual-panel' },
         { key: 'clearall', label: 'Clear All', sel: '#page-builder button[onclick="clearBuilder()"]' },
+        { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
+        { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
         { key: 'summary', label: 'Shipment Summary', sel: '.sum-card > .card:has(#sum-items)' },
         { key: 'export', label: 'Export (.txt / .xlsx)', sel: '.sum-card > .card:has(#ship-name)' } ] },
       { key: 'settings', label: 'Settings', sel: '#tab-settings', parts: [
