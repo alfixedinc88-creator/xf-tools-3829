@@ -1369,6 +1369,32 @@ async function reorderBackfillWeeklySales(request, url, env) {
 // FNSKU is the ASIN (B0…) when it ships with the maker's / our UPC, and an X00… code when every unit needs Amazon's label. From both
 // Amazon copies the app keeps (the FBA inventory report and the FBA catalog), each Amazon SKU read as our part # (✏️ mapped the same
 // way as the Reorder Planner). barcode: 'amazon' (X00…), 'maker' (= ASIN), '' (not known yet).
+// 🔍 /inventory/box-check — owner (2026-10-23): "the packer scans the label, then the package, so they know they didn't grab the wrong
+// product — make sure we don't ship the wrong product to AWD / FBA". POST { label, product, labelPart, productPart, ok } = one check
+// (who / when, right or wrong, kept); GET ?day=YYYY-MM-DD (New York) = that day's checks, newest first.
+async function inventoryBoxCheck(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS box_check_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, label TEXT, product TEXT,
+    label_part TEXT, product_part TEXT, ok INTEGER, note TEXT)`).run();
+  if (request.method === 'GET') {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const r = nyDateRangeUTC(day);
+    const rows = await d1All(env, 'SELECT * FROM box_check_log WHERE at >= ? AND at < ? ORDER BY id DESC LIMIT 500', [r.start, r.end]);
+    return J({ ok: true, day, checks: rows, right: rows.filter(x => x.ok).length, wrong: rows.filter(x => !x.ok).length });
+  }
+  const b = await request.json().catch(() => ({}));
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/box-check'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 60);
+  if (!t(b.label) || !t(b.product)) return J({ ok: false, error: 'label and product needed' }, 400);
+  const by = t((session && (session.displayName || session.username)) || '?', 40), at = b.at && !isNaN(Date.parse(b.at)) ? new Date(b.at).toISOString() : new Date().toISOString();
+  const ins = await env.DB.prepare('INSERT INTO box_check_log (at, by_user, label, product, label_part, product_part, ok, note) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(at, by, t(b.label), t(b.product), t(b.labelPart), t(b.productPart), b.ok ? 1 : 0, t(b.note, 200)).run();
+  if (session && session.userId && !b.ok) await logUserActivity(env, session.userId, 'box_check_wrong', { label: t(b.label), product: t(b.product), labelPart: t(b.labelPart), productPart: t(b.productPart) }).catch(() => {});
+  const res = { ok: true, id: ins.meta.last_row_id, by, at };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
 async function inventoryAmazonBarcode(env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   await ensureFbaCatalogTable(env);
@@ -10264,6 +10290,7 @@ const _app = {
         return await inventorySetFnsku(request, env);
       }
       if (path === '/inventory/amazon-barcode' && method === 'GET') return await inventoryAmazonBarcode(env);
+      if (path === '/inventory/box-check') return await inventoryBoxCheck(request, url, env, session);
       if (path === '/inventory/fnsku-lookup' && method === 'GET') {
         return await inventoryFnskuLookup(url, env);
       }
