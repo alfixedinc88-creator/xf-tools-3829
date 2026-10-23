@@ -8504,9 +8504,13 @@ async function recountReport(env, url) {
     const st = doneBy[l] ? 'done' : started[l] ? 'started' : 'none';
     a[st === 'done' ? 'done' : st === 'started' ? 'started' : 'notScanned']++;
     if (st === 'done' && checkedAt[l]) a.checked++;
+    // ⚠ Owner (2026-10-23): "if the audit number doesn't match SKU Mgr, give it a different color". The column's newest count.
+    const nc = st === 'done' ? cols.find(c => !c.stopped && String(c.location).toUpperCase() === l) : null;
+    const off = !!(nc && nc.skuMgr && nc.skuMgr.ok === false);
+    if (off) a.off = (a.off || 0) + 1;
     a.spots.push({ l, st, by: st === 'done' ? doneBy[l].by : st === 'started' ? started[l].by : '', at: st === 'done' ? doneBy[l].at : st === 'started' ? started[l].at : '',
       lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l),
-      checked: st === 'done' && checkedAt[l] ? checkedAt[l] : undefined });
+      checked: st === 'done' && checkedAt[l] ? checkedAt[l] : undefined, off: off || undefined });
   });
   // ⚠ odd spot: fewer parts than most spots of its area (FRONT=2-6 among FRONT=4-1-2-6) — likely typed wrong; ✕ deletes it.
   // compared with every spot of the same name before "=" (FRONT3 + FRONT4 + FRONT together, so a lone FRONT=2-6 still shows)
@@ -8530,6 +8534,27 @@ async function recountReport(env, url) {
       [new Date(Date.now() - 3 * 864e5).toISOString()]).catch(() => [])).map(r => { let n = 0; try { n = (JSON.parse(r.spots || '[]') || []).length; } catch (_) {}
         return { id: r.id, at: r.at, by: r.by_user, to: r.to_name, area: r.area, total: n, closedAt: r.closed_at, closedBy: r.closed_by, closedHow: r.closed_how, seenAt: r.seen_at || null }; }),
     spotsWithStock: spots.length, spotsDone: spots.filter(l => doneSet.has(l)).length }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// 🔍 GET /inventory/recount/spot?loc=C1=1-1-1 (Admin / Owner) — owner (2026-10-23): "when I click on the box, I can see all the info:
+// what, how many, how many pieces per case, part # (every detail) is in that column right now, who / when edited them, even stock out
+// and stock in — any change to that column". SKU Mgr now, every recount of the column, and every History entry at that spot.
+async function recountSpot(env, url) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const L = String(url.searchParams.get('loc') || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!L) return J({ ok: false, error: 'loc needed' });
+  await recountTables(env);
+  const sku = (await d1All(env, `SELECT id, part_num, name, cases, units_per_case, updated_at FROM master_list WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY part_num, units_per_case`, [L]).catch(() => []))
+    .map(r => ({ id: r.id, part: r.part_num, name: r.name || '', cases: +r.cases || 0, each: +r.units_per_case || 0, pcs: Math.round((+r.cases || 0) * (+r.units_per_case || 0) * 100) / 100, updatedAt: r.updated_at || null }));
+  const counts = (await d1All(env, `SELECT id, ts, started_at, by_user, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY ts DESC LIMIT 30`, [L]).catch(() => []))
+    .map(r => { let d = []; try { d = JSON.parse(r.detail || '[]') || []; } catch (_) {}
+      return { id: r.id, at: r.ts, startedAt: r.started_at || null, by: r.by_user || '?', stopped: !!r.stopped, recheck: !!r.recheck,
+        lines: d.map(x => ({ part: x.part, pcs: x.pcs, before: x.system, after: x.counted, how: x.how || 'scan', new: !!x.new })) }; });
+  const changes = (await d1All(env, `SELECT id, timestamp, type, part_num, cases, initials, status, verified_by, verified_at, notes, total_before, total_after, paired_location, cancelled_at
+      FROM inventory_log WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY timestamp DESC, id DESC LIMIT 300`, [L]).catch(() => []))
+    .map(r => ({ id: r.id, at: r.timestamp, type: r.type, part: r.part_num, cases: r.cases, by: r.initials || '', status: r.status || '', approvedBy: r.verified_by || '', approvedAt: r.verified_at || '',
+      notes: String(r.notes || '').slice(0, 400), before: r.total_before, after: r.total_after, other: r.paired_location || '', cancelled: r.cancelled_at || null }));
+  const R = v => Math.round(v * 100) / 100;
+  return J({ ok: true, loc: L, skuMgr: sku, totals: { lines: sku.length, cases: R(sku.reduce((a, x) => a + x.cases, 0)), pcs: R(sku.reduce((a, x) => a + x.pcs, 0)) }, counts, changes });
 }
 // POST /inventory/spot/delete { location, force } — managers only (Recount report → 🗺 By area → ✕).
 // Owner (2026-10-17): "weird spots like FRONT 2-6 — an ✕ to delete; no inventory in that column → just delete everything; inventory
@@ -10551,6 +10576,10 @@ const _app = {
         // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env, url);
+      }
+      if (path === '/inventory/recount/spot' && method === 'GET') {
+        if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountSpot(env, url);
       }
       if (path === '/inventory/recount/fix' && method === 'POST') {
         if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can fix the audit numbers' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
