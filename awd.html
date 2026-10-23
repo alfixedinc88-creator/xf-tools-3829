@@ -1043,6 +1043,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="document.getElementById('awd-lbl-file').click()">🏷 Add our template to Amazon box labels (PDF)</button>
                 <input type="file" id="awd-lbl-file" accept="application/pdf,.pdf" style="display:none" onchange="awdLabelsDo(this.files[0]); this.value=''">
                 <p style="font-size:11px;color:var(--gray-400);margin-top:6px;line-height:1.4">The FBA or AWD box label PDF Amazon gives you. Each label's SKU is read off the label; our template (need label · name · UPC · spot) is printed in an empty spot on it.</p>
+                <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-bc" checked> <span>Add the scan barcode + product photo (the packer scans the label, then the product — 🔍 Box check on Stock Out Big Company)</span></label>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
               </div>
             </div></div>
@@ -1961,13 +1962,49 @@ function awdDrawTemplate(ctx, rect, lines, maxFs) {
   ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
   lines.forEach((l, i) => ctx.fillText(l, rect.x + pad, rect.y + pad + i * fs * 1.18));
 }
+// 📷 + ▌▌ Owner (2026-10-23): "add the product photo to the label, and the part #'s UPC barcode — or, if it uses Amazon's own barcode,
+// that barcode — so the packer scans the label, then the product, and knows they didn't grab the wrong one (main point: never ship
+// the wrong product to AWD / FBA)". The code to scan: the listing's FNSKU when Amazon's barcode is required (every unit carries it),
+// else our UPC (from the template). → { code, kind } or null
+function awdScanCode(sku, lines, amz) {
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  const hit = (amz || []).find(x => x.barcode === 'amazon' && (n(x.sku) === n(sku) || n(x.part) === n(sku)));
+  if (hit && hit.fnsku) return { code: hit.fnsku, kind: 'FNSKU' };
+  const upc = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
+  return upc ? { code: upc, kind: 'UPC' } : null;
+}
+let _awdAmzP = null; const _awdPhotos = {};
+function awdAmzList() { if (!_awdAmzP) _awdAmzP = wFetch(W + '/inventory/amazon-barcode').then(r => r.json()).then(d => (d && d.list) || []).catch(() => { _awdAmzP = null; return []; }); return _awdAmzP; }
+async function awdPhoto(base) {
+  base = String(base || '').toUpperCase().split('=')[0]; if (!base) return null;
+  if (!(base in _awdPhotos)) _awdPhotos[base] = wFetch(W + '/inventory/photo-file?base=' + encodeURIComponent(base)).then(r => (r.ok && /^image\//.test(r.headers.get('content-type') || '')) ? r.blob() : null)
+    .then(b => b ? createImageBitmap(b) : null).catch(() => null);
+  return _awdPhotos[base];
+}
+function awdBarcodeCanvas(code) {
+  return new Promise(res => loadJsBarcode(() => { try { const c = document.createElement('canvas'); JsBarcode(c, code, { format: 'CODE128', width: 3, height: 90, displayValue: true, fontSize: 26, margin: 6 }); res(c); } catch (e) { res(null); } }));
+}
+// In the empty spot: the template text (photo on its left) on top, the scan barcode under it. Less room → no photo; the barcode is kept.
+function awdDrawBlock(ctx, rect, lines, bc, photo, maxFs) {
+  const p = Math.max(4, Math.round(rect.w * 0.03)), iw = rect.w - 2 * p;
+  let bh = 0;
+  if (bc) { bh = Math.min(Math.round(rect.h * 0.4), Math.round(maxFs * 4.2)); const bw = Math.min(iw, Math.round(bc.width * bh / bc.height));
+    ctx.drawImage(bc, rect.x + p, rect.y + rect.h - p - bh, bw, bh); }
+  const th = rect.h - 2 * p - (bh ? bh + p : 0);
+  let ps = photo ? Math.min(th, Math.round(iw * 0.32)) : 0;
+  if (ps < maxFs * 2.5) ps = 0; // too small to see — leave the photo off
+  if (ps) { const k = Math.min(ps / photo.width, ps / photo.height), w = photo.width * k, h = photo.height * k; ctx.drawImage(photo, rect.x + p, rect.y + p, w, h); }
+  awdDrawTemplate(ctx, { x: rect.x + p + (ps ? ps + p : 0) - p, y: rect.y, w: iw - (ps ? ps + p : 0) + 2 * p, h: th + 2 * p }, lines, maxFs);
+  return { photo: !!ps, barcode: !!bh };
+}
 async function awdLabelsDo(file) {
   const out = ge('awd-lbl-out'); if (!file) return;
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
   out.innerHTML = '⏳ Reading the labels…';
   try {
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
-    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0;
+    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0;
+    const amz = await awdAmzList();
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
@@ -1981,14 +2018,24 @@ async function awdLabelsDo(file) {
       const n = Math.max(1, found.length); labels += n;
       if (!found.length) noSku.push(p);
       const img = ctx.getImageData(0, 0, cv.width, cv.height).data;
-      found.forEach((f, i) => {
-        const top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n);
+      for (let i = 0; i < found.length; i++) {
+        const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
         const sku = awdLabelMatch(f.sku), lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
-        if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; return; }
-        const rect = awdBlankRect(img, cv.width, 0, top, cv.width, bot - top, Math.round(cv.width / 60), cv.width * 0.3, (bot - top) * 0.12);
-        if (!rect) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; return; }
-        awdDrawTemplate(ctx, rect, lns, Math.round((bot - top) * 0.032)); done++; // ≈ 14 pt on a 6" label
-      });
+        if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
+        const cell = Math.round(cv.width / 60);
+        // room for text + barcode (+ photo) first; else the smaller spot (text only) as before
+        // room for text + photo + barcode → text + barcode (the barcode matters most: the packer scans it) → text only
+        const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
+        const mid = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
+        const rect = mid || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
+        if (!rect) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
+        const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
+        const sc = mid && extra ? awdScanCode(sku, lns, amz) : null;
+        const bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = big && extra ? await awdPhoto(sku) : null;
+        const fs = Math.round(band * 0.032); // ≈ 14 pt on a 6" label
+        const r = mid ? awdDrawBlock(ctx, rect, lns, bc, photo, big ? fs : Math.round(fs * 0.8)) : (awdDrawTemplate(ctx, rect, lns, fs), { photo: false, barcode: false });
+        done++; if (r.barcode) withBc++; if (r.photo) withPhoto++;
+      }
       pages.push({ url: cv.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 });
     }
     const w = window.open('', '_blank');
@@ -1998,7 +2045,8 @@ async function awdLabelsDo(file) {
       + pages.map(x => '<img src="' + x.url + '">').join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
     w.document.close();
     const nt = Object.keys(noTpl);
-    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + done + '</b> with our template'
+    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + done + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+      + (done > withBc ? '<div style="color:#C2410C">⚠ ' + (done - withBc) + ' with no scan barcode (no room on the label, or no UPC / FNSKU on record)</div>' : '')
       + (noSku.length ? '<div style="color:#C2410C">⚠ ' + noSku.length + ' page' + (noSku.length === 1 ? '' : 's') + ' with no single SKU (mixed box?) — left as they are: page ' + noSku.slice(0, 20).join(', ') + (noSku.length > 20 ? '…' : '') + '</div>' : '')
       + (nt.length ? '<div style="color:#C2410C">⚠ No template for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — left as they are</div>' : '');
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }

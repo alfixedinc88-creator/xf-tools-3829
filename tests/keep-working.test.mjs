@@ -9189,5 +9189,45 @@ console.log('\n🏷 Shipment Builder: ✅ Make template for a short row + our te
       && /sel: '#awd-lbl-card'/.test(rfA(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
 }
 
+// Owner (2026-10-23): "add the product photo and the part #'s UPC barcode — or Amazon's own barcode if it uses that — to the label, so the
+// packer scans the label, then the package, and knows they didn't grab the wrong product. Main point: double check — never ship the
+// wrong product to AWD / FBA."
+console.log('\n🔍 Box check: scan the box label, then the product → ✅ right / ❌ wrong (kept); the label gets the scan barcode + photo');
+{
+  const { readFileSync: rfX } = await import('node:fs');
+  const ih = rfX(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ah = rfX(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  // the page's check: label code vs product code (same code, or both read as the same part #)
+  const code = ih.slice(ih.indexOf('  var BXC = { label: null };'), ih.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = { 'inv-bc-res': { innerHTML: '' }, 'inv-bc-step': { textContent: '' }, 'inv-bc-inp': { focus() {} }, 'inv-bc-lp': { innerHTML: '' } };
+  const posts = [];
+  const look = { '850000000017': '711-1-1=10', '850000000024': '711-1-1=10', '850000000999': '711-9-9=5' };
+  const env = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', code + '; return window;')(
+    id => els[id], async u => ({ json: async () => { const c = decodeURIComponent(u.split('code=')[1] || ''); return look[c] ? { partNum: look[c], name: 'tee' } : { error: 'nf' }; } }), '',
+    async () => ({ list: [{ fnsku: 'X00TEST001', part: '711-2-2=5', name: 'other brand cap', barcode: 'amazon' }] }),
+    async (u, o) => { posts.push(JSON.parse(o.body)); return { json: async () => ({ ok: true }) }; }, x => String(x == null ? '' : x), () => {}, {}, {});
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  const scan = async v => { env.invBoxCheckScan(v); await tick(); await tick(); };
+  await scan('850000000017'); await scan('850000000024'); const r1 = els['inv-bc-res'].innerHTML;
+  await scan('850000000999'); const r2 = els['inv-bc-res'].innerHTML;
+  env.invBoxCheckReset(); await scan('X00TEST001'); await scan('X00TEST001'); const r3 = els['inv-bc-res'].innerHTML;
+  check('box label UPC (outside box) + the product\'s inside-bag UPC of the SAME part # → ✅ RIGHT PRODUCT; another part # → ❌ WRONG PRODUCT — don\'t pack it!; FNSKU label + the unit\'s FNSKU → ✅; every check sent to be kept',
+    /✅ RIGHT PRODUCT/.test(r1) && /❌ WRONG PRODUCT — don't pack it!/.test(r2) && /711-9-9=5/.test(r2) && /✅ RIGHT PRODUCT/.test(r3) && posts.length === 3
+      && posts[0].ok === true && posts[1].ok === false && posts[1].labelPart === '711-1-1=10' && posts[1].productPart === '711-9-9=5' && posts[2].ok === true, { posts, r2 });
+  // the server keeps them: who / when / right or wrong; the day's count; sent twice (no WiFi, then back) = kept once
+  const a = await post('/inventory/box-check', { label: '850000000017', product: '850000000024', labelPart: '711-1-1=10', productPart: '711-1-1=10', ok: true, _requestId: 'bxc-1' });
+  await post('/inventory/box-check', { label: '850000000017', product: '850000000024', labelPart: '711-1-1=10', productPart: '711-1-1=10', ok: true, _requestId: 'bxc-1' });
+  await post('/inventory/box-check', { label: '850000000017', product: '850000000999', labelPart: '711-1-1=10', productPart: '711-9-9=5', ok: false, _requestId: 'bxc-2' });
+  const day = await get('/inventory/box-check');
+  check('…the server keeps every check (by TS, when): today ✅ 1 right · ❌ 1 wrong — the same check sent twice is kept once',
+    a.ok && a.by === 'TS' && day.right === 1 && day.wrong === 1 && day.checks.find(x => !x.ok).product_part === '711-9-9=5', day);
+  const sc = new Function(ah.slice(ah.indexOf('function awdScanCode('), ah.indexOf('let _awdAmzP = null;')) + '; return awdScanCode;')();
+  check('…the label\'s scan barcode is the FNSKU when Amazon\'s barcode is required, else our UPC; ☑ Add the scan barcode + product photo (can be unticked); 🔍 Box check only on Big Company; 🧩 check mark',
+    JSON.stringify(sc('30-3-6=2X-', ['2X=1/2F19', '810139938552'], [{ sku: '30-3-6=2X-', part: '30-3-6=2X', fnsku: 'X00ABC1234', barcode: 'amazon' }])) === '{"code":"X00ABC1234","kind":"FNSKU"}'
+      && JSON.stringify(sc('31-6-1=2XX-', ['2XX=3/8ODx1/2P', '840428935436', 'BARN=21-2-4'], [])) === '{"code":"840428935436","kind":"UPC"}'
+      && /id="awd-lbl-bc" checked/.test(ah) && /bxC\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ih)
+      && /sel: '#inv-boxcheck-card'/.test(rfX(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  sq.exec("DELETE FROM box_check_log");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

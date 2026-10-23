@@ -87,7 +87,8 @@ document.addEventListener('input', function (e) {
         { key: 'allpulls', label: '👥 Everyone\'s Un-grabbed Items', sel: '#inv-allpull-card' },
         { key: 'pulllist', label: 'Pull List', sel: '#inv-pulllist-card' } ] },
       { key: 'stockoutco', label: '🏢 Stock Out Big Company', sel: '#inv-tab-stockoutco', parts: [
-        { key: 'amzbarcode', label: "🏷 Listings that need Amazon's barcode", sel: '#inv-amzbc-card' } ] },
+        { key: 'amzbarcode', label: "🏷 Listings that need Amazon's barcode", sel: '#inv-amzbc-card' },
+        { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
         { key: 'quickadd', label: 'Quick Add', sel: '#inv-quickadd-card' },
