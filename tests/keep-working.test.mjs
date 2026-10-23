@@ -1605,6 +1605,27 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
     globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; await settle();
     sq.exec("DELETE FROM master_list WHERE base_sku IN ('702-1-10','711-1-11','712-1-1'); DELETE FROM inventory_log WHERE part_num LIKE '711-1-11%' OR part_num LIKE '712-1-1%'; DELETE FROM recount_columns WHERE location LIKE 'Q6=%'");
   }
+  // ✅ Owner (2026-10-23): "next to ✕ Stop one more 'Checked' — once anyone audited that column it pops up; if all the case numbers
+  // match, tap Checked and it goes back to scanning a new column".
+  {
+    sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('709-1-1','tee','709-1-1=10','Q6=2-2-2',3,10), ('709-1-2','elbow','709-1-2=5','Q6=2-2-2',2,5), ('709-1-3','cap','709-1-3=2','Q6=2-2-3',1,2)`).run();
+    await post('/inventory/recount/column-done', { location: 'Q6=2-2-2', items: 2, changed: 0, detail: [{ part: '709-1-1=10', pcs: 10, system: 3, counted: 3, how: 'scan' }, { part: '709-1-2=5', pcs: 5, system: 2, counted: 2, how: 'scan' }] });
+    const sum0 = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku LIKE '709-1-%'").get().c;
+    ck = mk(true); w = globalThis.__ckWin;
+    w.rcGo('Q6=2-2-3'); await settle(); await settle(); await settle();
+    const hNever = el('rc-out').innerHTML;
+    globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; await settle();
+    w.rcGo('Q6=2-2-2'); await settle(); await settle(); await settle();
+    const hDone = el('rc-out').innerHTML;
+    check('a column someone already audited shows ✅ Checked next to ✕ Stop; a column never audited does not',
+      /class="rc-checked-btn" onclick="rcChecked\(\)"[^>]*>✅ Checked<\/button><button[^>]*onclick="rcStop\(\)">✕ Stop/.test(hDone) && !/rc-checked-btn/.test(hNever), { hDone: hDone.slice(0, 600) });
+    globalThis.confirm = () => true; w.rcChecked(); delete globalThis.confirm; await settle(); await settle(); await settle();
+    const col = sq.prepare("SELECT by_user, recheck, detail FROM recount_columns WHERE location = 'Q6=2-2-2' ORDER BY id DESC").get(), det = JSON.parse(col.detail || '[]');
+    check('…✅ Checked: saved as a check by TS (every line as it is, "checked"), nothing in SKU Mgr changes, and the screen is back to "scan the column label"',
+      col.by_user === 'TS' && col.recheck === 1 && det.length === 2 && det.every(x => x.how === 'checked' && x.counted === x.system) && el('rc-out').innerHTML === ''
+        && flashes.some(f => /✅ Q6=2-2-2 checked — scan the next column/.test(f)) && sq.prepare("SELECT SUM(cases) c FROM master_list WHERE base_sku LIKE '709-1-%'").get().c === sum0, { col, out: el('rc-out').innerHTML });
+    sq.exec("DELETE FROM master_list WHERE base_sku LIKE '709-1-%'; DELETE FROM recount_columns WHERE location LIKE 'Q6=2-2-%'");
+  }
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
 }
 

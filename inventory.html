@@ -14380,6 +14380,29 @@ window.invCredLogin = async function() {
         var inp = g('rc-inp'); if (inp) inp.focus();
       }).catch(function() { invFlash('Could not mark the column done — try ✅ again', 'error'); });
   }
+  // ✅ Owner (2026-10-23): "next to ✕ Stop one more 'Checked' — whoever did it, once someone audited that column it pops up; if all the
+  // case numbers match, we tap Checked and go back to scanning a new column". Only for a column already audited (anyone, this round),
+  // before anything is counted on it: every line kept as it is (counted = the cases shown), saved as a check by me (who / when).
+  function rcPrevDone() { var A = RC.aisle && RC.aisle.spots, x = A && A.filter(function(s) { return String(s.location).toUpperCase() === RC.loc; })[0]; return x && x.done ? x.done : null; }
+  function rcCheckedBtn() {
+    var pd = rcPrevDone(); if (!pd || RC.checking || RC.extra.length || RC.rows.some(function(r) { return r._rc; }) || !RC.rows.length) return '';
+    return '<button type="button" class="rc-checked-btn" onclick="rcChecked()" title="Audited before by ' + ckE(pd.by || '?') + ' ' + ckE(xfrFmtT(pd.ts)) + ' — tap when every number of cases matches" style="padding:4px 10px;font-size:12px;border-radius:9px;border:2px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;cursor:pointer">✅ Checked</button>';
+  }
+  window.rcChecked = function() {
+    var pd = rcPrevDone(); if (!pd || !RC.loc) return;
+    var nb = 0; RC.rows.forEach(function(r) { nb += ckNow(r); });
+    if (!confirm('✅ ' + RC.loc + ' — every number of cases matches what the screen shows?\n\n' + RC.rows.length + ' line(s), ' + xfrN(nb) + ' box(es). Audited before by ' + (pd.by || '?') + '.\nSaved as checked by you, now.')) return;
+    var loc = RC.loc, det = RC.rows.map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: ckNow(r), how: 'checked' }; });
+    invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: loc, items: det.length, changed: 0, detail: det, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null, recheck: true, checked: true }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not saved — try ✅ Checked again', 'error'); return; }
+        rcDoneMark(loc);
+        RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus(rcAisleOf(loc));
+        invFlash(d.queued ? '✅ ' + loc + ' checked — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + loc + ' checked — scan the next column', d.queued ? 'warn' : 'success');
+        var inp = g('rc-inp'); if (inp) inp.focus();
+      }).catch(function() { invFlash('Not saved — try ✅ Checked again', 'error'); });
+  };
   window.rcStop = function() {
     if (!confirm('Stop ' + RC.loc + ' without finishing? What you counted is saved, but the column is NOT marked done.')) return;
     // 📊 Kept for the report: who stopped which column, when, and what was counted before (not marked done).
@@ -14393,7 +14416,7 @@ window.invCredLogin = async function() {
     if (!RC.loc) { rcOut(''); return; }
     var left = RC.rows.filter(function(r) { return !r._rc; }).length;
     var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
-      + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
+      + (RC.done ? '' : '<div style="display:flex;gap:6px;flex:0 0 auto">' + rcCheckedBtn() + '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button></div>') + '</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>'
       + (RC.recheck ? '<div class="rc-recheck" style="font-size:13px;font-weight:800;color:#7c3aed;margin-top:3px">🔁 Checking — counting this column again' + (RC.recheck.by ? ' <span style="font-weight:400;color:var(--text2)">(counted before by ' + ckE(RC.recheck.by) + ' · ' + ckE(xfrFmtT(RC.recheck.at)) + ')</span>' : '') + '</div>' : '')
       // 📦 Owner (2026-10-23): "when we scan the column, see the total boxes on it and the total part #s" — on record here (SKU Mgr) and
@@ -14575,7 +14598,7 @@ window.invCredLogin = async function() {
             var chk = (c.recheck ? '<div class="rc-is-check" style="color:#7c3aed;font-weight:800">🔁 Checking' + (c.firstBy ? '<div style="font-weight:400;color:var(--text2)">of ' + ckE(c.firstBy.by) + "'s count " + ckE(T(c.firstBy.at)) + '</div>' : '') + '</div>' : '')
               + (c.checkedBy || []).map(function(x) { return '<div class="rc-checked-by" style="color:#7c3aed">🔁 Checked by <b>' + ckE(x.by) + '</b> · ' + ckE(T(x.at)) + '</div>'; }).join('')
               + (c.stopped ? '' : '<button type="button" class="rc-check-btn" onclick="rcCheckCol(this.dataset.l, this.dataset.by, this.dataset.at)" data-l="' + ckE(c.location) + '" data-by="' + ckE(c.by) + '" data-at="' + ckE(c.doneAt) + '" style="margin-top:3px;padding:3px 8px;border-radius:7px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-size:11px;font-weight:700;cursor:pointer">🔁 Checking</button>');
-            var how = { scan: '✓ scanned', found: '✓ found (looked again)', none: '✗ none found' };
+            var how = { scan: '✓ scanned', found: '✓ found (looked again)', none: '✗ none found', checked: '✅ checked — matched' };
             var wd = (c.lines || []).length ? '<details class="rc-col-lines"><summary style="cursor:pointer;color:var(--accent);white-space:nowrap">📋 ' + c.lines.length + ' line' + (c.lines.length === 1 ? '' : 's') + ' · before ' + ckE(xfrN(c.before)) + ' → after ' + ckE(xfrN(c.after)) + ' boxes</summary>'
               + '<table style="border-collapse:collapse;margin-top:4px;font-size:11px"><tr>' + ['Part #', 'Name', 'pcs / box', 'Before', 'After', 'Change', 'How'].map(function(x) { return '<th style="text-align:left;padding:2px 5px;border-bottom:1px solid var(--border);white-space:nowrap">' + x + '</th>'; }).join('') + '</tr>'
               + c.lines.map(function(x) { var ch = Math.round((x.after - x.before) * 100) / 100;
