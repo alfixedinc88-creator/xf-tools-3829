@@ -9244,5 +9244,29 @@ console.log('\n⬇ Download the Amazon-barcode listings (CSV)');
       && !all.join().includes('B0BBB') && one.length === 2 && one[1].startsWith('24-4-6=5,') && /id="inv-amzbc-dl" onclick="invAmzBcCsv\(\)"/.test(ih), { all, one });
 }
 
+// Owner (2026-10-23): "AWD shipment planner — a History of record: when, what shipment we did and by who; can we still see our last shipment?"
+console.log('\n🕘 AWD Planner → History: every Shipment Builder export kept (when, who, each SKU, units, boxes)');
+{
+  const { readFileSync: rfH } = await import('node:fs');
+  const ah = rfH(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  let sent = null;
+  const S0 = { cpackMap: { '30-3-4=10X': { unitsPerBox: 24 } }, tplPrefix: { '30-3-4=10X': '2/1 need label' } };
+  new Function('S', 'wFetch', 'W', 'awd_planner_toast', fnA('awdHistSave') + '; awdHistSave("FBA-OCT-23", "xlsx", [["30-3-4=10X", { qty: 60, row: { name: "Tee" } }], ["31-1-1=5", { qty: 7, row: {} }]]);')(
+    S0, (u, o) => { sent = { u, b: JSON.parse(o.body) }; return Promise.resolve({ json: () => ({ ok: true }) }); }, 'W', () => {});
+  const it = (sent && sent.b.items) || [];
+  check('export → saved to History: 30-3-4=10X asked 60 → 3 boxes × 24 = 72 units sent ("2/1 need label"); 31-1-1=5 no box template → 7 units, 0 boxes; with a request id',
+    sent && /\/awd\/ship-history$/.test(sent.u) && sent.b.name === 'FBA-OCT-23' && sent.b.format === 'xlsx' && /^awdship-/.test(sent.b._requestId)
+      && it[0].sku === '30-3-4=10X' && it[0].qty === 60 && it[0].units === 72 && it[0].boxes === 3 && it[0].unitsPerBox === 24 && it[0].label === '2/1 need label' && it[1].units === 7 && it[1].boxes === 0, it);
+  check('…both export buttons (.txt and .xlsx) save it (awdHistSave in exportShipment)', /const tot = dataRows\.reduce[^\n]*\n  awdHistSave\(name, format, items\);/.test(ah), null);
+  const s1 = await post('/awd/ship-history', sent.b), s2 = await post('/awd/ship-history', sent.b);
+  const L = await get('/awd/ship-history'), one = await get('/awd/ship-history?id=' + s1.id), row = (L.list || []).find(x => x.id === s1.id) || {};
+  check('…History: when, who, name, 2 SKUs, 72 + 7 = 79 units, 3 boxes; sent twice → kept once; tap → every SKU',
+    s1.ok && s2.duplicate && s2.id === s1.id && (L.list || []).filter(x => x.name === 'FBA-OCT-23').length === 1 && row.by_user && row.ts && row.skus === 2 && row.units === 79 && row.boxes === 3
+      && one.ok && one.shipment.items.length === 2 && one.shipment.items[0].units === 72, { row, one });
+  const xa = rfH(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('…🕘 History tab on the AWD Planner (opens the list) + its 🧩 Pages & Tabs check mark', /id="tab-history"/.test(ah) && /id="page-history"/.test(ah) && /if \(n === 'history'\) awdHistLoad\(\);/.test(ah) && /key: 'history', label: '🕘 History \(shipments exported\)', sel: '#tab-history'/.test(xa), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

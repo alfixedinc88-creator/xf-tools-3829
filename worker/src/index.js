@@ -9787,6 +9787,8 @@ const _app = {
       await awdAutoSet(env, 'inboundCount', m);
       return cors(new Response(JSON.stringify({ ok: true, inboundCount: m }), { headers: { 'Content-Type': 'application/json' } }));
     }
+    // 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who".
+    if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
     if (url.pathname === '/awd/amazon-velocity-request'  && method === 'POST') return await awdVelocityRequest(env);
     if (url.pathname === '/awd/amazon-velocity-status'   && method === 'GET')  return await awdVelocityStatus(url, env);
     if (url.pathname === '/awd/amazon-velocity-download' && method === 'POST') return await awdVelocityDownload(request, env);
@@ -15002,6 +15004,39 @@ async function awdAutoHealth(env) {
   return { pending: false, status: 'DONE', count: done.count };
 }
 // Every 30-minute tick: once a New York day (from 5 am) the inventory run; any tick: pick up a pending Inventory Health report.
+// 🕘 AWD Shipment Builder history: every export (.txt / .xlsx) is kept — when, who, the shipment name, and each SKU
+// (units asked, units sent in whole boxes, units per box, boxes, need-label note). Only ever added, never changed.
+// POST { name, format, items:[{sku, name, qty, units, unitsPerBox, boxes, label}], _requestId } · GET ?id=N (one, with items) or the list.
+async function awdShipHistory(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_ship_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, name TEXT, format TEXT,
+    skus INTEGER, units INTEGER, boxes INTEGER, items TEXT, request_id TEXT)`).run();
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_awd_ship_hist_req ON awd_ship_history(request_id)').run().catch(() => {});
+  if (request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const n = v => { const x = parseFloat(v); return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : 0; };
+    const items = (Array.isArray(b.items) ? b.items : []).slice(0, 1000).map(x => ({ sku: String(x.sku || '').trim().slice(0, 80), name: String(x.name || '').slice(0, 160),
+      qty: n(x.qty), units: n(x.units), unitsPerBox: n(x.unitsPerBox), boxes: n(x.boxes), label: String(x.label || '').slice(0, 60) })).filter(x => x.sku);
+    if (!items.length) return J({ ok: false, error: 'No SKUs in the shipment' }, 400);
+    const rid = String(b._requestId || '').slice(0, 80) || null;
+    if (rid) { const had = await env.DB.prepare('SELECT id FROM awd_ship_history WHERE request_id = ?').bind(rid).first(); if (had) return J({ ok: true, id: had.id, duplicate: true }); }
+    const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), now = new Date().toISOString();
+    const units = Math.round(items.reduce((a, x) => a + x.units, 0)), boxes = Math.round(items.reduce((a, x) => a + x.boxes, 0));
+    const ins = await env.DB.prepare('INSERT INTO awd_ship_history (ts, by_user, name, format, skus, units, boxes, items, request_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(now, who, String(b.name || '').trim().slice(0, 120), String(b.format || '').slice(0, 10), items.length, units, boxes, JSON.stringify(items), rid).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'awd_shipment_export', { name: b.name || '', skus: items.length, units, boxes }).catch(() => {});
+    return J({ ok: true, id: ins.meta.last_row_id, ts: now, by: who });
+  }
+  const id = parseInt(url.searchParams.get('id'), 10);
+  if (id > 0) {
+    const r = await env.DB.prepare('SELECT * FROM awd_ship_history WHERE id = ?').bind(id).first();
+    if (!r) return J({ ok: false, error: 'Not found' }, 404);
+    let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {}
+    return J({ ok: true, shipment: { ...r, items, request_id: undefined } });
+  }
+  const rows = ((await env.DB.prepare('SELECT id, ts, by_user, name, format, skus, units, boxes FROM awd_ship_history ORDER BY id DESC LIMIT 200').all()).results || []);
+  return J({ ok: true, list: rows });
+}
 async function awdAutoTick(env, force) {
   if (!env.DB || !env.AMAZON_REFRESH_TOKEN) return { ok: false, error: 'Amazon seller API not set up' };
   const st = await awdAutoGet(env), nyDay = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });

@@ -806,6 +806,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Shipment Builder
       <span class="tbadge" id="bld-badge" style="display:none">0</span>
     </div>
+    <div class="tab" onclick="awd_switchTab('history')" id="tab-history">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>History
+    </div>
     <div class="tab" onclick="awd_switchTab('settings')" id="tab-settings">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12h2m16 0h2M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>Settings
     </div>
@@ -1059,6 +1062,16 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Items we shipped to FBA or AWD where everything else in the shipment was received (or Amazon closed it) but this item is still short <b>10+ days</b> later.
           They are <b>no longer counted</b> as stock in FBA / AWD, so the recommendations ask you to ship more. Tap what happened.</p>
         <div id="nr-out"></div>
+      </div>
+    </div>
+
+    <!-- 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who". Every Shipment Builder export is kept. -->
+    <div class="page" id="page-history">
+      <div style="max-width:1100px">
+        <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">🕘 Shipment History</h2>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Every shipment exported from the Shipment Builder (.txt / .xlsx): when, who, and each SKU with units and boxes. Tap one to see it. Kept from 10-23-2026 on.
+          <a href="#" onclick="awdHistLoad();return false">↻ Refresh</a></p>
+        <div id="awd-hist-out" style="font-size:13px;color:var(--gray-500)">Loading…</div>
       </div>
     </div>
 
@@ -2433,6 +2446,7 @@ function awd_switchTab(n) {
 
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
+  if (n === 'history') awdHistLoad();
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
   }
@@ -3222,6 +3236,52 @@ function buildLabelCopyText(amazonSku, casePrefix) {
   return lines.length > (casePrefix ? 1 : 0) ? lines.join('\n') : null;
 }
 
+// ── 🕘 SHIPMENT HISTORY (owner 2026-10-23) ──
+function awdHistSave(name, format, items) {
+  const list = items.map(([sku, i]) => {
+    const cp = S.cpackMap[sku.toUpperCase()], hasCP = cp && cp.unitsPerBox > 0, boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : 0;
+    return { sku, name: (i.row && i.row.name) || '', qty: i.qty, units: hasCP ? boxes * cp.unitsPerBox : i.qty, unitsPerBox: hasCP ? cp.unitsPerBox : 0, boxes, label: (S.tplPrefix || {})[sku.toUpperCase()] || '' };
+  });
+  const rid = 'awdship-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  const send = n => wFetch(W + '/awd/ship-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, format, items: list, _requestId: rid }) })
+    .then(r => r.json()).then(d => { if (!d || !d.ok) throw new Error((d && d.error) || 'not saved'); })
+    .catch(e => { if (n < 3) setTimeout(() => send(n + 1), 5000 * (n + 1)); else awd_planner_toast('⚠ Shipment not saved in History: ' + e.message, 'error'); });
+  send(0);
+}
+function awdHistWhen(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return iso || ''; } }
+async function awdHistLoad() {
+  const out = ge('awd-hist-out'); if (!out) return;
+  try {
+    const d = await wFetch(W + '/awd/ship-history').then(r => r.json());
+    if (!d || !d.ok) throw new Error((d && d.error) || 'error');
+    if (!d.list.length) { out.innerHTML = 'No shipment exported yet — the next export from the Shipment Builder shows up here.'; return; }
+    out.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--gray-900)"><tr style="text-align:left;color:var(--gray-500)"><th style="padding:6px">When</th><th style="padding:6px">Who</th><th style="padding:6px">Shipment</th><th style="padding:6px;text-align:right">SKUs</th><th style="padding:6px;text-align:right">Units</th><th style="padding:6px;text-align:right">Boxes</th><th style="padding:6px">File</th></tr>'
+      + d.list.map(r => '<tr class="awd-hist-row" style="border-top:1px solid #E5E7EB;cursor:pointer" onclick="awdHistOpen(' + r.id + ')"><td style="padding:6px">' + awdH(awdHistWhen(r.ts)) + '</td><td style="padding:6px"><b>' + awdH(r.by_user) + '</b></td><td style="padding:6px">' + awdH(r.name || '—')
+        + '</td><td style="padding:6px;text-align:right">' + fn(r.skus) + '</td><td style="padding:6px;text-align:right">' + fn(r.units) + '</td><td style="padding:6px;text-align:right">' + fn(r.boxes) + '</td><td style="padding:6px">.' + awdH(r.format) + '</td></tr>'
+        + '<tr id="awd-hist-d-' + r.id + '" style="display:none"><td colspan="7" style="padding:4px 6px 12px"></td></tr>').join('') + '</table>';
+  } catch (e) { out.innerHTML = '<span style="color:var(--red)">Could not load: ' + awdH(e.message) + '</span>'; }
+}
+async function awdHistOpen(id) {
+  const tr = ge('awd-hist-d-' + id); if (!tr) return;
+  if (tr.style.display !== 'none') { tr.style.display = 'none'; return; }
+  tr.style.display = ''; const td = tr.firstChild; td.textContent = 'Loading…';
+  try {
+    const d = await wFetch(W + '/awd/ship-history?id=' + id).then(r => r.json());
+    if (!d || !d.ok) throw new Error((d && d.error) || 'error');
+    const x = d.shipment; S.histOpen = x;
+    td.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;background:#F9FAFB"><tr style="text-align:left;color:var(--gray-500)"><th style="padding:4px 6px">SKU</th><th style="padding:4px 6px">Name</th><th style="padding:4px 6px;text-align:right">Asked</th><th style="padding:4px 6px;text-align:right">Units sent</th><th style="padding:4px 6px;text-align:right">Per box</th><th style="padding:4px 6px;text-align:right">Boxes</th><th style="padding:4px 6px">Label</th></tr>'
+      + x.items.map(i => '<tr style="border-top:1px solid #E5E7EB"><td style="padding:4px 6px;font-family:monospace;font-weight:700">' + awdH(i.sku) + '</td><td style="padding:4px 6px">' + awdH(i.name) + '</td><td style="padding:4px 6px;text-align:right">' + fn(i.qty) + '</td><td style="padding:4px 6px;text-align:right"><b>' + fn(i.units) + '</b></td><td style="padding:4px 6px;text-align:right">' + (i.unitsPerBox ? fn(i.unitsPerBox) : '—') + '</td><td style="padding:4px 6px;text-align:right">' + (i.boxes ? fn(i.boxes) : '—') + '</td><td style="padding:4px 6px">' + awdH(i.label) + '</td></tr>').join('')
+      + '<tr style="border-top:2px solid #D1D5DB;font-weight:700"><td style="padding:4px 6px" colspan="3">Total ' + x.items.length + ' SKUs</td><td style="padding:4px 6px;text-align:right">' + fn(x.units) + '</td><td></td><td style="padding:4px 6px;text-align:right">' + fn(x.boxes) + '</td><td></td></tr></table>'
+      + '<button class="btn btn-sm btn-secondary" style="margin-top:6px" onclick="awdHistCsv()">⬇ Download this shipment (.csv)</button>';
+  } catch (e) { td.innerHTML = '<span style="color:var(--red)">Could not load: ' + awdH(e.message) + '</span>'; }
+}
+function awdHistCsv() {
+  const x = S.histOpen; if (!x) return;
+  dlCSV([['Shipment', x.name, 'Exported', awdHistWhen(x.ts), 'By', x.by_user], [], ['SKU', 'Name', 'Units asked', 'Units sent', 'Units per box', 'Boxes', 'Label']]
+    .concat(x.items.map(i => [i.sku, i.name, i.qty, i.units, i.unitsPerBox || '', i.boxes || '', i.label]), [['TOTAL', x.items.length + ' SKUs', '', x.units, '', x.boxes, '']]),
+    'AWD_shipment_' + String(x.name || x.id).replace(/[^A-Za-z0-9_-]+/g, '_') + '_' + String(x.ts).slice(0, 10) + '.csv');
+}
+
 // ── EXPORT SHIPMENT (.txt or .xlsx) ──
 function exportShipment(format) {
   const items = Object.entries(S.shipment).filter(([,i]) => i.qty > 0);
@@ -3260,6 +3320,7 @@ function exportShipment(format) {
   const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD_Shipment';
   const allRows = [...headerRows, ...dataRows];
   const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
+  awdHistSave(name, format, items); // 🕘 kept in History (when, who, what)
 
   if (format === 'txt') {
     // Tab-delimited TXT matching Amazon AWD template format
