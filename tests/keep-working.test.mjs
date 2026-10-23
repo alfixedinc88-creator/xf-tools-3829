@@ -8889,7 +8889,16 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   await post('/inventory/log', { type: 'OUT', partNum: '705-1-1=10', sku: '705-1-1', location: 'Q5=1-1-1', cases: 2, initials: 'PK', notes: '[SHELVING]', masterId: id('705-1-1=10'), clientTimestamp: t(100) });
   // B) Q5=1-1-2: 4 on the shelf, the phone showed an OLD 8 (opened days before) → −4 applied → SKU Mgr 2, should be 4
   await post('/inventory/log', { type: 'OUT', partNum: '705-1-2=10', sku: '705-1-2', location: 'Q5=1-1-2', cases: 4, initials: 'MK', notes: '[AUDIT] System: 8 → Actual: 4 (diff: -4.0) (📋 Recount)', masterId: id('705-1-2=10'), clientTimestamp: t(20) });
-  await post('/inventory/recount/column-done', { location: 'Q5=1-1-2', items: 1, changed: 1, doneAt: t(21), startedAt: t(19), detail: [{ part: '705-1-2=10', pcs: 10, system: 8, counted: 4, how: 'scan' }] });
+  const cdB = await post('/inventory/recount/column-done', { location: 'Q5=1-1-2', items: 1, changed: 1, doneAt: t(21), startedAt: t(19), detail: [{ part: '705-1-2=10', pcs: 10, system: 8, counted: 4, how: 'scan' }] });
+  // 🛡 Owner (2026-10-23): "if not matching, go with the Audit numbers — find out why, make sure it doesn't happen again" → the moment
+  // the column is done, its count is checked: SKU Mgr 2 ≠ the count 4 → set to 4 at once, History [AUDIT FIX] with the reason.
+  const fxB = (cdB.fixed || [])[0] || {}, hB = sq.prepare("SELECT * FROM inventory_log WHERE notes LIKE '[AUDIT FIX]%' AND part_num = '705-1-2=10'").get() || {};
+  check('🛡 B) phone showed an OLD 8, really 6 → −4 made SKU Mgr 2; the moment the column is done: set to the count 4 by itself, the reason kept in History (Part Total 2 → 4)',
+    fxB.from === 2 && fxB.to === 4 && fxB.cause.kind === 'old number' && +sq.prepare("SELECT cases c FROM master_list WHERE part_num = '705-1-2=10'").get().c === 4
+      && /SKU Mgr 2 → 4 cases \(Audit count 4 by TS/.test(hB.notes) && /fixed by itself when the column was done · why it was off: the phone showed 8, but SKU Mgr had 6 when the count was saved/.test(hB.notes)
+      && +hB.total_before === 2 && +hB.total_after === 4 && hB.status === 'Verified', { cdB, hB });
+  // …then SKU Mgr is changed with NO History line (2 again) → the check below must still catch it
+  sq.prepare("UPDATE master_list SET cases = 2 WHERE part_num = '705-1-2=10'").run();
   // C) Q5=1-1-3: the list had only 705-1-3=2 (counted 1); 705-1-4=5 (2 cases in SKU Mgr) was never on it
   await post('/inventory/log', { type: 'IN', partNum: '705-1-3=2', sku: '705-1-3', location: 'Q5=1-1-3', cases: 0, initials: 'MK', notes: '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', masterId: id('705-1-3=2'), clientTimestamp: t(30) });
   await post('/inventory/recount/column-done', { location: 'Q5=1-1-3', items: 1, changed: 0, doneAt: t(31), startedAt: t(29), detail: [{ part: '705-1-3=2', pcs: 2, system: 1, counted: 1, how: 'scan' }] });
@@ -8926,13 +8935,33 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
         && f.ok === true && (f.emptied || [])[0] && f.emptied[0].by === 'NB', { a, b, c3, f });
     const { readFileSync: rfS } = await import('node:fs');
     const ihS = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-    const W2 = new Function('ckE', 'xfrN', 'xfrFmtT', ihS.slice(ihS.indexOf('  function rcSkuWarnHtml(off) {'), ihS.indexOf('  window.rcSkuMgrCell = rcSkuMgrCell;')) + '; return { cell: rcSkuMgrCell, warn: rcSkuWarnHtml };')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x));
+    const W2 = new Function('ckE', 'xfrN', 'xfrFmtT', 'window', ihS.slice(ihS.indexOf('  function rcSkuWarnHtml(off) {'), ihS.indexOf('  window.rcSkuMgrCell = rcSkuMgrCell;')) + '; return { cell: rcSkuMgrCell, warn: rcSkuWarnHtml };')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x), {});
     const off = (rep.columns || []).filter(x => /^Q5=/.test(x.location) && x.skuMgr && x.skuMgr.lines && !x.skuMgr.ok);
     const w = W2.warn(off), hb = W2.cell(C('Q5=1-1-2')), ha = W2.cell(C('Q5=1-1-1'));
     check('…the screen: ⚠ warning on top naming the columns not matching (Q5=1-1-3 · Q5=1-1-2, newest first), red rows, the 🏬 cell opens by itself when off; ✅ matches stays closed',
       /⚠ 2 columns NOT matching SKU Mgr/.test(w) && /Q5=1-1-3 · Q5=1-1-2/.test(w) && /✅ Every column/.test(W2.warn([]))
         && /<details class="rc-sku-cell" open>/.test(hb) && /⚠ NOT matching SKU Mgr/.test(hb) && /⚠ -2 off/.test(hb) && /<details class="rc-sku-cell">/.test(ha) && /✅ matches<\/b> · 3 boxes · 1 part #/.test(ha)
         && /'🏬 SKU Mgr now \(double check\)'/.test(ihS) && /rc-col-skuoff/.test(ihS) && /\+ rcSkuMgrCell\(c\) \+/.test(ihS), { w, hb });
+    // 🔍 Owner (2026-10-23): "if not matching, find out why — make sure it doesn't happen again". Each line not matching says why.
+    check('🔍 every line not matching says WHY: Q5=1-1-2 → the phone\'s number vs SKU Mgr (an old number / a change with no History line); Q5=1-1-3 705-1-4=5 → not on the phone\'s list (old list); shown on the screen with ✔ Use the Audit number + ✔ for all',
+      bl.cause && bl.cause.kind === 'old number' && /the phone showed 8, but SKU Mgr had 6/.test(bl.cause.text) && cl.cause && cl.cause.kind === 'old list'
+        && /🔍 Why: the phone showed 8/.test(hb) && /class="rc-fix-btn"/.test(hb) && /✔ Use the Audit number \(4\)/.test(hb) && /class="rc-fix-all"/.test(w), { bl, cl });
+    // ✔ Use the Audit number: the server checks again; a number that changed since you looked is not touched; the fix is a History line
+    const pkF = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+    const no = await call('/inventory/recount/fix', { method: 'POST', headers: { 'X-Cred-Token': pkF }, body: JSON.stringify({ lines: [{ location: 'Q5=1-1-2', part: '705-1-2=10', now: 2 }] }) });
+    const stale = await post('/inventory/recount/fix', { lines: [{ location: 'Q5=1-1-2', part: '705-1-2=10', now: 7 }] });
+    const okA = await post('/inventory/recount/fix', { lines: [{ location: 'Q5=1-1-1', part: '705-1-1=10', now: 3 }] });
+    const t1 = tot(), fx2 = await post('/inventory/recount/fix', { lines: [{ location: 'Q5=1-1-2', part: '705-1-2=10', now: 2 }] });
+    const hF = sq.prepare("SELECT * FROM inventory_log WHERE notes LIKE '[AUDIT FIX]%✔ Use the Audit number%' AND part_num = '705-1-2=10'").get() || {};
+    const after2 = await get('/inventory/recount/check');
+    check('✔ Use the Audit number (Admin / Owner only): SKU Mgr changed since you looked → not touched; a matching line → nothing to fix; Q5=1-1-2 2 → 4 with a History line (before → after, why); then it matches and the check does not count the fix as a move',
+      no.status === 403 && stale.fixed.length === 0 && /changed since you looked/.test(stale.skipped[0].why) && okA.fixed.length === 0 && /matches now/.test(okA.skipped[0].why)
+        && fx2.fixed.length === 1 && fx2.fixed[0].from === 2 && fx2.fixed[0].to === 4 && tot() === t1 + 2 && +hF.total_before === 2 && +hF.total_after === 4 && /why it was off/.test(hF.notes)
+        && !(after2.problems || []).some(p => p.location === 'Q5=1-1-2'), { stale, okA, fx2, hF });
+    sq.prepare("UPDATE master_list SET cases = 2 WHERE part_num = '705-1-2=10'").run(); // back as before for the checks below
+    sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '[AUDIT FIX]%✔ Use the Audit number%'").run();
+    check('…the phone says it when the column is done: 🛡 set to your count / ⚠ a part # in SKU Mgr not on your list (look for it)',
+      /🛡 SKU Mgr had ' \+ xfrN\(x\.from\)/.test(ihS) && /NOT on your list — look for it/.test(ihS) && /\+ rcDoneNote\(d\), d\.queued/.test(ihS), null);
   }
   const { readFileSync: rfN } = await import('node:fs');
   const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
