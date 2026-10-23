@@ -8063,7 +8063,7 @@ async function recountTables(env) {
     location TEXT, by_user TEXT, items INTEGER, changed INTEGER, detail TEXT)`).run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS recount_meta (key TEXT PRIMARY KEY, value TEXT)').run();
   // 📊 Owner (2026-10-17): when each column was started, and columns stopped without finishing (✕ Stop).
-  for (const c of ['started_at TEXT', 'stopped INTEGER DEFAULT 0']) await env.DB.prepare('ALTER TABLE recount_columns ADD COLUMN ' + c).run().catch(() => {});
+  for (const c of ['started_at TEXT', 'stopped INTEGER DEFAULT 0', 'recheck INTEGER DEFAULT 0']) await env.DB.prepare('ALTER TABLE recount_columns ADD COLUMN ' + c).run().catch(() => {});
 }
 async function recountRoundStart(env) {
   const r = await d1First(env, "SELECT value FROM recount_meta WHERE key = 'round_start'");
@@ -8104,8 +8104,9 @@ async function recountColumnDone(request, env, session) {
   if (rid) { const claim = await claimRequestId(env, rid, 'inventory/recount/column-done'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
   const ts = b.doneAt && !isNaN(Date.parse(b.doneAt)) ? new Date(b.doneAt).toISOString() : new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
   const started = b.startedAt && !isNaN(Date.parse(b.startedAt)) ? new Date(b.startedAt).toISOString() : null, stopped = b.stopped ? 1 : 0;
-  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail, started_at, stopped) VALUES (?,?,?,?,?,?,?,?,?)')
-    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000), started, stopped).run();
+  // 🔁 Owner (2026-10-23): "Checking" — a finished column counted again, kept as a check (who / when) of the first count.
+  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail, started_at, stopped, recheck) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000), started, stopped, b.recheck ? 1 : 0).run();
   if (session && session.userId) await logUserActivity(env, session.userId, stopped ? 'recount_column_stopped' : 'recount_column', { location: loc, items: b.items, changed: b.changed });
   const res = { ok: true, ts, by, columnId: ins.meta.last_row_id };
   if (rid) await recordRequestResult(env, rid, res);
@@ -8239,14 +8240,30 @@ async function recountCheck(env, url) {
 async function recountReport(env) {
   await recountTables(env);
   const roundStart = await recountRoundStart(env);
-  const rows = await d1All(env, 'SELECT id, ts, started_at, location, by_user, items, changed, detail, COALESCE(stopped, 0) AS stopped FROM recount_columns WHERE ts >= ? ORDER BY ts DESC', [roundStart]);
+  const rows = await d1All(env, 'SELECT id, ts, started_at, location, by_user, items, changed, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE ts >= ? ORDER BY ts DESC', [roundStart]);
+  // 📋 Owner (2026-10-23): "Columns — item name too, what's there before and after, what was found / none found". Product names by part #.
+  const nm = {};
+  { const ps = new Set(); rows.forEach(r => { try { (JSON.parse(r.detail || '[]') || []).forEach(x => { if (x && x.part) ps.add(String(x.part).trim().toUpperCase()); }); } catch (_) {} });
+    const list = [...ps];
+    for (let i = 0; i < list.length; i += 90) { const ch = list.slice(i, i + 90);
+      (await d1All(env, `SELECT UPPER(TRIM(part_num)) p, MAX(NULLIF(name, '')) n, MAX(base_sku) b FROM master_list WHERE UPPER(TRIM(part_num)) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(TRIM(part_num))`, ch).catch(() => [])).forEach(x => { if (x.n) nm[x.p] = x.n; }); }
+    const miss = list.filter(p => !nm[p]).map(p => p.split('=')[0]);
+    for (let i = 0; i < miss.length; i += 90) { const ch = [...new Set(miss.slice(i, i + 90))];
+      (await d1All(env, `SELECT UPPER(TRIM(base_sku)) b, MAX(NULLIF(name, '')) n FROM products WHERE UPPER(TRIM(base_sku)) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(TRIM(base_sku))`, ch).catch(() => [])).forEach(x => { list.filter(p => !nm[p] && p.split('=')[0] === x.b).forEach(p => { nm[p] = x.n; }); }); } }
+  const byLoc = {}; rows.forEach(r => { if (!r.stopped) (byLoc[String(r.location).toUpperCase()] = byLoc[String(r.location).toUpperCase()] || []).push(r); }); // newest first
   const cols = rows.map(r => {
     let d = []; try { d = JSON.parse(r.detail || '[]') || []; } catch (e) { d = []; }
     const mins = r.started_at ? Math.max(0, Math.round((Date.parse(r.ts) - Date.parse(r.started_at)) / 6000) / 10) : null;
     const boxes = Math.round(d.reduce((a, x) => a + (parseFloat(x.counted) || 0), 0) * 100) / 100;
     const skipped = d.filter(x => x.how === 'none' || x.how === 'found').map(x => ({ part: x.part, pcs: x.pcs, how: x.how, system: x.system, counted: x.counted }));
+    const lines = d.map(x => ({ part: x.part, name: nm[String(x.part || '').trim().toUpperCase()] || '', pcs: x.pcs, before: parseFloat(x.system) || 0, after: parseFloat(x.counted) || 0, how: x.how || 'scan', new: !!x.new }));
+    const same = byLoc[String(r.location).toUpperCase()] || [], at = same.indexOf(r);
+    const checkedBy = r.stopped ? [] : same.slice(0, Math.max(0, at)).filter(x => x.recheck).reverse().map(x => ({ by: x.by_user || '?', at: x.ts })); // later checks of this column
+    const first = r.recheck && same.length ? same[same.length - 1] : null;
     return { id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
-      boxes, skipped, howKnown: d.some(x => x.how), stopped: !!r.stopped };
+      boxes, skipped, howKnown: d.some(x => x.how), stopped: !!r.stopped, recheck: !!r.recheck, lines, checkedBy,
+      before: Math.round(lines.reduce((a, x) => a + x.before, 0) * 100) / 100, after: Math.round(lines.reduce((a, x) => a + x.after, 0) * 100) / 100,
+      firstBy: first && first !== r ? { by: first.by_user || '?', at: first.ts } : null };
   });
   const people = {};
   cols.forEach(c => {

@@ -14073,7 +14073,7 @@ window.invCredLogin = async function() {
   function rcSaveState() {
     try {
       if (!RC.loc) { localStorage.removeItem(rcStateKey()); return; }
-      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, startedAt: RC.startedAt || '', src: RC.src || null, at: Date.now() }));
+      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, startedAt: RC.startedAt || '', src: RC.src || null, recheck: RC.recheck || null, at: Date.now() }));
     } catch (e) {}
   }
   window.rcRestore = function() {
@@ -14084,8 +14084,8 @@ window.invCredLogin = async function() {
     // while SKU Mgr had 201-1-11=2XX / =5XX there — they were never on the list, so the recount never touched them. Nothing
     // counted yet → the column is simply opened again from SKU Mgr now; something counted → kept, and the list is read again.
     var counted = (st.rows || []).some(function(r) { return r._rc; }) || (st.extra || []).length;
-    if (!counted) { rcStart(st.loc, true); return; }
-    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null; RC.startedAt = st.startedAt || '';
+    if (!counted) { rcStart(st.loc, true, st.recheck || null); return; }
+    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null; RC.startedAt = st.startedAt || ''; RC.recheck = st.recheck || null;
     // A save that was still going when the page closed went through the phone outbox — it is not lost.
     RC.rows.forEach(function(r) { if (r._rc) r._rc.saving = false; }); RC.extra.forEach(function(x) { x.saving = false; });
     rcRender(); rcStatus(rcAisleOf(RC.loc));
@@ -14189,6 +14189,15 @@ window.invCredLogin = async function() {
       }).join('');
     }).catch(function() {});
   };
+  // 🔁 Owner (2026-10-23): "when a column is already done, a button 'Checking' next to it" — count the column again, kept as a check
+  // (who / when) of the count before; it is the newest count, so SKU Mgr is set the same way a recount does.
+  window.rcCheckCol = function(loc, by, at) {
+    loc = String(loc || '').toUpperCase(); if (!loc) return;
+    if (RC.loc && !RC.done && RC.loc !== loc) { invFlash('Finish ' + RC.loc + ' first — tap ✅ Done with this column', 'error'); return; }
+    if (!confirm('🔁 Check ' + loc + ' again?\n\nScan every box on it (same as a recount). It is kept as a check' + (by ? ' of ' + by + "'s count" : '') + ', with who and when.')) return;
+    rcStart(loc, false, { by: by || '', at: at || '' });
+    var c = g('rc-card'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' });
+  };
   window.rcNewRound = function() {
     if (!confirm('Start a NEW recount? Every column will show as "not done" again. (Counts already saved stay.)')) return;
     wFetch(W + '/inventory/recount/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); })
@@ -14222,11 +14231,11 @@ window.invCredLogin = async function() {
     if (typeof invObRead !== 'function') return 0;
     return invObRead().filter(function(x) { return x.state !== 'sent' && x.state !== 'old' && x.body && String(x.body.location || '').toUpperCase() === loc; }).length;
   }
-  function rcStart(loc, reopened) {
+  function rcStart(loc, reopened, recheck) {
     var waiting = rcWaitingFor(loc), doneAt = rcDoneGet()[loc];
     if (waiting) { invFlash('📶 ' + loc + ' has ' + waiting + ' count(s) still waiting on this phone for WiFi — recount it after they are sent', 'error'); return; }
-    if (doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
-    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null, startedAt: new Date().toISOString() }; // 📊 start time for the report
+    if (!recheck && doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
+    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null, startedAt: new Date().toISOString(), recheck: recheck || null }; // 📊 start time for the report
     rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
     rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
       // Owner (2026-10-22): "SKU Mgr shows 201-1-11 at C1=1-1-21, the phone Audit shows 202-1-10 there". A list that is not
@@ -14363,7 +14372,7 @@ window.invCredLogin = async function() {
     var detail = rcDetail();
     // Through the phone outbox: no WiFi → saved on the phone and sent by itself later (only once).
     invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null }) })
+      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null, recheck: !!RC.recheck }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
         RC.done = true; RC.checking = false; rcDoneMark(RC.loc); rcRender(); rcStatus(rcAisleOf(RC.loc));
@@ -14376,7 +14385,7 @@ window.invCredLogin = async function() {
     // 📊 Kept for the report: who stopped which column, when, and what was counted before (not marked done).
     var det = rcDetail();
     invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: RC.loc, items: det.length, changed: 0, detail: det, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null, stopped: true }) }).catch(function() {});
+      body: JSON.stringify({ location: RC.loc, items: det.length, changed: 0, detail: det, doneAt: new Date().toISOString(), startedAt: RC.startedAt || null, stopped: true, recheck: !!RC.recheck }) }).catch(function() {});
     RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus();
   };
   window.rcRender = function() {
@@ -14386,6 +14395,7 @@ window.invCredLogin = async function() {
     var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
       + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>'
+      + (RC.recheck ? '<div class="rc-recheck" style="font-size:13px;font-weight:800;color:#7c3aed;margin-top:3px">🔁 Checking — counting this column again' + (RC.recheck.by ? ' <span style="font-weight:400;color:var(--text2)">(counted before by ' + ckE(RC.recheck.by) + ' · ' + ckE(xfrFmtT(RC.recheck.at)) + ')</span>' : '') + '</div>' : '')
       // 📦 Owner (2026-10-23): "when we scan the column, see the total boxes on it and the total part #s" — on record here (SKU Mgr) and
       // counted so far (scanned / found + new lines), updated as each box is counted.
       + (function() { var onB = 0, parts = {}, cntB = 0;
@@ -14556,11 +14566,24 @@ window.invCredLogin = async function() {
       // header row stays on top (and the Column name on the left when sliding sideways); a column over 10 minutes is red.
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
         + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table style="border-collapse:separate;border-spacing:0;width:100%;font-size:12px;color:var(--text)"><thead><tr>'
-        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)', '📋 What was done (before → after)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
         + d.columns.map(function(c) {
             var sk = !c.howKnown && !c.skipped.length ? '<span style="color:var(--text3)">not recorded (before 10-17)</span>' : c.skipped.length ? c.skipped.map(function(x) { return '<div>' + (x.how === 'none' ? '✗ None found: ' : '✓ Found: ') + ckE(x.part) + ' × ' + ckE(xfrN(x.pcs)) + ' pcs (system ' + ckE(xfrN(x.system)) + ' → ' + ckE(xfrN(x.counted)) + ')</div>'; }).join('') : '<span style="color:var(--green)">none — every line scanned</span>';
             var o10 = rcOver10(c), bg = c.stopped ? 'var(--orange-bg,#fff7ed)' : o10 ? 'var(--red-bg,#fdf0ee)' : 'var(--bg)';
-            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td></tr>';
+            // 🔁 Owner (2026-10-23): a "Checking" button next to a done column; a check says it is one (and whose count it checked);
+            // a column checked later says by who / when. 📋 Every line: part #, product name, before → after, found / none found / new.
+            var chk = (c.recheck ? '<div class="rc-is-check" style="color:#7c3aed;font-weight:800">🔁 Checking' + (c.firstBy ? '<div style="font-weight:400;color:var(--text2)">of ' + ckE(c.firstBy.by) + "'s count " + ckE(T(c.firstBy.at)) + '</div>' : '') + '</div>' : '')
+              + (c.checkedBy || []).map(function(x) { return '<div class="rc-checked-by" style="color:#7c3aed">🔁 Checked by <b>' + ckE(x.by) + '</b> · ' + ckE(T(x.at)) + '</div>'; }).join('')
+              + (c.stopped ? '' : '<button type="button" class="rc-check-btn" onclick="rcCheckCol(this.dataset.l, this.dataset.by, this.dataset.at)" data-l="' + ckE(c.location) + '" data-by="' + ckE(c.by) + '" data-at="' + ckE(c.doneAt) + '" style="margin-top:3px;padding:3px 8px;border-radius:7px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-size:11px;font-weight:700;cursor:pointer">🔁 Checking</button>');
+            var how = { scan: '✓ scanned', found: '✓ found (looked again)', none: '✗ none found' };
+            var wd = (c.lines || []).length ? '<details class="rc-col-lines"><summary style="cursor:pointer;color:var(--accent);white-space:nowrap">📋 ' + c.lines.length + ' line' + (c.lines.length === 1 ? '' : 's') + ' · before ' + ckE(xfrN(c.before)) + ' → after ' + ckE(xfrN(c.after)) + ' boxes</summary>'
+              + '<table style="border-collapse:collapse;margin-top:4px;font-size:11px"><tr>' + ['Part #', 'Name', 'pcs / box', 'Before', 'After', 'Change', 'How'].map(function(x) { return '<th style="text-align:left;padding:2px 5px;border-bottom:1px solid var(--border);white-space:nowrap">' + x + '</th>'; }).join('') + '</tr>'
+              + c.lines.map(function(x) { var ch = Math.round((x.after - x.before) * 100) / 100;
+                  return '<tr><td style="padding:2px 5px;font-family:var(--mono);white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:2px 5px;min-width:140px">' + ckE(x.name || '—') + '</td><td style="padding:2px 5px">' + ckE(xfrN(x.pcs)) + '</td>'
+                    + '<td style="padding:2px 5px">' + ckE(xfrN(x.before)) + '</td><td style="padding:2px 5px"><b>' + ckE(xfrN(x.after)) + '</b></td><td style="padding:2px 5px;font-weight:700;color:' + (ch ? (ch > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') + '">' + (ch > 0 ? '+' : '') + ckE(xfrN(ch)) + '</td>'
+                    + '<td style="padding:2px 5px;white-space:nowrap;color:' + (x.how === 'none' ? 'var(--red)' : 'var(--text2)') + '">' + (x.new ? '➕ new line' : (how[x.how] || '✓ scanned')) + '</td></tr>'; }).join('') + '</table></details>'
+              : '<span style="color:var(--text3)">—</span>';
+            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td></tr>';
           }).join('') + '</tbody></table></div>';
       var nd = d.aisles.filter(function(a) { return a.notDone.length; });
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">⬜ Not done yet (' + (d.spotsWithStock - d.spotsDone) + ' spots with stock)</div>'
