@@ -8462,6 +8462,12 @@ async function recountReport(env) {
   // 🗺 By area (owner 2026-10-17: "he was working on C1 — let me click C1 and see every C1 spot: green done, red not scanned,
   // yellow scanned but not done"). Every spot of the area (with stock, or done / started in this round), its state and who / when.
   const doneBy = {}; cols.filter(c => !c.stopped).forEach(c => { const L = String(c.location).toUpperCase(); if (!doneBy[L] || c.doneAt > doneBy[L].at) doneBy[L] = { by: c.by, at: c.doneAt }; });
+  // 🔁 Owner (2026-10-23): "we double check the audit now — make the ones double checked easy to see". A spot finished more
+  // than once in this round (a 🔁 Checking, a ✅ Checked, or counted again) is double checked: the newest check, who / when.
+  const checkedAt = {};
+  { const g = {}; cols.filter(c => !c.stopped).forEach(c => { (g[String(c.location).toUpperCase()] = g[String(c.location).toUpperCase()] || []).push(c); });
+    Object.keys(g).forEach(L => { const l = g[L].slice().sort((a, b) => String(a.doneAt).localeCompare(String(b.doneAt)));
+      if (l.length > 1 || l[0].recheck) { const z = l[l.length - 1]; checkedAt[L] = { by: z.by, at: z.doneAt, times: l.length - (l[0].recheck ? 0 : 1) }; } }); }
   const started = {};
   cols.filter(c => c.stopped).forEach(c => { const L = String(c.location).toUpperCase(); started[L] = started[L] || { by: c.by, at: c.doneAt, lines: 0, stopped: true }; });
   (await d1All(env, `SELECT UPPER(TRIM(location)) AS l, COUNT(*) AS n, MAX(timestamp) AS at, MAX(initials) AS by FROM inventory_log
@@ -8472,11 +8478,13 @@ async function recountReport(env) {
   const areaOf = L => { const i = L.indexOf('='); if (i < 0) return L; const a = L.slice(0, i), m = a === 'FRONT' && L.slice(i + 1).match(/^([34])-/); return m ? 'FRONT' + m[1] : a; };
   const areas = {}, spotSet = new Set(spots);
   [...new Set(spots.concat(Object.keys(doneBy), Object.keys(started)))].filter(isSpot).forEach(l => {
-    const a = areas[areaOf(l)] = areas[areaOf(l)] || { area: areaOf(l), done: 0, started: 0, notScanned: 0, spots: [] };
+    const a = areas[areaOf(l)] = areas[areaOf(l)] || { area: areaOf(l), done: 0, started: 0, notScanned: 0, checked: 0, spots: [] };
     const st = doneBy[l] ? 'done' : started[l] ? 'started' : 'none';
     a[st === 'done' ? 'done' : st === 'started' ? 'started' : 'notScanned']++;
+    if (st === 'done' && checkedAt[l]) a.checked++;
     a.spots.push({ l, st, by: st === 'done' ? doneBy[l].by : st === 'started' ? started[l].by : '', at: st === 'done' ? doneBy[l].at : st === 'started' ? started[l].at : '',
-      lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l) });
+      lines: st === 'started' ? started[l].lines : undefined, stopped: st === 'started' ? started[l].stopped : undefined, stock: spotSet.has(l),
+      checked: st === 'done' && checkedAt[l] ? checkedAt[l] : undefined });
   });
   // ⚠ odd spot: fewer parts than most spots of its area (FRONT=2-6 among FRONT=4-1-2-6) — likely typed wrong; ✕ deletes it.
   // compared with every spot of the same name before "=" (FRONT3 + FRONT4 + FRONT together, so a lone FRONT=2-6 still shows)
