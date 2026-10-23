@@ -9027,5 +9027,22 @@ console.log('\n📶 Home page: the "Offline" notice is hidden unless the interne
   check('every page with the 📶 Offline notice also has its style (hidden until really offline) — index.html had none, so "Offline" always showed', !bad.length, bad);
 }
 
+// Owner (2026-10-23): "Reorder → Barcode / vendor for a part #: I want to have the item name there too".
+console.log('\n🏷 Reorder → Barcode / vendor for a part #: the item name (SKU Mgr, else another size, else Products / vendor sheet / Amazon) and where it came from');
+{
+  await call('/reorder/fix/history', { headers: H });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('33-1-1','3/4 PEX elbow','33-1-1=10','C1=1-1-1',1,100), ('33-1-1','','33-1-1=2','C1=1-1-2',1,50)").run();
+  sq.exec("CREATE TABLE IF NOT EXISTS fba_catalog (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, product_name TEXT, available INTEGER, updated_at TEXT)");
+  sq.prepare("INSERT OR REPLACE INTO fba_catalog (sku, asin, product_name, available) VALUES ('34-4-4=5','B0T3444','XFITTING 1/2 in. brass tee 5 pack',0)").run();
+  const a = await get('/reorder/fix/part-info?part=33-1-1%3D10'), b = await get('/reorder/fix/part-info?part=33-1-1%3D2'), c = await get('/reorder/fix/part-info?part=34-4-4%3D5'), z = await get('/reorder/fix/part-info?part=35-5-5%3D1');
+  check('33-1-1=10 → "3/4 PEX elbow" (SKU Mgr); 33-1-1=2 (no name on its own line) → the same, from SKU Mgr (33-1-1=10); 34-4-4=5 → the Amazon listing title; nothing anywhere → empty (page says "no name anywhere yet")',
+    a.itemName === '3/4 PEX elbow' && a.itemNameSrc === 'SKU Mgr' && b.itemName === '3/4 PEX elbow' && /SKU Mgr \(33-1-1=10\)/.test(b.itemNameSrc) && c.itemName === 'XFITTING 1/2 in. brass tee 5 pack' && c.itemNameSrc === 'Amazon listing' && z.itemName === '',
+    [a.itemName, a.itemNameSrc, b.itemName, b.itemNameSrc, c.itemName, z.itemName]);
+  const { readFileSync: rfI } = await import('node:fs');
+  const rh = rfI(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('…the window shows "🏷 <name> (where from)" under the part #', /class="rvo-p-name"[^>]*>🏷 <b>' \+ \(d\.itemName \? e\(d\.itemName\)/.test(rh) && /no name anywhere yet/.test(rh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '33-1-1'; DELETE FROM fba_catalog WHERE sku = '34-4-4=5'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
