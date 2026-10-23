@@ -229,7 +229,7 @@ window.lpCredLogin = async function() {
   <div class="lp-card" id="lp-saved-card">
     <div class="lp-card-title" style="display:flex;align-items:center;gap:8px">🏷 Saved labels to print <span id="lp-saved-badge" class="lp-count-badge" style="display:none">0</span>
       <button class="lp-btn lp-btn-secondary" style="margin-left:auto;padding:4px 10px;font-size:11px;text-transform:none;letter-spacing:0" onclick="lpSavedLoad()">↻</button></div>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Saved in Audit → 🏷 Barcode designer. Tap one to print it; after it prints it comes off the list (who printed it is kept).</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Saved in Audit → 🏷 Barcode designer. Tap one to print it; after it prints it comes off the list (who printed it is kept). Not needed? Tap ✕ to delete it.</div>
     <div id="lp-saved-list" style="font-size:13px;color:var(--text3)">Loading…</div>
     <div id="lp-saved-status" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
   </div>
@@ -520,7 +520,8 @@ window.lpCredLogin = async function() {
           + (j.name ? '<span style="font-size:12px;color:var(--text2)">' + lpEsc(j.name) + '</span>' : '') + '</div>'
           + '<div style="font-size:12px;color:var(--text);margin-top:2px">👤 Saved by <b>' + lpEsc(j.by_user || '?') + '</b> · ' + lpEsc(lpWhen(j.ts)) + '</div>'
           + ((j.spots || []).length ? '<div style="font-size:11px;color:var(--text3)">' + j.spots.map(function(x) { return '📍 ' + lpEsc(x.loc) + ' ' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es'); }).join(' · ') + '</div>' : '') + '</div>'
-          + '<span class="lp-btn lp-btn-primary" style="padding:8px 14px">🖨️ Print</span></div>';
+          + '<span class="lp-btn lp-btn-primary" style="padding:8px 14px">🖨️ Print</span>'
+          + '<button type="button" onclick="event.stopPropagation();lpSavedDelete(' + i + ')" title="Not needed — take it off the list" style="flex:0 0 auto;width:34px;height:34px;border-radius:8px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-size:16px;font-weight:800;cursor:pointer">✕</button></div>';
       }).join('') + (lpSaved.length > 1 ? '<button class="lp-btn lp-btn-green" onclick="lpSavedPrint(\'all\')">🖨️ Print all (' + lpSaved.reduce(function(n, j) { return n + j.copies; }, 0) + ' labels)</button>' : '');
     }).catch(function() { box.innerHTML = '<span style="color:var(--red)">Could not load — tap ↻</span>'; });
   };
@@ -542,6 +543,16 @@ window.lpCredLogin = async function() {
           .then(function(r) { return r.json(); }).then(function(d) { st.style.color = 'var(--green)'; st.textContent = '✓ Printed ' + n + ' — off the list'; lpSavedLoad(); });
       })
       .catch(function() { st.style.color = 'var(--red)'; st.textContent = '✗ Could not reach the printer — check Zebra Browser Print'; });
+  };
+  // ✕ (owner 2026-10-23): a saved label we don't need → off the list without printing (who / when kept on record).
+  window.lpSavedDelete = function(i) {
+    var j = lpSaved[i], st = g('lp-saved-status'); if (!j) return;
+    if (!confirm('Delete this saved label? It will NOT be printed.\n\n' + j.copies + ' × ' + j.sku + ' (saved by ' + (j.by_user || '?') + ')')) return;
+    wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/barcode-job/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: j.id }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { st.style.color = 'var(--red)'; st.textContent = '✗ Not deleted: ' + ((d && d.error) || 'error'); return; }
+        st.style.color = 'var(--green)'; st.textContent = '✓ Deleted ' + j.copies + ' × ' + j.sku + ' — off the list'; lpSavedLoad();
+      }).catch(function() { st.style.color = 'var(--red)'; st.textContent = '✗ Not deleted — check WiFi'; });
   };
   setTimeout(lpSavedLoad, 300);
   setInterval(function() { if (document.visibilityState === 'visible') lpSavedLoad(); }, 60000);

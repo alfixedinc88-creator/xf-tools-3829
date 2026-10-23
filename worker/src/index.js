@@ -7927,6 +7927,8 @@ async function barcodeJobTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS barcode_label_job (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, sku TEXT, name TEXT,
     copies INTEGER, spots TEXT, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0, request_id TEXT)`).run();
   await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_bdjob_req ON barcode_label_job(request_id)').run().catch(() => {});
+  // ✕ on a saved label (owner 2026-10-23): off the list, never erased — who / when kept.
+  for (const c of ['deleted_at TEXT', 'deleted_by TEXT']) await env.DB.prepare('ALTER TABLE barcode_label_job ADD COLUMN ' + c).run().catch(() => {});
 }
 function barcodeJobOut(r) { let spots = []; try { spots = JSON.parse(r.spots || '[]') || []; } catch (_) {} return { ...r, spots }; }
 async function inventoryBarcodeJob(path, request, url, env, session) {
@@ -7949,7 +7951,7 @@ async function inventoryBarcodeJob(path, request, url, env, session) {
     return J({ ok: true, id: ins.meta.last_row_id });
   }
   if (path === '/inventory/barcode-job/queue' && request.method === 'GET') {
-    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE printed_at IS NULL ORDER BY id LIMIT 200').all()).results || []).map(barcodeJobOut);
+    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE printed_at IS NULL AND deleted_at IS NULL ORDER BY id LIMIT 200').all()).results || []).map(barcodeJobOut);
     return J({ ok: true, jobs: rows });
   }
   if (path === '/inventory/barcode-job/printed' && request.method === 'POST') {
@@ -7966,11 +7968,21 @@ async function inventoryBarcodeJob(path, request, url, env, session) {
     }
     return J({ ok: true, printed: n });
   }
+  // POST { id } — ✕ a saved label not needed: taken off the list (not printed), kept on record with who / when.
+  if (path === '/inventory/barcode-job/delete' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({})), id = parseInt(b.id, 10);
+    const r = id > 0 ? await env.DB.prepare('SELECT * FROM barcode_label_job WHERE id = ?').bind(id).first() : null;
+    if (!r) return J({ ok: false, error: 'Label not found' }, 404);
+    if (r.printed_at) return J({ ok: false, error: 'Already printed' }, 400);
+    if (!r.deleted_at) await env.DB.prepare('UPDATE barcode_label_job SET deleted_at = ?, deleted_by = ? WHERE id = ?').bind(now, who, id).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'barcode_job_deleted', { id, sku: r.sku, copies: r.copies, savedBy: r.by_user });
+    return J({ ok: true, id });
+  }
   if (path === '/inventory/barcode-job/find' && request.method === 'GET') {
     const sku = String(url.searchParams.get('sku') || '').trim().toUpperCase().replace(/\s+/g, '');
     if (!sku) return J({ ok: false, error: 'Scan the sticker' }, 400);
     const since = new Date(Date.now() - 120 * 864e5).toISOString();
-    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE sku = ? AND ts >= ? ORDER BY id DESC LIMIT 20').bind(sku, since).all()).results || []).map(barcodeJobOut);
+    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE sku = ? AND ts >= ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 20').bind(sku, since).all()).results || []).map(barcodeJobOut);
     return J({ ok: true, sku, jobs: rows });
   }
   if (path === '/inventory/barcode-job/stuck' && request.method === 'POST') {
