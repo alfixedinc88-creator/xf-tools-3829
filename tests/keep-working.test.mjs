@@ -9229,5 +9229,20 @@ console.log('\n🔍 Box check: scan the box label, then the product → ✅ righ
   sq.exec("DELETE FROM box_check_log");
 }
 
+// Owner (2026-10-23): "can you give me a listing I can download of the listings using Amazon's barcode?"
+console.log('\n⬇ Download the Amazon-barcode listings (CSV)');
+{
+  const { readFileSync: rfX } = await import('node:fs');
+  const ih = rfX(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = new Function(ih.slice(ih.indexOf('  function invAmzBcCsvText('), ih.indexOf('  window.invAmzBcCsvText = invAmzBcCsvText;')) + '; return invAmzBcCsvText;')();
+  const d = { list: [{ part: '30-3-6=2X', sku: '30-3-6=2X-', fnsku: 'X00ABC1234', asin: 'B0AAA', name: 'Cap, "1/2" brass', from: ['FBA catalog'], at: '2026-10-20', barcode: 'amazon' },
+    { part: '31-6-1=2XX', sku: '31-6-1=2XX-', fnsku: 'B0BBB', asin: 'B0BBB', name: 'tee', from: [], at: '', barcode: 'maker' },
+    { part: '24-4-6=5', sku: '24-4-6=5-', fnsku: 'X00ZZZ9999', asin: 'B0CCC', name: 'elbow', from: [], at: '', barcode: 'amazon' }] };
+  const all = fn(d, '').split('\r\n'), one = fn(d, 'elbow').split('\r\n');
+  check('⬇ Download the list (CSV): only the listings needing Amazon\'s barcode (X00…), never the ones with our UPC; follows the search; commas/quotes kept safe',
+    all.length === 3 && all[0].startsWith('Part #,Amazon SKU,FNSKU (Amazon barcode)') && all[1] === '30-3-6=2X,30-3-6=2X-,X00ABC1234,B0AAA,"Cap, ""1/2"" brass",FBA catalog,2026-10-20'
+      && !all.join().includes('B0BBB') && one.length === 2 && one[1].startsWith('24-4-6=5,') && /id="inv-amzbc-dl" onclick="invAmzBcCsv\(\)"/.test(ih), { all, one });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

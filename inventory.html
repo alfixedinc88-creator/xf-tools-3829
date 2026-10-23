@@ -649,6 +649,7 @@ window.invCredLogin = async function() {
   <details class="icard" id="inv-amzbc-card" style="display:none" ontoggle="if(this.open)invAmzBcLoad()">
     <summary style="cursor:pointer;font-weight:800;color:#b45309">🏷 Listings that need Amazon's barcode (not our UPC) <span id="inv-amzbc-n" style="font-weight:400;color:var(--text3)"></span></summary>
     <div style="font-size:12px;color:var(--text2);margin:6px 0">Amazon's own data: a listing whose FNSKU is an <b>X00…</b> code needs Amazon's label on every unit — don't ship it with our UPC. One whose FNSKU is the ASIN (B0…) ships with our UPC.</div>
+    <button type="button" id="inv-amzbc-dl" onclick="invAmzBcCsv()" style="padding:7px 12px;border:1.5px solid #b45309;border-radius:8px;background:var(--bg);color:#b45309;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:6px">⬇ Download the list (CSV)</button>
     <input id="inv-amzbc-q" placeholder="Search part # / SKU / name / FNSKU…" oninput="invAmzBcRender()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:6px">
     <div id="inv-amzbc-list" style="font-size:12px;max-height:50vh;overflow:auto">Loading…</div>
   </details>
@@ -2239,6 +2240,23 @@ window.invCredLogin = async function() {
       + L.map(function(x) { return '<tr class="inv-amzbc-row"><td style="padding:3px 6px;font-family:var(--mono);font-weight:700;white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:3px 6px;font-family:var(--mono);white-space:nowrap">' + ckE(x.sku) + '</td>'
         + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + ckE(x.asin) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td></tr>'; }).join('') + '</table>'
       : '<span style="color:var(--text3)">' + (q ? 'None found for "' + ckE(q) + '"' : 'No FBA listing needs Amazon\'s barcode') + '</span>';
+  };
+  // ⬇ Owner (2026-10-23): "a listing I can download of the ones using Amazon's barcode" — what the search shows (all of them when empty).
+  function invAmzBcCsvText(d, q) {
+    q = String(q || '').trim().toUpperCase();
+    var L = (d && d.list || []).filter(function(x) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
+    var c = function(v) { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return [['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'From', 'Updated']].concat(L.map(function(x) { return [x.part, x.sku, x.fnsku, x.asin, x.name, (x.from || []).join(' + '), x.at]; }))
+      .map(function(r) { return r.map(c).join(','); }).join('\r\n');
+  }
+  window.invAmzBcCsvText = invAmzBcCsvText;
+  window.invAmzBcCsv = function() {
+    return invAmzBcLoad(true).then(function(d) {
+      if (!d) { alert('Could not load the list — try again'); return; }
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['\ufeff' + invAmzBcCsvText(d, (g('inv-amzbc-q') || {}).value)], { type: 'text/csv;charset=utf-8' }));
+      a.download = 'amazon-barcode-listings-' + new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) + '.csv'; a.click();
+    });
   };
   // 🔍 Box check: the label's code (UPC, or the FNSKU when Amazon's barcode is required) vs the product scanned. Right = the same code,
   // or both read as the same part # (e.g. the box's outside UPC vs the bag's inside UPC). The label stays until 📦 Next box, so every
