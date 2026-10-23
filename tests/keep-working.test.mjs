@@ -8913,6 +8913,27 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   check('…totals behind it add up: 14 − 2 (stock out) − 4 (the recount\'s −4) = ' + tot(), t0 === 14 && tot() === 8, { t0, now: tot() });
   const pk = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   check('…Admin / Owner only (a picker gets 403)', (await call('/inventory/recount/check', { headers: { 'X-Cred-Token': pk } })).status === 403, null);
+  // 🏬 Owner (2026-10-23): "under Columns (newest first) I want to also see what we have in SKU Mgr, so you can double check it too — no
+  // more mistakes; if it ends up not matching, give us the warning".
+  {
+    const rep = await get('/inventory/recount/report'), C = l => (rep.columns || []).find(c => c.location === l) || {};
+    const a = C('Q5=1-1-1').skuMgr || {}, b = C('Q5=1-1-2').skuMgr || {}, c3 = C('Q5=1-1-3').skuMgr || {}, f = C('Q5=1-1-6').skuMgr || {};
+    const bl = (b.lines || [])[0] || {}, cl = (c3.lines || []).find(x => x.part === '705-1-4=5') || {};
+    check('Columns → 🏬 SKU Mgr now: Q5=1-1-1 ✅ matches (counted 5, −2 out → SKU Mgr 3); Q5=1-1-2 ⚠ NOT matching (should be 4, SKU Mgr 2, −2 off, with the name); Q5=1-1-3 ⚠ 705-1-4=5 in SKU Mgr, never counted; Q5=1-1-6 found empty = ✅ (🧹 said)',
+      a.ok === true && a.lines.length === 1 && a.lines[0].now === 3 && a.lines[0].moved === -2 && a.boxes === 3
+        && b.ok === false && bl.expected === 4 && bl.now === 2 && bl.diff === -2 && bl.off && bl.name === 'tee'
+        && c3.ok === false && cl.why === 'not counted' && cl.now === 2 && c3.lines.find(x => x.part === '705-1-3=2').off === false
+        && f.ok === true && (f.emptied || [])[0] && f.emptied[0].by === 'NB', { a, b, c3, f });
+    const { readFileSync: rfS } = await import('node:fs');
+    const ihS = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+    const W2 = new Function('ckE', 'xfrN', 'xfrFmtT', ihS.slice(ihS.indexOf('  function rcSkuWarnHtml(off) {'), ihS.indexOf('  window.rcSkuMgrCell = rcSkuMgrCell;')) + '; return { cell: rcSkuMgrCell, warn: rcSkuWarnHtml };')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x));
+    const off = (rep.columns || []).filter(x => /^Q5=/.test(x.location) && x.skuMgr && x.skuMgr.lines && !x.skuMgr.ok);
+    const w = W2.warn(off), hb = W2.cell(C('Q5=1-1-2')), ha = W2.cell(C('Q5=1-1-1'));
+    check('…the screen: ⚠ warning on top naming the columns not matching (Q5=1-1-3 · Q5=1-1-2, newest first), red rows, the 🏬 cell opens by itself when off; ✅ matches stays closed',
+      /⚠ 2 columns NOT matching SKU Mgr/.test(w) && /Q5=1-1-3 · Q5=1-1-2/.test(w) && /✅ Every column/.test(W2.warn([]))
+        && /<details class="rc-sku-cell" open>/.test(hb) && /⚠ NOT matching SKU Mgr/.test(hb) && /⚠ -2 off/.test(hb) && /<details class="rc-sku-cell">/.test(ha) && /✅ matches<\/b> · 3 boxes · 1 part #/.test(ha)
+        && /'🏬 SKU Mgr now \(double check\)'/.test(ihS) && /rc-col-skuoff/.test(ihS) && /\+ rcSkuMgrCell\(c\) \+/.test(ihS), { w, hb });
+  }
   const { readFileSync: rfN } = await import('node:fs');
   const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   const i0 = ih.indexOf('  window.rcNumCheckHtml = function(d) {'), fn = ih.slice(i0, ih.indexOf('\n  };\n', i0) + 5);

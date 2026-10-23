@@ -8182,6 +8182,9 @@ async function recountColumnDone(request, env, session) {
 // in time order (Stock In / Out / Transfer, 🧹 found empty = 0, ✏️ SKU Mgr edit = its Part Total change) → should be = SKU Mgr now.
 // Each line carries its step-by-step timeline; ?all=1 also returns the ones that match (for the ⬇ CSV).
 async function recountCheck(env, url) {
+  return cors(new Response(JSON.stringify(await recountCheckData(env, url)), { headers: { 'Content-Type': 'application/json' } }));
+}
+async function recountCheckData(env, url) {
   await recountTables(env);
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
   await ensureTotalTrackingColumns(env).catch(() => {});
@@ -8288,15 +8291,26 @@ async function recountCheck(env, url) {
     }
   }
   problems.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }) || String(a.part).localeCompare(String(b.part)));
-  return cors(new Response(JSON.stringify({ ok: true, roundStart, from: from || null, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems, emptied: emptiedList, ...(wantAll ? { lines: allLines } : {}) }), { headers: { 'Content-Type': 'application/json' } }));
+  return { ok: true, roundStart, from: from || null, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems, emptied: emptiedList, ...(wantAll ? { lines: allLines } : {}) };
 }
 async function recountReport(env) {
   await recountTables(env);
   const roundStart = await recountRoundStart(env);
   const rows = await d1All(env, 'SELECT id, ts, started_at, location, by_user, items, changed, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE ts >= ? ORDER BY ts DESC', [roundStart]);
+  // 🏬 Owner (2026-10-23): "under Columns I want to also see what we have in SKU Mgr, so you can double check it too — no more mistakes;
+  // if it ends up not matching, give us the warning". The same check as 🔎 Are the audit numbers right? (count + what moved there
+  // after = SKU Mgr now), per column: every part # SKU Mgr has at that spot now, and ⚠ when it doesn't add up.
+  const UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+  let ck = null; try { ck = await recountCheckData(env, new URL('https://x/?all=1')); } catch (e) { ck = { ok: false, error: String(e && e.message || e) }; }
+  const ckBy = {}; if (ck && ck.ok) {
+    (ck.lines || []).forEach(x => { (ckBy[x.location] = ckBy[x.location] || { lines: [], problems: [], emptied: [] }).lines.push(x); });
+    (ck.problems || []).forEach(x => { (ckBy[x.location] = ckBy[x.location] || { lines: [], problems: [], emptied: [] }).problems.push(x); });
+    (ck.emptied || []).forEach(x => { (ckBy[x.location] = ckBy[x.location] || { lines: [], problems: [], emptied: [] }).emptied.push(x); });
+  }
   // 📋 Owner (2026-10-23): "Columns — item name too, what's there before and after, what was found / none found". Product names by part #.
   const nm = {};
   { const ps = new Set(); rows.forEach(r => { try { (JSON.parse(r.detail || '[]') || []).forEach(x => { if (x && x.part) ps.add(String(x.part).trim().toUpperCase()); }); } catch (_) {} });
+    Object.values(ckBy).forEach(b => b.lines.forEach(x => ps.add(String(x.part || '').trim().toUpperCase())));
     const list = [...ps];
     for (let i = 0; i < list.length; i += 90) { const ch = list.slice(i, i + 90);
       (await d1All(env, `SELECT UPPER(TRIM(part_num)) p, MAX(NULLIF(name, '')) n, MAX(base_sku) b FROM master_list WHERE UPPER(TRIM(part_num)) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(TRIM(part_num))`, ch).catch(() => [])).forEach(x => { if (x.n) nm[x.p] = x.n; }); }
@@ -8313,7 +8327,20 @@ async function recountReport(env) {
     const same = byLoc[String(r.location).toUpperCase()] || [], at = same.indexOf(r);
     const checkedBy = r.stopped ? [] : same.slice(0, Math.max(0, at)).filter(x => x.recheck).reverse().map(x => ({ by: x.by_user || '?', at: x.ts })); // later checks of this column
     const first = r.recheck && same.length ? same[same.length - 1] : null;
-    return { id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
+    // 🏬 SKU Mgr now at this spot, checked against the column's newest count (an older count of the same column: see the newer one)
+    let skuMgr = null;
+    if (!r.stopped) {
+      if (at > 0) skuMgr = { newer: true };
+      else if (!ck || !ck.ok) skuMgr = { error: (ck && ck.error) || 'could not check' };
+      else { const b = ckBy[UL(r.location)] || { lines: [], problems: [], emptied: [] }, R = v => Math.round((v || 0) * 1000) / 1000;
+        const off = new Set(b.problems.map(x => String(x.part).toUpperCase()));
+        skuMgr = { ok: !b.problems.length, unreadable: b.problems.some(x => x.why === 'unreadable'), boxes: R(b.lines.reduce((a, x) => a + (x.now || 0), 0)),
+          lines: b.lines.filter(x => x.now > 1e-9 || x.counted || off.has(String(x.part).toUpperCase()))
+            .map(x => ({ part: x.part, name: nm[String(x.part).toUpperCase()] || '', counted: x.counted, moved: x.moved, expected: x.expected, now: x.now, diff: x.diff,
+              off: off.has(String(x.part).toUpperCase()), why: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).why || '' })),
+          emptied: b.emptied.map(x => ({ part: x.part, counted: x.counted, by: x.emptiedBy, at: x.emptiedAt })) }; }
+    }
+    return { skuMgr, id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
       boxes, skipped, howKnown: d.some(x => x.how), stopped: !!r.stopped, recheck: !!r.recheck, lines, checkedBy,
       before: Math.round(lines.reduce((a, x) => a + x.before, 0) * 100) / 100, after: Math.round(lines.reduce((a, x) => a + x.after, 0) * 100) / 100,
       firstBy: first && first !== r ? { by: first.by_user || '?', at: first.ts } : null };
