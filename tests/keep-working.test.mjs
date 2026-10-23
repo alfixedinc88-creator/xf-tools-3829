@@ -9068,5 +9068,30 @@ console.log('\n🏷 Reorder → Barcode / vendor for a part #: the item name (SK
   sq.exec("DELETE FROM master_list WHERE base_sku = '33-1-1'; DELETE FROM fba_catalog WHERE sku = '34-4-4=5'");
 }
 
+// Owner (2026-10-23): "re-checking the inventory — when a column is done, a 'Checking' button next to it; when we check, under each
+// column 'checked by who, when'; each box: what's there and what's none found, with the product name. Columns (newest first): item
+// name too, what was done — what's there before and after."
+console.log('\n🔁 Recount report: 🔁 Checking a done column (who / when) + 📋 what was done per line (name, before → after, found / none found)');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('708-1-1','Brass tee 1/2"','708-1-1=10','Q3=1-1-1',3,10), ('708-1-2','Brass elbow','708-1-2=5','Q3=1-1-1',2,5)`).run();
+  const rs0 = Date.parse((await get('/inventory/recount/report')).roundStart), t1 = new Date(rs0 + 1000).toISOString(), t2 = new Date(rs0 + 2000).toISOString(); // in this round
+  await post('/inventory/recount/column-done', { location: 'Q3=1-1-1', items: 2, changed: 1, doneAt: t1, startedAt: t1, detail: [
+    { part: '708-1-1=10', pcs: 10, system: 3, counted: 3, how: 'scan' }, { part: '708-1-2=5', pcs: 5, system: 2, counted: 0, how: 'none' }, { part: '708-1-3=2', pcs: 2, system: 0, counted: 4, new: true, how: 'scan' }] });
+  await post('/inventory/recount/column-done', { location: 'Q3=1-1-1', items: 1, changed: 0, doneAt: t2, startedAt: t2, recheck: true, detail: [{ part: '708-1-1=10', pcs: 10, system: 3, counted: 3, how: 'scan' }] });
+  const rep = await get('/inventory/recount/report'), cs = (rep.columns || []).filter(c => c.location === 'Q3=1-1-1');
+  const first = cs.find(c => !c.recheck) || {}, chk = cs.find(c => c.recheck) || {};
+  const L = Object.fromEntries((first.lines || []).map(x => [x.part, x]));
+  check('the first count: "🔁 Checked by TS (when)" under it; 📋 each line with its product name, before → after, how (✓ scanned · ✗ none found · ➕ new line); column before 5 → after 7',
+    (first.checkedBy || []).length === 1 && first.checkedBy[0].by === 'TS' && L['708-1-1=10'].name === 'Brass tee 1/2"' && L['708-1-1=10'].before === 3 && L['708-1-1=10'].after === 3
+      && L['708-1-2=5'].name === 'Brass elbow' && L['708-1-2=5'].how === 'none' && L['708-1-2=5'].after === 0 && L['708-1-3=2'].new && first.before === 5 && first.after === 7, first);
+  check('…the check itself is marked 🔁 Checking, of TS\'s count (when)', chk.recheck === true && chk.firstBy && chk.firstBy.by === 'TS' && !(chk.checkedBy || []).length, chk);
+  const { readFileSync: rfK } = await import('node:fs');
+  const ih = rfK(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…screen: a 🔁 Checking button on each done column (opens it to count again, marked as a check — "🔁 Checking — counting this column again"); "📋 What was done (before → after)" with Name; the check is sent as recheck',
+    /class="rc-check-btn" onclick="rcCheckCol\(this\.dataset\.l, this\.dataset\.by, this\.dataset\.at\)"/.test(ih) && /window\.rcCheckCol = function\(loc, by, at\)/.test(ih) && /🔁 Checking — counting this column again/.test(ih)
+      && /'📋 What was done \(before → after\)'/.test(ih) && /\['Part #', 'Name', 'pcs \/ box', 'Before', 'After', 'Change', 'How'\]/.test(ih) && (ih.match(/recheck: !!RC\.recheck/g) || []).length === 2, null);
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '708-1-%'; DELETE FROM recount_columns WHERE location = 'Q3=1-1-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
