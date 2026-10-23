@@ -9284,7 +9284,13 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
     prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
   check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
     /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
-      && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+      && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);  // Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it".
+  const fr = new Function(fnA('awdPrevFromRows') + 'return awdPrevFromRows;')();
+  const a1 = fr([['ASIN', 'Title', 'Units', 'Boxes'], ['B0AAA11111', 'Tee', '120', '5'], ['b0bbb22222', 'Cap', '40', ''], ['B0AAA11111', 'Tee', '24', '1'], ['', 'total', '184', '6']]);
+  const a2 = fr([['B0CCC33333'], ['30-3-4=10X'], ['hello'], ['B0CCC33333']]);
+  const a3 = fr([['SKU', 'ASIN', 'Units'], ['31-1-1=5', 'B0DDD44444', '60']]);
+  check('⬆ upload a list (Excel / CSV / text): every ASIN (B0…) or part # in it; a "Boxes" column → that many boxes (same ASIN twice → added up); units are NOT taken as boxes; repeats kept once',
+    a1.join('|') === 'B0AAA11111 6|B0BBB22222' && a2.join('|') === 'B0CCC33333|30-3-4=10X' && a3.join('|') === 'B0DDD44444' && /onclick="document\.getElementById\('awd-prev-file'\)\.click\(\)">⬆ Upload a list/.test(ah), { a1, a2, a3 });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

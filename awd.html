@@ -1052,6 +1052,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <div id="awd-prev-wrap" style="margin-top:8px">
                   <div style="font-size:11px;font-weight:700;color:var(--gray-700)">✅ Already packed (PREVIOUS PACKED) — ASIN or SKU, one per line</div>
                   <textarea id="awd-prev-list" rows="3" placeholder="B0B4X2PWSM&#10;B0C1ABCDEF 3   ← only 3 of its boxes&#10;30-3-4=10X" oninput="awdPrevSave()" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;padding:6px;border:1px solid var(--gray-300);border-radius:6px;margin-top:3px"></textarea>
+                  <!-- ⬆ Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it". -->
+                  <button type="button" class="btn btn-sm btn-secondary" style="margin:3px 0" onclick="document.getElementById('awd-prev-file').click()">⬆ Upload a list (Excel / CSV / text)</button>
+                  <input type="file" id="awd-prev-file" accept=".xlsx,.xls,.csv,.txt" style="display:none" onchange="awdPrevFile(this.files[0]); this.value=''">
+                  <span id="awd-prev-msg" style="font-size:11px;color:var(--gray-600)"></span>
                   <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.</div>
                 </div>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
@@ -2026,6 +2030,37 @@ function awdPrevParse(text) {
     const n = t.length > 1 && /^\d+$/.test(t[t.length - 1]) ? parseInt(t.pop(), 10) : Infinity; const k = t.join('').replace(/-+$/, '');
     if (k) m[k] = (m[k] === undefined ? 0 : m[k]) + n; });
   return m;
+}
+// ⬆ A file of ASINs / SKUs (any layout: Amazon's report, our sheet, a plain list) → the list above. Every ASIN (B0…) or part #
+// (#-#…=…) in any cell is taken; a box count only from a column whose header says "box" (else every box of it).
+function awdPrevFromRows(rows) {
+  const out = [], seen = {}; let boxCol = -1;
+  rows.forEach(r => {
+    const cells = (r || []).map(c => String(c == null ? '' : c).trim());
+    const hb = cells.findIndex(c => /box/i.test(c) && !/\d/.test(c)); if (hb >= 0 && !cells.some(c => /^B0[0-9A-Z]{8}$/i.test(c))) { boxCol = hb; return; }
+    const k = cells.find(c => /^B0[0-9A-Z]{8}$/i.test(c)) || cells.find(c => /^\d+(-\d+)+(&\d+)?C?=[0-9A-Z.\-]+$/i.test(c));
+    if (!k) return;
+    const K = k.toUpperCase(), n = boxCol >= 0 ? parseInt(cells[boxCol], 10) : NaN;
+    if (seen[K] !== undefined) { if (n > 0 && out[seen[K]].n !== null) out[seen[K]].n += n; return; }
+    seen[K] = out.length; out.push({ k: K, n: n > 0 ? n : null });
+  });
+  return out.map(x => x.k + (x.n ? ' ' + x.n : ''));
+}
+async function awdPrevFile(file) {
+  const msg = ge('awd-prev-msg'); if (!file) return;
+  try {
+    let rows;
+    if (/\.xlsx?$/i.test(file.name)) {
+      if (typeof XLSX === 'undefined') await new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = ok; sc.onerror = () => bad(new Error('could not load the Excel reader')); document.head.appendChild(sc); });
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      rows = wb.SheetNames.flatMap(n => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false }));
+    } else rows = (await file.text()).split(/\r?\n/).map(l => l.split(/[\t,;]/).map(c => c.replace(/^"|"$/g, '')));
+    const got = awdPrevFromRows(rows), ta = ge('awd-prev-list');
+    if (!got.length) { msg.style.color = '#DC2626'; msg.textContent = '✗ No ASIN (B0…) or part # found in ' + file.name; return; }
+    const have = awdPrevParse(ta.value), add = got.filter(l => !(l.split(' ')[0] in have));
+    ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + add.join('\n'); awdPrevSave();
+    msg.style.color = '#15803D'; msg.textContent = '✓ ' + got.length + ' read from ' + file.name + (got.length > add.length ? ' (' + (got.length - add.length) + ' already on the list)' : '') + ' — now upload the box labels';
+  } catch (e) { msg.style.color = '#DC2626'; msg.textContent = '✗ Could not read ' + file.name + ': ' + (e.message || e); }
 }
 // Is this label's SKU (or its ASIN) on the list, with boxes left? Takes one box off the count.
 function awdPrevHit(prev, sku, amz) {
