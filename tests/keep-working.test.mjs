@@ -7688,7 +7688,7 @@ console.log('\n🗺 FRONT → FRONT3 / FRONT4; ⚠ odd spot (FRONT=2-6); ✕ del
   const { readFileSync: rfF } = await import('node:fs');
   const ih = rfF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('…not signed in → refused; screen: ✕ on each spot box, ⚠ on odd ones, the warning lists the cases with OK = delete / Cancel = keep everything',
-    noMgmt.status >= 400 && /onclick="rcSpotDel\(this\.dataset\.l\)"/.test(ih) && /Cancel = keep everything as it is/.test(ih) && /\(sp\.odd \? '⚠ ' : ''\)/.test(ih), null);
+    noMgmt.status >= 400 && /onclick="event\.stopPropagation\(\);rcSpotDel\(this\.dataset\.l\)"/.test(ih) && /Cancel = keep everything as it is/.test(ih) && /\(sp\.odd \? '⚠ ' : ''\)/.test(ih), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '942-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '942-1-1%'");
 }
 
@@ -9389,8 +9389,23 @@ console.log('\n🟪 Recount 🗺 By area: double-checked spots stand out (purple
   const { readFileSync: rfD } = await import('node:fs');
   const ih = rfD(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('…on the grid: purple box with a thick border and "✓✓ checked <who> · <when>"; legend "🟪 double checked N of M"; area buttons count 🟪',
-    /if \(sp\.st === 'done' && sp\.checked\) c = \['#ede9fe', '#7c3aed'\];/.test(ih) && /✓✓ checked ' \+ ckE\(sp\.checked\.by\)/.test(ih) && /\(sp\.checked && sp\.st === 'done' \? '3px' : '1\.5px'\)/.test(ih)
+    /if \(sp\.st === 'done' && sp\.checked\) c = \['#ede9fe', '#7c3aed'\];/.test(ih) && /✓✓ checked ' \+ ckE\(sp\.checked\.by\)/.test(ih) && /\(\(sp\.checked \|\| sp\.off\) && sp\.st === 'done' \? '3px' : '1\.5px'\)/.test(ih)
       && /🟪 double checked ' \+ \(a\.checked \|\| 0\) \+ ' of ' \+ a\.done/.test(ih) && /\(a\.checked \? ' 🟪 ' \+ a\.checked : ''\)/.test(ih), null);
+  // Owner (2026-10-23): "if the audit number doesn't match SKU Mgr, a different color; tap the box → every detail: what, how many, pcs / case,
+  // part #, who / when edited, stock in / out — any change to that column".
+  await post('/inventory/recount/column-done', { location: 'C9=1-1-3', items: 1, changed: 0, detail: [{ part: '97-1-1=10', pcs: 10, system: 1, counted: 1, how: 'scan' }], startedAt: iso(30), doneAt: iso(31) });
+  sq.prepare("UPDATE master_list SET cases = 4 WHERE location = 'C9=1-1-3'").run(); // changed with nothing on record → off
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', '97-1-1=10', 'C9=1-1-2', 1, 'KL', 'Stock Out test', 'Approved')").run(new Date().toISOString());
+  const rep2 = await get('/inventory/recount/report?dry=1'), a2 = (rep2.areas || []).find(x => x.area === 'C9') || { spots: [] }, s3 = a2.spots.find(x => x.l === 'C9=1-1-3') || {};
+  check('🟧 audit 1 case at C9=1-1-3 but SKU Mgr now 4 (nothing moved) → that spot is marked off (≠ SKU Mgr); the area counts 🟧 1; 1-1-1 is not',
+    s3.st === 'done' && s3.off === true && a2.off === 1 && !(a2.spots.find(x => x.l === 'C9=1-1-1') || {}).off, s3);
+  const spI = await get('/inventory/recount/spot?loc=c9%3D1-1-2'), spW = await call('/inventory/recount/spot?loc=C9=1-1-2', { headers: { 'X-Cred-Token': (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token } });
+  check('🔍 tap a spot → SKU Mgr now (part #, name, cases × 10 pcs a case = pieces, last changed), its audit count (who / when) and every change there (KL Stock Out); pickers can\'t see it',
+    spI.ok && spI.loc === 'C9=1-1-2' && spI.skuMgr.length === 1 && spI.skuMgr[0].part === '97-1-1=10' && spI.skuMgr[0].name === 'x' && spI.skuMgr[0].each === 10 && spI.skuMgr[0].pcs === spI.skuMgr[0].cases * 10 && spI.totals.pcs === spI.skuMgr[0].pcs && spI.skuMgr[0].updatedAt
+      && spI.counts.length === 1 && spI.counts[0].by && spI.changes.some(x => x.type === 'OUT' && x.by === 'KL' && x.part === '97-1-1=10') && spW.status === 403, { spI, w: spW.status });
+  check('…on the grid: orange box with a thick border and "⚠ ≠ SKU Mgr"; legend "🟧 ≠ SKU Mgr N"; every box opens its details (✕ still only deletes)',
+    /if \(sp\.st === 'done' && sp\.off\) c = \['#ffedd5', '#ea580c'\];/.test(ih) && /⚠ ≠ SKU Mgr<\/b>/.test(ih) && /🟧 ≠ SKU Mgr ' \+ a\.off/.test(ih) && /onclick="rcSpotOpen\(this\.dataset\.l\)" data-l="/.test(ih) && /onclick="event\.stopPropagation\(\);rcSpotDel\(this\.dataset\.l\)"/.test(ih), null);
+  sq.exec("DELETE FROM inventory_log WHERE location LIKE 'C9=%'");
   sq.exec("DELETE FROM master_list WHERE base_sku = '97-1-1'; DELETE FROM recount_columns WHERE location LIKE 'C9=%'");
 }
 

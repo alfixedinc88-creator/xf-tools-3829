@@ -14692,7 +14692,7 @@ window.invCredLogin = async function() {
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">🗺 By area — tap one to see every spot</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
         + (d.areas || []).map(function(a) { var on = RC.area === a.area, all = a.done + a.started + a.notScanned;
             return '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="' + ckE(a.area) + '" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (a.notScanned || a.started ? 'var(--bg)' : 'var(--green-bg,#e8f7ee)') + ';color:var(--text)">'
-              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + (a.checked ? ' 🟪 ' + a.checked : '') + '</span></button>'; }).join('')
+              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + (a.checked ? ' 🟪 ' + a.checked : '') + (a.off ? ' 🟧 ' + a.off : '') + '</span></button>'; }).join('')
         // Owner (2026-10-17): "why '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?" — SKU Mgr Locations that are not spots.
         + ((d.notSpots || []).length ? '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="__bad" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (RC.area === '__bad' ? 'var(--accent)' : 'var(--orange)') + ';background:var(--orange-bg,#fff7ed);color:var(--text)"><b>⚠ ' + d.notSpots.length + ' not real spots</b><br><span style="font-size:11px">a note / barcode / container in SKU Mgr Location</span></button>' : '')
         + '</div>'
@@ -14836,6 +14836,7 @@ window.invCredLogin = async function() {
     var T = function(x) { return x ? xfrFmtT(x) : ''; };
     return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
       + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
+      + (a.off ? '<span class="rc-off-legend" style="color:#c2410c;font-weight:800">🟧 ≠ SKU Mgr ' + a.off + '</span>' : '')
       + '<span>🟩 done ' + a.done + '</span><span class="rc-chk-legend" style="color:#7c3aed;font-weight:700">🟪 double checked ' + (a.checked || 0) + ' of ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
       + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished (pick which) to…</button>' : '')
       + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
@@ -14844,10 +14845,12 @@ window.invCredLogin = async function() {
       + rcAisleRows(a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }), function(sp) { var c = col[sp.st];
           // 🟪 Owner (2026-10-23): double checked → purple, thick border, "✓✓ checked by …" — easy to see which are done twice.
           if (sp.st === 'done' && sp.checked) c = ['#ede9fe', '#7c3aed'];
-          var sub = sp.st === 'done' ? (sp.checked ? '<b class="rc-dbl" style="color:#7c3aed">✓✓ checked ' + ckE(sp.checked.by) + ' · ' + ckE(T(sp.checked.at)) + '</b><br>' : '') + '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
+          // 🟧 Owner (2026-10-23): the audit count doesn't match SKU Mgr now → orange, "⚠ ≠ SKU Mgr" (tap the box for every detail).
+          if (sp.st === 'done' && sp.off) c = ['#ffedd5', '#ea580c'];
+          var sub = sp.st === 'done' ? (sp.off ? '<b class="rc-off" style="color:#c2410c">⚠ ≠ SKU Mgr</b><br>' : '') + (sp.checked ? '<b class="rc-dbl" style="color:#7c3aed">✓✓ checked ' + ckE(sp.checked.by) + ' · ' + ckE(T(sp.checked.at)) + '</b><br>' : '') + '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
           // ✕ delete a spot (owner 2026-10-17: "weird spots like FRONT 2-6"); ⚠ odd = shorter than the other spots of the area
-          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + (sp.odd ? ' — odd spot: shorter than the others here' : '') + '" style="position:relative;padding:5px 18px 5px 6px;border-radius:7px;background:' + c[0] + ';border:' + (sp.checked && sp.st === 'done' ? '3px' : '1.5px') + ' ' + (sp.odd ? 'dashed var(--orange)' : 'solid ' + c[1]) + ';color:var(--text)">'
-            + '<button type="button" onclick="rcSpotDel(this.dataset.l)" data-l="' + ckE(sp.l) + '" title="Delete this spot" style="position:absolute;top:2px;right:2px;border:none;background:none;color:var(--red);font-size:13px;font-weight:800;cursor:pointer;padding:0 3px;line-height:1">✕</button>'
+          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + (sp.odd ? ' — odd spot: shorter than the others here' : '') + '" style="position:relative;padding:5px 18px 5px 6px;border-radius:7px;background:' + c[0] + ';border:' + ((sp.checked || sp.off) && sp.st === 'done' ? '3px' : '1.5px') + ' ' + (sp.odd ? 'dashed var(--orange)' : 'solid ' + c[1]) + ';color:var(--text);cursor:pointer" onclick="rcSpotOpen(this.dataset.l)" data-l="' + ckE(sp.l) + '">'
+            + '<button type="button" onclick="event.stopPropagation();rcSpotDel(this.dataset.l)" data-l="' + ckE(sp.l) + '" title="Delete this spot" style="position:absolute;top:2px;right:2px;border:none;background:none;color:var(--red);font-size:13px;font-weight:800;cursor:pointer;padding:0 3px;line-height:1">✕</button>'
             + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + (sp.odd ? '⚠ ' : '') + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; })
       + '</div>';
   }
@@ -14875,6 +14878,37 @@ window.invCredLogin = async function() {
         + '<div style="flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px">' + by[k].map(cell).join('') + '</div></div>';
     }).join('');
   }
+  // 🔍 Tap a spot (owner 2026-10-23): everything at that column — SKU Mgr now (part #, name, cases, pcs / case, pieces), the audit
+  // counts (who / when, before → after) and the SKU Mgr check of the newest one, and every change there (stock in / out, transfer,
+  // edit, audit) with who / when.
+  window.rcSpotOpen = function(L) {
+    var ov = g('rc-spot-ov'); if (!ov) { ov = document.createElement('div'); ov.id = 'rc-spot-ov'; ov.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto'; ov.onclick = function(e) { if (e.target === ov) ov.remove(); }; document.body.appendChild(ov); }
+    ov.innerHTML = '<div style="background:var(--bg);color:var(--text);border-radius:12px;max-width:980px;width:100%;padding:14px">Loading ' + ckE(L) + '…</div>';
+    wFetch(W + '/inventory/recount/spot?loc=' + encodeURIComponent(L)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'error');
+      var T = function(x) { return x ? xfrFmtT(x) : '—'; }, N = function(v) { return v == null || v === '' ? '—' : ckE(xfrN(v)); };
+      var th = 'style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
+      var tb = function(head, rows) { return '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><tr>' + head.map(function(h) { return '<th ' + th + '>' + h + '</th>'; }).join('') + '</tr>' + rows.join('') + '</table></div>'; };
+      var col = ((RC.rep && RC.rep.columns) || []).filter(function(c) { return !c.stopped && String(c.location).toUpperCase() === d.loc; })[0], sm = col && col.skuMgr;
+      var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><b style="font-family:var(--mono);font-size:17px">📍 ' + ckE(d.loc) + '</b>'
+        + (sm && sm.ok === false ? '<span style="color:#c2410c;font-weight:800">⚠ audit ≠ SKU Mgr</span>' : sm && sm.ok ? '<span style="color:var(--green);font-weight:800">✅ audit = SKU Mgr</span>' : '')
+        + '<button type="button" onclick="document.getElementById(\'rc-spot-ov\').remove()" style="margin-left:auto;border:1.5px solid var(--border);background:var(--bg2);border-radius:8px;padding:4px 10px;cursor:pointer;color:var(--text)">✕ Close</button></div>';
+      h += '<div style="font-weight:800;margin:6px 0 3px">🏬 In SKU Mgr now: ' + d.totals.lines + ' line(s) · ' + N(d.totals.cases) + ' cases · ' + N(d.totals.pcs) + ' pcs</div>'
+        + (d.skuMgr.length ? tb(['Part #', 'Name', 'Cases', 'Pcs / case', 'Pieces', 'Last changed'], d.skuMgr.map(function(x) { return '<tr><td ' + td + '><b style="font-family:var(--mono)">' + ckE(x.part) + '</b></td><td ' + td + '>' + ckE(x.name) + '</td><td ' + td + '><b>' + N(x.cases) + '</b></td><td ' + td + '>' + N(x.each) + '</td><td ' + td + '>' + N(x.pcs) + '</td><td ' + td + '>' + ckE(T(x.updatedAt)) + '</td></tr>'; }))
+          : '<div style="color:var(--text3)">Nothing in SKU Mgr at this spot.</div>');
+      if (sm && sm.lines && sm.lines.length) h += '<div style="font-weight:800;margin:10px 0 3px">🔎 Newest audit vs SKU Mgr (counted + moved in / out after = should be → SKU Mgr now)</div>'
+        + tb(['Part #', 'Counted', 'Moved after', 'Should be', 'SKU Mgr now', ''], sm.lines.map(function(x) { return '<tr' + (x.off ? ' style="background:#ffedd5"' : '') + '><td ' + td + '><b style="font-family:var(--mono)">' + ckE(x.part) + '</b></td><td ' + td + '>' + N(x.counted) + '</td><td ' + td + '>' + N(x.moved) + '</td><td ' + td + '>' + N(x.expected) + '</td><td ' + td + '><b>' + N(x.now) + '</b></td><td ' + td + '>' + (x.off ? '<b style="color:#c2410c">⚠ off ' + N(x.diff) + '</b>' + (x.why ? ' · ' + ckE(x.why) : '') : '✅') + '</td></tr>'; }));
+      h += '<div style="font-weight:800;margin:10px 0 3px">📋 Audit counts of this column (newest first)</div>'
+        + (d.counts.length ? d.counts.map(function(c) { return '<div style="padding:4px 0;border-top:1px solid var(--border)"><b>' + ckE(c.by) + '</b> · ' + ckE(T(c.startedAt)) + ' → ' + ckE(T(c.at)) + (c.stopped ? ' <span style="color:var(--orange)">✕ stopped</span>' : '') + (c.recheck ? ' <span style="color:#7c3aed">🔁 check</span>' : '')
+            + '<div style="font-size:12px;color:var(--text2)">' + (c.lines.length ? c.lines.map(function(x) { return '<span style="font-family:var(--mono)">' + ckE(x.part) + '</span> ×' + N(x.pcs) + ' pcs: ' + N(x.before) + ' → <b>' + N(x.after) + '</b>' + (x.how === 'none' ? ' (none found)' : x.how === 'found' ? ' (found)' : x.new ? ' (new)' : ''); }).join(' · ') : '—') + '</div></div>'; }).join('')
+          : '<div style="color:var(--text3)">Not audited yet.</div>');
+      h += '<div style="font-weight:800;margin:10px 0 3px">🕘 Every change at this spot (newest first)</div>'
+        + (d.changes.length ? tb(['When', 'Who', 'What', 'Part #', 'Cases', 'Part total', 'Status', 'Notes'], d.changes.map(function(x) {
+            return '<tr' + (x.cancelled ? ' style="opacity:.5"' : '') + '><td ' + td + '>' + ckE(T(x.at)) + '</td><td ' + td + '><b>' + ckE(x.by) + '</b></td><td ' + td + '>' + ckE(String(x.type || '').replace('_', ' ')) + (x.other ? '<div style="font-size:11px;color:var(--text3)">' + (/OUT/.test(x.type) ? 'to ' : 'from ') + ckE(x.other) + '</div>' : '') + '</td><td ' + td + '><span style="font-family:var(--mono)">' + ckE(x.part) + '</span></td><td ' + td + '>' + N(x.cases) + '</td><td ' + td + '>' + (x.before != null && x.after != null ? N(x.before) + ' → ' + N(x.after) : '') + '</td><td ' + td + '>' + ckE(x.cancelled ? 'Cancelled' : x.status) + (x.approvedBy ? '<div style="font-size:11px;color:var(--text3)">' + ckE(x.approvedBy) + '</div>' : '') + '</td><td ' + td + ' title="' + ckE(x.notes) + '"><span style="font-size:11px;color:var(--text2)">' + ckE(x.notes.slice(0, 120)) + '</span></td></tr>'; }))
+          : '<div style="color:var(--text3)">No change recorded at this spot.</div>');
+      ov.innerHTML = '<div style="background:var(--bg);color:var(--text);border-radius:12px;max-width:980px;width:100%;padding:14px">' + h + '</div>';
+    }).catch(function(e) { ov.innerHTML = '<div style="background:var(--bg);color:var(--red);border-radius:12px;padding:14px">Could not load ' + ckE(L) + ': ' + ckE(e.message) + ' <a href="#" onclick="document.getElementById(\'rc-spot-ov\').remove();return false">close</a></div>'; });
+  };
   // ✕ a spot: empty → deleted at once; cases there → warning (part #s + cases): continue deleting or cancel (nothing changes).
   window.rcSpotDel = function(L) {
     if (!confirm('Delete spot ' + L + '?\n\nIt leaves the location list and SKU Mgr. Kept in Inventory → History.')) return;
