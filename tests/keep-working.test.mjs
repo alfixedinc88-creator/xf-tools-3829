@@ -9268,5 +9268,24 @@ console.log('\n🕘 AWD Planner → History: every Shipment Builder export kept 
   check('…🕘 History tab on the AWD Planner (opens the list) + its 🧩 Pages & Tabs check mark', /id="tab-history"/.test(ah) && /id="page-history"/.test(ah) && /if \(n === 'history'\) awdHistLoad\(\);/.test(ah) && /key: 'history', label: '🕘 History \(shipments exported\)', sel: '#tab-history'/.test(xa), null);
 }
 
+// Owner (2026-10-23): "some items we already packed — I give you the ASIN; when I upload Amazon's box labels, put 'previous packed' on them,
+// so our guy knows that one on the pallet is done and doesn't go down to the warehouse to grab it".
+console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already packed');
+{
+  const { readFileSync: rfV } = await import('node:fs');
+  const ah = rfV(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const S0 = { shipment: { '30-3-4=10X': { row: { asin: 'B0AAA11111' } } }, joined: [{ sku: '31-1-1=5', asin: 'B0BBB22222' }] };
+  const T = new Function('S', fnA('awdPrevParse') + fnA('awdPrevHit') + 'return { parse: awdPrevParse, hit: awdPrevHit };')(S0);
+  const prev = T.parse('b0aaa11111\nB0BBB22222 2\n 40-1-1=2 ');
+  const amz = [{ sku: '40-1-1=2', asin: 'B0CCC33333' }];
+  const seq = ['30-3-4=10X', '30-3-4=10X', '31-1-1=5', '31-1-1=5', '31-1-1=5', '40-1-1=2', '50-5-5=1'].map(s => !!T.hit(prev, s, amz));
+  check('the list: an ASIN (any case) → every box of its SKU; "ASIN 2" → only 2 boxes; a SKU works too; SKUs not on it keep our template',
+    prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
+  check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
+    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
+      && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

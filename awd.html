@@ -1047,6 +1047,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <input type="file" id="awd-lbl-file" accept="application/pdf,.pdf" style="display:none" onchange="awdLabelsDo(this.files[0]); this.value=''">
                 <p style="font-size:11px;color:var(--gray-400);margin-top:6px;line-height:1.4">The FBA or AWD box label PDF Amazon gives you. Each label's SKU is read off the label; our template (need label · name · UPC · spot) is printed in an empty spot on it.</p>
                 <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-bc" checked> <span>Add the scan barcode + product photo (the packer scans the label, then the product — 🔍 Box check on Stock Out Big Company)</span></label>
+                <!-- ✅ Owner (2026-10-23): "some items we have already packed — give you the ASIN, and when I upload the box labels put
+                     'previous packed' on them, so our guy knows that one on the pallet is done and doesn't go down to the warehouse". -->
+                <div id="awd-prev-wrap" style="margin-top:8px">
+                  <div style="font-size:11px;font-weight:700;color:var(--gray-700)">✅ Already packed (PREVIOUS PACKED) — ASIN or SKU, one per line</div>
+                  <textarea id="awd-prev-list" rows="3" placeholder="B0B4X2PWSM&#10;B0C1ABCDEF 3   ← only 3 of its boxes&#10;30-3-4=10X" oninput="awdPrevSave()" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;padding:6px;border:1px solid var(--gray-300);border-radius:6px;margin-top:3px"></textarea>
+                  <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.</div>
+                </div>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
               </div>
             </div></div>
@@ -2010,6 +2017,24 @@ function awdDrawBlock(ctx, rect, lines, bc, photo, maxFs) {
   awdDrawTemplate(ctx, { x: rect.x + p + (ps ? ps + p : 0) - p, y: rect.y, w: iw - (ps ? ps + p : 0) + 2 * p, h: th + 2 * p }, lines, maxFs);
   return { photo: !!ps, barcode: !!bh };
 }
+// ✅ PREVIOUS PACKED (owner 2026-10-23): the ASINs / SKUs typed in the box → { key: boxes left (Infinity = all) }.
+const AWD_PREV_KEY = 'awd_prev_packed';
+function awdPrevSave() { try { localStorage.setItem(AWD_PREV_KEY, (ge('awd-prev-list') || {}).value || ''); } catch (e) {} }
+function awdPrevParse(text) {
+  const m = {};
+  String(text || '').split(/[\n,;]+/).forEach(l => { const t = l.trim().toUpperCase().split(/\s+/).filter(Boolean); if (!t.length) return;
+    const n = t.length > 1 && /^\d+$/.test(t[t.length - 1]) ? parseInt(t.pop(), 10) : Infinity; const k = t.join('').replace(/-+$/, '');
+    if (k) m[k] = (m[k] === undefined ? 0 : m[k]) + n; });
+  return m;
+}
+// Is this label's SKU (or its ASIN) on the list, with boxes left? Takes one box off the count.
+function awdPrevHit(prev, sku, amz) {
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  const it = (S.shipment || {})[sku], j = (S.joined || []).find(r => n(r.sku) === n(sku)), a = (amz || []).find(x => n(x.sku) === n(sku));
+  const asin = n((it && it.row && it.row.asin) || (j && j.asin) || (a && a.asin));
+  for (const k of [n(sku), asin]) if (k && prev[k] > 0) { prev[k]--; return { key: k, asin }; }
+  return null;
+}
 async function awdLabelsDo(file) {
   const out = ge('awd-lbl-out'); if (!file) return;
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
@@ -2018,6 +2043,7 @@ async function awdLabelsDo(file) {
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
     const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0;
     const amz = await awdAmzList();
+    const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
@@ -2033,9 +2059,16 @@ async function awdLabelsDo(file) {
       const img = ctx.getImageData(0, 0, cv.width, cv.height).data;
       for (let i = 0; i < found.length; i++) {
         const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
-        const sku = awdLabelMatch(f.sku), lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
+        const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60);
+        const ph = awdPrevHit(prev, sku, amz);
+        if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse)
+          const pr = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
+          if (!pr) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
+          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
+          prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue;
+        }
+        const lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
         if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
-        const cell = Math.round(cv.width / 60);
         // room for text + barcode (+ photo) first; else the smaller spot (text only) as before
         // room for text + photo + barcode → text + barcode (the barcode matters most: the packer scans it) → text only
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
@@ -2057,8 +2090,11 @@ async function awdLabelsDo(file) {
     w.document.write('<!doctype html><html><head><title>Box labels with our template</title><style>@page{size:' + pg.w + 'in ' + pg.h + 'in;margin:0}body{margin:0}img{width:' + pg.w + 'in;height:' + pg.h + 'in;display:block;page-break-after:always}</style></head><body>'
       + pages.map(x => '<img src="' + x.url + '">').join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
     w.document.close();
-    const nt = Object.keys(noTpl);
-    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + done + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+    const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
+    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+      + (pk.length ? '<div style="color:#15803D">✅ PREVIOUS PACKED on <b>' + pdN + '</b> label' + (pdN === 1 ? '' : 's') + ': ' + pk.map(k => k + ' ' + (prevDone[k] || 0) + (prevAsked[k] !== Infinity ? ' of ' + prevAsked[k] : '')).join(' · ') + '</div>'
+        + (pk.filter(k => !prevDone[k]).length ? '<div style="color:#C2410C">⚠ Not on any label: ' + pk.filter(k => !prevDone[k]).join(', ') + ' (check the ASIN / SKU)</div>' : '')
+        + (pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).length ? '<div style="color:#C2410C">⚠ Fewer boxes than asked: ' + pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).map(k => k + ' ' + prevDone[k] + ' of ' + prevAsked[k]).join(', ') + '</div>' : '') : '')
       + (done > withBc ? '<div style="color:#C2410C">⚠ ' + (done - withBc) + ' with no scan barcode (no room on the label, or no UPC / FNSKU on record)</div>' : '')
       + (noSku.length ? '<div style="color:#C2410C">⚠ ' + noSku.length + ' page' + (noSku.length === 1 ? '' : 's') + ' with no single SKU (mixed box?) — left as they are: page ' + noSku.slice(0, 20).join(', ') + (noSku.length > 20 ? '…' : '') + '</div>' : '')
       + (nt.length ? '<div style="color:#C2410C">⚠ No template for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — left as they are</div>' : '');
@@ -2447,6 +2483,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
+  if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
   }
