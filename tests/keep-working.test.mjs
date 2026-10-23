@@ -8921,13 +8921,34 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
   check('J) counted 3, then SKU Mgr moved the row to Q5=9-9-9 → the counted spot should be 0 = SKU Mgr 0 (not "off")', cm('Q5=2-1-3') === '0/0' && /SKU MGR \(moved away\)/.test(JSON.stringify(R['Q5=2-1-3'].steps)), R['Q5=2-1-3']);
   check('K) counted 4, then a Transfer of 1 out → 3 = SKU Mgr 3', cm('Q5=2-1-4') === '3/3', R['Q5=2-1-4']);
   check('…none of H / I / J / K is listed as a problem', !(dR.problems || []).some(p => /^Q5=2-/.test(p.location)), (dR.problems || []).filter(p => /^Q5=2-/.test(p.location)));
+  // 📜 …and the changes that wrote NO History line now do, so the check follows them:
+  // L) Audit → Rename Locations moves the spot's boxes; M) Pack & Ship "Found it" sets cases + spot; N) Receive PO moves a row off its spot.
+  mk('705-3-1=10', 'Q5=3-1-1', 4); await cnt('705-3-1=10', 'Q5=3-1-1', 4, 140);
+  const rn = await post('/inventory/rename-locations', { oldPrefix: 'Q5=3-', newPrefix: 'Q5=7-' });
+  const rnLog = sq.prepare("SELECT notes, total_before b, total_after a FROM inventory_log WHERE part_num = '705-3-1=10' AND type = 'EDIT' ORDER BY id DESC").get();
+  const m2 = mk('705-3-2=10', 'Q5=3-2-1', 5); await cnt('705-3-2=10', 'Q5=3-2-1', 5, 150);
+  await get('/ship/nostock?status=open').catch(() => {});
+  const nsId = sq.prepare("INSERT INTO ship_nostock_log (date, timestamp, sku, bin_location, reported_by, status) VALUES (?, ?, '705-3-2=10', 'Q5=3-2-1', 'NB', 'open')").run(today, new Date().toISOString()).lastInsertRowid;
+  const fd = await post('/ship/nostock-resolve', { id: Number(nsId), resolvedBy: 'NB', outcome: 'found', cases: 2, location: 'Q5=7-9-9', partNum: '705-3-2=10' });
+  const fdLog = sq.prepare("SELECT initials, notes FROM inventory_log WHERE part_num = '705-3-2=10' AND type = 'EDIT' ORDER BY id DESC").get();
+  mk('705-3-3=1', 'Q5=3-3-1', 3); await cnt('705-3-3=1', 'Q5=3-3-1', 3, 160);
+  const rp2 = await post('/inventory/receive-apply', { partNum: '705-3-3=1', baseSku: '705-3-3', pallet: 'PO77-1', cases: 6, initials: 'TS', d1Id: id('705-3-3=1') }); // the page names the row it reuses
+  const rpLog = sq.prepare("SELECT location, notes FROM inventory_log WHERE part_num = '705-3-3=1' AND notes LIKE '[RECEIVE PO MOVE]%'").get();
+  const dS = await get('/inventory/recount/check?all=1&from=' + today), S3 = Object.fromEntries((dS.lines || []).filter(x => /^Q5=3-/.test(x.location)).map(x => [x.location, x]));
+  const c3 = l => (S3[l] ? S3[l].expected + '/' + S3[l].now : 'none');
+  check('L) Rename Locations Q5=3- → Q5=7- now writes History ("Location: Q5=3-1-1 → Q5=7-1-1", part total 4 → 4) and the counted spot is 0 = SKU Mgr 0 (not "off")',
+    rn.ok && rnLog && /\[SKU MGR EDIT\] Location: Q5=3-1-1 → Q5=7-1-1 · 📍 Rename Locations Q5=3- → Q5=7-/.test(rnLog.notes) && rnLog.b === 4 && rnLog.a === 4 && c3('Q5=3-1-1') === '0/0', { rn, rnLog, l: S3['Q5=3-1-1'] });
+  check('M) Pack & Ship "Found it" (2 cases at Q5=7-9-9) now writes History by NB · 📦 Found it ("Location … Cases: 5 → 2"); the counted spot is 0 = SKU Mgr 0',
+    fd.ok !== false && fdLog && /NB · 📦 Found it/.test(fdLog.initials) && /Location: Q5=3-2-1 → Q5=7-9-9/.test(fdLog.notes) && /Cases: 5 → 2/.test(fdLog.notes) && c3('Q5=3-2-1') === '0/0', { fd, fdLog, l: S3['Q5=3-2-1'] });
+  check('N) Receive PO on a row at Q5=3-3-1 (3 cases) moves it to the pallet: History now says so at the old spot ("Cases there: 3"); the counted spot is 0 = SKU Mgr 0',
+    rp2.ok && rpLog && rpLog.location === 'Q5=3-3-1' && /row moved from Q5=3-3-1 to PO77-1/.test(rpLog.notes) && /Cases there: 3/.test(rpLog.notes) && c3('Q5=3-3-1') === '0/0', { rp2, rpLog, l: S3['Q5=3-3-1'] });
   const tomorrow = new Date(Date.now() + 2 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   check('…a "From" date after the counts → nothing counted since then (0 columns)', (await get('/inventory/recount/check?from=' + tomorrow)).columns === 0, null);
   check('…screen: "From" date (10/16/26 to start), 📜 time by time on each line, ⬇ CSV of every counted spot',
     /id="rc-nc-from" value="2026-10-16"/.test(ih) && /window\.rcNumCheckCsv = /.test(ih) && /📜 time by time \(/.test(ih), null);
   const htmlE = new Function('ckE', 'xfrN', 'xfrFmtT', 'var window = {};\n' + fn + '\nreturn window.rcNumCheckHtml;')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x))({ ...d, problems: [], emptied: [F], okColumns: 3, columns: 3 });
   check('…screen: "🧹 1 found EMPTY after the count — SKU Mgr is 0 … where did they go?" (folded, tap)', /<details class="rc-nc-empty"[^>]*><summary[^>]*>🧹 1 found EMPTY after the count/.test(htmlE) && /<b>NB<\/b>/.test(htmlE), htmlE);
-  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku LIKE '705-2-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705-2-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");
+  sq.exec("DELETE FROM master_list WHERE base_sku LIKE '705-1-%' OR base_sku LIKE '705-2-%' OR base_sku LIKE '705-3-%' OR base_sku = '705'; DELETE FROM inventory_log WHERE part_num LIKE '705-1-%' OR part_num LIKE '705-2-%' OR part_num LIKE '705-3-%' OR part_num LIKE '705%BAG'; DELETE FROM recount_columns WHERE REPLACE(location, ' ', '') LIKE 'Q5=%'");
   await post('/inventory/review-mode', { mode: mode0 || 'auto' });
 }
 
