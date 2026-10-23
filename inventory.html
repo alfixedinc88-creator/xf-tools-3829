@@ -14487,6 +14487,15 @@ window.invCredLogin = async function() {
     return RC.rows.filter(function(r) { return r._rc; }).map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n, how: r._rc.how || 'scan' }; })
       .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true, how: x.how || 'scan' }; }));
   }
+  // 🛡 Owner (2026-10-23): "if not matching, go with the Audit numbers, find out why". The server checks the column the moment it is
+  // done: SKU Mgr set to your count (and why it was off) / still not matching (e.g. a part # in SKU Mgr that was not on your list).
+  function rcDoneNote(d) {
+    var t = '';
+    (d && d.fixed || []).forEach(function(x) { t += ' · 🛡 SKU Mgr had ' + xfrN(x.from) + ' of ' + x.part + ' → set to your count ' + xfrN(x.to); });
+    (d && d.notMatching || []).forEach(function(x) { t += ' · ⚠ ' + x.part + ': ' + (x.why === 'not counted' ? 'SKU Mgr has ' + xfrN(x.now) + ' here, NOT on your list — look for it' : 'SKU Mgr ' + xfrN(x.now) + ', should be ' + xfrN(x.expected)) + (x.cause ? ' (' + x.cause.text + ')' : ''); });
+    return t;
+  }
+  window.rcDoneNote = rcDoneNote;
   function rcFinish() {
     var counted = RC.rows.filter(function(r) { return r._rc; }), changed = counted.filter(function(r) { return Math.abs(r._rc.n - ckNow(r)) > 1e-9; }).length + RC.extra.length;
     var detail = rcDetail();
@@ -14496,7 +14505,7 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
         RC.done = true; RC.checking = false; rcDoneMark(RC.loc); rcRender(); rcStatus(rcAisleOf(RC.loc));
-        invFlash(d.queued ? '✅ ' + RC.loc + ' done — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + RC.loc + ' done — scan the next column', d.queued ? 'warn' : 'success');
+        invFlash(d.queued ? '✅ ' + RC.loc + ' done — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + RC.loc + ' done — scan the next column' + rcDoneNote(d), d.queued ? 'warn' : (d.notMatching ? 'warn' : 'success'));
         var inp = g('rc-inp'); if (inp) inp.focus();
       }).catch(function() { invFlash('Could not mark the column done — try ✅ again', 'error'); });
   }
@@ -14519,7 +14528,7 @@ window.invCredLogin = async function() {
         if (!d || !d.ok) { invFlash('Not saved — try ✅ Checked again', 'error'); return; }
         rcDoneMark(loc);
         RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus(rcAisleOf(loc));
-        invFlash(d.queued ? '✅ ' + loc + ' checked — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + loc + ' checked — scan the next column', d.queued ? 'warn' : 'success');
+        invFlash(d.queued ? '✅ ' + loc + ' checked — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + loc + ' checked — scan the next column' + rcDoneNote(d), d.queued ? 'warn' : (d.notMatching ? 'warn' : 'success'));
         var inp = g('rc-inp'); if (inp) inp.focus();
       }).catch(function() { invFlash('Not saved — try ✅ Checked again', 'error'); });
   };
@@ -14659,7 +14668,7 @@ window.invCredLogin = async function() {
           : p.why === 'unreadable' ? 'the column\'s count could not be read' : '<b style="color:var(--red)">' + (p.diff > 0 ? '+' : '') + n(p.diff) + ' off</b>' + (p.moves && p.moves.length ? ' — moves: ' + p.moves.map(function(m) { return ckE(m.type + ' ' + m.cases + ' ' + (m.by || '') + ' ' + String(m.at || '').slice(5, 10)); }).join(', ') : '');
         return '<tr class="rc-nc-row"><td ' + td + '><b style="font-family:var(--mono)">' + ckE(p.location) + '</b><div style="color:var(--text3)">' + ckE(p.by || '') + ' ' + ckE(xfrFmtT(p.at)) + '</div></td>'
           + '<td ' + td + '><span style="font-family:var(--mono)">' + ckE(p.part) + '</span></td><td ' + td + '>' + n(p.counted) + '</td><td ' + td + '>' + (p.moved ? (p.moved > 0 ? '+' : '') + n(p.moved) : '0') + '</td>'
-          + '<td ' + td + '>' + n(p.expected) + '</td><td ' + td + '><b>' + n(p.now) + '</b></td><td ' + td + '>' + why + (p.edits ? ' · ✏️ edited in SKU Mgr after the count' : '') + ((p.steps || []).length ? '<details class="rc-nc-steps"><summary style="cursor:pointer;color:var(--accent)">📜 time by time (' + p.steps.length + ')</summary>' + rcNumCheckSteps(p.steps) + '</details>' : '') + '</td></tr>';
+          + '<td ' + td + '>' + n(p.expected) + '</td><td ' + td + '><b>' + n(p.now) + '</b></td><td ' + td + '>' + why + (p.cause ? '<div class="rc-nc-why" style="color:var(--text2)">🔍 Why: ' + ckE(p.cause.text) + '</div>' : '') + (p.edits ? ' · ✏️ edited in SKU Mgr after the count' : '') + ((p.steps || []).length ? '<details class="rc-nc-steps"><summary style="cursor:pointer;color:var(--accent)">📜 time by time (' + p.steps.length + ')</summary>' + rcNumCheckSteps(p.steps) + '</details>' : '') + '</td></tr>';
       }).join('') + '</table></div>'
       + '<div style="margin-top:6px;color:var(--text2)">Recount those spots (or send them with 📤 to someone) — the new count makes them right.</div>' + emptyH;
     return h;
@@ -14747,8 +14756,26 @@ window.invCredLogin = async function() {
     if (!off.length) return '<div class="rc-sku-warn" style="margin:10px 0 4px;font-weight:800;color:var(--green)">🏬 ✅ Every column\'s newest count matches SKU Mgr now (count + what moved there after)</div>';
     return '<div class="rc-sku-warn" style="margin:10px 0 4px;padding:8px 10px;border:2px solid var(--red);border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800">⚠ '
       + off.length + ' column' + (off.length === 1 ? '' : 's') + ' NOT matching SKU Mgr — look again / recount: <span style="font-family:var(--mono)">'
-      + off.map(function(c) { return ckE(c.location); }).join(' · ') + '</span><div style="font-weight:400;color:var(--text2);margin-top:2px">Red rows below; the 🏬 column says which part # is off and by how much.</div></div>';
+      + off.map(function(c) { return ckE(c.location); }).join(' · ') + '</span><div style="font-weight:400;color:var(--text2);margin-top:2px">Red rows below; the 🏬 column says which part # is off, by how much, and 🔍 why.</div>'
+      + '<button type="button" class="rc-fix-all" onclick="rcFixAll(this)" style="margin-top:6px;padding:6px 12px;border-radius:9px;border:2px solid var(--accent);background:var(--bg);color:var(--accent);font-weight:800;cursor:pointer">✔ Use the Audit numbers for all of them</button></div>';
   }
+  // ✔ Set SKU Mgr to the Audit number (count + what moved there after). The server checks again and only fixes what is still off
+  // with the same SKU Mgr number you saw; every fix is a History line ([AUDIT FIX], before → after, why).
+  window.rcFix = function(lines, btn) {
+    if (!lines.length) return;
+    if (!confirm('✔ Set SKU Mgr to the Audit number for ' + lines.length + ' line' + (lines.length === 1 ? '' : 's') + '?\n\n' + lines.slice(0, 12).map(function(x) { return x.location + '  ' + x.part; }).join('\n') + (lines.length > 12 ? '\n…' : '') + '\n\nEach one is kept in History (before → after and why).')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
+    wFetch(W + '/inventory/recount/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines: lines }) }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { alert((d && d.error) || 'Not fixed — try again'); if (btn) btn.disabled = false; return; }
+      alert('✔ ' + d.fixed.length + ' fixed' + (d.skipped.length ? '\n\nNot fixed:\n' + d.skipped.map(function(x) { return x.location + ' ' + x.part + ': ' + x.why; }).join('\n') : ''));
+      rcReport();
+    }).catch(function() { alert('📶 Not fixed — check WiFi'); if (btn) btn.disabled = false; });
+  };
+  window.rcFixAll = function(btn) {
+    var L = []; ((RC.rep && RC.rep.columns) || []).forEach(function(c) { var k = c.skuMgr; if (!k || !k.lines || k.ok) return;
+      k.lines.forEach(function(x) { if (x.off && !(x.cause && x.cause.kind === 'pending')) L.push({ location: c.location, part: x.part, now: x.now }); }); });
+    rcFix(L, btn);
+  };
   function rcSkuMgrCell(c) {
     var k = c.skuMgr;
     if (!k || c.stopped) return '<span style="color:var(--text3)">—</span>';
@@ -14758,8 +14785,9 @@ window.invCredLogin = async function() {
     var head = k.ok ? '<b class="rc-sku-ok" style="color:var(--green)">✅ matches</b> · ' + N(k.boxes) + ' boxes · ' + k.lines.length + ' part #' + (k.lines.length === 1 ? '' : 's')
       : '<b class="rc-sku-off" style="color:var(--red)">⚠ NOT matching SKU Mgr</b>' + (k.unreadable ? ' (the count could not be read)' : '') + ' · SKU Mgr has ' + N(k.boxes) + ' boxes';
     var rows = k.lines.map(function(x) {
-      var why = !x.off ? '<span style="color:var(--green)">✅</span>' : x.why === 'not counted' ? '<b style="color:var(--red)">⚠ in SKU Mgr, never counted</b>'
-        : '<b style="color:var(--red)">⚠ ' + (x.diff > 0 ? '+' : '') + N(x.diff) + ' off</b>';
+      var why = !x.off ? '<span style="color:var(--green)">✅</span>' : (x.why === 'not counted' ? '<b style="color:var(--red)">⚠ in SKU Mgr, never counted</b>'
+        : '<b style="color:var(--red)">⚠ ' + (x.diff > 0 ? '+' : '') + N(x.diff) + ' off</b>') + (x.cause ? '<div class="rc-sku-why" style="white-space:normal;max-width:280px;color:var(--text2)">🔍 Why: ' + ckE(x.cause.text) + '</div>' : '')
+          + (x.cause && x.cause.kind === 'pending' ? '' : '<button type="button" class="rc-fix-btn" onclick="rcFix([{location:this.dataset.l,part:this.dataset.p,now:+this.dataset.n}],this)" data-l="' + ckE(c.location) + '" data-p="' + ckE(x.part) + '" data-n="' + ckE(x.now) + '" style="margin-top:3px;padding:2px 8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-size:11px;font-weight:700;cursor:pointer">✔ Use the Audit number (' + N(x.expected) + ')</button>');
       return '<tr' + (x.off ? ' style="background:var(--red-bg,#fdf0ee)"' : '') + '><td style="padding:2px 5px;font-family:var(--mono);white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:2px 5px;min-width:120px">' + ckE(x.name || '—') + '</td>'
         + '<td style="padding:2px 5px">' + N(x.counted) + '</td><td style="padding:2px 5px">' + (x.moved ? (x.moved > 0 ? '+' : '') + N(x.moved) : '0') + '</td><td style="padding:2px 5px">' + N(x.expected) + '</td>'
         + '<td style="padding:2px 5px"><b>' + N(x.now) + '</b></td><td style="padding:2px 5px;white-space:nowrap">' + why + '</td></tr>'; }).join('');

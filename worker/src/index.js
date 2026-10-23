@@ -8162,6 +8162,20 @@ async function recountColumnDone(request, env, session) {
     .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000), started, stopped, b.recheck ? 1 : 0).run();
   if (session && session.userId) await logUserActivity(env, session.userId, stopped ? 'recount_column_stopped' : 'recount_column', { location: loc, items: b.items, changed: b.changed });
   const res = { ok: true, ts, by, columnId: ins.meta.last_row_id };
+  // 🛡 Owner (2026-10-23): "if not matching, go with the Audit numbers — find out why, make sure it doesn't happen again". Right
+  // after a column is done, its count is checked (count + what moved there after = SKU Mgr now). A part # the phone counted whose
+  // count line was saved and approved, but SKU Mgr doesn't add up (an old number on the phone, a change while counting) → SKU Mgr
+  // is set to the count at once ([AUDIT FIX] in History, with the reason). Lines still waiting / not sent yet / never on the
+  // phone's list are left alone (fixing those could count twice) — the report warns about them.
+  if (!stopped) try {
+    const ck = await recountCheckData(env, null), UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+    const mine = (ck.problems || []).filter(p => UL(p.location) === UL(loc) && p.why === 'off' && p.cause && (p.cause.kind === 'old number' || p.cause.kind === 'during' || p.cause.kind === 'unknown'));
+    const fixed = [];
+    for (const p of mine) { const r = await recountApplyFix(env, by, p, '🛡 fixed by itself when the column was done'); if (r.ok) fixed.push(r); }
+    if (fixed.length) { res.fixed = fixed; await invalidateMasterListCache(env); }
+    const left = (ck.problems || []).filter(p => UL(p.location) === UL(loc) && !mine.includes(p));
+    if (left.length) res.notMatching = left.map(p => ({ part: p.part, why: p.why, now: p.now, expected: p.expected, cause: p.cause || null }));
+  } catch (e) { console.error('[recount auto-fix]', e.message); }
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
@@ -8234,6 +8248,7 @@ async function recountCheckData(env, url) {
       continue;
     }
     if (t === 'EDIT') {
+      if (/^\[AUDIT FIX\]/.test(notes)) continue; // ✔ "Use the Audit number": SKU Mgr set to what the count + moves say — not a move
       if (/^\[SKU MGR EDIT\]/.test(notes)) { // Part # / Location / Cases "old → new" in the notes: the row left the old part # / spot
         const g = re => { const m = re.exec(notes); return m ? [m[1].trim(), m[2].trim()] : null; };
         const P = g(/Part #: (.+?) → (.+?)(?: · |$)/), Lc = g(/Location: (.+?) → (.+?)(?: · |$)/), C = g(/Cases: (.+?) → (.+?)(?: · |$)/);
@@ -8252,11 +8267,29 @@ async function recountCheckData(env, url) {
   const now = {}; (await d1All(env, `SELECT part_num, location, cases FROM master_list WHERE TRIM(COALESCE(location,'')) != ''`, []))
     .forEach(r => { const k = UP(r.part_num) + '|' + UL(r.location); now[k] = (now[k] || 0) + (parseFloat(r.cases) || 0); });
   const rcAt = {}; logs.filter(isRc).forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (rcAt[k] = rcAt[k] || []).push(te(l)); });
+  // 🔍 Owner (2026-10-23): "if not matching, find out WHY, so it doesn't happen again". Every count line (any status: waiting /
+  // rejected / cancelled too) so a line that never changed SKU Mgr is named as the reason.
+  const rcAny = {}; (await d1All(env, `SELECT part_num, location, status, cancelled_at, timestamp FROM inventory_log WHERE timestamp >= ? AND notes LIKE '%(📋 Recount)%' ORDER BY timestamp, id`, [roundStart]))
+    .forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (rcAny[k] = rcAny[k] || []).push(l); });
+  const fT = x => String(x || '').slice(5, 16).replace('T', ' ');
+  const causeOf = (c, k, p, sys, cnt, diff, notCounted) => {
+    const during = (fx[k] || []).filter(e => e.at >= (c.started_at || c.ts) && e.at <= c.ts), D = during.map(e => e.what + ' ' + (e.n > 0 ? '+' : '') + e.n + ' by ' + (e.by || '?') + ' ' + fT(e.at)).join(', ');
+    if (notCounted) return during.length ? { kind: 'during', text: 'came in WHILE the column was being counted (' + D + ') — after the phone loaded its list, so it was never on it' }
+      : { kind: 'old list', text: 'in SKU Mgr at this spot, but not on the phone\'s list — the list on the phone was old (opened before it was put here, or a saved copy)' };
+    const L = (rcAny[k] || []).filter(l => l.timestamp <= c.ts), last = L[L.length - 1];
+    if (last && last.cancelled_at) return { kind: 'cancelled', text: 'the count\'s line was cancelled in History — SKU Mgr went back to the old number' };
+    if (last && last.status === 'Pending') return { kind: 'pending', text: 'the count\'s line is still waiting in Review — SKU Mgr is not changed until it is approved' };
+    if (last && last.status === 'Rejected') return { kind: 'rejected', text: 'the count\'s line was rejected in Review — SKU Mgr was not changed' };
+    if (!L.length && sys != null && Math.abs(cnt - sys) > 1e-9) return { kind: 'not saved', text: 'counted ' + cnt + ' (phone showed ' + sys + '), but the change never reached History — not sent (no WiFi / the app closed before it was sent)' };
+    if (during.length) return { kind: 'during', text: during.length + ' change' + (during.length === 1 ? '' : 's') + ' WHILE the column was being counted (' + D + ') — the number on the phone was old by that' };
+    if (sys != null) return { kind: 'old number', text: 'the phone showed ' + sys + ', but SKU Mgr had ' + r3(sys + diff) + ' when the count was saved — the count is saved as + / − from the phone\'s number, so an old number on the phone (opened earlier / a saved copy) or a SKU Mgr change with no History line leaves it ' + (diff > 0 ? '+' : '') + diff + ' off' };
+    return { kind: 'unknown', text: 'no reason found in History — SKU Mgr was changed without a History line' };
+  };
   const problems = [], emptiedList = []; let checked = 0, partsChecked = 0, unreadable = 0;
   for (const L of Object.keys(last)) {
     const c = last[L]; let det; try { det = JSON.parse(c.detail || '[]'); } catch (_) { unreadable++; problems.push({ location: L, by: c.by_user, at: c.ts, why: 'unreadable', part: '' }); continue; }
     checked++;
-    const counted = {}; (det || []).forEach(x => { const p = UP(x.part); if (p) counted[p] = (counted[p] || 0) + (parseFloat(x.counted) || 0); });
+    const counted = {}, sysOf = {}; (det || []).forEach(x => { const p = UP(x.part); if (p) { counted[p] = (counted[p] || 0) + (parseFloat(x.counted) || 0); if (x.system != null && x.system !== '') sysOf[p] = (sysOf[p] || 0) + (parseFloat(x.system) || 0); } });
     const parts = new Set(Object.keys(counted));
     Object.keys(now).forEach(k => { const [p, l] = k.split('|'); if (l === L && now[k] > 1e-9) parts.add(p); });
     Object.keys(fx).forEach(k => { const [p, l] = k.split('|'); if (l === L) parts.add(p); });
@@ -8280,18 +8313,74 @@ async function recountCheckData(env, url) {
       partsChecked++;
       if (wantAll) allLines.push({ location: L, part: p, by: c.by_user, at: c.ts, counted: p in counted ? r3(counted[p]) : null, moved, expected: r3(val), now: has, diff: r3(has - val), steps });
       if (!(p in counted)) {
-        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), steps });
+        if (has - val > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'not counted', counted: null, moved, expected: r3(val), now: has, diff: r3(has - val), steps, cause: causeOf(c, k, p, null, 0, r3(has - val), true) });
         continue;
       }
       const expected = r3(val);
       if (Math.abs(expected - has) > 1e-6) problems.push({ location: L, by: c.by_user, at: c.ts, part: p, why: 'off', counted: r3(counted[p]), moved, expected, now: has, diff: r3(has - expected),
-        moves: after.slice(-6).map(e => ({ at: e.at, type: e.what, cases: e.n, by: e.by })), steps });
+        moves: after.slice(-6).map(e => ({ at: e.at, type: e.what, cases: e.n, by: e.by })), steps, cause: causeOf(c, k, p, p in sysOf ? r3(sysOf[p]) : null, r3(counted[p]), r3(has - expected), false) });
       else if (emptied && counted[p] > 1e-9) emptiedList.push({ location: L, by: c.by_user, at: c.ts, part: p, counted: r3(counted[p]), now: has,
         emptiedBy: emptied.by || '', emptiedAt: emptied.at, note: String(emptied.note || '').slice(0, 200) });
     }
   }
   problems.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }) || String(a.part).localeCompare(String(b.part)));
   return { ok: true, roundStart, from: from || null, columns: checked, parts: partsChecked, unreadable, okColumns: checked - new Set(problems.map(x => x.location)).size, problems, emptied: emptiedList, ...(wantAll ? { lines: allLines } : {}) };
+}
+// ✔ POST /inventory/recount/fix (Admin / Owner) { lines: [{ location, part, now }] } — owner (2026-10-23): "if for any reason it is
+// not matching, go with the Audit numbers". The check is run again here (never the page's numbers): each line still listed as not
+// matching, whose SKU Mgr number is still what the page showed, is set to "should be" (the count + what moved there after it).
+// Recorded in History ([AUDIT FIX], Part Total before → after) — never a silent change; the check skips those lines (not a move).
+async function recountFix(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const want = (Array.isArray(b.lines) ? b.lines : []).slice(0, 500);
+  if (!want.length) return J({ ok: false, error: 'Nothing to fix' }, 400);
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
+  const ck = await recountCheckData(env, null);
+  if (!ck || !ck.ok) return J({ ok: false, error: 'Could not check the numbers — try again' }, 503);
+  const prob = {}; (ck.problems || []).forEach(p => { if (p.why !== 'unreadable') prob[UP(p.part) + '|' + UL(p.location)] = p; });
+  const fixed = [], skipped = [];
+  for (const w of want) {
+    const k = UP(w.part) + '|' + UL(w.location), p = prob[k];
+    if (!p) { skipped.push({ location: w.location, part: w.part, why: 'matches now — nothing to fix' }); continue; }
+    if (w.now != null && Math.abs((parseFloat(w.now) || 0) - p.now) > 1e-6) { skipped.push({ location: w.location, part: w.part, why: 'SKU Mgr changed since you looked (' + p.now + ' now) — check again' }); continue; }
+    if (p.cause && p.cause.kind === 'pending') { skipped.push({ location: p.location, part: p.part, why: 'its count is still waiting in Review — approve or reject it there first' }); continue; }
+    const r = await recountApplyFix(env, who, p, '✔ Use the Audit number');
+    if (r.ok) fixed.push(r); else skipped.push({ location: p.location, part: p.part, why: r.why });
+  }
+  if (fixed.length) {
+    await invalidateMasterListCache(env);
+    if (session && session.userId) await logUserActivity(env, session.userId, 'recount_fix', { lines: fixed.length }).catch(() => {});
+  }
+  return J({ ok: true, fixed, skipped });
+}
+// Sets SKU Mgr at the spot to the check's "should be" (one row carries it; a gone row is made again), History [AUDIT FIX] with
+// the before → after, the count it came from and the reason it was off.
+async function recountApplyFix(env, who, p, tag) {
+  const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
+  {
+    const to = Math.max(0, Math.round(p.expected * 1000) / 1000);
+    const rows = (await d1All(env, "SELECT * FROM master_list WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY id", [UL(p.location)])).filter(r => UP(r.part_num) === UP(p.part));
+    let row = rows[0] || null;
+    const part = row ? U(row.part_num) : UP(p.part);
+    const tot = await skuMgrTotalsBefore(env, row ? row.id : 0, 0, part);
+    const old = rows.reduce((a, r) => a + (parseFloat(r.cases) || 0), 0), at = new Date().toISOString();
+    if (!row) { // the count had boxes, SKU Mgr has no row there any more: make it again (box size / name / price from the part #'s other shelves)
+      const like = await d1First(env, 'SELECT name, units_per_case, price, vendor FROM master_list WHERE UPPER(TRIM(part_num)) = ? ORDER BY units_per_case DESC LIMIT 1', [part]).catch(() => null);
+      if (!like) return { ok: false, why: 'not in SKU Mgr anywhere — add it in SKU Mgr' };
+      const ins = await env.DB.prepare(`INSERT INTO master_list (sku, base_sku, name, part_num, location, cases, units_per_case, vendor, price, prev_notes, sheet_row, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(mlParent(part), mlParent(part), like.name || '', part, p.location, 0, like.units_per_case || 0, like.vendor || '', like.price || 0, '[RE-CREATED by ✔ Use the Audit number]', 0, at).run();
+      row = { id: ins.meta.last_row_id, part_num: part, location: p.location, name: like.name || '', cases: 0 };
+    }
+    await env.DB.prepare('UPDATE master_list SET cases = ?, updated_at = ? WHERE id = ?').bind(to, at, row.id).run();
+    for (const r of rows.slice(1)) await env.DB.prepare('UPDATE master_list SET cases = 0, updated_at = ? WHERE id = ?').bind(at, r.id).run(); // one row carries the spot's number
+    await costSafe(() => costReconcile(env, part, row.location || p.location));
+    const how = p.why === 'not counted' ? 'not on the Audit count' : 'Audit count ' + p.counted + ' by ' + (p.by || '?') + ' ' + String(p.at || '').slice(0, 16).replace('T', ' ') + (p.moved ? ', moved since ' + (p.moved > 0 ? '+' : '') + p.moved : '');
+    const why = p.cause && p.cause.text ? ' · why it was off: ' + p.cause.text : '';
+    await _skuMgrInsertLog(env, who, { ...row, cases: to }, `[AUDIT FIX] ${part} @ ${row.location || p.location}: SKU Mgr ${old} → ${to} cases (${how}) — ${tag}${why}`, tot);
+    return { ok: true, location: p.location, part, from: old, to, cause: p.cause || null };
+  }
 }
 async function recountReport(env) {
   await recountTables(env);
@@ -8337,7 +8426,8 @@ async function recountReport(env) {
         skuMgr = { ok: !b.problems.length, unreadable: b.problems.some(x => x.why === 'unreadable'), boxes: R(b.lines.reduce((a, x) => a + (x.now || 0), 0)),
           lines: b.lines.filter(x => x.now > 1e-9 || x.counted || off.has(String(x.part).toUpperCase()))
             .map(x => ({ part: x.part, name: nm[String(x.part).toUpperCase()] || '', counted: x.counted, moved: x.moved, expected: x.expected, now: x.now, diff: x.diff,
-              off: off.has(String(x.part).toUpperCase()), why: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).why || '' })),
+              off: off.has(String(x.part).toUpperCase()), why: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).why || '',
+              cause: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).cause || null })),
           emptied: b.emptied.map(x => ({ part: x.part, counted: x.counted, by: x.emptiedBy, at: x.emptiedAt })) }; }
     }
     return { skuMgr, id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
@@ -10431,6 +10521,10 @@ const _app = {
         // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await recountReport(env);
+      }
+      if (path === '/inventory/recount/fix' && method === 'POST') {
+        if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can fix the audit numbers' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountFix(request, env, session);
       }
       if (path === '/inventory/recount/check' && method === 'GET') {
         if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount check' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
