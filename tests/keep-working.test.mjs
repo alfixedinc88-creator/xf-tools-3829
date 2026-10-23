@@ -8619,7 +8619,8 @@ console.log('\n✏️ AWD Builder: edit a box template (that SKU\'s row changed,
   check('page: ✏️ next to the green box template opens it filled in ("Edit Case Pack Template", Save Changes)',
     /onclick="openAddTemplateModal\('\$\{esc\(sku\)\}', true\)">✏️<\/button>/.test(ah) && /Edit Case Pack Template/.test(ah) && /'Save Changes'/.test(ah), null);
   check('"$" → "need label": the 📋 label button says "2/1 need label" / "3 need label"; the badge says "🏷 Need label" (no "$ Needs label" left)',
-    (ah.match(/' need label'/g) || []).length === 4 && !/\+ '\$'/.test(ah) && (ah.match(/🏷 Need label/g) || []).length === 2 && !/\$ Needs label/.test(ah), null);
+    // 5 = the 4 label-button wordings + ✅ Make template on a short row (owner 2026-10-23: "N need label" too)
+    (ah.match(/' need label'/g) || []).length === 5 && !/\+ '\$'/.test(ah) && (ah.match(/🏷 Need label/g) || []).length === 2 && !/\$ Needs label/.test(ah), null);
   sq.exec("DELETE FROM awd_template_log");
 }
 
@@ -9160,6 +9161,32 @@ console.log('\n🏷 FBA listings that need Amazon\'s barcode (FNSKU X00…) — 
     /<details class="icard" id="inv-amzbc-card" style="display:none"/.test(ih) && /amzBc\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ih) && /if \(company\) invAmzBcWarn\(target\);/.test(ih)
       && /needs AMAZON\\'s barcode \(FNSKU /.test(ih) && /sel: '#inv-amzbc-card'/.test(rfB(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   sq.exec("DELETE FROM amazon_fba_inventory WHERE sku LIKE '710-1-%'; DELETE FROM fba_catalog WHERE sku LIKE '710-1-%'");
+}
+
+// Owner (2026-10-23): "Shipment Builder: some have no template because of not enough inventory — a check button so I can make it with a
+// template. And after I upload to AWD or FBA and they give us the outside box labels, can I upload them in our app and it auto puts the
+// template on the label?" (photos of an FBA and an AWD box label with our template printed in the white space)
+console.log('\n🏷 Shipment Builder: ✅ Make template for a short row + our template printed on Amazon\'s FBA / AWD box labels');
+{
+  const { readFileSync: rfA } = await import('node:fs');
+  const ah = rfA(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('async function awdLabelsDo(file) {'));
+  const L = new Function('S', code + '; return { awdLabelSkus, awdLabelMatch, awdBlankRect };')({ shipment: { '31-6-1=2XX-': {}, '30-3-6=2X': {} } });
+  const awd = L.awdLabelSkus([{ y: 10, text: 'AWD Box 489 of 527' }, { y: 20, text: 'SKU: 31-6-1=2XX- Units: 25' }, { y: 30, text: 'FNSKU: B0DK7ZKKMX' }]);
+  const fba = L.awdLabelSkus([{ y: 10, text: 'FBA19QRYL9THU000109' }, { y: 20, text: 'Single SKU' }, { y: 22, text: '30-3-6=2X-' }, { y: 24, text: 'Qty 10' }]);
+  const mixed = L.awdLabelSkus([{ y: 10, text: 'Mixed SKUs' }, { y: 20, text: 'FNSKU: X00ABC' }]);
+  check('the SKU is read off each label: AWD "SKU: 31-6-1=2XX-" (never the FNSKU), FBA "Single SKU / 30-3-6=2X-"; a mixed box has none; "30-3-6=2X-" matches the builder\'s 30-3-6=2X',
+    JSON.stringify(awd.map(x => x.sku)) === '["31-6-1=2XX-"]' && JSON.stringify(fba.map(x => x.sku)) === '["30-3-6=2X-"]' && !mixed.length
+      && L.awdLabelMatch('31-6-1=2XX-') === '31-6-1=2XX-' && L.awdLabelMatch('30-3-6=2X-') === '30-3-6=2X', { awd, fba, mixed });
+  // a 60 × 40 px "label": all white except a black band (a barcode) on rows 0–19 → the empty spot is below it
+  const W = 60, H = 40, px = new Uint8ClampedArray(W * H * 4).fill(255);
+  for (let y = 0; y < 20; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; px[i] = px[i + 1] = px[i + 2] = 0; }
+  const r = L.awdBlankRect(px, W, 0, 0, W, H, 4, 20, 8);
+  check('…our template goes in an empty (white) spot only — never over a barcode', r && r.y >= 20 && r.h <= 20 && r.w >= 20, r);
+  check('…screen: "🏷 Add our template to Amazon box labels (PDF)" in the Shipment Builder; a short row with no label gets "☐ Make template" (every box needs a label); 🧩 check marks',
+    /onclick="document\.getElementById\('awd-lbl-file'\)\.click\(\)">🏷 Add our template to Amazon box labels \(PDF\)/.test(ah) && /class="awd-force-tpl"[\s\S]{0,300}Make template<\/label>/.test(ah)
+      && /if \(!lPrefix && S\.forceTpl\[sku\]\) lPrefix = String\(hasCP \? boxes : item\.qty\) \+ ' need label';/.test(ah)
+      && /sel: '#awd-lbl-card'/.test(rfA(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

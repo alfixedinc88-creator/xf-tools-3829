@@ -1037,6 +1037,14 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .xlsx
               </button>
               <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:7px">Amazon AWD shipment upload format</p>
+              <!-- 🏷 Owner (2026-10-23): "after I upload it to AWD or FBA and they give us the outside box labels, can I upload them in our app
+                   and it puts the template on each label?" — each label's SKU is read off the label, our template goes in an empty spot on it. -->
+              <div id="awd-lbl-card" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-200)">
+                <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="document.getElementById('awd-lbl-file').click()">🏷 Add our template to Amazon box labels (PDF)</button>
+                <input type="file" id="awd-lbl-file" accept="application/pdf,.pdf" style="display:none" onchange="awdLabelsDo(this.files[0]); this.value=''">
+                <p style="font-size:11px;color:var(--gray-400);margin-top:6px;line-height:1.4">The FBA or AWD box label PDF Amazon gives you. Each label's SKU is read off the label; our template (need label · name · UPC · spot) is printed in an empty spot on it.</p>
+                <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
+              </div>
             </div></div>
           </div>
         </div>
@@ -1825,6 +1833,7 @@ function renderBuilder(){
   // stock shared between multiple pack sizes of the same product is
   // correctly split rather than double-counted.
   const bulkAlloc = calculateSharedBulkAllocation(items);
+  S.tplPrefix = {}; S.forceTpl = S.forceTpl || {};
 
   ge('bld-tbody').innerHTML=filt.map(([sku,item])=>{
     const r=item.row,cp=S.cpackMap[sku.toUpperCase()],hasCP=cp&&cp.unitsPerBox>0;
@@ -1867,6 +1876,10 @@ function renderBuilder(){
         stockWarning = `⚠ ${shortfall} box${shortfall!==1?'es':''} short — shared bulk stock split across ${sku.split('=')[0]} variants`;
       }
     }
+    // ✅ Owner (2026-10-23): "some have no template because of not enough inventory — a check button so I can make it with a template".
+    // Ticked → every box of this SKU needs a label (the template is made from what we have, like any other).
+    if (!lPrefix && S.forceTpl[sku]) lPrefix = String(hasCP ? boxes : item.qty) + ' need label';
+    if (lPrefix) S.tplPrefix[sku.toUpperCase()] = lPrefix;
 
     return`<tr>
       <td class="sku">${sku}${stockWarning ? `<div style="font-size:10px;color:#C2410C;font-weight:600;margin-top:2px">${stockWarning}</div>` : ''}</td>
@@ -1879,13 +1892,118 @@ function renderBuilder(){
         : `<span class="cp-pill missing" style="cursor:pointer;text-decoration:underline" onclick="openAddTemplateModal('${esc(sku)}')" title="Click to add a case pack template for this SKU">No template — click to add</span>`}</td>
       <td>${lPrefix
         ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
-        : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
+        : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
     </tr>${awdStockRow(r, 8)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
 }
+// ── 🏷 Our template on Amazon's box labels ────────────────────────────────
+let _awdPdfjsP = null;
+function awdLoadPdfjs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_awdPdfjsP) return _awdPdfjsP;
+  _awdPdfjsP = new Promise(function(res, rej) {
+    const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    sc.onload = function() { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); } catch (e) { rej(e); } };
+    sc.onerror = function() { _awdPdfjsP = null; rej(new Error('pdf.js did not load')); };
+    document.head.appendChild(sc);
+  });
+  return _awdPdfjsP;
+}
+// The SKU(s) Amazon printed on a label page: "Single SKU 30-3-6=2X- Qty 10" (FBA) or "SKU: 31-6-1=2XX- Units: 25" (AWD) — never the
+// FNSKU. lines = [{ y, text }] top → bottom (y = 0 at the top). → [{ sku, y }]
+function awdLabelSkus(lines) {
+  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*([0-9A-Z][0-9A-Z=\-\/\.\(\)#]*)/gi;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].text + ' ' + ((lines[i + 1] && /^\s*(SINGLE\s+SKU|SKU)\s*:?\s*$/i.test(lines[i].text)) ? lines[i + 1].text : '');
+    let m; re.lastIndex = 0;
+    while ((m = re.exec(t))) { if (/^(QTY|UNITS|MIXED)/i.test(m[1]) || !/\d/.test(m[1])) continue; out.push({ sku: m[1].toUpperCase(), y: lines[i].y }); } // "Mixed SKUs" is no SKU (a part # has digits)
+  }
+  return out;
+}
+// The builder SKU for a label SKU: exact, else the same without a trailing "-" / spaces.
+function awdLabelMatch(sku) {
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  const keys = Object.keys(S.shipment || {});
+  return keys.find(k => k.toUpperCase() === sku) || keys.find(k => n(k) === n(sku)) || sku;
+}
+// The biggest empty (white) rectangle in a part of the label, on a grid of `cell` px; at least minW × minH. → { x, y, w, h } or null
+function awdBlankRect(data, W, x0, y0, w, h, cell, minW, minH) {
+  const cols = Math.floor(w / cell), rows = Math.floor(h / cell), hgt = new Array(cols).fill(0);
+  let best = null;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let dark = false;
+      for (let yy = 0; yy < cell && !dark; yy += 2) for (let xx = 0; xx < cell; xx += 2) {
+        const i = ((y0 + r * cell + yy) * W + (x0 + c * cell + xx)) * 4;
+        if (data[i] + data[i + 1] + data[i + 2] < 600) { dark = true; break; }
+      }
+      hgt[c] = dark ? 0 : hgt[c] + 1;
+    }
+    for (let c = 0; c < cols; c++) { // the widest-highest box ending on this row from column c
+      let hh = Infinity;
+      for (let c2 = c; c2 < cols && hgt[c2] > 0; c2++) {
+        hh = Math.min(hh, hgt[c2]); const ww = (c2 - c + 1) * cell, Hh = hh * cell;
+        if (ww >= minW && Hh >= minH && (!best || ww * Hh > best.w * best.h)) best = { x: x0 + c * cell, y: y0 + (r - hh + 1) * cell, w: ww, h: Hh };
+      }
+    }
+  }
+  return best;
+}
+function awdDrawTemplate(ctx, rect, lines, maxFs) {
+  const pad = Math.max(4, rect.w * 0.04), W = rect.w - 2 * pad, H = rect.h - 2 * pad;
+  let fs = Math.floor(H / (lines.length * 1.18));
+  ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
+  for (; fs > 6; fs--) { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; if (Math.max(...lines.map(l => ctx.measureText(l).width)) <= W) break; }
+  fs = Math.min(fs, Math.floor(rect.h * 0.22), maxFs || Infinity); // never bigger than normal label print
+  ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
+  lines.forEach((l, i) => ctx.fillText(l, rect.x + pad, rect.y + pad + i * fs * 1.18));
+}
+async function awdLabelsDo(file) {
+  const out = ge('awd-lbl-out'); if (!file) return;
+  if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
+  out.innerHTML = '⏳ Reading the labels…';
+  try {
+    const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0;
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
+      const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+      const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const tc = await page.getTextContent(), byY = {};
+      tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
+      const lines = Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') }));
+      const found = awdLabelSkus(lines);
+      // one label per page (4×6), or several stacked on a letter page: each SKU owns the band around it
+      const n = Math.max(1, found.length); labels += n;
+      if (!found.length) noSku.push(p);
+      const img = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      found.forEach((f, i) => {
+        const top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n);
+        const sku = awdLabelMatch(f.sku), lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
+        if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; return; }
+        const rect = awdBlankRect(img, cv.width, 0, top, cv.width, bot - top, Math.round(cv.width / 60), cv.width * 0.3, (bot - top) * 0.12);
+        if (!rect) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; return; }
+        awdDrawTemplate(ctx, rect, lns, Math.round((bot - top) * 0.032)); done++; // ≈ 14 pt on a 6" label
+      });
+      pages.push({ url: cv.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 });
+    }
+    const w = window.open('', '_blank');
+    if (!w) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
+    const pg = pages[0];
+    w.document.write('<!doctype html><html><head><title>Box labels with our template</title><style>@page{size:' + pg.w + 'in ' + pg.h + 'in;margin:0}body{margin:0}img{width:' + pg.w + 'in;height:' + pg.h + 'in;display:block;page-break-after:always}</style></head><body>'
+      + pages.map(x => '<img src="' + x.url + '">').join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
+    w.document.close();
+    const nt = Object.keys(noTpl);
+    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + done + '</b> with our template'
+      + (noSku.length ? '<div style="color:#C2410C">⚠ ' + noSku.length + ' page' + (noSku.length === 1 ? '' : 's') + ' with no single SKU (mixed box?) — left as they are: page ' + noSku.slice(0, 20).join(', ') + (noSku.length > 20 ? '…' : '') + '</div>' : '')
+      + (nt.length ? '<div style="color:#C2410C">⚠ No template for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — left as they are</div>' : '');
+  } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }
+}
+function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; renderBuilder(); }
 function updateSummary(){
   const items=Object.entries(S.shipment);let tot=0;
   ge('sum-items').innerHTML=items.slice(0,16).map(([sku,i])=>{tot+=i.qty;return'<div class="sum-item"><span class="sum-sku">'+sku+'</span><span class="sum-qty">'+fn(i.qty)+'</span></div>';}).join('')
