@@ -8168,13 +8168,9 @@ async function recountColumnDone(request, env, session) {
   // is set to the count at once ([AUDIT FIX] in History, with the reason). Lines still waiting / not sent yet / never on the
   // phone's list are left alone (fixing those could count twice) — the report warns about them.
   if (!stopped) try {
-    const ck = await recountCheckData(env, null), UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
-    const mine = (ck.problems || []).filter(p => UL(p.location) === UL(loc) && p.why === 'off' && p.cause && (p.cause.kind === 'old number' || p.cause.kind === 'during' || p.cause.kind === 'unknown'));
-    const fixed = [];
-    for (const p of mine) { const r = await recountApplyFix(env, by, p, '🛡 fixed by itself when the column was done'); if (r.ok) fixed.push(r); }
-    if (fixed.length) { res.fixed = fixed; await invalidateMasterListCache(env); }
-    const left = (ck.problems || []).filter(p => UL(p.location) === UL(loc) && !mine.includes(p));
-    if (left.length) res.notMatching = left.map(p => ({ part: p.part, why: p.why, now: p.now, expected: p.expected, cause: p.cause || null }));
+    const r = await recountAutoFix(env, loc, '🛡 set to the Audit number by itself when the column was done', by);
+    if (r.fixed.length) res.fixed = r.fixed;
+    if (r.left.length) res.notMatching = r.left;
   } catch (e) { console.error('[recount auto-fix]', e.message); }
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
@@ -8196,6 +8192,8 @@ async function recountColumnDone(request, env, session) {
 // in time order (Stock In / Out / Transfer, 🧹 found empty = 0, ✏️ SKU Mgr edit = its Part Total change) → should be = SKU Mgr now.
 // Each line carries its step-by-step timeline; ?all=1 also returns the ones that match (for the ⬇ CSV).
 async function recountCheck(env, url) {
+  // ?dry=1 = look only (nothing set) — for tests / looking into a problem
+  if (!(url && url.searchParams.get('dry') === '1')) try { await recountAutoFix(env, null); } catch (e) { console.error('[recount auto-fix]', e.message); }
   return cors(new Response(JSON.stringify(await recountCheckData(env, url)), { headers: { 'Content-Type': 'application/json' } }));
 }
 async function recountCheckData(env, url) {
@@ -8273,6 +8271,8 @@ async function recountCheckData(env, url) {
     .forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (rcAny[k] = rcAny[k] || []).push(l); });
   const fT = x => String(x || '').slice(5, 16).replace('T', ' ');
   const causeOf = (c, k, p, sys, cnt, diff, notCounted) => {
+    const L0 = UL(c.location), again = Object.keys(rcAny).some(kk => kk.split('|')[1] === L0 && rcAny[kk].some(l => l.timestamp > c.ts));
+    if (again) return { kind: 'recounting', text: 'this spot is being counted again right now — checked when that count is done' };
     const during = (fx[k] || []).filter(e => e.at >= (c.started_at || c.ts) && e.at <= c.ts), D = during.map(e => e.what + ' ' + (e.n > 0 ? '+' : '') + e.n + ' by ' + (e.by || '?') + ' ' + fT(e.at)).join(', ');
     if (notCounted) return during.length ? { kind: 'during', text: 'came in WHILE the column was being counted (' + D + ') — after the phone loaded its list, so it was never on it' }
       : { kind: 'old list', text: 'in SKU Mgr at this spot, but not on the phone\'s list — the list on the phone was old (opened before it was put here, or a saved copy)' };
@@ -8355,6 +8355,24 @@ async function recountFix(request, env, session) {
   }
   return J({ ok: true, fixed, skipped });
 }
+// 🛡 Owner (2026-10-23): "don't ask me — just auto change it to the Audit number, then put the note there (something I can open to see
+// why); no need to approve it — they are already there to double check, the Audit is the right number". Every line not matching
+// (one column, or all) is set to the Audit number with an [AUDIT FIX] History line (before → after, why). Runs when a column is
+// done, when the report / check opens, and on the timer — so a count that arrives late (no WiFi) and lands twice is put right on
+// the next pass. Left alone: a spot being counted again right now (its new count isn't done yet), a column that can't be read.
+async function recountAutoFix(env, onlyLoc, tag, who) {
+  const UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+  const ck = await recountCheckData(env, null), fixed = [], left = [];
+  if (!ck || !ck.ok) return { fixed, left };
+  const P = (ck.problems || []).filter(p => !onlyLoc || UL(p.location) === UL(onlyLoc));
+  for (const p of P) {
+    if (p.why === 'unreadable' || (p.cause && p.cause.kind === 'recounting')) { left.push({ part: p.part, why: p.why, now: p.now, expected: p.expected, cause: p.cause || null }); continue; }
+    const r = await recountApplyFix(env, who || p.by || 'AUDIT', p, tag || '🛡 set to the Audit number by itself');
+    if (r.ok) fixed.push(r); else left.push({ part: p.part, why: p.why, now: p.now, expected: p.expected, cause: { kind: 'cannot', text: r.why } });
+  }
+  if (fixed.length) await invalidateMasterListCache(env);
+  return { fixed, left };
+}
 // Sets SKU Mgr at the spot to the check's "should be" (one row carries it; a gone row is made again), History [AUDIT FIX] with
 // the before → after, the count it came from and the reason it was off.
 async function recountApplyFix(env, who, p, tag) {
@@ -8382,7 +8400,7 @@ async function recountApplyFix(env, who, p, tag) {
     return { ok: true, location: p.location, part, from: old, to, cause: p.cause || null };
   }
 }
-async function recountReport(env) {
+async function recountReport(env, url) {
   await recountTables(env);
   const roundStart = await recountRoundStart(env);
   const rows = await d1All(env, 'SELECT id, ts, started_at, location, by_user, items, changed, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE ts >= ? ORDER BY ts DESC', [roundStart]);
@@ -8390,7 +8408,11 @@ async function recountReport(env) {
   // if it ends up not matching, give us the warning". The same check as 🔎 Are the audit numbers right? (count + what moved there
   // after = SKU Mgr now), per column: every part # SKU Mgr has at that spot now, and ⚠ when it doesn't add up.
   const UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!(url && url.searchParams.get('dry') === '1')) try { await recountAutoFix(env, null); } catch (e) { console.error('[recount auto-fix]', e.message); }
   let ck = null; try { ck = await recountCheckData(env, new URL('https://x/?all=1')); } catch (e) { ck = { ok: false, error: String(e && e.message || e) }; }
+  const fixBy = {}; (await d1All(env, "SELECT id, timestamp, part_num, location, initials, notes, total_before, total_after FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[AUDIT FIX]%' AND timestamp >= ? ORDER BY id DESC LIMIT 2000", [roundStart]))
+    .forEach(l => { const n = String(l.notes || ''), m = /SKU Mgr ([\d.]+) → ([\d.]+) cases/.exec(n), w = /· why it was off: ([\s\S]*)$/.exec(n);
+      (fixBy[UL(l.location)] = fixBy[UL(l.location)] || []).push({ id: l.id, at: l.timestamp, part: l.part_num, by: l.initials || '', from: m ? +m[1] : null, to: m ? +m[2] : null, why: w ? w[1] : '', note: n.slice(0, 600) }); });
   const ckBy = {}; if (ck && ck.ok) {
     (ck.lines || []).forEach(x => { (ckBy[x.location] = ckBy[x.location] || { lines: [], problems: [], emptied: [] }).lines.push(x); });
     (ck.problems || []).forEach(x => { (ckBy[x.location] = ckBy[x.location] || { lines: [], problems: [], emptied: [] }).problems.push(x); });
@@ -8428,7 +8450,7 @@ async function recountReport(env) {
             .map(x => ({ part: x.part, name: nm[String(x.part).toUpperCase()] || '', counted: x.counted, moved: x.moved, expected: x.expected, now: x.now, diff: x.diff,
               off: off.has(String(x.part).toUpperCase()), why: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).why || '',
               cause: (b.problems.find(p => String(p.part).toUpperCase() === String(x.part).toUpperCase()) || {}).cause || null })),
-          emptied: b.emptied.map(x => ({ part: x.part, counted: x.counted, by: x.emptiedBy, at: x.emptiedAt })) }; }
+          emptied: b.emptied.map(x => ({ part: x.part, counted: x.counted, by: x.emptiedBy, at: x.emptiedAt })), fixes: (fixBy[UL(r.location)] || []).filter(f => f.at >= r.ts) }; }
     }
     return { skuMgr, id: r.id, location: r.location, by: r.by_user || '?', startedAt: r.started_at || null, doneAt: r.ts, minutes: mins, items: r.items || 0, changed: r.changed || 0,
       boxes, skipped, howKnown: d.some(x => x.how), stopped: !!r.stopped, recheck: !!r.recheck, lines, checkedBy,
@@ -10520,7 +10542,7 @@ const _app = {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         // 📊 Owner (2026-10-17): "the Audit recount report — only Admin and Owner can review it".
         if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can see the recount report' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
-        return await recountReport(env);
+        return await recountReport(env, url);
       }
       if (path === '/inventory/recount/fix' && method === 'POST') {
         if (session.pin_level !== 'mgmt' || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admin and Owner can fix the audit numbers' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
@@ -10685,6 +10707,8 @@ const _app = {
     const dow = now.getUTCDay();
     // Every 30 min: auto-fetch eBay messages
     ctx.waitUntil(cronFetchEbayMessages(env));
+    // 🛡 Audit: anything not matching the Audit number is set to it (History [AUDIT FIX], with why)
+    ctx.waitUntil(recountAutoFix(env, null).catch(e => console.error('[recount auto-fix cron]', e.message)));
     // Weekly Amazon sales pull: Monday 11am UTC — CORRECTED from an
     // earlier 6am UTC gate that would have never fired at all. The
     // dashboard confirmed the real, actual triggers are 5 fixed times
