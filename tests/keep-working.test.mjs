@@ -9093,5 +9093,22 @@ console.log('\n🔁 Recount report: 🔁 Checking a done column (who / when) + �
   sq.exec("DELETE FROM master_list WHERE base_sku LIKE '708-1-%'; DELETE FROM recount_columns WHERE location = 'Q3=1-1-1'");
 }
 
+// Owner (2026-10-23): "Inventory → Checking: when we scan the column number, show on top the total of part #s, the total of boxes, and each
+// part # how many".
+console.log('\n📊 Checking → a spot / column: on top the number of part #s, total boxes (pcs), and each part # how many');
+{
+  const { readFileSync: rfC } = await import('node:fs');
+  const ih = rfC(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fnOf = n => { const i = ih.indexOf('  function ' + n + '('); const j = ih.indexOf('\n  }\n', i); return ih.slice(i, j + 4); };
+  const lib = new Function('xfrN', 'xfrEsc', fnOf('ckE') + fnOf('ckNum') + fnOf('ckNow') + fnOf('ckPackKey') + fnOf('ckPartCompare') + fnOf('ckLocSumHtml') + '\nreturn ckLocSumHtml;')(n => String(Math.round(n * 100) / 100), x => String(x));
+  // C3=4-1-1: =10 3 boxes × 10 + 2 boxes × 25 (2 box sizes) · =2 1 × 50 · =OLD 2 boxes, no pcs / box · =5 (adjusted to 4) × 5
+  const h = lib([{ partNum: '88-8-1=10', cases: 3, eachQty: 10 }, { partNum: '88-8-1=10', cases: 2, eachQty: 25 }, { partNum: '88-8-1=2', cases: 1, eachQty: 50 },
+    { partNum: '88-8-1=OLD', cases: 2, eachQty: 0 }, { partNum: '88-8-1=5', cases: 6, adjustedCases: 4, eachQty: 5 }]);
+  const lines = [...h.matchAll(/font-weight:700">([^<]+)<\/span><span><b>([^<]+)<\/b> box/g)].map(m => m[1] + ' ' + m[2]);
+  check('4 part #s · 12 boxes · 150 pcs on top; each part # (pack order): =OLD 2 (no pcs / box, in red) · =2 1 · =5 4 · =10 5 (3 + 2 boxes of 2 sizes = 30 + 50 = 80 pcs)',
+    /<span>4 part #s<\/span><span>12 boxes<\/span><span>150 pcs<\/span>/.test(h) && lines.join(' | ') === '88-8-1=OLD 2 | 88-8-1=2 1 | 88-8-1=5 4 | 88-8-1=10 5' && /<b>5<\/b> boxes · 80 pcs/.test(h) && /⚠ 2 box\(es\) have no pieces per box/.test(h), { lines, h: h.slice(0, 900) });
+  check('…shown on top of the spot (before the items) in ✅ Checking; nothing on record → no summary', /h \+= ckLocSumHtml\(CK\.rows\);/.test(ih) && ih.indexOf('h += ckLocSumHtml(CK.rows);') < ih.indexOf("CK.rows.forEach(function(r, i) {", ih.indexOf('function ckRenderLoc')) && lib([]) === '', null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
