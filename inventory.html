@@ -643,6 +643,15 @@ window.invCredLogin = async function() {
       <button class="isearch-btn" onclick="invSoldOutPrintQueue()">🖨 Print all</button>
     </div>
   </div>
+  <!-- 🏷 Owner (2026-10-23): "some FBA listings are not our brand — Amazon doesn't let us ship them with our UPC, we have to use Amazon's
+       own barcode; find out which". Stock Out Big Company only (Shelving, a locked design, is not touched): every FBA listing whose
+       FNSKU is an X00… code (Amazon's barcode on every unit), from Amazon's own data. -->
+  <details class="icard" id="inv-amzbc-card" style="display:none" ontoggle="if(this.open)invAmzBcLoad()">
+    <summary style="cursor:pointer;font-weight:800;color:#b45309">🏷 Listings that need Amazon's barcode (not our UPC) <span id="inv-amzbc-n" style="font-weight:400;color:var(--text3)"></span></summary>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0">Amazon's own data: a listing whose FNSKU is an <b>X00…</b> code needs Amazon's label on every unit — don't ship it with our UPC. One whose FNSKU is the ASIN (B0…) ships with our UPC.</div>
+    <input id="inv-amzbc-q" placeholder="Search part # / SKU / name / FNSKU…" oninput="invAmzBcRender()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:6px">
+    <div id="inv-amzbc-list" style="font-size:12px;max-height:50vh;overflow:auto">Loading…</div>
+  </details>
   <div class="icard" id="inv-stockout-card">
     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="invToggleStockoutList()">
       <div class="icard-label" style="margin-bottom:0">⚠️ Stock Out Reports<span class="ibadge" id="inv-stockout-badge" style="display:none">0</span></div>
@@ -2168,6 +2177,7 @@ window.invCredLogin = async function() {
     // it would show up on Stock In too, which doesn't make sense there.
     var stockoutReportsCard = g("inv-stockout-card");
     if (stockoutReportsCard) stockoutReportsCard.style.display = (mode === "out" && invStockOutDest === 'shelving') ? "block" : "none";
+    var amzBc = g("inv-amzbc-card"); if (amzBc) amzBc.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
     // stock out, so hidden there.
@@ -2197,6 +2207,33 @@ window.invCredLogin = async function() {
   // applied). Kept as its own global rather than folded into invMode,
   // since it's a sub-choice within Stock Out, not a third mode.
   var invStockOutDest = 'shelving';
+  // 🏷 Amazon-barcode listings (Big Company): loaded once per page, then searched on the phone.
+  var _invAmzBc = null, _invAmzBcP = null;
+  window.invAmzBcLoad = function(quiet) {
+    if (_invAmzBc) { invAmzBcRender(); return Promise.resolve(_invAmzBc); }
+    if (!_invAmzBcP) _invAmzBcP = wFetch(W + '/inventory/amazon-barcode').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+      _invAmzBc = d; var n = g('inv-amzbc-n'); if (n) n.textContent = '(' + d.counts.amazon + ' of ' + d.list.length + ' FBA listings)'; invAmzBcRender(); return d;
+    }).catch(function(e) { _invAmzBcP = null; var b = g('inv-amzbc-list'); if (b && !quiet) b.innerHTML = '<span style="color:var(--red)">Could not load — ' + ckE(e.message) + '</span>'; return null; });
+    return _invAmzBcP;
+  };
+  window.invAmzBcRender = function() {
+    var b = g('inv-amzbc-list'); if (!b || !_invAmzBc) return;
+    var q = String((g('inv-amzbc-q') || {}).value || '').trim().toUpperCase();
+    var L = _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
+    b.innerHTML = L.length ? '<table style="border-collapse:collapse;width:100%"><tr>' + ['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name'].map(function(h) { return '<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + h + '</th>'; }).join('') + '</tr>'
+      + L.map(function(x) { return '<tr class="inv-amzbc-row"><td style="padding:3px 6px;font-family:var(--mono);font-weight:700;white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:3px 6px;font-family:var(--mono);white-space:nowrap">' + ckE(x.sku) + '</td>'
+        + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + ckE(x.asin) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td></tr>'; }).join('') + '</table>'
+      : '<span style="color:var(--text3)">' + (q ? 'None found for "' + ckE(q) + '"' : 'No FBA listing needs Amazon\'s barcode') + '</span>';
+  };
+  // A part # picked for Big Company that ships with Amazon's barcode → said once (it never stops the pick).
+  window.invAmzBcWarn = function(part) {
+    var P = String(part || '').toUpperCase(); if (!P) return;
+    invAmzBcLoad(true).then(function(d) {
+      var hit = d && d.list.filter(function(x) { return x.barcode === 'amazon' && (x.part === P || x.sku === P); });
+      if (hit && hit.length) invFlash('🏷 ' + P + ' needs AMAZON\'s barcode (FNSKU ' + hit.map(function(x) { return x.fnsku; }).join(', ') + ') — label every unit, don\'t ship it with our UPC', 'warn');
+    });
+  };
   window.invSetStockOutDest = function(dest) {
     invStockOutDest = dest;
     // Keep the two Stock Out tabs, the reports card and the Cases needed
@@ -2206,6 +2243,8 @@ window.invCredLogin = async function() {
       if (t1) t1.className = 'itab' + (dest === 'shelving' ? ' iactive' : '');
       if (t2) t2.className = 'itab' + (dest === 'company' ? ' iactive' : '');
       var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
+      var ab = g('inv-amzbc-card'); if (ab) ab.style.display = dest === 'company' ? 'block' : 'none';
+      if (dest === 'company') invAmzBcLoad(true);
     }
     var nh = g('inv-need-help');
     if (nh) nh.textContent = dest === 'company'
@@ -2668,6 +2707,7 @@ window.invCredLogin = async function() {
     // exact part # (bag count) matters: it must be searched whole.
     var target = company ? (invSearchedExactVariant || (String(d.partNum).indexOf('=') >= 0 ? String(d.partNum).toUpperCase() : null)) : null;
     if (company && !target) { invFlash('Big Company: scan or type the WHOLE part # (e.g. ' + (d.baseSku || d.partNum) + '=10X) — the bag count matters here', 'warn'); return; }
+    if (company) invAmzBcWarn(target); // 🏷 needs Amazon's own barcode? (said, never blocks)
     // The system always picks for the picker; no number typed = 1 case.
     var typed = need > 0; if (!typed) need = 1;
     var srcId = fromReport ? fromReport.id : null;
