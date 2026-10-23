@@ -14692,7 +14692,7 @@ window.invCredLogin = async function() {
       h += '<div style="font-weight:800;color:var(--text);margin:8px 0 4px">🗺 By area — tap one to see every spot</div><div style="display:flex;flex-wrap:wrap;gap:6px">'
         + (d.areas || []).map(function(a) { var on = RC.area === a.area, all = a.done + a.started + a.notScanned;
             return '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="' + ckE(a.area) + '" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (a.notScanned || a.started ? 'var(--bg)' : 'var(--green-bg,#e8f7ee)') + ';color:var(--text)">'
-              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + '</span></button>'; }).join('')
+              + '<b style="font-family:var(--mono)">' + ckE(a.area) + '</b> <span style="color:var(--text3)">' + a.done + '/' + all + '</span><br><span style="font-size:11px">🟩 ' + a.done + ' 🟨 ' + a.started + ' 🟥 ' + a.notScanned + (a.checked ? ' 🟪 ' + a.checked : '') + '</span></button>'; }).join('')
         // Owner (2026-10-17): "why '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?" — SKU Mgr Locations that are not spots.
         + ((d.notSpots || []).length ? '<button type="button" onclick="rcArea(this.dataset.rca)" data-rca="__bad" style="padding:6px 10px;border-radius:9px;cursor:pointer;font-size:12px;border:2px solid ' + (RC.area === '__bad' ? 'var(--accent)' : 'var(--orange)') + ';background:var(--orange-bg,#fff7ed);color:var(--text)"><b>⚠ ' + d.notSpots.length + ' not real spots</b><br><span style="font-size:11px">a note / barcode / container in SKU Mgr Location</span></button>' : '')
         + '</div>'
@@ -14849,15 +14849,17 @@ window.invCredLogin = async function() {
     var T = function(x) { return x ? xfrFmtT(x) : ''; };
     return '<div style="margin:8px 0;padding:8px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2)">'
       + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
-      + '<span>🟩 done ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
+      + '<span>🟩 done ' + a.done + '</span><span class="rc-chk-legend" style="color:#7c3aed;font-weight:700">🟪 double checked ' + (a.checked || 0) + ' of ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
       + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished (pick which) to…</button>' : '')
       + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
       // 🧭 Owner (2026-10-21): "each aisle on its own line — 1A stays with 1A: 1A-1-1, 1A-1-2 … 1A-2-1, 1A-2-2 …". One row per aisle
       // (the part after "=" up to the first "-"), its spots in walking order; the aisles in walking order too.
       + rcAisleRows(a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }), function(sp) { var c = col[sp.st];
-          var sub = sp.st === 'done' ? '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
+          // 🟪 Owner (2026-10-23): double checked → purple, thick border, "✓✓ checked by …" — easy to see which are done twice.
+          if (sp.st === 'done' && sp.checked) c = ['#ede9fe', '#7c3aed'];
+          var sub = sp.st === 'done' ? (sp.checked ? '<b class="rc-dbl" style="color:#7c3aed">✓✓ checked ' + ckE(sp.checked.by) + ' · ' + ckE(T(sp.checked.at)) + '</b><br>' : '') + '✓ ' + ckE(sp.by) + ' · ' + ckE(T(sp.at)) : sp.st === 'started' ? (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + (sp.by ? ' · ' + ckE(sp.by) : '') + ' · ' + ckE(T(sp.at)) : 'not scanned';
           // ✕ delete a spot (owner 2026-10-17: "weird spots like FRONT 2-6"); ⚠ odd = shorter than the other spots of the area
-          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + (sp.odd ? ' — odd spot: shorter than the others here' : '') + '" style="position:relative;padding:5px 18px 5px 6px;border-radius:7px;background:' + c[0] + ';border:1.5px ' + (sp.odd ? 'dashed var(--orange)' : 'solid ' + c[1]) + ';color:var(--text)">'
+          return '<div title="' + ckE(sp.l) + (sp.stock ? '' : ' (no stock in SKU Mgr now)') + (sp.odd ? ' — odd spot: shorter than the others here' : '') + '" style="position:relative;padding:5px 18px 5px 6px;border-radius:7px;background:' + c[0] + ';border:' + (sp.checked && sp.st === 'done' ? '3px' : '1.5px') + ' ' + (sp.odd ? 'dashed var(--orange)' : 'solid ' + c[1]) + ';color:var(--text)">'
             + '<button type="button" onclick="rcSpotDel(this.dataset.l)" data-l="' + ckE(sp.l) + '" title="Delete this spot" style="position:absolute;top:2px;right:2px;border:none;background:none;color:var(--red);font-size:13px;font-weight:800;cursor:pointer;padding:0 3px;line-height:1">✕</button>'
             + '<div style="font-family:var(--mono);font-weight:800;font-size:11.5px">' + (sp.odd ? '⚠ ' : '') + ckE(sp.l.slice(sp.l.indexOf('=') + 1) || sp.l) + '</div><div style="font-size:10px;color:var(--text2)">' + sub + '</div></div>'; })
       + '</div>';

@@ -9343,5 +9343,26 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
     a1.join('|') === 'B0AAA11111 6|B0BBB22222' && a2.join('|') === 'B0CCC33333|30-3-4=10X' && a3.join('|') === 'B0DDD44444' && /onclick="document\.getElementById\('awd-prev-file'\)\.click\(\)">⬆ Upload a list/.test(ah), { a1, a2, a3 });
 }
 
+// Owner (2026-10-23, screenshot of 🗺 By area C1): "we double check the audit now — when we double check it, do something special
+// to it, so I can easily see which one is already double checked".
+console.log('\n🟪 Recount 🗺 By area: double-checked spots stand out (purple, ✓✓ checked by / when)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('97-1-1','x','97-1-1=10','C9=1-1-1',2,10), ('97-1-1','x','97-1-1=10','C9=1-1-2',3,10), ('97-1-1','x','97-1-1=10','C9=1-1-3',1,10)").run();
+  const t0 = Date.now(), iso = m => new Date(t0 + m * 100).toISOString(); // inside this recount round (a check above starts a new round)
+  await post('/inventory/recount/column-done', { location: 'C9=1-1-1', items: 1, changed: 0, detail: [], startedAt: iso(0), doneAt: iso(2) });
+  await post('/inventory/recount/column-done', { location: 'C9=1-1-2', items: 1, changed: 0, detail: [], startedAt: iso(3), doneAt: iso(5) });
+  await post('/inventory/recount/column-done', { location: 'C9=1-1-1', items: 1, changed: 0, detail: [], startedAt: iso(20), doneAt: iso(22), recheck: true, checked: true }); // ✅ Checked
+  const rep = await get('/inventory/recount/report'), a = (rep.areas || []).find(x => x.area === 'C9') || { spots: [] };
+  const sp = l => a.spots.find(x => x.l === l) || {};
+  check('C9: 1-1-1 done then ✅ Checked → double checked (who / when of the check); 1-1-2 done once → not; 1-1-3 not scanned; the area shows 🟪 1',
+    sp('C9=1-1-1').st === 'done' && sp('C9=1-1-1').checked && sp('C9=1-1-1').checked.at === iso(22) && sp('C9=1-1-1').checked.by && !sp('C9=1-1-2').checked && sp('C9=1-1-3').st === 'none' && a.checked === 1 && a.done === 2, a);
+  const { readFileSync: rfD } = await import('node:fs');
+  const ih = rfD(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…on the grid: purple box with a thick border and "✓✓ checked <who> · <when>"; legend "🟪 double checked N of M"; area buttons count 🟪',
+    /if \(sp\.st === 'done' && sp\.checked\) c = \['#ede9fe', '#7c3aed'\];/.test(ih) && /✓✓ checked ' \+ ckE\(sp\.checked\.by\)/.test(ih) && /\(sp\.checked && sp\.st === 'done' \? '3px' : '1\.5px'\)/.test(ih)
+      && /🟪 double checked ' \+ \(a\.checked \|\| 0\) \+ ' of ' \+ a\.done/.test(ih) && /\(a\.checked \? ' 🟪 ' \+ a\.checked : ''\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '97-1-1'; DELETE FROM recount_columns WHERE location LIKE 'C9=%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
