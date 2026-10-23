@@ -7054,7 +7054,16 @@ console.log('\n🏷 Barcode designer 💾 Save → 🏷 Label Printer: saved lab
     /window\.lpSavedPrint = function\(which\)/.test(lp) && /lpGenSkuZPL\(j\.sku, j\.name \|\| '', j\.copies(?:, pics\[k\])?\)/.test(lp) && /\/inventory\/barcode-job\/printed', \{ method: 'POST'/.test(lp) && /if \(window\.lpSavedLoad\) lpSavedLoad\(\);/.test(lp), null);
   check('…Label Printer top bar like the other pages: white bar, title left, 🔄 Refresh / 🚪 Sign Out / ← Apps on the right, wraps on a phone',
     /#labelprint-app \.lp-header \{\n  background:var\(--bg2\);[\s\S]*?flex-wrap:wrap;/.test(lp) && /<div class="lp-header">[\s\S]{0,400}🔄 Refresh[\s\S]{0,200}🚪 Sign Out[\s\S]{0,200}← Apps/.test(lp), null);
+  // Owner (2026-10-23): "saved labels to print — an X on each one, in case we don't need it, we can just delete it".
+  check('…each saved label has ✕ (does not print the row) → asks first → /inventory/barcode-job/delete', /onclick="event\.stopPropagation\(\);lpSavedDelete\(\d+\)"[^>]*>✕<\/button>/.test(h) && /window\.lpSavedDelete = function\(i\)/.test(lp) && /if \(!confirm\('Delete this saved label\?/.test(lp) && /\/inventory\/barcode-job\/delete', \{ method: 'POST'/.test(lp), h.slice(-400));
+  const sv2 = await post('/inventory/barcode-job', { sku: '933-1-2=5', name: 'Cap', copies: 2, spots: [{ loc: 'C1=6-1-2', boxes: 2 }] });
+  const del = await post('/inventory/barcode-job/delete', { id: sv2.id }), q2 = await get('/inventory/barcode-job/queue'), f2 = await get('/inventory/barcode-job/find?sku=933-1-2=5');
+  const dr = sq.prepare('SELECT deleted_at, deleted_by, printed_at FROM barcode_label_job WHERE id = ?').get(sv2.id);
+  check('…✕ → off the list (and off "Where does it go?"), never printed, kept on record with who / when deleted; the other label stays',
+    del.ok && !(q2.jobs || []).some(x => x.id === sv2.id) && (q2.jobs || []).some(x => x.id === sv.id) && !(f2.jobs || []).length && dr.deleted_at && dr.deleted_by && !dr.printed_at, { del, dr });
   await post('/inventory/barcode-job/printed', { ids: [sv.id] });
+  const del3 = await post('/inventory/barcode-job/delete', { id: sv.id });
+  check('…a label already printed can\'t be deleted ("Already printed")', del3.ok === false && /Already printed/.test(del3.error || ''), del3);
 }
 
 // Owner 2026-10-17 (screenshot): Label Printer's Refresh / Sign Out / Apps sat as a column on the LEFT — the page is shown
