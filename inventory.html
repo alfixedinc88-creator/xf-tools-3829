@@ -14707,9 +14707,11 @@ window.invCredLogin = async function() {
           : '<tr><td ' + td + ' colspan="10">No column done yet in this recount.</td></tr>') + '</table></div>';
       // 📌 Owner (2026-10-21): "when scrolling down keep the Column / Who / Started line on the top, only the info scrolls" — the
       // header row stays on top (and the Column name on the left when sliding sideways); a column over 10 minutes is red.
+      var skOff = (d.columns || []).filter(function(c) { return c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok; });
+      h += rcSkuWarnHtml(skOff);
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
         + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table style="border-collapse:separate;border-spacing:0;width:100%;font-size:12px;color:var(--text)"><thead><tr>'
-        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)', '📋 What was done (before → after)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+        + ['Column', 'Who', 'Started', 'Done', 'Took', 'Boxes', 'Lines', 'Changed', 'Skipped to scan (not scanned → looked again)', '📋 What was done (before → after)', '🏬 SKU Mgr now (double check)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
         + d.columns.map(function(c) {
             var sk = !c.howKnown && !c.skipped.length ? '<span style="color:var(--text3)">not recorded (before 10-17)</span>' : c.skipped.length ? c.skipped.map(function(x) { return '<div>' + (x.how === 'none' ? '✗ None found: ' : '✓ Found: ') + ckE(x.part) + ' × ' + ckE(xfrN(x.pcs)) + ' pcs (system ' + ckE(xfrN(x.system)) + ' → ' + ckE(xfrN(x.counted)) + ')</div>'; }).join('') : '<span style="color:var(--green)">none — every line scanned</span>';
             var o10 = rcOver10(c), bg = c.stopped ? 'var(--orange-bg,#fff7ed)' : o10 ? 'var(--red-bg,#fdf0ee)' : 'var(--bg)';
@@ -14726,7 +14728,8 @@ window.invCredLogin = async function() {
                     + '<td style="padding:2px 5px">' + ckE(xfrN(x.before)) + '</td><td style="padding:2px 5px"><b>' + ckE(xfrN(x.after)) + '</b></td><td style="padding:2px 5px;font-weight:700;color:' + (ch ? (ch > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') + '">' + (ch > 0 ? '+' : '') + ckE(xfrN(ch)) + '</td>'
                     + '<td style="padding:2px 5px;white-space:nowrap;color:' + (x.how === 'none' ? 'var(--red)' : 'var(--text2)') + '">' + (x.new ? '➕ new line' : (how[x.how] || '✓ scanned')) + '</td></tr>'; }).join('') + '</table></details>'
               : '<span style="color:var(--text3)">—</span>';
-            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td></tr>';
+            if (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok) bg = 'var(--red-bg,#fdf0ee)';
+            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok ? ' rc-col-skuoff' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + ckE(xfrN(c.boxes)) + '</td><td ' + td + '>' + c.items + '</td><td ' + td + '>' + c.changed + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td><td ' + td + '>' + rcSkuMgrCell(c) + '</td></tr>';
           }).join('') + '</tbody></table></div>';
       var nd = d.aisles.filter(function(a) { return a.notDone.length; });
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">⬜ Not done yet (' + (d.spotsWithStock - d.spotsDone) + ' spots with stock)</div>'
@@ -14737,6 +14740,35 @@ window.invCredLogin = async function() {
     }).catch(function() { box.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
 
+  // 🏬 Owner (2026-10-23): "under Columns I want to also see what we have in SKU Mgr, so you can double check it too — no more mistakes;
+  // if it ends up not matching, give us the warning". Per column: every part # SKU Mgr has at that spot now vs the count + what moved
+  // there after it (the same check as 🔎 Are the audit numbers right?). ⚠ red when it doesn't add up; the list of those on top.
+  function rcSkuWarnHtml(off) {
+    if (!off.length) return '<div class="rc-sku-warn" style="margin:10px 0 4px;font-weight:800;color:var(--green)">🏬 ✅ Every column\'s newest count matches SKU Mgr now (count + what moved there after)</div>';
+    return '<div class="rc-sku-warn" style="margin:10px 0 4px;padding:8px 10px;border:2px solid var(--red);border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800">⚠ '
+      + off.length + ' column' + (off.length === 1 ? '' : 's') + ' NOT matching SKU Mgr — look again / recount: <span style="font-family:var(--mono)">'
+      + off.map(function(c) { return ckE(c.location); }).join(' · ') + '</span><div style="font-weight:400;color:var(--text2);margin-top:2px">Red rows below; the 🏬 column says which part # is off and by how much.</div></div>';
+  }
+  function rcSkuMgrCell(c) {
+    var k = c.skuMgr;
+    if (!k || c.stopped) return '<span style="color:var(--text3)">—</span>';
+    if (k.newer) return '<span style="color:var(--text3)">see the newer count of this column above</span>';
+    if (k.error || !k.lines) return '<span style="color:var(--orange)">⚠ could not check: ' + ckE(k.error || '') + '</span>';
+    var N = function(v) { return v == null ? '—' : ckE(xfrN(v)); };
+    var head = k.ok ? '<b class="rc-sku-ok" style="color:var(--green)">✅ matches</b> · ' + N(k.boxes) + ' boxes · ' + k.lines.length + ' part #' + (k.lines.length === 1 ? '' : 's')
+      : '<b class="rc-sku-off" style="color:var(--red)">⚠ NOT matching SKU Mgr</b>' + (k.unreadable ? ' (the count could not be read)' : '') + ' · SKU Mgr has ' + N(k.boxes) + ' boxes';
+    var rows = k.lines.map(function(x) {
+      var why = !x.off ? '<span style="color:var(--green)">✅</span>' : x.why === 'not counted' ? '<b style="color:var(--red)">⚠ in SKU Mgr, never counted</b>'
+        : '<b style="color:var(--red)">⚠ ' + (x.diff > 0 ? '+' : '') + N(x.diff) + ' off</b>';
+      return '<tr' + (x.off ? ' style="background:var(--red-bg,#fdf0ee)"' : '') + '><td style="padding:2px 5px;font-family:var(--mono);white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:2px 5px;min-width:120px">' + ckE(x.name || '—') + '</td>'
+        + '<td style="padding:2px 5px">' + N(x.counted) + '</td><td style="padding:2px 5px">' + (x.moved ? (x.moved > 0 ? '+' : '') + N(x.moved) : '0') + '</td><td style="padding:2px 5px">' + N(x.expected) + '</td>'
+        + '<td style="padding:2px 5px"><b>' + N(x.now) + '</b></td><td style="padding:2px 5px;white-space:nowrap">' + why + '</td></tr>'; }).join('');
+    var em = (k.emptied || []).map(function(x) { return '<div style="color:var(--orange)">🧹 ' + ckE(x.part) + ': counted ' + N(x.counted) + ', found empty later by ' + ckE(x.by) + ' ' + ckE(xfrFmtT(x.at)) + '</div>'; }).join('');
+    return '<details class="rc-sku-cell"' + (k.ok ? '' : ' open') + '><summary style="cursor:pointer;white-space:nowrap">' + head + '</summary>'
+      + (rows ? '<table style="border-collapse:collapse;margin-top:4px;font-size:11px"><tr>' + ['Part #', 'Name', 'Counted', 'Moved since', 'Should be', 'SKU Mgr now', ''].map(function(x) { return '<th style="text-align:left;padding:2px 5px;border-bottom:1px solid var(--border);white-space:nowrap">' + x + '</th>'; }).join('') + '</tr>' + rows + '</table>'
+        : '<div style="color:var(--text3)">SKU Mgr has nothing at this spot</div>') + em + '</details>';
+  }
+  window.rcSkuMgrCell = rcSkuMgrCell; window.rcSkuWarnHtml = rcSkuWarnHtml;
   // ⏱ A finished column that took more than 10 minutes (a stopped one isn't a finished column).
   function rcOver10(c) { return !!c && !c.stopped && c.minutes != null && c.minutes > 10; }
   // 🔎 Search by name / day (New York day) over every column ever done: per person per day — columns, boxes, time, avg / column, over 10 min.
