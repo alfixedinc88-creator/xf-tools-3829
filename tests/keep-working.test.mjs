@@ -9409,5 +9409,15 @@ console.log('\n🟪 Recount 🗺 By area: double-checked spots stand out (purple
   sq.exec("DELETE FROM master_list WHERE base_sku = '97-1-1'; DELETE FROM recount_columns WHERE location LIKE 'C9=%'");
 }
 
+// Owner (2026-10-23, screenshot): "space between What was done and SKU Mgr now — move it closer; move Columns to the top too"
+console.log('\n📍 Recount report: Columns list at the top, no gap before 🏬 SKU Mgr now');
+{
+  const { readFileSync: rfC } = await import('node:fs');
+  const ih = rfC(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), f = ih.slice(ih.indexOf('  window.rcReport = function() {'), ih.indexOf('  // ⏱ A finished column that took more than 10 minutes'));
+  const iTop = f.indexOf("↻ Refresh</a></div><!--rc-cols-->'"), iOver = f.indexOf("h += '<div class=\"rc-over10\""), iCols = f.indexOf("colsH += '<div style=\"font-weight:800;color:var(--text);margin:12px 0 4px\">📍 Columns (newest first)");
+  check('📍 Columns (newest first) goes right under the report\'s first line (before ⏱ over 10 min, By area, By person); the table is only as wide as what\'s in it (What was done next to 🏬 SKU Mgr now)',
+    iTop > 0 && iOver > iTop && iCols > 0 && /h = h\.replace\('<!--rc-cols-->', function\(\) \{ return colsH; \}\);/.test(f) && /<table class="rc-cols-table" style="border-collapse:separate;border-spacing:0;width:auto;/.test(f), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -14680,7 +14680,7 @@ window.invCredLogin = async function() {
       if (!d || !d.ok) { box.innerHTML = '<span style="color:var(--red)">' + ckE((d && d.error) || 'Could not load') + '</span>'; return; }
       var T = function(x) { return x ? xfrFmtT(x) : '—'; }, M = function(m) { return m == null ? '—' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
       var th = 'style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
-      var h = '<div style="color:var(--text2);margin-bottom:6px">This recount (since ' + ckE(T(d.roundStart)) + '): <b>' + d.spotsDone + ' of ' + d.spotsWithStock + '</b> spots with stock done. <a href="#" onclick="rcReport();return false">↻ Refresh</a></div>';
+      var h = '<div style="color:var(--text2);margin-bottom:6px">This recount (since ' + ckE(T(d.roundStart)) + '): <b>' + d.spotsDone + ' of ' + d.spotsWithStock + '</b> spots with stock done. <a href="#" onclick="rcReport();return false">↻ Refresh</a></div><!--rc-cols-->';
       // ⏱ Owner (2026-10-21): "any column that takes longer than 10 minutes in a different color, and the main report shows how many".
       var over = (d.columns || []).filter(rcOver10);
       h += '<div class="rc-over10" style="margin-bottom:6px;font-weight:700;color:' + (over.length ? 'var(--red)' : 'var(--green)') + '">⏱ ' + over.length + ' column' + (over.length === 1 ? '' : 's') + ' took more than 10 minutes'
@@ -14717,9 +14717,11 @@ window.invCredLogin = async function() {
       // 📌 Owner (2026-10-21): "when scrolling down keep the Column / Who / Started line on the top, only the info scrolls" — the
       // header row stays on top (and the Column name on the left when sliding sideways); a column over 10 minutes is red.
       var skOff = (d.columns || []).filter(function(c) { return c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok; });
-      h += rcSkuWarnHtml(skOff, d.columns);
-      h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
-        + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table style="border-collapse:separate;border-spacing:0;width:100%;font-size:12px;color:var(--text)"><thead><tr>'
+      // 📍 Owner (2026-10-23, screenshot): "space between What was done and SKU Mgr now — move it closer, and move Columns to the top".
+      // The table is as wide as what's in it (no stretch), and the Columns list goes right under the first line of the report.
+      var colsH = rcSkuWarnHtml(skOff, d.columns);
+      colsH += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
+        + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table class="rc-cols-table" style="border-collapse:separate;border-spacing:0;width:auto;font-size:12px;color:var(--text)"><thead><tr>'
         + ['Column', 'Who', 'Started', 'Done', 'Took', 'Skipped to scan (not scanned → looked again)', '📋 What was done (before → after)', '🏬 SKU Mgr now (double check)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
         + d.columns.map(function(c) {
             var sk = !c.howKnown && !c.skipped.length ? '<span style="color:var(--text3)">not recorded (before 10-17)</span>' : c.skipped.length ? c.skipped.map(function(x) { return '<div>' + (x.how === 'none' ? '✗ None found: ' : '✓ Found: ') + ckE(x.part) + ' × ' + ckE(xfrN(x.pcs)) + ' pcs (system ' + ckE(xfrN(x.system)) + ' → ' + ckE(xfrN(x.counted)) + ')</div>'; }).join('') : '<span style="color:var(--green)">none — every line scanned</span>';
@@ -14740,6 +14742,7 @@ window.invCredLogin = async function() {
             if (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok) bg = 'var(--red-bg,#fdf0ee)';
             return '<tr class="' + (o10 ? 'rc-col-over10' : '') + (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok ? ' rc-col-skuoff' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td><td ' + td + '>' + rcSkuMgrCell(c) + '</td></tr>';
           }).join('') + '</tbody></table></div>';
+      h = h.replace('<!--rc-cols-->', function() { return colsH; });
       var nd = d.aisles.filter(function(a) { return a.notDone.length; });
       h += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">⬜ Not done yet (' + (d.spotsWithStock - d.spotsDone) + ' spots with stock)</div>'
         + (nd.length ? nd.map(function(a) { return '<details style="margin-bottom:4px"><summary style="cursor:pointer;color:var(--text)"><b style="font-family:var(--mono)">' + ckE(a.aisle) + '</b>: ' + a.done + ' of ' + a.total + ' done — ' + a.notDone.length + ' not done</summary><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'
