@@ -9140,5 +9140,27 @@ console.log('\n📊 Checking → a spot / column: on top the number of part #s, 
   check('…shown on top of the spot (before the items) in ✅ Checking; nothing on record → no summary', /h \+= ckLocSumHtml\(CK\.rows\);/.test(ih) && ih.indexOf('h += ckLocSumHtml(CK.rows);') < ih.indexOf("CK.rows.forEach(function(r, i) {", ih.indexOf('function ckRenderLoc')) && lib([]) === '', null);
 }
 
+// Owner (2026-10-23): "some FBA listings are not our brand — Amazon doesn't let us ship them with our UPC, we have to use Amazon's own
+// barcode. Find out which use Amazon's barcode." FNSKU = the ASIN (B0…) → our UPC is fine; FNSKU X00… → Amazon's label on every unit.
+console.log('\n🏷 FBA listings that need Amazon\'s barcode (FNSKU X00…) — list + a warning on Stock Out Big Company');
+{
+  sq.exec(`CREATE TABLE IF NOT EXISTS amazon_fba_inventory (sku TEXT PRIMARY KEY, fnsku TEXT, asin TEXT, product_name TEXT, afn_listing_exists TEXT, mfn_listing_exists TEXT, updated_at TEXT)`);
+  await get('/inventory/amazon-barcode'); // fba_catalog table
+  const now = new Date().toISOString();
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('710-1-1=10X', 'X00ABC1234', 'B0AAAA1111', 'Not-our-brand valve 10 pack', 'Yes', now);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('710-1-2=5', 'B0BBBB2222', 'B0BBBB2222', 'Our brand tee 5 pack', 'Yes', now);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('710-1-9=5', 'X00ZZZ9999', 'B0ZZZZ9999', 'FBM only — not FBA', 'No', now);
+  sq.prepare("INSERT OR REPLACE INTO fba_catalog (sku, asin, fnsku, product_name, updated_at) VALUES (?,?,?,?,?)").run('710-1-3=2X', 'B0CCCC3333', 'X00DEF5678', 'Other brand cap 2 pack', now);
+  const d = await get('/inventory/amazon-barcode'), by = Object.fromEntries((d.list || []).filter(x => /^710-1-/.test(x.part)).map(x => [x.part, x]));
+  check('X00… FNSKU = Amazon\'s barcode (710-1-1=10X from the FBA inventory report, 710-1-3=2X from the FBA catalog); FNSKU = ASIN = our UPC (710-1-2=5); a listing not on FBA is left out',
+    d.ok && by['710-1-1=10X'].barcode === 'amazon' && by['710-1-1=10X'].fnsku === 'X00ABC1234' && by['710-1-3=2X'].barcode === 'amazon' && by['710-1-2=5'].barcode === 'maker' && !by['710-1-9=5'] && d.counts.amazon >= 2, by);
+  const { readFileSync: rfB } = await import('node:fs');
+  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…Stock Out Big Company: the "🏷 Listings that need Amazon\'s barcode" card (only there — not on Shelving), and picking such a part # says "needs AMAZON\'s barcode (FNSKU …)"; 🧩 check mark',
+    /<details class="icard" id="inv-amzbc-card" style="display:none"/.test(ih) && /amzBc\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ih) && /if \(company\) invAmzBcWarn\(target\);/.test(ih)
+      && /needs AMAZON\\'s barcode \(FNSKU /.test(ih) && /sel: '#inv-amzbc-card'/.test(rfB(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  sq.exec("DELETE FROM amazon_fba_inventory WHERE sku LIKE '710-1-%'; DELETE FROM fba_catalog WHERE sku LIKE '710-1-%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

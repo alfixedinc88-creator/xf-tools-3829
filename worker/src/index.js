@@ -1364,6 +1364,33 @@ async function reorderBackfillWeeklySales(request, url, env) {
 // SKU -> ASIN -> current stock list, in the real part-number format,
 // with sales velocity intentionally left out since that already lives
 // in the amazon_sales_weekly table - no need to duplicate it here.
+// 🏷 GET /inventory/amazon-barcode — owner (2026-10-23): "some FBA listings are not our brand, so Amazon doesn't let us ship them with
+// our UPC — we have to use Amazon's own barcode. Can you find out which use Amazon's barcode?" Amazon's own data says it: a listing's
+// FNSKU is the ASIN (B0…) when it ships with the maker's / our UPC, and an X00… code when every unit needs Amazon's label. From both
+// Amazon copies the app keeps (the FBA inventory report and the FBA catalog), each Amazon SKU read as our part # (✏️ mapped the same
+// way as the Reorder Planner). barcode: 'amazon' (X00…), 'maker' (= ASIN), '' (not known yet).
+async function inventoryAmazonBarcode(env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  await ensureFbaCatalogTable(env);
+  const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  const U = x => String(x || '').trim().toUpperCase();
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const rows = {};
+  const take = (r, src) => {
+    const sku = U(r.sku); if (!sku) return;
+    const fn = U(r.fnsku), asin = U(r.asin), o = rows[sku] = rows[sku] || { sku, part: P(sku), asin: '', fnsku: '', name: '', from: [], at: '' };
+    if (fn && (!o.fnsku || (r.updated_at || '') > o.at)) { o.fnsku = fn; o.at = r.updated_at || o.at; }
+    if (asin && !o.asin) o.asin = asin; if (r.product_name && !o.name) o.name = String(r.product_name).slice(0, 160);
+    if (!o.from.includes(src)) o.from.push(src);
+  };
+  (await all(`SELECT sku, asin, fnsku, product_name, updated_at FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`)).forEach(r => take(r, 'FBA inventory report'));
+  (await all('SELECT sku, asin, fnsku, product_name, updated_at FROM fba_catalog')).forEach(r => take(r, 'FBA catalog'));
+  const list = Object.values(rows).map(o => ({ ...o, barcode: /^X0/.test(o.fnsku) ? 'amazon' : o.fnsku && o.asin && o.fnsku === o.asin ? 'maker' : /^B0/.test(o.fnsku) ? 'maker' : '' }))
+    .sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }) || a.sku.localeCompare(b.sku));
+  const n = k => list.filter(x => x.barcode === k).length;
+  return J({ ok: true, list, counts: { amazon: n('amazon'), maker: n('maker'), unknown: n('') }, asOf: list.reduce((a, x) => x.at > a ? x.at : a, '') });
+}
 async function ensureFbaCatalogTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS fba_catalog (
@@ -10236,6 +10263,7 @@ const _app = {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventorySetFnsku(request, env);
       }
+      if (path === '/inventory/amazon-barcode' && method === 'GET') return await inventoryAmazonBarcode(env);
       if (path === '/inventory/fnsku-lookup' && method === 'GET') {
         return await inventoryFnskuLookup(url, env);
       }
