@@ -8164,6 +8164,7 @@ async function recountCheck(env, url) {
         else if (C) add(nP, nL, { ...base, kind: 'd', n: nC - oC, what: 'SKU MGR EDIT' });
         continue;
       }
+      if (/^\[RECEIVE PO MOVE\]/.test(notes)) { const m = /Cases there: ([\d.]+)/.exec(notes); add(l.part_num, l.location, { ...base, kind: 'd', n: -(m ? parseFloat(m[1]) : n), what: 'RECEIVE PO (row moved away)' }); continue; }
       if (/^\[SKU MGR ADD\]/.test(notes)) { add(l.part_num, l.location, { ...base, kind: 'd', n, what: 'SKU MGR ADD' }); continue; }
       if (/^\[SKU MGR DELETE\]/.test(notes)) { add(l.part_num, l.location, { ...base, kind: 'd', n: -n, what: 'SKU MGR DELETE' }); continue; }
       const d = ed(l); if (d !== null && Math.abs(d) > 1e-9 && l.location) add(l.part_num, l.location, { ...base, kind: 'd', n: d, what: 'EDIT' });
@@ -8688,7 +8689,7 @@ async function inventorySetPrefixes(request, env) {
 // Now updates D1 first (master_list AND the locations registry table, so
 // suggestions/empty-shelf lookups stay consistent too), Sheets mirrored
 // fire-and-forget after.
-async function inventoryRenameLocations(request, env) {
+async function inventoryRenameLocations(request, env, session) {
   if (!env.DB) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'D1 not available' }), { status: 503, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -8703,7 +8704,7 @@ async function inventoryRenameLocations(request, env) {
     // compare the exact-length prefix substring rather than LIKE, avoiding
     // any wildcard-character edge cases in the prefix text.
     const mlRows = await d1All(env,
-      `SELECT id, location FROM master_list
+      `SELECT * FROM master_list
        WHERE UPPER(SUBSTR(location, 1, ?)) = UPPER(?) AND location != ''`,
       [oldLen, oldP]
     );
@@ -8720,6 +8721,15 @@ async function inventoryRenameLocations(request, env) {
       });
       await env.DB.batch(stmts);
       updated += chunk.length;
+    }
+    // 📜 Owner (2026-10-23): "everything that changes the inventory" is in History — a renamed spot moves its boxes, one line per row
+    // (the same "Location: A → B" a SKU Mgr edit writes), so the audit check and History follow the boxes.
+    const whoR = String((session && (session.displayName || session.username)) || 'MGMT').slice(0, 40);
+    for (const r of mlRows) {
+      if (!(parseFloat(r.cases) > 0)) continue;
+      const newLoc = newP + r.location.slice(oldLen);
+      const pt = String(r.part_num || '').trim().toUpperCase(), tR = { newPart: pt, newBefore: await invPartCases(env, pt) }; // a rename: the part total stays the same
+      await _skuMgrInsertLog(env, whoR, { ...r, location: newLoc }, `[SKU MGR EDIT] Location: ${r.location} → ${newLoc} · 📍 Rename Locations ${oldP} → ${newP}`, tR).catch(() => {});
     }
 
     // Also rename matching entries in the locations registry table, so
@@ -9048,6 +9058,10 @@ async function inventoryReceiveApply(request, env) {
       'UPDATE master_list SET cases=?, location=?, prev_notes=?, price=?, units_per_case=CASE WHEN units_per_case=0 OR units_per_case IS NULL THEN ? ELSE units_per_case END, updated_at=? WHERE id=?'
     ).bind(casesNum, palletWithDate, newPrevNotes, priceNum != null ? priceNum : (d1Row.price || 0), upcNum, ts, d1Row.id).run();
 
+    // 📜 The row (and the cases it had) left its old spot for the pallet spot — said at the old spot too (History only had the pallet).
+    if (oldLocation && oldLocation.toUpperCase() !== palletWithDate.toUpperCase() && (parseFloat(d1Row.cases) || 0) > 0)
+      await _skuMgrInsertLog(env, initials || 'MGMT', { ...d1Row, location: oldLocation }, `[RECEIVE PO MOVE] row moved from ${oldLocation} to ${palletWithDate} · Cases there: ${parseFloat(d1Row.cases) || 0}`,
+        { newPart: String(partNum || d1Row.part_num).trim().toUpperCase(), newBefore: await invPartCases(env, String(partNum || d1Row.part_num).trim().toUpperCase()) }).catch(() => {}); // the Receive PO line right after it has the total change
     // ── 2. Write inventory_log entry (IN, auto-verified) ────────────────
     const logNote = `[RECEIVE PO] Pallet: ${palletWithDate}${vendor ? ' · Vendor: ' + vendor : ''}${priceNum != null ? ' · Price: $' + priceNum.toFixed(3) : ''}`;
     const logRes = await env.DB.prepare(
@@ -10337,7 +10351,7 @@ const _app = {
       if (path === '/inventory/audit-mode'      && method === 'POST') return await inventoryAuditModeSet(request, env);
       if (path === '/inventory/review-mode'     && method === 'POST') return await inventoryReviewModeSet(request, env);
       if (path === '/inventory/prefixes'        && method === 'POST') return await inventorySetPrefixes(request, env);
-      if (path === '/inventory/rename-locations'&& method === 'POST') return await inventoryRenameLocations(request, env);
+      if (path === '/inventory/rename-locations'&& method === 'POST') return await inventoryRenameLocations(request, env, session);
       if (path === '/inventory/cancel-entry'    && method === 'POST') return await inventoryCancelEntry(request, env);
       return cors(new Response(JSON.stringify({ error: 'Inventory route not found' }), {
         status: 404, headers: { 'Content-Type': 'application/json' }
@@ -23905,7 +23919,12 @@ async function shipResolveNostock(request, env) {
   // actually typed) always gets a chance before falling back to the bin.
   let masterListUpdated = false, matchedId = null, note = '', autoCreated = false, needsReview = false;
 
+  // 📜 Owner (2026-10-23): "everything that changes the inventory" is in History — "Found it" sets the cases and spot like a SKU Mgr
+  // edit (it wrote no History line), so it now writes the same line ("Location: A → B · Cases: x → y"), by the picker.
+  const whoF = String((resolvedBy || '?') + ' · 📦 Found it').slice(0, 40);
   async function applyUpdateTo(row) {
+    const totF = await skuMgrTotalsBefore(env, row.id, 0, row.part_num).catch(() => null);
+    const before = { ...row };
     const result = await _invApplySkuRowUpdate(env, {
       d1Id: row.id, sheetRow: row.sheet_row,
       partNum: row.part_num, name: row.name,
@@ -23915,6 +23934,7 @@ async function shipResolveNostock(request, env) {
     });
     masterListUpdated = !!result.ok;
     matchedId = row.id;
+    if (result.ok) await skuMgrLogEdit(env, whoF, before, row.id, 0, totF).catch(() => {});
     if (!result.ok) note = result.error || 'Inventory update failed — the report is still marked resolved, but update SKU Mgr by hand for this one.';
   }
 
@@ -24002,11 +24022,13 @@ async function shipResolveNostock(request, env) {
               + ' rows that don\'t all agree on name/case size/price/vendor, so this was pieced together from the newest'
               + ' row that had each field (mainly ' + mostRecent.part_num + '), found at ' + locationFound + '.' + extra
               + ' PLEASE VERIFY name/price/case size/vendor are correct for this SKU.');
+        const totA = await skuMgrTotalsBefore(env, null, 0, partNumFound).catch(() => null);
         const insertResult = await _invApplySkuRowInsert(env, {
           partNum: partNumFound, location: locationFound, cases: casesFound,
           name: nameF.value, sku: skuF.value, unitsPerCase: unitsF.value,
           vendor: vendorF.value, price: priceF.value, prevNotes: autoNote,
         });
+        if (insertResult.ok) await skuMgrLogAdd(env, whoF, { partNum: partNumFound, location: locationFound, cases: casesFound, name: nameF.value }, totA).catch(() => {});
         if (insertResult.ok) {
           masterListUpdated = true;
           matchedId = insertResult.d1Id;
