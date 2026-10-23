@@ -14366,6 +14366,14 @@ window.invCredLogin = async function() {
     var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
       + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>'
+      // 📦 Owner (2026-10-23): "when we scan the column, see the total boxes on it and the total part #s" — on record here (SKU Mgr) and
+      // counted so far (scanned / found + new lines), updated as each box is counted.
+      + (function() { var onB = 0, parts = {}, cntB = 0;
+          RC.rows.forEach(function(r) { onB += ckNow(r); parts[String(r.partNum).toUpperCase()] = 1; if (r._rc) cntB += ckNum(r._rc.n); });
+          RC.extra.forEach(function(x) { cntB += ckNum(x.n); });
+          var np = Object.keys(parts).length, rnd = function(v) { return Math.round(v * 100) / 100; };
+          return '<div class="rc-totals" style="font-size:13px;margin-top:3px">📦 <b>On record: ' + rnd(onB) + ' box' + (onB === 1 ? '' : 'es') + ' · ' + np + ' part #' + (np === 1 ? '' : 's') + '</b>'
+            + ' <span style="color:var(--text2)">· Counted so far: <b>' + rnd(cntB) + '</b> box' + (cntB === 1 ? '' : 'es') + '</span></div>'; })()
       + (RC.src ? '<div class="rc-src" style="font-size:11px;margin-top:2px;' + (RC.src.old ? 'color:var(--red);font-weight:700">⚠ list saved on this phone (no WiFi) — scan the column again when WiFi is back' : 'color:var(--text3)">list from SKU Mgr · ' + ckE(xfrFmtT(new Date(RC.src.at).toISOString()))) + '</div>' : '');
     // This aisle: columns done (green) / not yet (grey), in walking order.
     // Owner: at the bottom, folded — tap to open (stays open / closed while counting).

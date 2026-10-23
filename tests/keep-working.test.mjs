@@ -1471,6 +1471,9 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   // Owner: "Audit — move the location to the bottom and minimize; click to open when we want to see".
   check('…the aisle\'s column list is at the bottom (after ✅ Done with this column), folded — tap to open', !/"\s+open[\s>]/.test((ho.match(/<details id="rc-aisle"[^>]*>/) || ['" open>'])[0]) && ho.indexOf('id="rc-aisle"') > ho.indexOf('Done with this column') && ho.indexOf('id="rc-aisle"') > ho.lastIndexOf('not scanned yet'), ho.slice(-600));
   // scan a box → cases → pieces (tap = saved)
+  // 📦 Owner (2026-10-23): "when we scan the column, see the total boxes on that column and the total part #s"
+  check('…the column shows its totals: "📦 On record: 15 boxes · 4 part #s · Counted so far: 0 boxes" (5 + 3 + 2 + 4 + 1 at C3=4-1-1)',
+    /class="rc-totals"[^>]*>📦 <b>On record: 15 boxes · 4 part #s<\/b> <span[^>]*>· Counted so far: <b>0<\/b> boxes/.test(ho), (ho.match(/class="rc-totals".{0,200}/) || [''])[0]);
   w.rcGo('88-8-1=10'); await settle(); await settle(); ho = el('rc-out').innerHTML;
   check('scan a box → 1️⃣ How many cases? (our buttons)', /1️⃣ How many cases\?/.test(ho) && /rcCases\('more'\)/.test(ho) && !/<input/.test(ho), null);
   w.rcCases(6); ho = el('rc-out').innerHTML;
