@@ -9632,7 +9632,10 @@ console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label
   check('2 full AWD labels → still 2 labels to print: each Amazon label drawn at 85% (top) with PREVIOUS PACKED / our template in the strip under it; says "one label per box"',
     imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED — on the pallet,/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
     { imgs, scaled: scaled.length, out });
-  check('…a choice (☑ One label per box), remembered on this computer; off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) === '1'/.test(ah), null);
+  check('…a choice (☑ One label per box), remembered on this computer (on unless turned off); off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) !== '0'/.test(ah) && /id="awd-lbl-one" checked/.test(ah), null);
+  // Owner (2026-10-24): "I have to scroll all the way down the window to scroll that panel" + the one-label choice was off → on by default.
+  check('…☑ One label per box is ON by default (unless turned off); the Shipment Builder\'s right panel scrolls by itself when taller than the window',
+    /\.sum-card\{position:sticky;top:88px;max-height:calc\(100vh - 100px\);overflow-y:auto\}/.test(ah), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
