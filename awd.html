@@ -125,7 +125,7 @@ select.fsel:focus{outline:none;border-color:var(--blue)}.mla{margin-left:auto}
 @media(max-width:1100px){.bld-layout{grid-template-columns:1fr}}
 .qty-inp{width:72px;text-align:center;border:1px solid var(--gray-200);border-radius:var(--rs);padding:5px 8px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
 .qty-inp:focus{outline:none;border-color:var(--blue)}
-.sum-card{position:sticky;top:88px}
+.sum-card{position:sticky;top:88px;max-height:calc(100vh - 100px);overflow-y:auto} /* owner 2026-10-24: taller than the window → it scrolls by itself (no scrolling the whole page to the end) */
 .sum-item{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--gray-100)}
 .sum-item:last-child{border-bottom:none}
 .sum-sku{font-size:12px;font-family:monospace;color:var(--gray-600)}.sum-qty{font-size:13px;font-weight:600;color:var(--gray-800)}
@@ -1055,7 +1055,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-bc" checked> <span>Add the scan barcode + product photo (the packer scans the label, then the product — 🔍 Box check on Stock Out Big Company)</span></label>
                 <!-- 🏷 Owner (2026-10-24): "can we make it the same label? a separate label wastes a lot of labels". Full AWD label → Amazon's at 85%
                      (its SSCC bars stay above the GS1 minimum) with our info in the strip under it, instead of a 2nd label. -->
-                <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-one" onchange="try{localStorage.setItem('awd_lbl_one',this.checked?'1':'0')}catch(e){}"> <span><b>One label per box:</b> when Amazon's label is full (AWD), print it at 85% and put our info under it — no 2nd label. Off = our info on its own label right after.</span></label>
+                <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-one" checked onchange="try{localStorage.setItem('awd_lbl_one',this.checked?'1':'0')}catch(e){}"> <span><b>One label per box:</b> when Amazon's label is full (AWD), print it at 85% and put our info under it — no 2nd label. Off = our info on its own label right after.</span></label>
                 <!-- ✅ Owner (2026-10-23): "some items we have already packed — give you the ASIN, and when I upload the box labels put
                      'previous packed' on them, so our guy knows that one on the pallet is done and doesn't go down to the warehouse". -->
                 <div id="awd-prev-wrap" style="margin-top:8px">
@@ -2570,7 +2570,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
-  if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') === '1'; } catch (e) {} }
+  if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
