@@ -2089,7 +2089,7 @@ async function awdLabelsDo(file) {
   out.innerHTML = '⏳ Reading the labels…';
   try {
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
-    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0;
+    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0;
     const amz = await awdAmzList();
     const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
     for (let p = 1; p <= pdf.numPages; p++) {
@@ -2105,13 +2105,16 @@ async function awdLabelsDo(file) {
       const n = Math.max(1, found.length); labels += n;
       if (!found.length) noSku.push(p);
       const img = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      // 📄 Owner (2026-10-24, AWD label "Box 1 of 324"): AWD labels are full — no empty spot, and nothing on them may be covered.
+      // Then our template goes on its OWN label (same size), printed right after that Amazon label: stick both on the box.
+      const own = [], boxTxt = (lines.map(l => l.text).join(' ').match(/Box\s+\d+\s+of\s+\d+/i) || [''])[0];
       for (let i = 0; i < found.length; i++) {
         const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
         const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60);
         const ph = awdPrevHit(prev, sku, amz);
         if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse)
           const pr = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-          if (!pr) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
+          if (!pr) { own.push({ sku, prev: true, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
           awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
           prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue;
         }
@@ -2122,8 +2125,8 @@ async function awdLabelsDo(file) {
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const mid = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         const rect = mid || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-        if (!rect) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
         const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
+        if (!rect) { own.push({ sku, lns, box: n > 1 ? '' : boxTxt, extra }); done++; continue; }
         const sc = mid && extra ? awdScanCode(sku, lns, amz) : null;
         const bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = big && extra ? await awdPhoto(sku) : null;
         const fs = Math.round(band * 0.032); // ≈ 14 pt on a 6" label
@@ -2131,6 +2134,21 @@ async function awdLabelsDo(file) {
         done++; if (r.barcode) withBc++; if (r.photo) withPhoto++;
       }
       pages.push({ url: cv.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 });
+      for (const o of own) { // our own label, right after the Amazon one
+        const c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height;
+        const x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, c2.width, c2.height);
+        const H = c2.height, Wd = c2.width, m = Math.round(Wd * 0.05);
+        x2.strokeStyle = '#000'; x2.lineWidth = Math.max(3, Math.round(Wd * 0.006)); x2.strokeRect(m / 2, m / 2, Wd - m, H - m);
+        awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.sku + (o.box ? '  ·  ' + o.box : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
+        const body = { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m };
+        if (o.prev) awdDrawTemplate(x2, body, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the', 'warehouse', o.sku], Math.round(H * 0.06));
+        else {
+          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = o.extra ? await awdPhoto(o.sku) : null;
+          const r = awdDrawBlock(x2, body, o.lns, bc, photo, Math.round(H * 0.045));
+          if (r.barcode) withBc++; if (r.photo) withPhoto++;
+        }
+        pages.push({ url: c2.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); ownPages++;
+      }
     }
     const w = window.open('', '_blank');
     if (!w) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
@@ -2140,6 +2158,7 @@ async function awdLabelsDo(file) {
     w.document.close();
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+      + (ownPages ? '<div style="color:#1D4ED8">📄 <b>' + ownPages + '</b> Amazon label' + (ownPages === 1 ? ' has' : 's have') + ' no empty spot (AWD labels are full) — our template is printed on its <b>own label right after it</b> (' + (pages.length) + ' labels to print): stick both on the box.</div>' : '')
       + (pk.length ? '<div style="color:#15803D">✅ PREVIOUS PACKED on <b>' + pdN + '</b> label' + (pdN === 1 ? '' : 's') + ': ' + pk.map(k => k + ' ' + (prevDone[k] || 0) + (prevAsked[k] !== Infinity ? ' of ' + prevAsked[k] : '')).join(' · ') + '</div>'
         + (pk.filter(k => !prevDone[k]).length ? '<div style="color:#C2410C">⚠ Not on any label: ' + pk.filter(k => !prevDone[k]).join(', ') + ' (check the ASIN / SKU)</div>' : '')
         + (pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).length ? '<div style="color:#C2410C">⚠ Fewer boxes than asked: ' + pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).map(k => k + ' ' + prevDone[k] + ' of ' + prevAsked[k]).join(', ') + '</div>' : '') : '')
