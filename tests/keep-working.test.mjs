@@ -9478,5 +9478,27 @@ console.log('\n🧰 AWD: fix "Prep category is missing" — set No prep needed o
     pk.status === 403 && /onclick="awdPrepFix\(\)">🧰 Fix "Prep category is missing" on Amazon/.test(ah) && /awdPrepFix\(S\.histOpen\.items\.map\(i => i\.sku\)/.test(ah) && /Set them all to "No prep needed"\?/.test(ah), pk.status);
 }
 
+// Owner (2026-10-24, screenshot): "Set No prep needed on 48 SKUs" but "Amazon refused: HTTP 400 … Prep category and types cannot be updated
+// for msku 25-1-6=25X- with existing prep category of FC_PROVIDED" — a whole batch of 100 was refused because of 2 SKUs.
+console.log('\n🧰 AWD prep fix: SKUs Amazon already set (FC_PROVIDED) are left out, the rest of the batch still goes');
+{
+  const realFetch = globalThis.fetch, posted = [];
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  const FC = new Set(['25-1-6=25X-', '25-1-5=25X-']);
+  globalThis.fetch = async (u, o) => { const x = String(u), J = (b, st) => new Response(JSON.stringify(b), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (x.includes('api.amazon.com/auth')) return J({ access_token: 't', expires_in: 3600 });
+    if (x.includes('/items/prepDetails') && (!o || !o.method || o.method === 'GET')) return J({ mskuPrepDetails: new URL(x).searchParams.getAll('mskus').map(k => ({ msku: k })) }); // Amazon lists no category for them
+    if (x.includes('/items/prepDetails') && o.method === 'POST') { const b = JSON.parse(o.body); posted.push(b.mskuPrepDetails.map(m => m.msku));
+      const bad = b.mskuPrepDetails.map(m => m.msku).filter(m => FC.has(m));
+      return bad.length ? J({ errors: bad.map(m => ({ code: 'BadRequest', message: 'ERROR: Prep category and types cannot be updated for msku ' + m + ' with existing prep category of FC_PROVIDED.', details: '' })) }, 400) : J({ operationId: 'op2' }); }
+    if (x.includes('/operations/op2')) return J({ operationStatus: 'SUCCESS', operationProblems: [] });
+    return realFetch(u, o); };
+  const skus = Array.from({ length: 98 }, (_, i) => '90-1-' + (i + 1) + '=10X-').concat(['25-1-6=25X-', '25-1-5=25X-'], Array.from({ length: 48 }, (_, i) => '91-1-' + (i + 1) + '=5X-'));
+  const d = await post('/awd/prep-fix', { skus });
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  check('148 SKUs: the batch with the 2 FC_PROVIDED SKUs is sent again without them → 98 + 48 = 146 set, 2 left as they are (listed), no error',
+    d.ok && d.set.length === 146 && !d.set.some(m => FC.has(m)) && (d.kept || []).map(k => k.sku + ' ' + k.category).sort().join() === '25-1-5=25X- FC_PROVIDED,25-1-6=25X- FC_PROVIDED' && !(d.errors || []).length && posted.length === 3, { set: d.set.length, kept: d.kept, errors: d.errors, posts: posted.map(p => p.length) });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

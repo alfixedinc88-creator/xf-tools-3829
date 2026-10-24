@@ -3379,6 +3379,7 @@ async function awdPrepFix(skus, outId) {
     const d = await call(false);
     const probs = (d.operations || []).flatMap(o => o.problems || []);
     out.innerHTML = (d.set.length ? '<span style="color:#15803D">✅ Set "No prep needed" on <b>' + d.set.length + '</b> SKU' + (d.set.length === 1 ? '' : 's') + '.</span> In Send to Amazon, refresh the page (it can take a minute).' : '')
+      + ((d.kept || []).length ? '<div style="color:#6B7280">ℹ ' + d.kept.length + ' already had Amazon\'s own prep category — left as they are: ' + awdH(d.kept.map(k => k.sku + ' (' + k.category + ')').join(', ')) + '</div>' : '')
       + ((d.errors || []).length ? '<div style="color:#DC2626">✗ Amazon refused: ' + awdH(d.errors.map(e => e.error).join(' · ')) + '</div>' : '')
       + (probs.length ? '<div style="color:#C2410C">⚠ ' + awdH(probs.map(p => (p.message || p.code || '') + (p.details ? ' (' + p.details + ')' : '')).join(' · ')) + '</div>' : '');
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">✗ ' + awdH(e.message) + '</span>'; }
