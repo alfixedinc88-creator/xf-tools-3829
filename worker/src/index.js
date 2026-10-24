@@ -1506,7 +1506,9 @@ async function ensureSpotCanon(env) {
 }
 async function spotNameCleanup(env) {
   await ensureSpotCanon(env);
-  const rows = await d1All(env, `SELECT *, ${sqlSpotCanon('location')} AS canon FROM master_list WHERE location IS NOT NULL AND location != '' AND location != ${sqlSpotCanon('location')} LIMIT 500`, []);
+  // ⚡ only names with a space or a character outside plain A–Z / 0–9 / signs can need it (cheap to find), then the full rule
+  const odd = col => `(${col} GLOB '*[^ -~]*' OR ${col} LIKE '% %')`;
+  const rows = await d1All(env, `SELECT *, ${sqlSpotCanon('location')} AS canon FROM master_list WHERE location IS NOT NULL AND location != '' AND ${odd('location')} AND location != ${sqlSpotCanon('location')} LIMIT 500`, []);
   const what = raw => { const f = []; for (const ch of String(raw)) { const c = ch.charCodeAt(0);
       if (SPOT_DASH.includes(c)) f.push('"' + ch + '" (a long dash / minus, not "-")'); else if (SPOT_GONE.includes(c)) f.push('a hidden character'); else if (c === 160) f.push('a no-break space'); else if (c === 65309) f.push('a full-width "＝"'); }
     if (/^\s|\s$/.test(raw)) f.push('a space at the start / end'); if (String(raw).includes('=') && /\s/.test(String(raw).trim())) f.push('spaces inside');
@@ -1520,7 +1522,7 @@ async function spotNameCleanup(env) {
     n++;
   }
   // the registered spots list: one spelling too
-  const locs = await d1All(env, `SELECT location, ${sqlSpotCanon('location')} AS canon FROM locations WHERE location != ${sqlSpotCanon('location')} LIMIT 500`, []).catch(() => []);
+  const locs = await d1All(env, `SELECT location, ${sqlSpotCanon('location')} AS canon FROM locations WHERE ${odd('location')} AND location != ${sqlSpotCanon('location')} LIMIT 500`, []).catch(() => []);
   for (const l of locs) {
     await env.DB.prepare('INSERT OR IGNORE INTO locations (location, prefix, active, created_at) SELECT ?, prefix, active, created_at FROM locations WHERE location = ?').bind(l.canon, l.location).run().catch(() => {});
     await env.DB.prepare('DELETE FROM locations WHERE location = ?').bind(l.location).run().catch(() => {});
@@ -8325,7 +8327,7 @@ async function recountCheckData(env, url) {
     .forEach(l => { const k = UP(l.part_num) + '|' + UL(l.location); (rcAny[k] = rcAny[k] || []).push(l); });
   const fT = x => String(x || '').slice(5, 16).replace('T', ' ');
   const causeOf = (c, k, p, sys, cnt, diff, notCounted) => {
-    const L0 = UL(c.location), again = Object.keys(rcAny).some(kk => kk.split('|')[1] === L0 && rcAny[kk].some(l => l.timestamp > c.ts));
+    const L0 = UL(c.location), again = !!rcAgainAt[L0] && rcAgainAt[L0] > c.ts;
     if (again) return { kind: 'recounting', text: 'this spot is being counted again right now — checked when that count is done' };
     const during = (fx[k] || []).filter(e => e.at >= (c.started_at || c.ts) && e.at <= c.ts), D = during.map(e => e.what + ' ' + (e.n > 0 ? '+' : '') + e.n + ' by ' + (e.by || '?') + ' ' + fT(e.at)).join(', ');
     if (notCounted) return during.length ? { kind: 'during', text: 'came in WHILE the column was being counted (' + D + ') — after the phone loaded its list, so it was never on it' }
@@ -8339,14 +8341,19 @@ async function recountCheckData(env, url) {
     if (sys != null) return { kind: 'old number', text: 'the phone showed ' + sys + ', but SKU Mgr had ' + r3(sys + diff) + ' when the count was saved — the count is saved as + / − from the phone\'s number, so an old number on the phone (opened earlier / a saved copy) or a SKU Mgr change with no History line leaves it ' + (diff > 0 ? '+' : '') + diff + ' off' };
     return { kind: 'unknown', text: 'no reason found in History — SKU Mgr was changed without a History line' };
   };
+  // ⚡ Owner (2026-10-24: "the Audit is super slow now"): the part #s at each spot looked up directly — not every SKU Mgr row and
+  // every History line again for each column (700 columns × 20,000 = 18 seconds on every column done).
+  const byLoc = o => { const m = {}; Object.keys(o).forEach(k => { const i = k.lastIndexOf('|'); (m[k.slice(i + 1)] = m[k.slice(i + 1)] || []).push(k.slice(0, i)); }); return m; };
+  const nowAt = byLoc(now), fxAt = byLoc(fx), rcAgainAt = {};
+  Object.keys(rcAny).forEach(k => { const L0 = k.slice(k.lastIndexOf('|') + 1); rcAny[k].forEach(l => { if (!rcAgainAt[L0] || l.timestamp > rcAgainAt[L0]) rcAgainAt[L0] = l.timestamp; }); });
   const problems = [], emptiedList = []; let checked = 0, partsChecked = 0, unreadable = 0;
   for (const L of Object.keys(last)) {
     const c = last[L]; let det; try { det = JSON.parse(c.detail || '[]'); } catch (_) { unreadable++; problems.push({ location: L, by: c.by_user, at: c.ts, why: 'unreadable', part: '' }); continue; }
     checked++;
     const counted = {}, sysOf = {}; (det || []).forEach(x => { const p = UP(x.part); if (p) { counted[p] = (counted[p] || 0) + (parseFloat(x.counted) || 0); if (x.system != null && x.system !== '') sysOf[p] = (sysOf[p] || 0) + (parseFloat(x.system) || 0); } });
     const parts = new Set(Object.keys(counted));
-    Object.keys(now).forEach(k => { const [p, l] = k.split('|'); if (l === L && now[k] > 1e-9) parts.add(p); });
-    Object.keys(fx).forEach(k => { const [p, l] = k.split('|'); if (l === L) parts.add(p); });
+    (nowAt[L] || []).forEach(p => { if (now[p + '|' + L] > 1e-9) parts.add(p); });
+    (fxAt[L] || []).forEach(p => parts.add(p));
     for (const p of parts) {
       const k = p + '|' + L;
       // when this part # was counted: its last recount line at the spot up to the column's finish (else the start / finish)
