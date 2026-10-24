@@ -15273,19 +15273,27 @@ async function awdPrepFix(request, env, session) {
   const missing = skus.filter(m => !have[m] || !have[m].category || /^(UNKNOWN|)$/i.test(have[m].category));
   const already = skus.filter(m => !missing.includes(m)).map(m => ({ sku: m, category: have[m].category }));
   if (b.dry || !missing.length) return J({ ok: true, dry: !!b.dry, missing, already, set: [], readErrors: readErr });
-  const set = [], errors = [], ops = [];
+  const set = [], errors = [], ops = [], kept = [];
   for (let i = 0; i < missing.length; i += 100) {
-    const ch = missing.slice(i, i + 100);
-    const r = await fetch(base + '/items/prepDetails', { method: 'POST', headers: H,
-      body: JSON.stringify({ marketplaceId: mid, mskuPrepDetails: ch.map(m => ({ msku: m, prepCategory: 'NONE', prepTypes: ['ITEM_NO_PREP'] })) }) }).catch(e => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: e.message }] }) }));
-    const d = await r.json().catch(() => ({}));
-    if (r.ok) { set.push(...ch); if (d.operationId) ops.push(d.operationId); } else errors.push({ skus: ch, error: 'HTTP ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 400) });
+    let ch = missing.slice(i, i + 100);
+    // Owner (2026-10-24): one batch of 100 was refused because 2 SKUs already had FC_PROVIDED ("cannot be updated … with existing prep
+    // category") — those are left as they are (Amazon's own category) and the rest of the batch is sent again.
+    for (let tries = 0; ch.length && tries < 6; tries++) {
+      const r = await fetch(base + '/items/prepDetails', { method: 'POST', headers: H,
+        body: JSON.stringify({ marketplaceId: mid, mskuPrepDetails: ch.map(m => ({ msku: m, prepCategory: 'NONE', prepTypes: ['ITEM_NO_PREP'] })) }) }).catch(e => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: e.message }] }) }));
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { set.push(...ch); if (d.operationId) ops.push(d.operationId); break; }
+      const errs = Array.isArray(d.errors) ? d.errors : [], named = [];
+      errs.forEach(e => { const m = /for msku (.+?) with existing prep category of ([A-Z_]+)/.exec(String(e.message || '')); if (m && ch.includes(m[1])) { named.push(m[1]); kept.push({ sku: m[1], category: m[2] }); } });
+      if (!named.length) { errors.push({ skus: ch, error: 'HTTP ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 400) }); break; }
+      ch = ch.filter(m => !named.includes(m));
+    }
   }
   // Amazon works on it in the background — read back the operation once so a refusal shows here, not only in Seller Central.
   const opStatus = [];
   for (const id of ops.slice(0, 5)) { try { const d = await awdSpGet(env, token, base + '/operations/' + encodeURIComponent(id)); opStatus.push({ id, status: d.operationStatus || '', problems: (d.operationProblems || []).slice(0, 20) }); } catch (e) { opStatus.push({ id, error: e.message }); } }
   if (session && session.userId) await logUserActivity(env, session.userId, 'awd_prep_fix', { set: set.length, skus: set.slice(0, 100), errors: errors.length }).catch(() => {});
-  return J({ ok: !errors.length, missing, already, set, errors, operations: opStatus, readErrors: readErr });
+  return J({ ok: !errors.length, missing, already: already.concat(kept), kept, set, errors, operations: opStatus, readErrors: readErr });
 }
 async function awdShipHistory(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
