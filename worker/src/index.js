@@ -8428,6 +8428,13 @@ async function recountAutoFix(env, onlyLoc, tag, who) {
   if (fixed.length) await invalidateMasterListCache(env);
   return { fixed, left };
 }
+async function recountAutoFixThrottled(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run().catch(() => {});
+  const last = await env.DB.prepare("SELECT value FROM app_config WHERE key = 'recount_autofix_at'").first().catch(() => null);
+  if (last && Date.now() - Date.parse(last.value) < 10 * 60 * 1000) return;
+  await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('recount_autofix_at', ?)").bind(new Date().toISOString()).run();
+  await recountAutoFix(env, null);
+}
 // Sets SKU Mgr at the spot to the check's "should be" (one row carries it; a gone row is made again), History [AUDIT FIX] with
 // the before → after, the count it came from and the reason it was off.
 async function recountApplyFix(env, who, p, tag) {
@@ -9951,6 +9958,10 @@ const _app = {
         status: 401, headers: { 'Content-Type': 'application/json' }
       }));
     }
+    // 🛡 Owner (2026-10-24, C1=1-1-21: "the 201-1-11 boxes are still there — match it up to whatever the Audit says, or we'll have a lot
+    // of extra boxes"): the Worker's timer only runs a few times a week, so while the app is in use the Audit check runs in the
+    // background (at most every 10 minutes): one spelling per spot, then every audited spot set to the Audit number (History, why).
+    if (ctx && ctx.waitUntil) ctx.waitUntil(recountAutoFixThrottled(env).catch(e => console.error('[recount auto-fix bg]', e.message)));
 
     // Mgmt-only tab guard (existing logic — unchanged)
     const MGMT_ONLY_TABS = new Set(['JQ_Vendor','EFF_Vendor','COGS','Part#_Sales','SKU_Sales',
@@ -15999,7 +16010,7 @@ async function inventorySkuSearch(url, env) {
   const areaSum = rows => {
     const S = { spots: 0, parts: 0, cases: 0, pieces: 0, noEaCases: 0 }, locs = new Set(), parts = new Set();
     rows.forEach(r => { const c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0; if (!(c > 0)) return;
-      locs.add(String(r.location || '').toUpperCase()); parts.add(String(r.part_num || '').toUpperCase()); S.cases += c; if (ea > 0) S.pieces += c * ea; else S.noEaCases += c; });
+      locs.add(spotKey(r.location)); parts.add(String(r.part_num || '').toUpperCase()); S.cases += c; if (ea > 0) S.pieces += c * ea; else S.noEaCases += c; });
     S.spots = locs.size; S.parts = parts.size; ['cases', 'pieces', 'noEaCases'].forEach(k => { S[k] = Math.round(S[k] * 100) / 100; });
     return S;
   };
@@ -16023,6 +16034,8 @@ async function inventorySkuSearch(url, env) {
       { headers: { 'Content-Type': 'application/json' } }));
   }
   if (locQ && env.DB) {
+    // 🛡 the spot as the Audit says (one spelling, the Audit number) before it is shown
+    try { await recountAutoFix(env, locQ); } catch (e) { console.error('[recount auto-fix spot]', e.message); }
     try {
       const rows = await d1All(env,
         `SELECT m.id, m.sku, m.base_sku,

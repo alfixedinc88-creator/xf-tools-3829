@@ -9449,5 +9449,33 @@ console.log('\n🔤 Look-alike spot names (C1=1–1-21 vs C1=1-1-21) are ONE spo
   sq.prepare("DELETE FROM master_list WHERE base_sku IN ('761-1-11','762-1-10','763-1-1')").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '76_-1-1%'").run();
 }
 
+// Owner (2026-10-24, C1=1-1-21 screenshot): "the right ones we audited are there, but 201-1-11=2XX and =5XX are still there — match it
+// up to whatever the Audit says, or the Audit makes no sense and we'll have a lot of extra boxes".
+console.log('\n🛡 Extra rows the Audit never saw (old look-alike spelling) are taken off — SKU Mgr = what the Audit says');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('772-1-10','nipple','772-1-10=2XX','Q7=1-1-21',2,100), ('772-1-11','nipple','772-1-11=OLD','Q7=1-1-21',1,100)`).run();
+  const id = p => sq.prepare('SELECT id FROM master_list WHERE part_num = ?').get(p).id;
+  await post('/inventory/log', { type: 'IN', partNum: '772-1-10=2XX', sku: '772-1-10', location: 'Q7=1-1-21', cases: 0, initials: 'CH', notes: '[AUDIT] Confirmed: 2 cases verified correct (📋 Recount)', masterId: id('772-1-10=2XX') });
+  await post('/inventory/log', { type: 'IN', partNum: '772-1-11=OLD', sku: '772-1-11', location: 'Q7=1-1-21', cases: 0, initials: 'CH', notes: '[AUDIT] Confirmed: 1 cases verified correct (📋 Recount)', masterId: id('772-1-11=OLD') });
+  await post('/inventory/recount/column-done', { location: 'Q7=1-1-21', items: 2, changed: 0, detail: [{ part: '772-1-10=2XX', pcs: 100, system: 2, counted: 2, how: 'scan' }, { part: '772-1-11=OLD', pcs: 100, system: 1, counted: 1, how: 'scan' }] });
+  // the rows the phone never listed: saved months ago as "Q7=1–1-21" (a long dash), no History since
+  sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_ins"); sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_upd");
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('771-1-11','push elbow','771-1-11=2XX','Q7=1–1-21',2,250), ('771-1-11','push elbow','771-1-11=5XX','Q7=1–1-21',2,250)`).run();
+  const sum = () => sq.prepare("SELECT COALESCE(SUM(cases),0) c FROM master_list WHERE base_sku IN ('771-1-11','772-1-10','772-1-11')").get().c, s0 = sum();
+  const sk = await get('/inventory/sku-search?location=Q7=1-1-21');
+  const rows = sq.prepare("SELECT part_num p, location l, cases c FROM master_list WHERE base_sku IN ('771-1-11','772-1-10','772-1-11') ORDER BY part_num").all();
+  const fx = sq.prepare("SELECT part_num p, notes n, total_before b, total_after a FROM inventory_log WHERE notes LIKE '[AUDIT FIX]%' AND part_num LIKE '771-1-11=%' ORDER BY part_num").all();
+  check('searching the spot in SKU Mgr: 771-1-11=2XX / =5XX (2 + 2, never on the Audit) → 0; the audited 772-1-10=2XX (2) / 772-1-11=OLD (1) stay; total 7 → 3 = the Audit (2 + 1); 1 spot; each with History (before → after, why)',
+    s0 === 7 && sum() === 3 && (sk.results || []).map(r => r.part_num).sort().join() === '772-1-10=2XX,772-1-11=OLD' && sk.summary.spots === 1 && sk.summary.cases === 3
+      && rows.every(r => r.l === 'Q7=1-1-21') && rows.filter(r => /^771/.test(r.p)).every(r => r.c === 0)
+      && fx.length === 2 && fx.every(f => +f.b === 2 && +f.a === 0 && /SKU Mgr 2 → 0 cases \(not on the Audit count\)/.test(f.n) && /not on the phone's list/.test(f.n)), { s0, now: sum(), rows, fx, sk: sk.summary });
+  // …and without anyone searching: any signed-in request runs the same check in the background (at most every 10 minutes)
+  sq.prepare("UPDATE master_list SET cases = 2 WHERE part_num = '771-1-11=2XX'").run(); sq.prepare("DELETE FROM app_config WHERE key = 'recount_autofix_at'").run();
+  const bg = []; const r2 = await worker.fetch(new Request('https://w/inventory/review-mode', { headers: H }), env, { waitUntil: p => bg.push(p) }); await Promise.all(bg);
+  check('…the background check (any screen, every 10 minutes at most) does it too: 771-1-11=2XX back to 0; the time of the run is kept',
+    r2.status === 200 && +sq.prepare("SELECT cases c FROM master_list WHERE part_num = '771-1-11=2XX'").get().c === 0 && !!sq.prepare("SELECT value FROM app_config WHERE key = 'recount_autofix_at'").get(), null);
+  sq.prepare("DELETE FROM master_list WHERE base_sku IN ('771-1-11','772-1-10','772-1-11')").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '77_-1-1%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
