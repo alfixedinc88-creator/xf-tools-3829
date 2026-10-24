@@ -9449,5 +9449,34 @@ console.log('\n🔤 Look-alike spot names (C1=1–1-21 vs C1=1-1-21) are ONE spo
   sq.prepare("DELETE FROM master_list WHERE base_sku IN ('761-1-11','762-1-10','763-1-1')").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '76_-1-1%'").run();
 }
 
+// Owner (2026-10-24, Send to Amazon screenshot): "(22) SKUs from the uploaded file have errors — Prep category is missing. Can you fix it?"
+console.log('\n🧰 AWD: fix "Prep category is missing" — set No prep needed on Amazon for the shipment\'s SKUs');
+{
+  const realFetch = globalThis.fetch, posted = [];
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  globalThis.fetch = async (u, o) => { const x = String(u);
+    if (x.includes('api.amazon.com/auth')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { headers: { 'Content-Type': 'application/json' } });
+    if (x.includes('/inbound/fba/2024-03-20/items/prepDetails') && (!o || !o.method || o.method === 'GET')) {
+      const m = new URL(x).searchParams.getAll('mskus');
+      return new Response(JSON.stringify({ mskuPrepDetails: m.map(k => k === '24-1-9=10X-' ? { msku: k, prepCategory: 'NONE', prepTypes: ['ITEM_NO_PREP'] } : { msku: k }) }), { headers: { 'Content-Type': 'application/json' } }); }
+    if (x.includes('/inbound/fba/2024-03-20/items/prepDetails') && o.method === 'POST') { posted.push(JSON.parse(o.body)); return new Response(JSON.stringify({ operationId: 'op1' }), { headers: { 'Content-Type': 'application/json' } }); }
+    if (x.includes('/inbound/fba/2024-03-20/operations/op1')) return new Response(JSON.stringify({ operationStatus: 'SUCCESS', operationProblems: [] }), { headers: { 'Content-Type': 'application/json' } });
+    return realFetch(u, o); };
+  const skus = ['201-2-5=10X-', '202-1-16=10XX-', '24-1-9=10X-'];
+  const dry = await post('/awd/prep-fix', { skus, dry: true });
+  const n0 = posted.length, d = await post('/awd/prep-fix', { skus });
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  check('check first (nothing set): 201-2-5=10X- and 202-1-16=10XX- have no prep category, 24-1-9=10X- already has one',
+    dry.ok && dry.dry && dry.missing.join() === '201-2-5=10X-,202-1-16=10XX-' && dry.already.length === 1 && n0 === 0, dry);
+  check('…then only those 2 are set to "No prep needed" (NONE · ITEM_NO_PREP) on Amazon; the one with a category is left alone; Amazon\'s answer is read back',
+    d.ok && d.set.join() === '201-2-5=10X-,202-1-16=10XX-' && posted.length === 1 && posted[0].marketplaceId && posted[0].mskuPrepDetails.length === 2
+      && posted[0].mskuPrepDetails.every(x => x.prepCategory === 'NONE' && x.prepTypes.join() === 'ITEM_NO_PREP') && d.operations[0].status === 'SUCCESS', { d, posted });
+  const pk = await call('/awd/prep-fix', { method: 'POST', headers: { 'X-Cred-Token': (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, 'Content-Type': 'application/json' }, body: JSON.stringify({ skus }) });
+  const { readFileSync: rfP2 } = await import('node:fs');
+  const ah = rfP2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('…managers only; the button is in the Shipment Builder (the shipment\'s SKUs, or paste them) and on each History shipment; asks before setting',
+    pk.status === 403 && /onclick="awdPrepFix\(\)">🧰 Fix "Prep category is missing" on Amazon/.test(ah) && /awdPrepFix\(S\.histOpen\.items\.map\(i => i\.sku\)/.test(ah) && /Set them all to "No prep needed"\?/.test(ah), pk.status);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
