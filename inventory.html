@@ -649,6 +649,7 @@ window.invCredLogin = async function() {
   <details class="icard" id="inv-amzbc-card" style="display:none" ontoggle="if(this.open)invAmzBcLoad()">
     <summary style="cursor:pointer;font-weight:800;color:#b45309">🏷 Listings that need Amazon's barcode (not our UPC) <span id="inv-amzbc-n" style="font-weight:400;color:var(--text3)"></span></summary>
     <div style="font-size:12px;color:var(--text2);margin:6px 0">Amazon's own data: a listing whose FNSKU is an <b>X00…</b> code needs Amazon's label on every unit — don't ship it with our UPC. One whose FNSKU is the ASIN (B0…) ships with our UPC.</div>
+    <button type="button" id="inv-amzbc-live" onclick="invAmzBcLive()" style="padding:7px 12px;border:none;border-radius:8px;background:#b45309;color:#fff;font-weight:800;font-size:12px;cursor:pointer;margin:0 6px 6px 0">🔄 Check live with Amazon now</button><span id="inv-amzbc-live-msg" style="font-size:12px;color:var(--text2)"></span><br>
     <button type="button" id="inv-amzbc-dl" onclick="invAmzBcCsv()" style="padding:7px 12px;border:1.5px solid #b45309;border-radius:8px;background:var(--bg);color:#b45309;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:6px">⬇ Download the list (CSV)</button>
     <input id="inv-amzbc-q" placeholder="Search part # / SKU / name / FNSKU…" oninput="invAmzBcRender()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:6px">
     <div id="inv-amzbc-list" style="font-size:12px;max-height:50vh;overflow:auto">Loading…</div>
@@ -2236,9 +2237,9 @@ window.invCredLogin = async function() {
     var b = g('inv-amzbc-list'); if (!b || !_invAmzBc) return;
     var q = String((g('inv-amzbc-q') || {}).value || '').trim().toUpperCase();
     var L = _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
-    b.innerHTML = L.length ? '<table style="border-collapse:collapse;width:100%"><tr>' + ['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name'].map(function(h) { return '<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + h + '</th>'; }).join('') + '</tr>'
+    b.innerHTML = L.length ? '<table style="border-collapse:collapse;width:100%"><tr>' + ['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'Why (likely)'].map(function(h) { return '<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + h + '</th>'; }).join('') + '</tr>'
       + L.map(function(x) { return '<tr class="inv-amzbc-row"><td style="padding:3px 6px;font-family:var(--mono);font-weight:700;white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:3px 6px;font-family:var(--mono);white-space:nowrap">' + ckE(x.sku) + '</td>'
-        + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + ckE(x.asin) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td></tr>'; }).join('') + '</table>'
+        + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + ckE(x.asin) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td><td class="inv-amzbc-why" style="padding:3px 6px;font-size:11px;color:var(--text2)">' + ckE(x.why || '') + '</td></tr>'; }).join('') + '</table>'
       : '<span style="color:var(--text3)">' + (q ? 'None found for "' + ckE(q) + '"' : 'No FBA listing needs Amazon\'s barcode') + '</span>';
   };
   // ⬇ Owner (2026-10-23): "a listing I can download of the ones using Amazon's barcode" — what the search shows (all of them when empty).
@@ -2246,10 +2247,22 @@ window.invCredLogin = async function() {
     q = String(q || '').trim().toUpperCase();
     var L = (d && d.list || []).filter(function(x) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
     var c = function(v) { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-    return [['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'From', 'Updated']].concat(L.map(function(x) { return [x.part, x.sku, x.fnsku, x.asin, x.name, (x.from || []).join(' + '), x.at]; }))
+    return [['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'Brand on Amazon', 'Why (likely)', 'From', 'Updated']].concat(L.map(function(x) { return [x.part, x.sku, x.fnsku, x.asin, x.name, x.brand || '', x.why || '', (x.from || []).join(' + '), x.at]; }))
       .map(function(r) { return r.map(c).join(','); }).join('\r\n');
   }
   window.invAmzBcCsvText = invAmzBcCsvText;
+  // 🔄 Owner (2026-10-24): "check on Amazon why these use the Amazon label and find all of them" — every FBA SKU's FNSKU from Amazon now
+  // (it wins over the saved reports), the brand of each Amazon-barcode listing, and what changed.
+  window.invAmzBcLive = function() {
+    var m = g('inv-amzbc-live-msg'); if (m) { m.style.color = 'var(--text2)'; m.textContent = '⏳ Asking Amazon for every FBA listing (about a minute)…'; }
+    wFetch(W + '/inventory/amazon-barcode/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+      _invAmzBc = null; _invAmzBcP = null; invAmzBcLoad();
+      if (m) { m.style.color = 'var(--green)'; m.innerHTML = '✓ ' + d.fromAmazon + ' FBA listings checked with Amazon — <b>' + d.amazonBarcode + '</b> need Amazon\'s barcode'
+        + (d.changed.length ? '<br><span style="color:#b45309">Changed: ' + d.changed.map(function(c) { return ckE(c.sku) + ' ' + (c.from === 'amazon' ? 'Amazon → our UPC' : c.to === 'amazon' ? 'our UPC → Amazon' : c.from + ' → ' + c.to); }).join(' · ') + '</span>' : '')
+        + ((d.errors || []).length ? '<br><span style="color:var(--red)">Brand lookup: ' + ckE(d.errors.join(' · ')) + '</span>' : ''); }
+    }).catch(function(e) { if (m) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + e.message; } });
+  };
   window.invAmzBcCsv = function() {
     return invAmzBcLoad(true).then(function(d) {
       if (!d) { alert('Could not load the list — try again'); return; }
