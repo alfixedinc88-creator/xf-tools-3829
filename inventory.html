@@ -167,6 +167,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
+  if (path.indexOf('stockout-qty') >= 0) return '📋 Stock Out Report ' + (b.where || '') + ': need ' + (b.quantity || '?') + ' cs';
   if (path.indexOf('recount/column-done') >= 0) return '📋 Recount: column ' + (b.location || '') + (b.stopped ? ' stopped (not done)' : ' done') + ' (' + (b.items || 0) + ' item(s))';
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
@@ -4735,8 +4736,8 @@ window.invCredLogin = async function() {
       // before this field existed). Shown as its own badge, not buried in
       // the detail line, so it's the second thing anyone sees after the
       // bin — this is the number they need to grab.
-      var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
-      var qtyBadge = '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-bg);border-radius:10px;padding:2px 7px;flex-shrink:0">Need ' + qty + ' cs</span>';
+      var qty = invStockoutQtyOf(s);
+      var qtyBadge = '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-bg);border-radius:10px;padding:2px 7px;flex-shrink:0">Need ' + qty + ' cs</span>' + invStockoutWasHtml(s);
       // One-time click — once used, the headline stops being clickable
       // entirely (not just grayed out) so the same report can't get
       // searched/added to the Pull List a second time by accident.
@@ -4763,6 +4764,14 @@ window.invCredLogin = async function() {
     }).join('');
   }
 
+  // A report's cases: the picker's number (pre-quantity reports = 1), or the Pull List's new number after a change.
+  function invStockoutQtyOf(s) { return s.quantity != null ? (Math.round((parseFloat(s.quantity) || 1) * 100) / 100) : 1; }
+  // "· was 2 (changed by Ann)" once the cases were changed on the Pull List.
+  function invStockoutWasHtml(s) {
+    if (s.origQuantity == null || +s.origQuantity === invStockoutQtyOf(s)) return '';
+    return '<span class="inv-so-was" style="font-size:10px;color:var(--text3);flex-shrink:0">was ' + (Math.round(s.origQuantity * 100) / 100) + (s.qtyChangedBy ? ' · ' + invEsc(s.qtyChangedBy) : '') + '</span>';
+  }
+
   window.invShowStockoutHistory = function() {
     var body = g('inv-stockout-history-body');
     var modal = g('inv-stockout-history-modal');
@@ -4779,14 +4788,14 @@ window.invCredLogin = async function() {
           try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
           var resolvedWhen = '';
           try { resolvedWhen = s.resolvedAt ? new Date(s.resolvedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : ''; } catch(e) {}
-          var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
+          var qty = invStockoutQtyOf(s);
           return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
             + '<div style="display:flex;justify-content:space-between;align-items:center">'
             + '<span style="font-family:var(--mono);font-weight:700">' + (s.binLocation || s.sku || '—') + '</span>'
             + '<span style="font-size:10px;font-weight:700;color:var(--green)">✓ Resolved</span>'
             + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">'
-            + 'Need ' + qty + ' cs' + (s.sku ? ' · ' + s.sku : '') + (s.orderNum ? ' · Order ' + s.orderNum : '')
+            + 'Need ' + qty + ' cs' + (s.origQuantity != null && +s.origQuantity !== qty ? ' (was ' + (Math.round(s.origQuantity * 100) / 100) + (s.qtyChangedBy ? ', changed by ' + invEsc(s.qtyChangedBy) : '') + ')' : '') + (s.sku ? ' · ' + s.sku : '') + (s.orderNum ? ' · Order ' + s.orderNum : '')
             + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '') + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Resolved by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' · ' + resolvedWhen : '') + '</div>'
@@ -4869,7 +4878,7 @@ window.invCredLogin = async function() {
     // report's cases go straight onto the Pull List (Shelving rules —
     // oldest first, FBA bags last, one spot when one spot has them all).
     // The "choose location" list still shows below for "found it".
-    var repQty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
+    var repQty = invStockoutQtyOf(s);
     _invLookupWithFallback(primary, fallback, inp, function(d) {
       if (invMode !== 'out') return;
       if (invStockOutDest !== 'shelving') invSwitchTab('stockout');
@@ -4887,7 +4896,7 @@ window.invCredLogin = async function() {
     // than waiting on the fetch(es) above to resolve. This is the "don't
     // have to work out how many boxes to grab" part.
     if (gb) {
-      var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
+      var qty = invStockoutQtyOf(s);
       gb.textContent = '📦 Grab ' + qty + ' case' + (qty === 1 ? '' : 's') + (s.orderNum ? ' for Order ' + s.orderNum : '');
       gb.style.display = 'block';
     }
@@ -6635,8 +6644,38 @@ window.invCredLogin = async function() {
     if (invPullList[i]) {
       invPullList[i].cases = val ? parseFloat(val) : '';
       invSavePullList();
+      if (invPullList[i].sourceStockoutId) invStockoutQtyQueue(invPullList[i].sourceStockoutId);
     }
   };
+
+  // The picker changed the cases of a Pull List item that came from a Stock Out Report (e.g. the report said
+  // 2 boxes, only 1 is left, so they made it 1): the report shows the new number ("Need 1 cs · was 2") on every
+  // device, with who / when kept on the server. The new number = the cases on this Pull List's items from that
+  // report (a report split over 2 spots counts both; None Found items count 0). Sent ~1s after the last edit.
+  var _invSoQtyTimers = {};
+  function invStockoutPullQty(id) {
+    var n = 0, any = false;
+    invPullList.forEach(function(x) { if (x.sourceStockoutId === id && !x.noneFound) { any = true; n += parseFloat(x.cases) || 0; } });
+    return any ? Math.round(n * 100) / 100 : null;
+  }
+  function invStockoutQtyQueue(id) {
+    clearTimeout(_invSoQtyTimers[id]);
+    _invSoQtyTimers[id] = setTimeout(function() {
+      var q = invStockoutPullQty(id);
+      var s = _invStockoutOpenList.filter(function(r) { return r.id === id; })[0];
+      if (!(q > 0) || !s || invStockoutQtyOf(s) === q) return;
+      var was = invStockoutQtyOf(s);
+      if (s.origQuantity == null) s.origQuantity = was;
+      s.quantity = q; s.qtyChangedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || ''; s.qtyChangedAt = new Date().toISOString();
+      if (_invStockoutListShown) invRenderStockoutList();
+      // 📶 Through the phone's outbox: no WiFi → saved here and sent once when it's back.
+      invPost(W + '/inventory/stockout-qty', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id, quantity: q, by: s.qtyChangedBy, where: s.binLocation || s.sku || '' }) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (!d || !d.ok) invFlash('Stock Out Report not updated to ' + q + ' cs' + (d && d.error ? ' — ' + d.error : ''), 'error'); })
+        .catch(function() {});
+    }, 1000);
+  }
 
   window.invRemoveFromPullList = function(i) {
     if (invPullList[i] && invPullList[i].submitted) {
