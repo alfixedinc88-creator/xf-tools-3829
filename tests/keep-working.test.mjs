@@ -9322,7 +9322,7 @@ console.log('\n⬇ Download the Amazon-barcode listings (CSV)');
     { part: '24-4-6=5', sku: '24-4-6=5-', fnsku: 'X00ZZZ9999', asin: 'B0CCC', name: 'elbow', from: [], at: '', barcode: 'amazon' }] };
   const all = fn(d, '').split('\r\n'), one = fn(d, 'elbow').split('\r\n');
   check('⬇ Download the list (CSV): only the listings needing Amazon\'s barcode (X00…), never the ones with our UPC; follows the search; commas/quotes kept safe',
-    all.length === 3 && all[0].startsWith('Part #,Amazon SKU,FNSKU (Amazon barcode)') && all[1] === '30-3-6=2X,30-3-6=2X-,X00ABC1234,B0AAA,"Cap, ""1/2"" brass",FBA catalog,2026-10-20'
+    all.length === 3 && all[0].startsWith('Part #,Amazon SKU,FNSKU (Amazon barcode)') && all[1] === '30-3-6=2X,30-3-6=2X-,X00ABC1234,B0AAA,"Cap, ""1/2"" brass",,,FBA catalog,2026-10-20' // Brand + Why columns added 2026-10-24
       && !all.join().includes('B0BBB') && one.length === 2 && one[1].startsWith('24-4-6=5,') && /id="inv-amzbc-dl" onclick="invAmzBcCsv\(\)"/.test(ih), { all, one });
 }
 
@@ -9720,6 +9720,38 @@ console.log('\n✏️ AWD template: the right AWD_Master row (Amazon SKU → par
   check('…Shipment Builder: ✏️ next to each 📋 template (purple when edited) opens the template as it prints, with Label line / UPC to change, 💾 Save, ↺ Back, 📋 Copy; 🧩 check mark',
     /class="btn btn-sm btn-secondary awd-tpl-edit"/.test(ah) && /onclick="awdTplEdit\('\$\{esc\(sku\)\}','\$\{esc\(lPrefix\)\}'\)">✏️<\/button>/.test(ah) && /💾 Save/.test(ah) && /↺ Back to worked out/.test(ah)
       && /await awdTplLoad\(\);\n    AWD_DB\.loaded = true;/.test(ah) && /sel: '#page-builder \.awd-tpl-edit'/.test(rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+}
+
+// Owner (2026-10-24): "201-1-9=10- showed Amazon's barcode but we use our UPC; check on Amazon why 24-1-1=10– and 23-2-1=10XA use the Amazon
+// label, find all of them, give me the list". The saved reports kept an old X00… FNSKU — Amazon's FNSKU now wins, with a likely reason.
+console.log('\n🏷 Amazon-barcode listings: 🔄 checked live with Amazon (FNSKU now wins), brand + why');
+{
+  const realFetch = globalThis.fetch, now = new Date().toISOString();
+  sq.prepare("INSERT OR REPLACE INTO fba_catalog (sku, asin, fnsku, product_name, available, updated_at) VALUES ('201-1-9=10-','B0TEST1919','X00OLD1919','Tee',5,?), ('24-1-1=10-','B0TEST2411','X00AMZ2411','Valve',5,?), ('23-2-1=10XA','B0TEST2321','X00AMZ2321','Elbow',5,?)").run(now, now, now);
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('23-2-1=10XA','23-2-1','850031119991','')").run();
+  const b0 = await get('/inventory/amazon-barcode'), was = x => ((b0.list || []).find(r => r.sku === x) || {}).barcode;
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  let pages = 0;
+  globalThis.fetch = async (u, o) => { const x = String(u), J = b => new Response(JSON.stringify(b), { headers: { 'Content-Type': 'application/json' } });
+    if (x.includes('api.amazon.com/auth')) return J({ access_token: 't', expires_in: 3600 });
+    if (x.includes('/fba/inventory/v1/summaries')) { pages++;
+      return J(new URL(x).searchParams.get('nextToken') ? { payload: { inventorySummaries: [{ sellerSku: '23-2-1=10XA', asin: 'B0TEST2321', fnSku: 'X00AMZ2321', productName: 'Elbow' }] } }
+        : { payload: { inventorySummaries: [{ sellerSku: '201-1-9=10-', asin: 'B0TEST1919', fnSku: 'B0TEST1919', productName: 'Tee' }, { sellerSku: '24-1-1=10-', asin: 'B0TEST2411', fnSku: 'X00AMZ2411', productName: 'Valve' }] }, pagination: { nextToken: 'n2' } }); }
+    if (x.includes('/catalog/2022-04-01/items')) return J({ items: [{ asin: 'B0TEST2411', summaries: [{ marketplaceId: 'ATVPDKIKX0DER', brand: 'XFITTING' }] }, { asin: 'B0TEST2321', summaries: [{ marketplaceId: 'ATVPDKIKX0DER', brand: 'Generic' }] }] });
+    return realFetch(u, o); };
+  const lv = await post('/inventory/amazon-barcode/live', {});
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  const b1 = await get('/inventory/amazon-barcode'), row = x => (b1.list || []).find(r => r.sku === x) || {};
+  check('before: the saved report said 201-1-9=10- needs Amazon\'s barcode (old X00…); 🔄 Check live (2 pages) → Amazon says its FNSKU is the ASIN → our UPC, named as changed',
+    was('201-1-9=10-') === 'amazon' && lv.ok && pages === 2 && lv.fromAmazon === 3 && row('201-1-9=10-').barcode === 'maker' && lv.changed.some(c => c.sku === '201-1-9=10-' && c.from === 'amazon' && c.to === 'maker'), { lv, r: row('201-1-9=10-') });
+  check('…24-1-1=10- and 23-2-1=10XA still need Amazon\'s barcode, each with a likely why: 23-2-1=10XA brand "Generic" (not ours); 24-1-1=10- our brand but no UPC on record',
+    row('24-1-1=10-').barcode === 'amazon' && row('23-2-1=10XA').barcode === 'amazon' && /Brand on Amazon: Generic — not our brand/.test(row('23-2-1=10XA').why) && /No UPC on record for 24-1-1=10/.test(row('24-1-1=10-').why) && row('23-2-1=10XA').from[0] === 'Amazon now', [row('24-1-1=10-').why, row('23-2-1=10XA').why]);
+  const pk = await call('/inventory/amazon-barcode/live', { method: 'POST', headers: { 'X-Cred-Token': (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, 'Content-Type': 'application/json' }, body: '{}' });
+  const { readFileSync: rfB } = await import('node:fs');
+  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), wk = rfB(workerPath, 'utf8');
+  check('…managers only; the list has a "Why (likely)" column, the download has Brand + Why; every ⚡ Amazon sync keeps each SKU\'s FNSKU too',
+    pk.status === 403 && /onclick="invAmzBcLive\(\)"[^>]*>🔄 Check live with Amazon now/.test(ih) && /'Brand on Amazon', 'Why \(likely\)'/.test(ih) && /try \{ await amazonBarcodeLiveSave\(env, items\); \}/.test(wk), pk.status);
+  sq.exec("DELETE FROM fba_catalog WHERE sku IN ('201-1-9=10-','24-1-1=10-','23-2-1=10XA'); DELETE FROM amazon_barcode_live; DELETE FROM upc WHERE sku = '23-2-1=10XA'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

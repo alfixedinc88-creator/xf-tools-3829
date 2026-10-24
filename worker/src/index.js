@@ -1412,10 +1412,74 @@ async function inventoryAmazonBarcode(env) {
   };
   (await all(`SELECT sku, asin, fnsku, product_name, updated_at FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`)).forEach(r => take(r, 'FBA inventory report'));
   (await all('SELECT sku, asin, fnsku, product_name, updated_at FROM fba_catalog')).forEach(r => take(r, 'FBA catalog'));
-  const list = Object.values(rows).map(o => ({ ...o, barcode: /^X0/.test(o.fnsku) ? 'amazon' : o.fnsku && o.asin && o.fnsku === o.asin ? 'maker' : /^B0/.test(o.fnsku) ? 'maker' : '' }))
+  // Amazon's FNSKU now (⚡ sync / 🔄 Check live) wins over the saved reports, whatever their dates.
+  (await all('SELECT sku, asin, fnsku, name, brand, at FROM amazon_barcode_live')).forEach(r => {
+    const sku = U(r.sku); if (!sku || !r.fnsku) return;
+    const o = rows[sku] = rows[sku] || { sku, part: P(sku), asin: '', fnsku: '', name: '', from: [], at: '' };
+    o.fnsku = U(r.fnsku); o.at = r.at || o.at; if (r.asin) o.asin = U(r.asin); if (r.name && !o.name) o.name = String(r.name).slice(0, 160); o.brand = r.brand || ''; o.live = true;
+    o.from = ['Amazon now'].concat(o.from.filter(x => x !== 'Amazon now'));
+  });
+  // Why a listing needs Amazon's barcode — the likely reason, from what we know.
+  const upcs = await all('SELECT sku, inside_upc, outside_upc FROM upc'), upcOf = {}, byCode = {};
+  const Z = c => String(c || '').replace(/\D/g, '').replace(/^0+/, '');
+  upcs.forEach(r => { const k = P(r.sku); [r.inside_upc, r.outside_upc].map(Z).filter(Boolean).forEach(c => { (upcOf[k] = upcOf[k] || []).push(c); (byCode[c] = byCode[c] || new Set()).add(k); }); });
+  const why = o => {
+    if (o.brand && !/x\s*-?\s*fitting/i.test(o.brand)) return 'Brand on Amazon: ' + o.brand + ' — not our brand, so Amazon needs its own barcode';
+    const mine = upcOf[o.part] || [];
+    if (!mine.length) return 'No UPC on record for ' + o.part + ' — the listing likely has no manufacturer barcode (GTIN exemption), so Amazon\'s barcode is required';
+    const shared = [...new Set(mine.flatMap(c => [...(byCode[c] || [])]).filter(k => k !== o.part))];
+    if (shared.length) return 'Our UPC is also on ' + shared.slice(0, 3).join(', ') + ' — one barcode on 2+ products, Amazon can\'t tell them apart';
+    return 'Set to "Amazon barcode" in Seller Central (Inventory → Manage FBA Inventory → barcode type)' + (o.brand ? '' : ' — or another brand / old setting; 🔄 Check live adds the brand');
+  };
+  const list = Object.values(rows).map(o => { const bc = /^X0/.test(o.fnsku) ? 'amazon' : o.fnsku && o.asin && o.fnsku === o.asin ? 'maker' : /^B0/.test(o.fnsku) ? 'maker' : '';
+      return { ...o, barcode: bc, why: bc === 'amazon' ? why(o) : '' }; })
     .sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }) || a.sku.localeCompare(b.sku));
   const n = k => list.filter(x => x.barcode === k).length;
   return J({ ok: true, list, counts: { amazon: n('amazon'), maker: n('maker'), unknown: n('') }, asOf: list.reduce((a, x) => x.at > a ? x.at : a, '') });
+}
+// 🏷 Owner (2026-10-24): "201-1-9=10- showed Amazon's barcode, but we use our UPC on it — check Amazon, why do 24-1-1=10– and
+// 23-2-1=10XA use the Amazon label, find all of them". The saved reports kept an OLD X00… FNSKU after a listing moved to the
+// manufacturer barcode. Amazon's FBA Inventory API gives each SKU's FNSKU NOW — kept here (every ⚡ sync + 🔄 Check live) and it wins.
+async function amazonBarcodeLiveTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_barcode_live (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, name TEXT, brand TEXT, at TEXT)').run();
+}
+async function amazonBarcodeLiveSave(env, items) {
+  await amazonBarcodeLiveTable(env);
+  const now = new Date().toISOString(), rows = (items || []).filter(x => x && x.sellerSku && x.fnSku);
+  for (let i = 0; i < rows.length; i += 50) await env.DB.batch(rows.slice(i, i + 50).map(x => env.DB.prepare(
+    `INSERT INTO amazon_barcode_live (sku, asin, fnsku, name, at) VALUES (?,?,?,?,?) ON CONFLICT(sku) DO UPDATE SET asin = excluded.asin, fnsku = excluded.fnsku,
+     name = COALESCE(NULLIF(excluded.name, ''), name), at = excluded.at`).bind(String(x.sellerSku).trim(), String(x.asin || '').trim(), String(x.fnSku).trim(), String(x.productName || '').slice(0, 160), now)));
+  return rows.length;
+}
+// POST /inventory/amazon-barcode/live (managers): every FBA SKU's FNSKU from Amazon now, then the brand Amazon shows for each listing
+// that needs Amazon's barcode (a listing under another brand is the usual reason). → what changed vs. before.
+async function amazonBarcodeLiveCheck(env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!env.AMAZON_REFRESH_TOKEN) return J({ ok: false, error: 'Amazon is not connected' }, 400);
+  const before = {}; { const d = await (await inventoryAmazonBarcode(env)).clone().json().catch(() => ({ list: [] })); (d.list || []).forEach(x => { before[x.sku] = x.barcode; }); }
+  const token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  let items = [], next = null, pages = 0;
+  do {
+    const p = new URLSearchParams({ granularityType: 'Marketplace', granularityId: mid, marketplaceIds: mid, details: 'false' }); if (next) p.set('nextToken', next);
+    const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inventory/v1/summaries?${p}`);
+    items = items.concat((d.payload && d.payload.inventorySummaries) || []);
+    next = d.pagination && d.pagination.nextToken ? d.pagination.nextToken : null;
+  } while (next && ++pages < 400);
+  const saved = await amazonBarcodeLiveSave(env, items);
+  // brand for the Amazon-barcode ones (catalog: 20 ASINs a call, 2 calls a second)
+  const amzAsins = [...new Set(items.filter(x => /^X0/i.test(x.fnSku || '') && x.asin).map(x => x.asin))].slice(0, 600), brand = {}, errors = [];
+  for (let i = 0; i < amzAsins.length; i += 20) {
+    if (i) await new Promise(r => setTimeout(r, 550));
+    try { const ids = amzAsins.slice(i, i + 20);
+      const r = await fetch(`https://sellingpartnerapi-na.amazon.com/catalog/2022-04-01/items?identifiers=${ids.join(',')}&identifiersType=ASIN&marketplaceIds=${mid}&includedData=summaries`, { headers: { 'x-amz-access-token': token } });
+      if (!r.ok) { errors.push('catalog HTTP ' + r.status); break; }
+      ((await r.json().catch(() => ({}))).items || []).forEach(it => { const sm = (it.summaries || []).find(x => x.marketplaceId === mid) || (it.summaries || [])[0] || {}; brand[it.asin] = sm.brand || sm.brandName || ''; });
+    } catch (e) { errors.push(e.message); break; }
+  }
+  for (const a of Object.keys(brand)) await env.DB.prepare('UPDATE amazon_barcode_live SET brand = ? WHERE asin = ?').bind(brand[a], a).run();
+  const after = {}; { const d = await (await inventoryAmazonBarcode(env)).clone().json().catch(() => ({ list: [] })); (d.list || []).forEach(x => { after[x.sku] = x; }); }
+  const changed = Object.keys(after).filter(k => before[k] !== undefined && before[k] !== after[k].barcode).map(k => ({ sku: k, from: before[k] || '?', to: after[k].barcode || '?' }));
+  return J({ ok: true, fromAmazon: items.length, saved, amazonBarcode: Object.values(after).filter(x => x.barcode === 'amazon').length, changed, errors });
 }
 async function ensureFbaCatalogTable(env) {
   await env.DB.prepare(`
@@ -10036,6 +10100,10 @@ const _app = {
     }
     // 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who".
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
+    if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
+      if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      try { return await amazonBarcodeLiveCheck(env); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } })); }
+    }
     // 🧰 Owner (2026-10-24): Send to Amazon says "Prep category is missing" on 22 SKUs — set it on Amazon for the shipment's SKUs.
     if (url.pathname === '/awd/prep-fix' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
@@ -15115,6 +15183,7 @@ async function awdAutoInventory(env) {
     // Owner's first real Sync (2026-10-22) came back with exactly 3,000 FBA SKUs = the old 60-page stop (50 a page): every SKU
     // after that was cut off. Now up to 400 pages (20,000 SKUs); if Amazon still has more, it is said — never cut off silently.
     if (!items.length) throw new Error('Amazon sent no FBA SKUs — sheets kept as they were');
+    try { await amazonBarcodeLiveSave(env, items); } catch (e) { console.error('[amazon barcode live]', e.message); } // 🏷 each SKU's FNSKU now
     if (next) out.fbaCut = items.length;
     const base = awdFbaBaseRows(items);
     await awdWriteFbaInventory(env, base, st.healthRows || null);
