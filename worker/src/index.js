@@ -10017,6 +10017,11 @@ const _app = {
     }
     // 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who".
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
+    // 🧰 Owner (2026-10-24): Send to Amazon says "Prep category is missing" on 22 SKUs — set it on Amazon for the shipment's SKUs.
+    if (url.pathname === '/awd/prep-fix' && method === 'POST') {
+      if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      return await awdPrepFix(request, env, session);
+    }
     if (url.pathname === '/awd/amazon-velocity-request'  && method === 'POST') return await awdVelocityRequest(env);
     if (url.pathname === '/awd/amazon-velocity-status'   && method === 'GET')  return await awdVelocityStatus(url, env);
     if (url.pathname === '/awd/amazon-velocity-download' && method === 'POST') return await awdVelocityDownload(request, env);
@@ -15245,6 +15250,43 @@ async function awdAutoHealth(env) {
 // 🕘 AWD Shipment Builder history: every export (.txt / .xlsx) is kept — when, who, the shipment name, and each SKU
 // (units asked, units sent in whole boxes, units per box, boxes, need-label note). Only ever added, never changed.
 // POST { name, format, items:[{sku, name, qty, units, unitsPerBox, boxes, label}], _requestId } · GET ?id=N (one, with items) or the list.
+// 🧰 POST /awd/prep-fix { skus:[…], dry } — Amazon's Send to Amazon / AWD stops at "Prep category is missing" for a SKU never
+// shipped with prep details. Reads each SKU's prep details (Fulfillment Inbound 2024-03-20 listPrepDetails) and, for the ones with
+// none, sets "No prep needed" (prepCategory NONE · ITEM_NO_PREP — our fittings need no prep). SKUs that already have a category are
+// left as they are. Who / when / which kept in the activity log. dry = only read and say what would be set.
+async function awdPrepFix(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const skus = [...new Set((Array.isArray(b.skus) ? b.skus : []).map(x => String(x || '').trim()).filter(Boolean))].slice(0, 500);
+  if (!skus.length) return J({ ok: false, error: 'No SKUs' }, 400);
+  if (!env.AMAZON_REFRESH_TOKEN) return J({ ok: false, error: 'Amazon is not connected (no refresh token)' }, 400);
+  const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER', base = 'https://sellingpartnerapi-na.amazon.com/inbound/fba/2024-03-20';
+  let token; try { token = await getAmazonToken(env); } catch (e) { return J({ ok: false, error: 'Amazon sign-in failed: ' + e.message }, 502); }
+  const H = { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' };
+  const have = {}, readErr = [];
+  for (let i = 0; i < skus.length; i += 100) {
+    const ch = skus.slice(i, i + 100), q = new URLSearchParams({ marketplaceId: mid }); ch.forEach(m => q.append('mskus', m));
+    try { const d = await awdSpGet(env, token, base + '/items/prepDetails?' + q.toString());
+      (d.mskuPrepDetails || []).forEach(x => { have[String(x.msku)] = { category: x.prepCategory || '', types: x.prepTypes || [] }; }); }
+    catch (e) { readErr.push(e.message); }
+  }
+  const missing = skus.filter(m => !have[m] || !have[m].category || /^(UNKNOWN|)$/i.test(have[m].category));
+  const already = skus.filter(m => !missing.includes(m)).map(m => ({ sku: m, category: have[m].category }));
+  if (b.dry || !missing.length) return J({ ok: true, dry: !!b.dry, missing, already, set: [], readErrors: readErr });
+  const set = [], errors = [], ops = [];
+  for (let i = 0; i < missing.length; i += 100) {
+    const ch = missing.slice(i, i + 100);
+    const r = await fetch(base + '/items/prepDetails', { method: 'POST', headers: H,
+      body: JSON.stringify({ marketplaceId: mid, mskuPrepDetails: ch.map(m => ({ msku: m, prepCategory: 'NONE', prepTypes: ['ITEM_NO_PREP'] })) }) }).catch(e => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: e.message }] }) }));
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) { set.push(...ch); if (d.operationId) ops.push(d.operationId); } else errors.push({ skus: ch, error: 'HTTP ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 400) });
+  }
+  // Amazon works on it in the background — read back the operation once so a refusal shows here, not only in Seller Central.
+  const opStatus = [];
+  for (const id of ops.slice(0, 5)) { try { const d = await awdSpGet(env, token, base + '/operations/' + encodeURIComponent(id)); opStatus.push({ id, status: d.operationStatus || '', problems: (d.operationProblems || []).slice(0, 20) }); } catch (e) { opStatus.push({ id, error: e.message }); } }
+  if (session && session.userId) await logUserActivity(env, session.userId, 'awd_prep_fix', { set: set.length, skus: set.slice(0, 100), errors: errors.length }).catch(() => {});
+  return J({ ok: !errors.length, missing, already, set, errors, operations: opStatus, readErrors: readErr });
+}
 async function awdShipHistory(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_ship_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, name TEXT, format TEXT,
