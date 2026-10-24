@@ -9602,5 +9602,38 @@ console.log('\n📄 AWD box labels with no empty spot: our template on its own l
       && /📄 <b>2<\/b> Amazon labels have no empty spot/.test(out) && /\(4 labels to print\)/.test(out) && /PREVIOUS PACKED on <b>1<\/b> label/.test(out) && !/No template for/.test(out), { imgs, out, texts: texts.slice(0, 12) });
 }
 
+// Owner (2026-10-24): "can we make it the same label? a separate label wastes a lot of labels" → ☑ One label per box.
+console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label at 85% + our info under it');
+{
+  const { readFileSync: rfL2 } = await import('node:fs');
+  const ah = rfL2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const W0 = 720, H0 = 1080, texts = [], drawn = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage(...a) { drawn.push(a); },
+    fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }); // every pixel black = no empty spot anywhere
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const pageOf = (sku, box) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'AWD Box ' + box + ' of 324', transform: [1, 0, 0, 1, 10, 420] }, { str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }] }) });
+  const pdfPages = [pageOf('2-3-4=2XX-', 1), pageOf('23-4-6=2X-', 2)];
+  let printed = '';
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '2-3-4=2XX-' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
+    id => els[id], { shipment: { '2-3-4=2XX-': { row: {} }, '23-4-6=2X-': { row: {} } }, tplPrefix: {}, joined: [] },
+    { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 2, getPage: async p => pdfPages[p - 1] }) }) }),
+    sku => sku === '23-4-6=2X-' ? '1 need label\nTee 1/2"\n850031110001\nC1=1-1-1' : 'x',
+    () => Promise.reject(new Error('offline')), '', cb => cb(), (c) => { c.width = 300; c.height = 100; }, () => {});
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
+  const scaled = drawn.filter(d => d[0] && d[0].toDataURL && d[3] === Math.round(720 * 0.85) && d[4] === Math.round(1080 * 0.85));
+  check('2 full AWD labels → still 2 labels to print: each Amazon label drawn at 85% (top) with PREVIOUS PACKED / our template in the strip under it; says "one label per box"',
+    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED — on the pallet,/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
+    { imgs, scaled: scaled.length, out });
+  check('…a choice (☑ One label per box), remembered on this computer; off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) === '1'/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
