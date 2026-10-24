@@ -2020,6 +2020,20 @@ function awdScanCode(sku, lines, amz, labelFn) {
   const upc = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
   return upc ? { code: upc, kind: 'UPC' } : null;
 }
+// ✅ Owner (2026-10-24): the PREVIOUS PACKED label also shows the product name, how many bags × pieces a bag (= pieces) and a photo.
+// Bags = "Units: N" Amazon printed on that label (each unit is one bag / pack of the SKU); pieces a bag = the number after "=".
+function awdLabelUnits(lines, y) {
+  let best = null;
+  (lines || []).forEach(l => { const m = /Units\s*:?\s*(\d+)/i.exec(l.text || ''); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, n: parseInt(m[1], 10) }; });
+  return best ? best.n : 0;
+}
+function awdPrevInfo(sku, units, amz) {
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  const it = (S.shipment || {})[sku], j = (S.joined || []).find(r => n(r.sku) === n(sku)), a = (amz || []).find(x => n(x.sku) === n(sku));
+  const name = String((it && it.row && it.row.name) || (j && j.name) || (a && a.name) || '').replace(/\s+/g, ' ').trim();
+  const pm = String(sku || '').split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0;
+  return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: bags ? bags + ' bag' + (bags === 1 ? '' : 's') + ' × ' + pack + ' pc' + (pack === 1 ? '' : 's') + ' = ' + (bags * pack) + ' pcs' : pack + ' pcs a bag' };
+}
 // The FNSKU printed on the label nearest the SKU line (several labels can share a page).
 function awdLabelFnsku(lines, y) {
   let best = null;
@@ -2160,10 +2174,12 @@ async function awdLabelsDo(file) {
         const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
         const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60), seq = seqOf(sku), lfn = awdLabelFnsku(lines, f.y);
         const ph = awdPrevHit(prev, sku, amz);
-        if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse)
+        if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse); name, bags × pcs, photo
+          const pi = awdPrevInfo(sku, awdLabelUnits(lines, f.y), amz), photo = await awdPhoto(sku);
           const pr = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-          if (!pr) { own.push({ sku, seq, prev: true, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
-          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED · Box ' + seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
+          if (!pr) { own.push({ sku, seq, prev: true, pi, photo, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
+          const r0 = awdDrawBlock(ctx, pr, ['✅ PREVIOUS PACKED · Box ' + seq, pi.name, pi.qty, 'on the pallet — do NOT go to the warehouse'].filter(Boolean), null, photo, Math.round(band * 0.04));
+          if (r0.photo) withPhoto++;
           prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue;
         }
         const lns0 = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
@@ -2189,7 +2205,10 @@ async function awdLabelsDo(file) {
         const col = { x: Math.round(Wd * K), y: 0, w: Wd - Math.round(Wd * K), h: Math.round(H * K) };
         const strip = { x: Math.round(Wd * 0.01), y: Math.round(H * K) + Math.round(H * 0.005), w: Math.round(Wd * 0.98), h: H - Math.round(H * K) - Math.round(H * 0.01) };
         x3.strokeStyle = '#000'; x3.lineWidth = Math.max(2, Math.round(Wd * 0.004)); x3.strokeRect(strip.x, strip.y, strip.w, strip.h);
-        if (o.prev) awdBigText(x3, strip, ['✅ PREVIOUS PACKED · Box ' + o.seq, 'on the pallet — do NOT go to the warehouse']);
+        if (o.prev) { // photo in the right column, 3 big lines under the label
+          if (o.photo) { const k = Math.min((col.w - 8) / o.photo.width, (col.w - 8) / o.photo.height), w = o.photo.width * k, h = o.photo.height * k; x3.drawImage(o.photo, col.x + (col.w - w) / 2, col.y + 8, w, h); withPhoto++; }
+          awdBigText(x3, strip, ['✅ PREVIOUS PACKED · Box ' + o.seq + ' (on the pallet)', o.pi.name || o.sku, o.pi.qty]);
+        }
         else {
           const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null;
           if (bc && awdDrawSideBarcode(x3, col, bc)) withBc++;
@@ -2206,7 +2225,7 @@ async function awdLabelsDo(file) {
         x2.strokeStyle = '#000'; x2.lineWidth = Math.max(3, Math.round(Wd * 0.006)); x2.strokeRect(m / 2, m / 2, Wd - m, H - m);
         awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.sku + '  ·  Box ' + o.seq + (o.box ? '  (' + o.box + ')' : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
         const body = { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m };
-        if (o.prev) awdDrawTemplate(x2, body, ['✅ PREVIOUS PACKED', 'Box ' + o.seq, 'Already on the pallet —', 'do NOT go to the', 'warehouse', o.sku], Math.round(H * 0.06));
+        if (o.prev) { const r1 = awdDrawBlock(x2, body, ['✅ PREVIOUS PACKED', 'Box ' + o.seq, o.pi.name, o.pi.qty, 'on the pallet —', 'do NOT go to the warehouse'].filter(Boolean), null, o.photo, Math.round(H * 0.05)); if (r1.photo) withPhoto++; }
         else {
           const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = o.extra ? await awdPhoto(o.sku) : null;
           const r = awdDrawBlock(x2, body, ['Box ' + o.seq].concat(o.lns), bc, photo, Math.round(H * 0.045));
