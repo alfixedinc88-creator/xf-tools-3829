@@ -9375,7 +9375,7 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
   check('the list: an ASIN (any case) → every box of its SKU; "ASIN 2" → only 2 boxes; a SKU works too; SKUs not on it keep our template',
     prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
   check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
-    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED · Box ' \+ seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
+    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED · Box ' \+ seq, pi\.name, pi\.qty, 'on the pallet — do NOT go to the warehouse'\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
       && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);  // Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it".
   const fr = new Function(fnA('awdPrevFromRows') + 'return awdPrevFromRows;')();
   const a1 = fr([['ASIN', 'Title', 'Units', 'Boxes'], ['B0AAA11111', 'Tee', '120', '5'], ['b0bbb22222', 'Cap', '40', ''], ['B0AAA11111', 'Tee', '24', '1'], ['', 'total', '184', '6']]);
@@ -9795,6 +9795,34 @@ console.log('\n📋 Stock Out Reports: cases changed on the Pull List (2 → 1) 
   check('…the Pull List cases box sends it (through the 📶 outbox), the report card + Resolved history show it',
     /if \(invPullList\[i\]\.sourceStockoutId\) invStockoutQtyQueue\(invPullList\[i\]\.sourceStockoutId\);/.test(ih) && /invPost\(W \+ '\/inventory\/stockout-qty'/.test(ih)
       && /cs<\/span>' \+ invStockoutWasHtml\(s\);/.test(ih) && /' \(was ' \+ \(Math\.round\(s\.origQuantity \* 100\) \/ 100\)/.test(ih), null);
+}
+
+// Owner (2026-10-24): "the Amazon label with PREVIOUS PACKED — put the product name, how many pieces a bag, how many bags, and a product photo".
+console.log('\n✅ PREVIOUS PACKED label: product name, bags × pieces a bag = pieces, photo');
+{
+  const { readFileSync: rfP4 } = await import('node:fs');
+  const ah = rfP4(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const texts = [], drawn = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage(...a) { drawn.push(a); }, save() {}, restore() {}, translate() {}, rotate() {},
+    fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) });
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const page = { getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'SKU: 2-3-4=2XX-', transform: [1, 0, 0, 1, 10, 400] }, { str: 'Units: 5', transform: [1, 0, 0, 1, 200, 400] }, { str: 'FNSKU: B0DCLY31Z2', transform: [1, 0, 0, 1, 10, 380] }] }) };
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: 'B0DCLY31Z2' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const PHOTO = { width: 100, height: 80, photo: true };
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast', 'PHOTO',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return awdLabelsDo;')(
+    id => els[id], { shipment: { '2-3-4=2XX-': { row: { asin: 'B0DCLY31Z2', name: '2 Pack XFITTING 1/2" Brass Tee' } } }, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() },
+    { open: () => ({ document: { write() {}, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 1, getPage: async () => page }) }) }),
+    () => 'x', () => Promise.reject(new Error('offline')), '', cb => cb(), () => {}, () => {}, PHOTO);
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  check('a full AWD label for 2-3-4=2XX- (Units: 5) on the PREVIOUS PACKED list → "✅ PREVIOUS PACKED · Box 1-1 (on the pallet)", the product name, "5 bags × 2 pcs = 10 pcs", and the product photo on the same label',
+    texts.includes('✅ PREVIOUS PACKED · Box 1-1 (on the pallet)') && texts.includes('2 Pack XFITTING 1/2" Brass Tee') && texts.includes('5 bags × 2 pcs = 10 pcs') && drawn.some(d => d[0] === PHOTO)
+      && /<b>1<\/b> with the photo/.test(els['awd-lbl-out'].innerHTML), { texts, out: els['awd-lbl-out'].innerHTML.slice(0, 200) });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
