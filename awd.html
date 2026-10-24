@@ -2006,12 +2006,50 @@ function awdDrawTemplate(ctx, rect, lines, maxFs) {
 // that barcode — so the packer scans the label, then the product, and knows they didn't grab the wrong one (main point: never ship
 // the wrong product to AWD / FBA)". The code to scan: the listing's FNSKU when Amazon's barcode is required (every unit carries it),
 // else our UPC (from the template). → { code, kind } or null
-function awdScanCode(sku, lines, amz) {
+function awdScanCode(sku, lines, amz, labelFn) {
   const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  // 🏷 Owner (2026-10-24): "201-1-9=10- shows Amazon's barcode, but we use our manufacturer UPC on it". The FNSKU Amazon printed on THIS
+  // label is the truth for this shipment: X0… = Amazon barcode on every unit; the ASIN (B0…) = manufacturer barcode → our UPC.
+  if (labelFn) {
+    if (/^X0/i.test(labelFn)) return { code: String(labelFn).toUpperCase(), kind: 'FNSKU' };
+    const u = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
+    return u ? { code: u, kind: 'UPC' } : null;
+  }
   const hit = (amz || []).find(x => x.barcode === 'amazon' && (n(x.sku) === n(sku) || n(x.part) === n(sku)));
   if (hit && hit.fnsku) return { code: hit.fnsku, kind: 'FNSKU' };
   const upc = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
   return upc ? { code: upc, kind: 'UPC' } : null;
+}
+// The FNSKU printed on the label nearest the SKU line (several labels can share a page).
+function awdLabelFnsku(lines, y) {
+  let best = null;
+  (lines || []).forEach(l => { const m = /FNSKU\s*:?\s*([0-9A-Z]{10})\b/i.exec(l.text || ''); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, code: m[1].toUpperCase() }; });
+  return best ? best.code : '';
+}
+// 🏷 One label (owner 2026-10-24: "the words under the label are so small no one can see them"): Amazon's label at 85% top-left;
+// our scan barcode turned on its side in the free column on the right; the strip under it is ONLY big text, 3 lines
+// (box N-k + need label · the spots · the item), as big as fits.
+function awdBigText(ctx, rect, text, maxFs) {
+  const p = Math.max(4, Math.round(rect.h * 0.04)), n = Math.max(1, text.length);
+  let fs = Math.min(maxFs || 999, Math.floor((rect.h - 2 * p) / (n * 1.12)));
+  ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
+  for (; fs > 8; fs--) { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; if (Math.max(...text.map(l => ctx.measureText(l).width)) <= rect.w - 2 * p) break; }
+  ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
+  const top = rect.y + Math.round((rect.h - n * fs * 1.12) / 2);
+  text.forEach((l, i) => ctx.fillText(l, rect.x + p, top + i * fs * 1.12));
+  return fs;
+}
+function awdStripText(seq, lns, bc) {
+  const digits = l => /^\d{8,14}$/.test(String(l).trim());
+  const need = lns.find(l => /need label|\/\d/i.test(l)) || '', locs = lns.filter(l => /^[A-Z0-9]+=/i.test(l) && /\d-\d/.test(l) && l !== need);
+  const rest = lns.filter(l => l !== need && !locs.includes(l) && !(bc && digits(l)));
+  return ['Box ' + seq + (need ? ' · ' + need : ''), locs.slice(0, 2).join('  /  '), rest.join(' · ')].filter(Boolean);
+}
+function awdDrawSideBarcode(ctx, col, bc) { // the barcode turned 90°, as long as the column allows
+  const p = Math.max(3, Math.round(col.w * 0.08)), long = col.h - 2 * p, thick = col.w - 2 * p;
+  const T = thick, L = Math.min(long, Math.round(thick * 5)); // stretched along its length: wider bars scan more easily
+  ctx.save(); ctx.translate(col.x + col.w / 2, col.y + col.h / 2); ctx.rotate(-Math.PI / 2); ctx.drawImage(bc, -L / 2, -T / 2, L, T); ctx.restore();
+  return true;
 }
 let _awdAmzP = null; const _awdPhotos = {};
 function awdAmzList() { if (!_awdAmzP) _awdAmzP = wFetch(W + '/inventory/amazon-barcode').then(r => r.json()).then(d => (d && d.list) || []).catch(() => { _awdAmzP = null; return []; }); return _awdAmzP; }
@@ -2095,14 +2133,20 @@ async function awdLabelsDo(file) {
     const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0, oneLabel = 0;
     const amz = await awdAmzList();
     const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
+    // 🔢 Owner (2026-10-24): "23-4-1=10- has 5 boxes → 5 labels: 5-1, 5-2 … 5-5, so a label found alone tells how many boxes we had".
+    // Read every page's text first: how many labels each SKU has in this PDF; then number them in order.
+    const readPage = async page => { const vp1 = page.getViewport({ scale: 1 }), tc = await page.getTextContent(), byY = {};
+      tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
+      return Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') })); };
+    const boxTot = {}, boxSeen = {};
+    for (let p = 1; p <= pdf.numPages; p++) awdLabelSkus(await readPage(await pdf.getPage(p))).forEach(f => { const k = awdLabelMatch(f.sku).toUpperCase(); boxTot[k] = (boxTot[k] || 0) + 1; });
+    const seqOf = sku => { const k = sku.toUpperCase(); boxSeen[k] = (boxSeen[k] || 0) + 1; return boxTot[k] + '-' + boxSeen[k]; };
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
       const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      const tc = await page.getTextContent(), byY = {};
-      tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
-      const lines = Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') }));
+      const lines = await readPage(page);
       const found = awdLabelSkus(lines);
       // one label per page (4×6), or several stacked on a letter page: each SKU owns the band around it
       const n = Math.max(1, found.length); labels += n;
@@ -2114,24 +2158,25 @@ async function awdLabelsDo(file) {
       const own = [], boxTxt = (lines.map(l => l.text).join(' ').match(/Box\s+\d+\s+of\s+\d+/i) || [''])[0];
       for (let i = 0; i < found.length; i++) {
         const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
-        const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60);
+        const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60), seq = seqOf(sku), lfn = awdLabelFnsku(lines, f.y);
         const ph = awdPrevHit(prev, sku, amz);
         if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse)
           const pr = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-          if (!pr) { own.push({ sku, prev: true, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
-          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
+          if (!pr) { own.push({ sku, seq, prev: true, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
+          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED · Box ' + seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
           prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue;
         }
-        const lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
-        if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
+        const lns0 = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
+        if (!lns0.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
+        const lns = ['Box ' + seq].concat(lns0);
         // room for text + barcode (+ photo) first; else the smaller spot (text only) as before
         // room for text + photo + barcode → text + barcode (the barcode matters most: the packer scans it) → text only
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const mid = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         const rect = mid || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
         const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
-        if (!rect) { own.push({ sku, lns, box: n > 1 ? '' : boxTxt, extra }); done++; continue; }
-        const sc = mid && extra ? awdScanCode(sku, lns, amz) : null;
+        if (!rect) { own.push({ sku, seq, lns: lns0, lfn, box: n > 1 ? '' : boxTxt, extra }); done++; continue; }
+        const sc = mid && extra ? awdScanCode(sku, lns, amz, lfn) : null;
         const bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = big && extra ? await awdPhoto(sku) : null;
         const fs = Math.round(band * 0.032); // ≈ 14 pt on a 6" label
         const r = mid ? awdDrawBlock(ctx, rect, lns, bc, photo, big ? fs : Math.round(fs * 0.8)) : (awdDrawTemplate(ctx, rect, lns, fs), { photo: false, barcode: false });
@@ -2140,14 +2185,15 @@ async function awdLabelsDo(file) {
       if (one && own.length) { // Amazon's label at 85%, top centre; our info in the strip under it — one label
         const o = own[0], c3 = document.createElement('canvas'); c3.width = cv.width; c3.height = cv.height;
         const x3 = c3.getContext('2d'), K = 0.85, H = c3.height, Wd = c3.width; x3.fillStyle = '#fff'; x3.fillRect(0, 0, Wd, H);
-        x3.drawImage(cv, Math.round(Wd * (1 - K) / 2), 0, Math.round(Wd * K), Math.round(H * K));
-        const strip = { x: Math.round(Wd * 0.03), y: Math.round(H * K) + Math.round(H * 0.005), w: Math.round(Wd * 0.94), h: H - Math.round(H * K) - Math.round(H * 0.01) };
+        x3.drawImage(cv, 0, 0, Math.round(Wd * K), Math.round(H * K));
+        const col = { x: Math.round(Wd * K), y: 0, w: Wd - Math.round(Wd * K), h: Math.round(H * K) };
+        const strip = { x: Math.round(Wd * 0.01), y: Math.round(H * K) + Math.round(H * 0.005), w: Math.round(Wd * 0.98), h: H - Math.round(H * K) - Math.round(H * 0.01) };
         x3.strokeStyle = '#000'; x3.lineWidth = Math.max(2, Math.round(Wd * 0.004)); x3.strokeRect(strip.x, strip.y, strip.w, strip.h);
-        if (o.prev) awdDrawTemplate(x3, strip, ['✅ PREVIOUS PACKED — on the pallet,', 'do NOT go to the warehouse · ' + o.sku], Math.round(H * 0.034));
+        if (o.prev) awdBigText(x3, strip, ['✅ PREVIOUS PACKED · Box ' + o.seq, 'on the pallet — do NOT go to the warehouse']);
         else {
-          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null;
-          const r = awdDrawBlock(x3, strip, o.lns, bc, null, Math.round(H * 0.022));
-          if (r.barcode) withBc++;
+          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null;
+          if (bc && awdDrawSideBarcode(x3, col, bc)) withBc++;
+          awdBigText(x3, strip, awdStripText(o.seq, o.lns, bc));
         }
         pages.push({ url: c3.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); oneLabel++;
         continue;
@@ -2158,12 +2204,12 @@ async function awdLabelsDo(file) {
         const x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, c2.width, c2.height);
         const H = c2.height, Wd = c2.width, m = Math.round(Wd * 0.05);
         x2.strokeStyle = '#000'; x2.lineWidth = Math.max(3, Math.round(Wd * 0.006)); x2.strokeRect(m / 2, m / 2, Wd - m, H - m);
-        awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.sku + (o.box ? '  ·  ' + o.box : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
+        awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.sku + '  ·  Box ' + o.seq + (o.box ? '  (' + o.box + ')' : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
         const body = { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m };
-        if (o.prev) awdDrawTemplate(x2, body, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the', 'warehouse', o.sku], Math.round(H * 0.06));
+        if (o.prev) awdDrawTemplate(x2, body, ['✅ PREVIOUS PACKED', 'Box ' + o.seq, 'Already on the pallet —', 'do NOT go to the', 'warehouse', o.sku], Math.round(H * 0.06));
         else {
-          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = o.extra ? await awdPhoto(o.sku) : null;
-          const r = awdDrawBlock(x2, body, o.lns, bc, photo, Math.round(H * 0.045));
+          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = o.extra ? await awdPhoto(o.sku) : null;
+          const r = awdDrawBlock(x2, body, ['Box ' + o.seq].concat(o.lns), bc, photo, Math.round(H * 0.045));
           if (r.barcode) withBc++; if (r.photo) withPhoto++;
         }
         pages.push({ url: c2.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); ownPages++;
