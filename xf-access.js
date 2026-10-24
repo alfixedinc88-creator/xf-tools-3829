@@ -64,6 +64,7 @@ document.addEventListener('input', function (e) {
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
         { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
+        { key: 'edittpl', label: '✏️ See / edit a SKU\'s template', sel: '#page-builder .awd-tpl-edit' },
         { key: 'summary', label: 'Shipment Summary', sel: '.sum-card > .card:has(#sum-items)' },
         { key: 'export', label: 'Export (.txt / .xlsx)', sel: '.sum-card > .card:has(#ship-name)' },
         { key: 'prepfix', label: '🧰 Fix "Prep category is missing" on Amazon', sel: '#awd-prep-card' } ] },

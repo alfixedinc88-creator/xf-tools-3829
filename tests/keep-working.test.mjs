@@ -9695,5 +9695,32 @@ console.log('\n🔢 AWD box labels: box N-k numbering, the barcode from the labe
     big >= H * 0.035 && texts.includes('Box 3-1 · 5 need label') && texts.includes('C1=1-1-1  /  BSMT=3-1-2') && texts.some(t => /^Tee 1\/2"$/.test(t)), { big, min: H * 0.035, t: texts.slice(0, 8) });
 }
 
+// Owner (2026-10-24): "I tried to see the template of 23-2-1=10XA but it was wrong — it said 1=3/4XB, but that listing is 10=3/4XB.
+// I want to be able to see the template and edit it too."
+console.log('\n✏️ AWD template: the right AWD_Master row (Amazon SKU → part # → same pack number), and see / edit it');
+{
+  const { readFileSync: rfT } = await import('node:fs');
+  const ah = rfT(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fn = n => ah.slice(ah.indexOf('function ' + n + '('), ah.indexOf('\n}\n', ah.indexOf('function ' + n + '(')) + 2);
+  const mk = (master, tpl) => new Function('AWD_DB', 'DB', fn('normalizeAmazonSKU') + fn('baseSKU_awd') + fn('getAWDWarehouseName') + fn('awdTplInfo') + '; return awdTplInfo;')(
+    { products: [{ sku: '23-2-1', warehouseName: '3/4XB' }], awdMaster: master, tpl: tpl || {} }, undefined);
+  const rows = [{ partNum: '23-2-1=1', upc: '850000000111', sku: '23-2-1=1XB-' }, { partNum: '23-2-1=10', upc: '850000000222', sku: '23-2-1=10XA-' }];
+  const a = mk(rows)('23-2-1=10XA-'), b = mk(rows.map(r => ({ ...r, sku: '' })))('23-2-1=10XA-'), c = mk([rows[0]])('23-2-1=10XA-');
+  const d = mk(rows, { '23-2-1=10XA': { label: '10=3/4 XB BRASS', upc: '850000000999', by: 'TS', at: '2026-10-24T10:00:00Z' } })('23-2-1=10XA-');
+  check('23-2-1=10XA: found by its Amazon SKU → 10=3/4XB + its own UPC (it was 1=3/4XB from the first 23-2-1 row); no Amazon SKU on the row → the same pack number (10); only a pack of 1 there → 10=… flagged ⚠ to check; an edit wins',
+    a.label === '10=3/4XB' && a.upc === '850000000222' && /by Amazon SKU/.test(a.from) && !a.guessed
+      && b.label === '10=3/4XB' && /same pack number/.test(b.from) && c.label === '10=3/4XB' && c.guessed === true && c.upc === '850000000111'
+      && d.label === '10=3/4 XB BRASS' && d.upc === '850000000999' && d.autoLabel === '10=3/4XB', { a, b, c, d });
+  const s1 = await post('/awd/label-template', { sku: '23-2-1=10XA-', label: '10=3/4XB', upc: '850000000222' });
+  const bad = await call('/awd/label-template', { method: 'POST', headers: H, body: JSON.stringify({ sku: '23-2-1=10XA', upc: '12AB' }) });
+  const g1 = await get('/awd/label-template'), r1 = await post('/awd/label-template', { sku: '23-2-1=10XA', reset: true }), g2 = await get('/awd/label-template');
+  check('✏️ saved on the server (by TS, when) for every screen; a UPC that isn\'t 8–14 digits is refused; ↺ back to worked out; every save / reset kept (old → new)',
+    s1.ok && s1.by === 'TS' && bad.status === 400 && g1.list.some(x => x.sku === '23-2-1=10XA' && x.label === '10=3/4XB' && x.by === 'TS') && r1.ok && !g2.list.some(x => x.sku === '23-2-1=10XA')
+      && g2.log.filter(x => x.sku === '23-2-1=10XA').length === 2 && g2.log[0].old_label === '10=3/4XB' && g2.log[0].new_label === '', { s1, g2: g2.log.slice(0, 2) });
+  check('…Shipment Builder: ✏️ next to each 📋 template (purple when edited) opens the template as it prints, with Label line / UPC to change, 💾 Save, ↺ Back, 📋 Copy; 🧩 check mark',
+    /class="btn btn-sm btn-secondary awd-tpl-edit"/.test(ah) && /onclick="awdTplEdit\('\$\{esc\(sku\)\}','\$\{esc\(lPrefix\)\}'\)">✏️<\/button>/.test(ah) && /💾 Save/.test(ah) && /↺ Back to worked out/.test(ah)
+      && /await awdTplLoad\(\);\n    AWD_DB\.loaded = true;/.test(ah) && /sel: '#page-builder \.awd-tpl-edit'/.test(rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

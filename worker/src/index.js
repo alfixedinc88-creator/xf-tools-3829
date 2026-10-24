@@ -9990,6 +9990,7 @@ const _app = {
     // Only reachable with a valid mgmt session token.
     // Completely isolated — no shared state with existing routes.
     // ── AWD routes /awd/* ──
+    if (url.pathname === '/awd/label-template') return await awdLabelTemplate(request, env, session);
     if (url.pathname === '/awd/cpack'                    && method === 'GET')  return await awdCpackSync(env);
     if (url.pathname === '/awd/cpack-add'                 && method === 'POST') return await awdCpackAdd(request, env, session);
     // ⚡ Sync from Amazon = the same 4-report run as every morning (the old sync left units shipped blank).
@@ -15328,6 +15329,30 @@ async function awdPrepFix(request, env, session) {
       ch.forEach(m => { if (!got[m] || /^UNKNOWN$/i.test(got[m])) still.push(m); }); } catch (_) {} }
   if (session && session.userId) await logUserActivity(env, session.userId, 'awd_prep_fix', { set: set.length, skus: set.slice(0, 100), errors: errors.length }).catch(() => {});
   return J({ ok: !errors.length, missing, already: already.concat(kept), kept, set, still, errors, operations: opStatus, readErrors: readErr });
+}
+// ✏️ GET / POST /awd/label-template — owner (2026-10-24: "23-2-1=10XA's template said 1=3/4XB, but that listing is 10=3/4XB — I want
+// to see the template and edit it"). An edited label line / UPC for one Amazon SKU is used on every template of it (📋 copy, box
+// labels) instead of the one worked out from AWD_Master; blank = worked out. Every save / reset is kept (who, when, old → new).
+async function awdLabelTemplate(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_label_tpl (sku TEXT PRIMARY KEY, label TEXT, upc TEXT, by_user TEXT, at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_label_tpl_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, sku TEXT, old_label TEXT, old_upc TEXT, new_label TEXT, new_upc TEXT)').run();
+  const key = x => String(x || '').trim().replace(/\s*=\s*/g, '=').replace(/-+$/, '').toUpperCase();
+  if (request.method === 'GET') {
+    const list = (await d1All(env, 'SELECT sku, label, upc, by_user AS "by", at FROM awd_label_tpl ORDER BY sku', []));
+    const log = (await d1All(env, 'SELECT * FROM awd_label_tpl_log ORDER BY id DESC LIMIT 200', []));
+    return J({ ok: true, list, log });
+  }
+  const b = await request.json().catch(() => ({}));
+  const sku = key(b.sku); if (!sku) return J({ ok: false, error: 'Which SKU?' }, 400);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), at = new Date().toISOString();
+  const label = b.reset ? '' : String(b.label || '').trim().slice(0, 120), upc = b.reset ? '' : String(b.upc || '').replace(/\s+/g, '').slice(0, 20);
+  if (upc && !/^\d{8,14}$/.test(upc)) return J({ ok: false, error: 'A UPC is 8–14 digits' }, 400);
+  const old = await env.DB.prepare('SELECT label, upc FROM awd_label_tpl WHERE sku = ?').bind(sku).first().catch(() => null);
+  if (!label && !upc) await env.DB.prepare('DELETE FROM awd_label_tpl WHERE sku = ?').bind(sku).run();
+  else await env.DB.prepare('INSERT OR REPLACE INTO awd_label_tpl (sku, label, upc, by_user, at) VALUES (?,?,?,?,?)').bind(sku, label, upc, who, at).run();
+  await env.DB.prepare('INSERT INTO awd_label_tpl_log (at, by_user, sku, old_label, old_upc, new_label, new_upc) VALUES (?,?,?,?,?,?,?)').bind(at, who, sku, (old && old.label) || '', (old && old.upc) || '', label, upc).run();
+  return J({ ok: true, sku, label, upc, by: who, at });
 }
 async function awdShipHistory(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
