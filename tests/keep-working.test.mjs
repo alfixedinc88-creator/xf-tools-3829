@@ -9553,6 +9553,27 @@ console.log('\n🧰 AWD prep fix: waits for Amazon\'s answer, names SKUs still m
   check('…page: "↻ Send again for those SKUs" (paste them) + "⚠ Amazon still shows no prep category for …" with what to do', /function awdPrepAgain\(outId\)/.test(ah) && /awdPrepFix\(skus, outId, true\)/.test(ah) && /⚠ Amazon still shows no prep category for /.test(ah), null);
 }
 
+// Owner (2026-10-24): "the Audit is super slow now" — the check went through every SKU Mgr row and every History line again for each
+// column (700 columns: 18 seconds on every ✅ column done). Spots are looked up directly now.
+console.log('\n⚡ Audit speed: column done / SKU Mgr spot / background check stay fast with a lot of columns');
+{
+  const { readFileSync: rfP } = await import('node:fs');
+  const ws = rfP(workerPath, 'utf8');
+  check('the check looks up each spot\'s part #s directly (never every SKU Mgr row / History line again per column)',
+    /\(nowAt\[L\] \|\| \[\]\)\.forEach/.test(ws) && /\(fxAt\[L\] \|\| \[\]\)\.forEach/.test(ws) && !/Object\.keys\(now\)\.forEach\(k => \{ const \[p, l\] = k\.split/.test(ws) && !/Object\.keys\(rcAny\)\.some/.test(ws), null);
+  const ins = sq.prepare('INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES (?,?,?,?,?,?)'), sp = [];
+  for (let i = 1; i <= 400; i++) { const L = 'Z9=1-1-' + i; sp.push(L); for (let j = 0; j < 5; j++) ins.run('880-' + i, 'perf', '880-' + i + '=' + [2, 5, 10, 25, 50][j] + 'X', L, 3, 100); }
+  const il = sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, verified_at) VALUES (?,?,?,?,?,?,?,?,?)"), t0 = Date.parse((await get('/inventory/recount/check?dry=1')).roundStart) + 500; // inside this round
+  for (let i = 0; i < 6000; i++) { const ts = new Date(t0 + i).toISOString(); il.run(ts, 'IN', '880-' + (1 + i % 400) + '=2X', 'Z9=1-1-' + (1 + i % 400), 0, 'PF', '[AUDIT] Confirmed: 3 cases verified correct (📋 Recount)', 'Verified', ts); }
+  const rc = sq.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail, started_at, stopped, recheck) VALUES (?,?,?,?,?,?,?,?,0,0)');
+  sp.forEach((L, i) => { const ts = new Date(t0 + 6000 + i).toISOString(); rc.run(ts, '', L, 'PF', 5, 0, JSON.stringify([2, 5, 10, 25, 50].map(n => ({ part: L.replace('Z9=1-1-', '880-') + '=' + n + 'X', pcs: 100, system: 3, counted: 3, how: 'scan' }))), ts); });
+  let t = performance.now(); const cd = await post('/inventory/recount/column-done', { location: 'Z9=1-1-7', items: 5, changed: 0, detail: [2, 5, 10, 25, 50].map(n => ({ part: '880-7=' + n + 'X', pcs: 100, system: 3, counted: 3, how: 'scan' })) }); const msDone = performance.now() - t;
+  t = performance.now(); await get('/inventory/sku-search?location=Z9=1-1-9'); const msSpot = performance.now() - t;
+  check('…400 more columns × 5 lines, 6,000 History lines: ✅ column done ' + Math.round(msDone) + ' ms, SKU Mgr spot search ' + Math.round(msSpot) + ' ms (each under 3 s; it was 18 s)',
+    cd.ok && msDone < 3000 && msSpot < 3000 && (await get('/inventory/recount/check?dry=1')).columns >= 400, { msDone, msSpot });
+  sq.prepare("DELETE FROM master_list WHERE name = 'perf'").run(); sq.prepare("DELETE FROM inventory_log WHERE initials = 'PF' OR part_num LIKE '880-%'").run(); sq.prepare("DELETE FROM recount_columns WHERE by_user = 'PF' OR location LIKE 'Z9=%'").run();
+}
+
 // Owner (2026-10-24): "Shipment Builder → Shipment Contents: put the time each SKU was put there, so I can arrange by time —
 // easier to find what's on the previous finished pallet (I did that pallet first)".
 console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown and sortable');
