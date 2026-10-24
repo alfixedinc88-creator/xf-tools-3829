@@ -9365,7 +9365,7 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
   check('the list: an ASIN (any case) → every box of its SKU; "ASIN 2" → only 2 boxes; a SKU works too; SKUs not on it keep our template',
     prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
   check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
-    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
+    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED · Box ' \+ seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
       && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);  // Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it".
   const fr = new Function(fnA('awdPrevFromRows') + 'return awdPrevFromRows;')();
   const a1 = fr([['ASIN', 'Title', 'Units', 'Boxes'], ['B0AAA11111', 'Tee', '120', '5'], ['b0bbb22222', 'Cap', '40', ''], ['B0AAA11111', 'Tee', '24', '1'], ['', 'total', '184', '6']]);
@@ -9579,7 +9579,7 @@ console.log('\n📄 AWD box labels with no empty spot: our template on its own l
   const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
   const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
   const W0 = 720, H0 = 1080, texts = [];
-  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage() {},
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {},
     fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
     getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }); // every pixel black = no empty spot anywhere
   const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
@@ -9598,7 +9598,7 @@ console.log('\n📄 AWD box labels with no empty spot: our template on its own l
   await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
   const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
   check('2 full AWD labels (no empty spot) → 4 labels to print: each Amazon label + our own right after it; PREVIOUS PACKED on the 1st, our template on the 2nd; "Box 1 of 324" named on ours',
-    imgs === 4 && texts.some(t => /2-3-4=2XX-\s+·\s+AWD Box 1 of 324|2-3-4=2XX-\s+·\s+Box 1 of 324/.test(t)) && texts.includes('✅ PREVIOUS PACKED') && texts.includes('C1=1-1-1') && texts.some(t => /goes WITH the Amazon label before it/.test(t))
+    imgs === 4 && texts.some(t => /2-3-4=2XX-\s+·\s+Box 1-1\s+\(Box 1 of 324\)/.test(t)) && texts.includes('✅ PREVIOUS PACKED') && texts.includes('C1=1-1-1') && texts.some(t => /goes WITH the Amazon label before it/.test(t))
       && /📄 <b>2<\/b> Amazon labels have no empty spot/.test(out) && /\(4 labels to print\)/.test(out) && /PREVIOUS PACKED on <b>1<\/b> label/.test(out) && !/No template for/.test(out), { imgs, out, texts: texts.slice(0, 12) });
 }
 
@@ -9610,7 +9610,7 @@ console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label
   const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
   const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
   const W0 = 720, H0 = 1080, texts = [], drawn = [];
-  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage(...a) { drawn.push(a); },
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage(...a) { drawn.push(a); }, save() {}, restore() {}, translate() {}, rotate() {},
     fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
     getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }); // every pixel black = no empty spot anywhere
   const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
@@ -9630,12 +9630,48 @@ console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label
   const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
   const scaled = drawn.filter(d => d[0] && d[0].toDataURL && d[3] === Math.round(720 * 0.85) && d[4] === Math.round(1080 * 0.85));
   check('2 full AWD labels → still 2 labels to print: each Amazon label drawn at 85% (top) with PREVIOUS PACKED / our template in the strip under it; says "one label per box"',
-    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED — on the pallet,/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
+    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED · Box 1-1/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
     { imgs, scaled: scaled.length, out });
   check('…a choice (☑ One label per box), remembered on this computer (on unless turned off); off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) !== '0'/.test(ah) && /id="awd-lbl-one" checked/.test(ah), null);
   // Owner (2026-10-24): "I have to scroll all the way down the window to scroll that panel" + the one-label choice was off → on by default.
   check('…☑ One label per box is ON by default (unless turned off); the Shipment Builder\'s right panel scrolls by itself when taller than the window',
     /\.sum-card\{position:sticky;top:88px;max-height:calc\(100vh - 100px\);overflow-y:auto\}/.test(ah), null);
+}
+
+// Owner (2026-10-24): "1. 23-4-1=10- has 5 boxes → 5 labels, number them 5-1 … 5-5. 2. 201-1-9=10- shows Amazon's barcode but we use our
+// manufacturer UPC — only 24-1-1=10– and 23-2-1=10XA use Amazon labels in this shipment. 3. the words under the label are too small".
+console.log('\n🔢 AWD box labels: box N-k numbering, the barcode from the label\'s own FNSKU, big strip text');
+{
+  const { readFileSync: rfL3 } = await import('node:fs');
+  const ah = rfL3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const texts = [], fonts = [], codes = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {},
+    fillText(t) { texts.push(t); fonts.push([t, parseInt(String(this.font).replace(/\D+/, ''))]); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) });
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const pageOf = (sku, fn) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }, { str: 'FNSKU: ' + fn, transform: [1, 0, 0, 1, 10, 380] }] }) });
+  // 23-4-1=10- ×3 (manufacturer barcode: FNSKU = its ASIN) and 24-1-1=10- ×1 (Amazon barcode: X0…)
+  const pdfPages = [pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('24-1-1=10-', 'X001ABCDEF'), pageOf('23-4-1=10-', 'B07BCXWTFX')];
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const amz = [{ sku: '23-4-1=10-', barcode: 'amazon', fnsku: 'X00WRONG01' }]; // the old list says Amazon barcode — the label says otherwise
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdAmzList = () => Promise.resolve(' + JSON.stringify(amz) + '); return awdLabelsDo;')(
+    id => els[id], { shipment: {}, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() }, { open: () => ({ document: { write() {}, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 4, getPage: async p => pdfPages[p - 1] }) }) }),
+    sku => sku === '24-1-1=10-' ? 'Ball valve\n850031110024\nC2=2-2-2' : '5 need label\nTee 1/2"\n850031110001\nC1=1-1-1\nBSMT=3-1-2',
+    () => Promise.reject(new Error('offline')), '', cb => cb(), (c, code) => { codes.push(code); c.width = 300; c.height = 100; }, () => {});
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const boxes = texts.filter(t => /^Box \d+-\d+/.test(t)).map(t => t.match(/^Box (\d+-\d+)/)[1]);
+  check('23-4-1=10- has 3 labels in the PDF → Box 3-1, 3-2, 3-3 (in order, even with another SKU between); 24-1-1=10- → Box 1-1',
+    boxes.join() === '3-1,3-2,1-1,3-3', boxes);
+  check('…the scan barcode comes from the FNSKU on the label: 23-4-1=10- (FNSKU = its ASIN → manufacturer barcode) → our UPC 850031110001, not the old list\'s X00WRONG01; 24-1-1=10- (X0…) → X001ABCDEF',
+    codes.filter(c => c === '850031110001').length === 3 && codes.includes('X001ABCDEF') && !codes.includes('X00WRONG01'), codes);
+  const big = fonts.filter(([t]) => /^Box 3-1/.test(t)).map(x => x[1])[0] || 0, H = 432 * 2.5;
+  check('…one label: the strip under Amazon\'s label is only 3 big lines (box + need label · the spots · the item), the barcode turned on its side on the right; text at least 3.5% of the label height (was ~2%)',
+    big >= H * 0.035 && texts.includes('Box 3-1 · 5 need label') && texts.includes('C1=1-1-1  /  BSMT=3-1-2') && texts.some(t => /^Tee 1\/2"$/.test(t)), { big, min: H * 0.035, t: texts.slice(0, 8) });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
