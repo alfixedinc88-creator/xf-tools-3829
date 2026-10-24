@@ -15270,7 +15270,9 @@ async function awdPrepFix(request, env, session) {
       (d.mskuPrepDetails || []).forEach(x => { have[String(x.msku)] = { category: x.prepCategory || '', types: x.prepTypes || [] }; }); }
     catch (e) { readErr.push(e.message); }
   }
-  const missing = skus.filter(m => !have[m] || !have[m].category || /^(UNKNOWN|)$/i.test(have[m].category));
+  // force (owner 2026-10-24: 3 SKUs still said "missing" in Send to Amazon after being set) = send "No prep needed" for every SKU given,
+  // even when Amazon's list says it has a category (Amazon's own FC_PROVIDED ones are still left out by the retry below).
+  const missing = b.force ? skus.slice() : skus.filter(m => !have[m] || !have[m].category || /^(UNKNOWN|)$/i.test(have[m].category));
   const already = skus.filter(m => !missing.includes(m)).map(m => ({ sku: m, category: have[m].category }));
   if (b.dry || !missing.length) return J({ ok: true, dry: !!b.dry, missing, already, set: [], readErrors: readErr });
   const set = [], errors = [], ops = [], kept = [];
@@ -15291,9 +15293,23 @@ async function awdPrepFix(request, env, session) {
   }
   // Amazon works on it in the background — read back the operation once so a refusal shows here, not only in Seller Central.
   const opStatus = [];
-  for (const id of ops.slice(0, 5)) { try { const d = await awdSpGet(env, token, base + '/operations/' + encodeURIComponent(id)); opStatus.push({ id, status: d.operationStatus || '', problems: (d.operationProblems || []).slice(0, 20) }); } catch (e) { opStatus.push({ id, error: e.message }); } }
+  // Amazon finishes it in the background: wait for its final answer (up to ~20 s), so SKUs it failed on show here.
+  for (const id of ops.slice(0, 5)) {
+    let o = null;
+    for (let t = 0; t < 6; t++) {
+      try { const d = await awdSpGet(env, token, base + '/operations/' + encodeURIComponent(id)); o = { id, status: d.operationStatus || '', problems: (d.operationProblems || []).slice(0, 50) }; } catch (e) { o = { id, error: e.message }; break; }
+      if (o.status !== 'IN_PROGRESS') break;
+      await new Promise(r => setTimeout(r, b.fast ? 0 : 3500));
+    }
+    opStatus.push(o);
+  }
+  // …then read the SKUs back: any still without a category is named (to set by hand or ↻ send again).
+  const still = [];
+  if (set.length) for (let i = 0; i < set.length; i += 100) { const ch = set.slice(i, i + 100), q = new URLSearchParams({ marketplaceId: mid }); ch.forEach(m => q.append('mskus', m));
+    try { const d = await awdSpGet(env, token, base + '/items/prepDetails?' + q.toString()); const got = {}; (d.mskuPrepDetails || []).forEach(x => { got[String(x.msku)] = x.prepCategory || ''; });
+      ch.forEach(m => { if (!got[m] || /^UNKNOWN$/i.test(got[m])) still.push(m); }); } catch (_) {} }
   if (session && session.userId) await logUserActivity(env, session.userId, 'awd_prep_fix', { set: set.length, skus: set.slice(0, 100), errors: errors.length }).catch(() => {});
-  return J({ ok: !errors.length, missing, already: already.concat(kept), kept, set, errors, operations: opStatus, readErrors: readErr });
+  return J({ ok: !errors.length, missing, already: already.concat(kept), kept, set, still, errors, operations: opStatus, readErrors: readErr });
 }
 async function awdShipHistory(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));

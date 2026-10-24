@@ -3364,25 +3364,37 @@ function awdHistCsv() {
 // Amazon's Send to Amazon / AWD: "Prep category is missing" on SKUs never shipped with prep details → set "No prep needed" on Amazon
 // for the shipment's SKUs (the ones that already have a category stay as they are). SKUs: the Shipment Builder's, an open History
 // shipment's, or pasted.
-async function awdPrepFix(skus, outId) {
+async function awdPrepFix(skus, outId, force) {
   const out = ge(outId || 'awd-prep-out') || {};
   if (!skus || !skus.length) skus = Object.keys(S.shipment || {});
   if (!skus.length) { const t = prompt('Paste the SKUs with "Prep category is missing" (one per line, or the Merchant SKU column):', ''); if (!t) return; skus = t.split(/[\n,;\t]+/).map(x => x.trim()).filter(Boolean); }
   out.innerHTML = '⏳ Checking ' + skus.length + ' SKU' + (skus.length === 1 ? '' : 's') + ' on Amazon…';
   try {
-    const call = dry => wFetch(W + '/awd/prep-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus, dry }) }).then(r => r.json());
+    const call = dry => wFetch(W + '/awd/prep-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus, dry, force: !!force }) }).then(r => r.json());
     const d0 = await call(true);
     if (!d0 || !d0.ok) throw new Error((d0 && d0.error) || 'error');
-    if (!d0.missing.length) { out.innerHTML = '<span style="color:#15803D">✅ All ' + skus.length + ' SKUs already have a prep category on Amazon.</span> In Send to Amazon, refresh the page.'; return; }
-    if (!confirm('🧰 ' + d0.missing.length + ' SKU' + (d0.missing.length === 1 ? ' has' : 's have') + ' no prep category on Amazon:\n\n' + d0.missing.slice(0, 30).join('\n') + (d0.missing.length > 30 ? '\n…' : '')
+    if (!d0.missing.length) { out.innerHTML = '<span style="color:#15803D">✅ All ' + skus.length + ' SKUs already have a prep category on Amazon.</span> In Send to Amazon, refresh the page.'
+      + ' <a href="#" onclick="awdPrepAgain(\'' + (outId || 'awd-prep-out') + '\');return false">Still says "missing" there? ↻ Send "No prep needed" again for some SKUs</a>'; return; }
+    if (!force && !confirm('🧰 ' + d0.missing.length + ' SKU' + (d0.missing.length === 1 ? ' has' : 's have') + ' no prep category on Amazon:\n\n' + d0.missing.slice(0, 30).join('\n') + (d0.missing.length > 30 ? '\n…' : '')
       + '\n\nSet them all to "No prep needed"? (' + d0.already.length + ' already have one — not changed)')) { out.innerHTML = 'Nothing changed.'; return; }
     const d = await call(false);
     const probs = (d.operations || []).flatMap(o => o.problems || []);
     out.innerHTML = (d.set.length ? '<span style="color:#15803D">✅ Set "No prep needed" on <b>' + d.set.length + '</b> SKU' + (d.set.length === 1 ? '' : 's') + '.</span> In Send to Amazon, refresh the page (it can take a minute).' : '')
+      + ((d.still || []).length ? '<div style="color:#C2410C">⚠ Amazon still shows no prep category for ' + d.still.length + ': ' + awdH(d.still.join(', ')) + ' — set them by hand in Send to Amazon (click "Prep category is missing")</div>' : '')
+      + ' <a href="#" onclick="awdPrepAgain(\'' + (outId || 'awd-prep-out') + '\');return false" style="font-size:11px">Some still say "missing" in Send to Amazon? ↻ Send again for those SKUs</a>'
       + ((d.kept || []).length ? '<div style="color:#6B7280">ℹ ' + d.kept.length + ' already had Amazon\'s own prep category — left as they are: ' + awdH(d.kept.map(k => k.sku + ' (' + k.category + ')').join(', ')) + '</div>' : '')
       + ((d.errors || []).length ? '<div style="color:#DC2626">✗ Amazon refused: ' + awdH(d.errors.map(e => e.error).join(' · ')) + '</div>' : '')
       + (probs.length ? '<div style="color:#C2410C">⚠ ' + awdH(probs.map(p => (p.message || p.code || '') + (p.details ? ' (' + p.details + ')' : '')).join(' · ')) + '</div>' : '');
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">✗ ' + awdH(e.message) + '</span>'; }
+}
+
+// ↻ Owner (2026-10-24): "now it shows 'Prep category is missing' on these 3" — paste them, "No prep needed" is sent again even if Amazon
+// lists a category for them.
+function awdPrepAgain(outId) {
+  const t = prompt('Paste the SKUs that still say "Prep category is missing" in Send to Amazon (one per line, e.g. 202-1-16=10XX-):', '');
+  if (!t) return;
+  const skus = t.split(/[\n,;\t ]+/).map(x => x.trim()).filter(x => x && /\d/.test(x));
+  if (skus.length && confirm('Send "No prep needed" again for ' + skus.length + ' SKU' + (skus.length === 1 ? '' : 's') + '?\n\n' + skus.join('\n'))) awdPrepFix(skus, outId, true);
 }
 
 // ── EXPORT SHIPMENT (.txt or .xlsx) ──

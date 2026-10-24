@@ -9500,5 +9500,30 @@ console.log('\n🧰 AWD prep fix: SKUs Amazon already set (FC_PROVIDED) are left
     d.ok && d.set.length === 146 && !d.set.some(m => FC.has(m)) && (d.kept || []).map(k => k.sku + ' ' + k.category).sort().join() === '25-1-5=25X- FC_PROVIDED,25-1-6=25X- FC_PROVIDED' && !(d.errors || []).length && posted.length === 3, { set: d.set.length, kept: d.kept, errors: d.errors, posts: posted.map(p => p.length) });
 }
 
+// Owner (2026-10-24, screenshot): after "Set No prep needed on 146", Send to Amazon still shows "Prep category is missing" on
+// 202-1-16=10XX-, 202-1-17=10XX-, 202-1-17=2XX-. Wait for Amazon's final answer, name the ones still missing, and send again on request.
+console.log('\n🧰 AWD prep fix: waits for Amazon\'s answer, names SKUs still missing, ↻ send again (force)');
+{
+  const realFetch = globalThis.fetch, posted = []; let polls = 0;
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  globalThis.fetch = async (u, o) => { const x = String(u), J = (b, st) => new Response(JSON.stringify(b), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (x.includes('api.amazon.com/auth')) return J({ access_token: 't', expires_in: 3600 });
+    if (x.includes('/items/prepDetails') && (!o || !o.method || o.method === 'GET')) // Amazon's list says they have NONE — except 202-1-17=2XX- after the failed op
+      return J({ mskuPrepDetails: new URL(x).searchParams.getAll('mskus').map(k => k === '202-1-17=2XX-' && posted.length ? { msku: k } : { msku: k, prepCategory: 'NONE' }) });
+    if (x.includes('/items/prepDetails') && o.method === 'POST') { posted.push(JSON.parse(o.body)); return J({ operationId: 'op3' }); }
+    if (x.includes('/operations/op3')) { polls++; return J(polls < 2 ? { operationStatus: 'IN_PROGRESS' } : { operationStatus: 'FAILED', operationProblems: [{ code: 'BadRequest', message: 'msku 202-1-17=2XX- failed', severity: 'ERROR' }] }); }
+    return realFetch(u, o); };
+  const skus = ['202-1-16=10XX-', '202-1-17=10XX-', '202-1-17=2XX-'];
+  const dry = await post('/awd/prep-fix', { skus, dry: true });
+  const d = await post('/awd/prep-fix', { skus, force: true, fast: true });
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+  check('Amazon lists a category for all 3 → nothing to set (normal); ↻ send again (force) → all 3 sent; waits past IN_PROGRESS for the final answer (FAILED + why); names 202-1-17=2XX- as still missing',
+    dry.ok && !dry.missing.length && d.set.length === 3 && posted.length === 1 && posted[0].mskuPrepDetails.length === 3 && polls === 2 && d.operations[0].status === 'FAILED' && d.operations[0].problems.length === 1
+      && (d.still || []).join() === '202-1-17=2XX-', { dry: dry.missing, set: d.set, polls, ops: d.operations, still: d.still });
+  const { readFileSync: rfP3 } = await import('node:fs');
+  const ah = rfP3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('…page: "↻ Send again for those SKUs" (paste them) + "⚠ Amazon still shows no prep category for …" with what to do', /function awdPrepAgain\(outId\)/.test(ah) && /awdPrepFix\(skus, outId, true\)/.test(ah) && /⚠ Amazon still shows no prep category for /.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
