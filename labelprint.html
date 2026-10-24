@@ -275,6 +275,12 @@ window.lpCredLogin = async function() {
         onkeydown="if(event.key==='Enter') lpPrintSingle()">
       <button class="lp-btn lp-btn-primary" onclick="lpPrintSingle()">🖨️ Print</button>
     </div>
+    <!-- ⬆ / ⬇ Owner (2026-10-24): up and down columns on the same row — an arrow on the location label tells which is which. -->
+    <div id="lp-arrow-row" style="display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">Arrow on the label:</span>
+      <button type="button" class="lp-btn lp-btn-secondary lp-arrow-btn" data-a="" onclick="lpSetArrow('')" style="padding:6px 12px">No arrow</button>
+      <button type="button" class="lp-btn lp-btn-secondary lp-arrow-btn" data-a="up" onclick="lpSetArrow('up')" style="padding:6px 14px;font-size:16px">⬆ Up</button>
+      <button type="button" class="lp-btn lp-btn-secondary lp-arrow-btn" data-a="down" onclick="lpSetArrow('down')" style="padding:6px 14px;font-size:16px">⬇ Down</button>
+      <span style="font-size:11px;color:var(--text3)">(location labels; a part # label prints without it)</span></div>
     <div style="display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">How many of each:</span><button class="lp-btn lp-btn-secondary" style="padding:6px 12px" onclick="lpCopiesStep('lp-single-copies',-1)">−</button><input id="lp-single-copies" type="number" min="1" max="99" value="1" inputmode="numeric" style="width:64px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;text-align:center;font-family:var(--mono)"><button class="lp-btn lp-btn-secondary" style="padding:6px 12px" onclick="lpCopiesStep('lp-single-copies',1)">+</button><button class="lp-btn lp-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="lpCopiesSet('lp-single-copies',1)">1</button><button class="lp-btn lp-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="lpCopiesSet('lp-single-copies',2)">2</button><button class="lp-btn lp-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="lpCopiesSet('lp-single-copies',5)">5</button><button class="lp-btn lp-btn-secondary" style="padding:6px 10px;font-size:12px" onclick="lpCopiesSet('lp-single-copies',10)">10</button></div>
     <div id="lp-single-status" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
   </div>
@@ -568,7 +574,7 @@ window.lpCredLogin = async function() {
     var printer = lpPrinters[idx];
     if (!printer) { if(status) status.textContent = 'No printer selected'; return; }
     var n = lpCopies('lp-single-copies');
-    var zpl = lpGenZPL(loc, n);
+    var zpl = lpGenZPL(loc, n, window.lpSingleArrow || '');
     // A SKU (starts with a number, e.g. 26-3-6=10X) → its own label: bigger part #, wider bars, the item name under
     // the barcode (owner). A location (BARN=1-1-2, C1=…) prints as before.
     var isSku = /^\d/.test(loc.replace(/^'/, '')), name = '';
@@ -665,18 +671,42 @@ window.lpCredLogin = async function() {
     var w = modules * by;
     return { by: by, width: w, x: Math.max(0, Math.round((s.width - w) / 2) + (s.barShift || 0)) };
   }
+  window.lpSingleArrow = '';
+  window.lpSetArrow = function(a) {
+    window.lpSingleArrow = a || '';
+    document.querySelectorAll('.lp-arrow-btn').forEach(function(b) { var on = (b.getAttribute('data-a') || '') === window.lpSingleArrow;
+      b.style.background = on ? '#1D4ED8' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? '#1D4ED8' : ''; });
+  };
+  setTimeout(function() { if (window.lpSetArrow) lpSetArrow(''); }, 0);
   window.lpCopies = function(id) { var el = g(id); var n = parseInt(el && el.value) || 1; n = Math.max(1, Math.min(99, n)); if (el) el.value = n; return n; };
   window.lpCopiesStep = function(id, d) { var el = g(id); if (el) { el.value = Math.max(1, Math.min(99, (parseInt(el.value) || 1) + d)); } };
   window.lpCopiesSet = function(id, n) { var el = g(id); if (el) el.value = n; };
-  function lpGenZPL(loc, copies) {
+  // ⬆ / ⬇ Owner (2026-10-24): "some columns have the up and the down column on the same row — an arrow up / down on the label, so they
+  // know which column number is for which one". A filled arrow on BOTH sides of the location name; the barcode keeps the full width
+  // (its bars stay as wide as without the arrow, so it scans the same).
+  function lpArrowZPL(dir, x, y, w, h) {
+    var cx = x + Math.round(w / 2), head = Math.max(8, Math.min(Math.round(h * 0.5), 64)), out = [];
+    for (var i = 0; i < head; i += 3) { // the head: stacked bars, narrow at the tip
+      var bw = Math.max(3, Math.round(3 + ((w - 3) * i) / head)), yy = dir === 'up' ? y + i : y + h - i - 3;
+      out.push('^FO' + Math.round(cx - bw / 2) + ',' + yy + '^GB' + bw + ',3,3^FS');
+    }
+    var sw = Math.max(8, Math.round(w * 0.36));
+    out.push('^FO' + Math.round(cx - sw / 2) + ',' + (dir === 'up' ? y + head : y) + '^GB' + sw + ',' + (h - head) + ',' + sw + '^FS'); // the shaft
+    return out;
+  }
+  function lpGenZPL(loc, copies, arrow) {
     var s          = lpGetSettings();
     var barcodeVal = loc.replace(/^'/, '');
     var bl         = lpBarcodeLayout(barcodeVal, s);
+    var A          = arrow === 'up' || arrow === 'down' ? 50 : 0; // room for an arrow each side of the name
     // Location name as big as fits across the label (owner: "for the location, I want the word to be big too"),
     // never smaller than the Text size setting; the barcode moves down under it and keeps its height if there's room.
-    var ts   = Math.max(s.textSize, Math.min(64, Math.floor((s.width - 16) / (0.62 * Math.max(1, barcodeVal.length)))));
+    var ts   = Math.max(s.textSize, Math.min(64, Math.floor((s.width - 2 * A - 16) / (0.62 * Math.max(1, barcodeVal.length)))));
     var barY = Math.max(s.barY, s.textY + ts + 6);
     var barH = Math.max(40, Math.min(s.barHeight, s.height - barY - 6));
+    // full label height when the barcode leaves room at the sides (most locations); else as tall as the name
+    var ah   = bl.x >= A - 4 ? s.height - s.textY - 10 : Math.max(30, Math.min(barY - s.textY - 4, 64));
+    var arr  = A ? lpArrowZPL(arrow, 4, s.textY, A - 10, ah).concat(lpArrowZPL(arrow, s.width - A + 6, s.textY, A - 10, ah)) : [];
     return [
       '^XA',
       '^MMT',
@@ -685,12 +715,12 @@ window.lpCredLogin = async function() {
       '^LL' + s.height,
       '^MD' + s.darkness,
       '^LS0',
-      '^CI28',
-      '^FO0,' + s.textY + '^FB' + s.width + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + barcodeVal + '^FS',
+      '^CI28'].concat(arr, [
+      '^FO' + A + ',' + s.textY + '^FB' + (s.width - 2 * A) + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + barcodeVal + '^FS',
       '^FO' + bl.x + ',' + barY + '^BY' + bl.by + ',3,' + barH + '^BCN,' + barH + ',N,N,N^FD' + barcodeVal + '^FS',
       '^PQ' + Math.max(1, parseInt(copies) || 1),
       '^XZ'
-    ].join('\n');
+    ]).join('\n');
   }
 
   // 🏷 SKU label (owner: "give the name of the SKU, and make it a little bigger — 26-3-6 was too small"): the part #
