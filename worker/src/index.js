@@ -10521,6 +10521,10 @@ const _app = {
       if (path === '/inventory/stockout-resolve' && method === 'POST') {
         return await inventoryResolveStockout(request, env);
       }
+      // Pull List cases changed (e.g. 2 → 1, no more stock): the report shows the new number, old one kept with who / when.
+      if (path === '/inventory/stockout-qty' && method === 'POST') {
+        return await inventoryStockoutQty(request, env, session);
+      }
       // Stock Out "Save For Later" pull batches (see the big comment above
       // inventoryPullBatchSave) — same "any valid session" access level as
       // the routes right above, since this is routine floor work.
@@ -22952,6 +22956,10 @@ async function _ensureShipD1TablesRun(env) {
   // old one-button-per-item flow that only ever implied "1". Existing rows
   // predate this column and get NULL, which the read side treats as 1.
   await env.DB.prepare('ALTER TABLE ship_stockout_log ADD COLUMN quantity INTEGER').run().catch(()=>{});
+  // Cases changed on the Pull List after the report came in (POST /inventory/stockout-qty): the first
+  // reported number is kept in orig_quantity, plus who changed it and when.
+  for (const c of ['orig_quantity REAL', 'qty_changed_by TEXT', 'qty_changed_at TEXT'])
+    await env.DB.prepare('ALTER TABLE ship_stockout_log ADD COLUMN ' + c).run().catch(()=>{});
   // "No Stock Found" log — deliberately separate from ship_stockout_log
   // above. A stock-out report means the SYSTEM still thinks there's stock
   // but the picker couldn't find it on the shelf — a real discrepancy
@@ -24658,10 +24666,42 @@ async function inventoryGetStockouts(url, env) {
     reportedBy: r.reported_by || '', status: r.status || 'open',
     resolvedBy: r.resolved_by || '', resolvedAt: r.resolved_at || '',
     quantity: r.quantity != null ? r.quantity : 1, // pre-quantity-column rows read back as 1
+    origQuantity: r.orig_quantity != null ? r.orig_quantity : null, qtyChangedBy: r.qty_changed_by || '', qtyChangedAt: r.qty_changed_at || '',
   }));
   return cors(new Response(JSON.stringify({ ok: true, stockouts: out, count: out.length }), {
     headers: { 'Content-Type': 'application/json' }
   }));
+}
+
+// ── POST /inventory/stockout-qty ─────────────────────────────────────────────
+// The picker changed the cases of a Pull List item that came from this report (e.g. the report said 2 boxes,
+// only 1 is left, so they made it 1). The report then shows "Need 1 cs (was 2)". Only the report's number
+// changes — no stock is moved here (the Stock Out itself is logged when the item is grabbed). The first
+// reported number stays in orig_quantity. Setting the same number again is a no-op, so a resend can't hurt.
+async function inventoryStockoutQty(request, env, session) {
+  await ensureShipD1Tables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  // Saved on the phone with no WiFi (📶 outbox): the same _requestId is only applied once.
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/stockout-qty'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const id = parseInt(b.id, 10);
+  const q = Math.round((parseFloat(b.quantity) || 0) * 100) / 100;
+  if (!id || !(q > 0)) return fail({ ok: false, error: 'id and quantity > 0 required' }, 400);
+  const row = await env.DB.prepare('SELECT id, status, quantity, orig_quantity FROM ship_stockout_log WHERE id = ?').bind(id).first();
+  if (!row) return fail({ ok: false, error: 'Stock Out Report not found' }, 404);
+  const was = row.quantity != null ? parseFloat(row.quantity) : 1;
+  let res;
+  if (was === q) res = { ok: true, unchanged: true, quantity: q };
+  else {
+    const orig = row.orig_quantity != null ? row.orig_quantity : was;
+    await env.DB.prepare('UPDATE ship_stockout_log SET quantity = ?, orig_quantity = ?, qty_changed_by = ?, qty_changed_at = ? WHERE id = ?')
+      .bind(q, orig, String((session && (session.displayName || session.username)) || b.by || '').slice(0, 60), new Date().toISOString(), id).run();
+    res = { ok: true, quantity: q, was, origQuantity: orig };
+  }
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 
 // ── POST /inventory/stockout-resolve ─────────────────────────────────────────

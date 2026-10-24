@@ -9754,5 +9754,38 @@ console.log('\n🏷 Amazon-barcode listings: 🔄 checked live with Amazon (FNSK
   sq.exec("DELETE FROM fba_catalog WHERE sku IN ('201-1-9=10-','24-1-1=10-','23-2-1=10XA'); DELETE FROM amazon_barcode_live; DELETE FROM upc WHERE sku = '23-2-1=10XA'");
 }
 
+// Owner (2026-10-24): "for 'picking' one complain when there's no more of the inventory, we know we put the requirement for to start
+// with 2 boxes, but when they change it to 1 box, over the 'stock out reports' still showing 2 boxes they need to grab".
+console.log('\n📋 Stock Out Reports: cases changed on the Pull List (2 → 1) show on the report, was 2 + who kept');
+{
+  await get('/inventory/stockouts?status=open'); // makes the table
+  const rid = sq.prepare("INSERT INTO ship_stockout_log (date, timestamp, tracking, order_num, sku, bin_location, carrier, reported_by, status, quantity) VALUES ('2026-10-24','2026-10-24T14:00:00Z','1ZSOQTY','#SOQ','30-3-4=10','C2-1-1','UPS','AB','open',2)").run().lastInsertRowid;
+  const one = async () => ((await get('/inventory/stockouts?status=open')).stockouts || []).find(r => r.id === Number(rid)) || {};
+  const r0 = await one();
+  const u1 = await post('/inventory/stockout-qty', { id: Number(rid), quantity: 1, _requestId: 'soq-1' });
+  const r1 = await one();
+  const dup = await post('/inventory/stockout-qty', { id: Number(rid), quantity: 1, _requestId: 'soq-1' });
+  const u2 = await post('/inventory/stockout-qty', { id: Number(rid), quantity: 1.5, _requestId: 'soq-2' });
+  const r2 = await one();
+  const bad = await post('/inventory/stockout-qty', { id: Number(rid), quantity: 0 });
+  check('before: the report says Need 2 cs; picker makes it 1 → the report says 1, was 2, who + when kept; the same send again is applied once; 1.5 later keeps "was 2"; 0 is refused',
+    r0.quantity === 2 && r0.origQuantity == null && u1.ok && u1.was === 2 && r1.quantity === 1 && r1.origQuantity === 2 && !!r1.qtyChangedBy && !!r1.qtyChangedAt
+      && dup.ok && r2.quantity === 1.5 && r2.origQuantity === 2 && u2.was === 1 && bad.ok === false, { r0, r1, r2, u1, dup, bad });
+  const outbox = await post('/inventory/outbox/check', { ids: ['soq-1'] });
+  check('…📶 sent from the phone\'s outbox: the check says saved (never "Not in History — sending again")', outbox.ok && outbox.results['soq-1'].state === 'saved', outbox);
+  sq.prepare('DELETE FROM ship_stockout_log WHERE id = ?').run(rid);
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = n => (ih.match(new RegExp('  function ' + n + '\\([^]*?\\n  \\}')) || [''])[0];
+  const lib = new Function('invPullList', 'invEsc', fn('invStockoutPullQty') + fn('invStockoutQtyOf') + fn('invStockoutWasHtml') + '; return { pq: invStockoutPullQty, q: invStockoutQtyOf, was: invStockoutWasHtml };');
+  const L = lib([{ sourceStockoutId: 7, cases: '1' }, { sourceStockoutId: 7, cases: 0.5 }, { sourceStockoutId: 7, cases: 2, noneFound: true }, { sourceStockoutId: 8, cases: 3 }, { cases: 4 }], x => String(x));
+  check('…the new number = this Pull List\'s cases from that report (2 spots add up, None Found counts 0, other reports not mixed in); badge "was 2 · Ann"; old reports (no number) = 1',
+    L.pq(7) === 1.5 && L.pq(8) === 3 && L.pq(9) === null && L.q({ quantity: 2 }) === 2 && L.q({}) === 1 && /was 2 · Ann/.test(L.was({ quantity: 1, origQuantity: 2, qtyChangedBy: 'Ann' })) && L.was({ quantity: 2 }) === '',
+    { a: L.pq(7), b: L.pq(8) });
+  check('…the Pull List cases box sends it (through the 📶 outbox), the report card + Resolved history show it',
+    /if \(invPullList\[i\]\.sourceStockoutId\) invStockoutQtyQueue\(invPullList\[i\]\.sourceStockoutId\);/.test(ih) && /invPost\(W \+ '\/inventory\/stockout-qty'/.test(ih)
+      && /cs<\/span>' \+ invStockoutWasHtml\(s\);/.test(ih) && /' \(was ' \+ \(Math\.round\(s\.origQuantity \* 100\) \/ 100\)/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
