@@ -1020,6 +1020,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
                 <th class="r">Case Pack / Export Qty</th><th>Label</th>
+                <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="bldToggleSort('time')" title="When this SKU was put in the shipment — tap to sort">🕒 Added <span id="bld-sort-time" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th>
                 <th></th>
               </tr></thead><tbody id="bld-tbody"></tbody></table></div>
             </div>
@@ -1588,7 +1589,7 @@ function findRow(sku){
   var normalized = normalizeSkuForMatch(sku);
   return S.joined.find(function(r){ return normalizeSkuForMatch(r.sku) === normalized; });
 }
-function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};saveShipmentToSheet();}
+function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0,addedAt:new Date().toISOString()};saveShipmentToSheet();} // 🕒 when it was put in (owner 2026-10-24)
 
 function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
@@ -1625,7 +1626,7 @@ function bldManualAdd(){
   const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
   const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
   if(existing&&name)row.name=name;
-  S.shipment[sku]={row,qty};
+  S.shipment[sku]={row,qty,addedAt:new Date().toISOString()};
   updateBadges();renderRecs();renderInv();renderBuilder();saveShipmentToSheet();
   awd_planner_toast('Added: '+sku,'success');
   ge('bld-manual-sku').value='';ge('bld-manual-name').value='';ge('bld-manual-qty').value='0';
@@ -1643,12 +1644,16 @@ function invAddToBuilder(sku){
 
 
 var _bldSortDir = 0; // 0=none, 1=asc, -1=desc
-function bldToggleSort(){
-  _bldSortDir = _bldSortDir === 1 ? -1 : 1;
-  var arrow = ge('bld-sort-arrow');
-  if(arrow) arrow.innerHTML = _bldSortDir === 1 ? '&#9650;' : '&#9660;';
+var _bldSortKey = 'sku'; // 'sku' | 'time' (🕒 Added, owner 2026-10-24: "arrange by the time we put it there")
+function bldToggleSort(key){
+  key = key || 'sku';
+  _bldSortDir = _bldSortKey === key && _bldSortDir === 1 ? -1 : 1; _bldSortKey = key;
+  var arrow = ge('bld-sort-arrow'), ta = ge('bld-sort-time');
+  if(arrow) arrow.innerHTML = key === 'sku' ? (_bldSortDir === 1 ? '&#9650;' : '&#9660;') : '&#8645;';
+  if(ta) ta.innerHTML = key === 'time' ? (_bldSortDir === 1 ? '&#9650;' : '&#9660;') : '&#8645;';
   renderBuilder();
 }
+function bldAddedTxt(iso) { if (!iso) return ''; try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
 // ── SHARED BULK POOL ALLOCATION ──
 // FIX: confirmed real bug — when multiple pack-size variants of the
 // same base SKU are all in the shipment builder, each one's "bulk
@@ -1852,7 +1857,9 @@ function renderBuilder(){
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
   let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
-  if(_bldSortDir!==0) filt=filt.slice().sort(([a],[b])=>_bldSortDir*a.localeCompare(b));
+  if(_bldSortDir!==0) filt=filt.slice().sort(_bldSortKey==='time'
+    ? ([a,x],[b,y])=>_bldSortDir*(String(x.addedAt||'').localeCompare(String(y.addedAt||''))||a.localeCompare(b)) // no time (put in before 10-24) = oldest
+    : ([a],[b])=>_bldSortDir*a.localeCompare(b));
   ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
   { var fw = ge('bld-fam-warn'); if (!fw) { fw = document.createElement('div'); fw.id = 'bld-fam-warn'; var bb = ge('bld-body'); if (bb) bb.insertBefore(fw, bb.firstChild); } if (fw) fw.innerHTML = awdFamWarnHtml(); }
   const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
@@ -1923,8 +1930,9 @@ function renderBuilder(){
       <td>${lPrefix
         ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
+      <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>${awdStockRow(r, 8)}`;
+    </tr>${awdStockRow(r, 9)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
@@ -3146,11 +3154,11 @@ function saveShipmentToSheet() {
         // Clear the sheet
         await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
           method: 'PUT', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({values: [['sku','qty']]})
+          body: JSON.stringify({values: [['sku','qty','added']]})
         });
         return;
       }
-      const values = [['sku','qty'], ...items.map(([sku,i]) => [sku, i.qty])];
+      const values = [['sku','qty','added'], ...items.map(([sku,i]) => [sku, i.qty, i.addedAt || ''])];
       await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
@@ -3173,7 +3181,7 @@ async function loadShipmentFromSheet() {
       if (!sku || sku === 'sku') return;
       const r = findRow(sku);
       if (r) {
-        S.shipment[sku] = {row: r, qty: qty};
+        S.shipment[sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
         loaded++;
       }
     });
@@ -3317,7 +3325,7 @@ function buildLabelCopyText(amazonSku, casePrefix) {
 function awdHistSave(name, format, items) {
   const list = items.map(([sku, i]) => {
     const cp = S.cpackMap[sku.toUpperCase()], hasCP = cp && cp.unitsPerBox > 0, boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : 0;
-    return { sku, name: (i.row && i.row.name) || '', qty: i.qty, units: hasCP ? boxes * cp.unitsPerBox : i.qty, unitsPerBox: hasCP ? cp.unitsPerBox : 0, boxes, label: (S.tplPrefix || {})[sku.toUpperCase()] || '' };
+    return { sku, name: (i.row && i.row.name) || '', qty: i.qty, units: hasCP ? boxes * cp.unitsPerBox : i.qty, unitsPerBox: hasCP ? cp.unitsPerBox : 0, boxes, label: (S.tplPrefix || {})[sku.toUpperCase()] || '', addedAt: i.addedAt || '' };
   });
   const rid = 'awdship-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   const send = n => wFetch(W + '/awd/ship-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, format, items: list, _requestId: rid }) })
