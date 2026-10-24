@@ -1931,7 +1931,7 @@ function renderBuilder(){
         ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span> <button class="btn btn-sm btn-secondary awd-tpl-edit" style="padding:2px 6px;font-size:11px" title="Change the box template (units per box, weight, size)" onclick="openAddTemplateModal('${esc(sku)}', true)">✏️</button>`
         : `<span class="cp-pill missing" style="cursor:pointer;text-decoration:underline" onclick="openAddTemplateModal('${esc(sku)}')" title="Click to add a case pack template for this SKU">No template — click to add</span>`}</td>
       <td>${lPrefix
-        ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button> <button class="btn btn-sm btn-secondary awd-tpl-edit" title="See / edit this SKU's template" style="font-size:11px;padding:2px 6px${(AWD_DB.tpl || {})[normalizeAmazonSKU(sku).toUpperCase()] ? ';color:#7C3AED;border-color:#C4B5FD' : ''}" onclick="awdTplEdit('${esc(sku)}','${esc(lPrefix)}')">✏️</button>`
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
       <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
@@ -2648,6 +2648,7 @@ const AWD_DB = {
   awdMaster:      [],   // {partNum, upc, location, label}
   fnskuToPartNum: {},   // FNSKU → partNum  (from FBA_Live col A+B)
   partNumToFnsku: {},   // partNum → FNSKU
+  tpl:            {},   // ✏️ edited templates: AMAZON SKU (no trailing "-") → { label, upc, by, at }
   loaded: false,
 };
 
@@ -3323,6 +3324,7 @@ async function loadAWDPlannerDB() {
       AWD_DB.partNumToFnsku[partNum.toUpperCase()]     = fnsku;
     });
 
+    await awdTplLoad();
     AWD_DB.loaded = true;
     console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows,', Object.keys(AWD_DB.fnskuToPartNum).length, 'FNSKUs');
   } catch(e) {
@@ -3358,6 +3360,71 @@ function getAWDWarehouseName(baseSkuStr) {
   return '';
 }
 
+// ✏️ The label line + UPC of an Amazon SKU's template, and where they came from. Owner (2026-10-24): "23-2-1=10XA's template said
+// 1=3/4XB, but that listing is 10=3/4XB". The AWD_Master row is found by: its Amazon SKU (col H) → its part # → a row with the SAME
+// pack number (10XA → 10) → (last) any row of the same base, then the SKU's own pack number is used and it is flagged to check.
+// It used to take the FIRST row of the base (a pack of 1). An edited template (✏️, kept on the server) wins over all of it.
+function awdTplInfo(amazonSku) {
+  const norm = normalizeAmazonSKU(amazonSku), base = baseSKU_awd(norm);
+  const packNo = x => { const m = /=\s*(\d+(?:\.\d+)?)/.exec(String(x || '')); return m ? m[1] : ''; };
+  const pn = r => String(r.partNum || r[6] || '').trim().toLowerCase(), sk = r => normalizeAmazonSKU(r.sku || r[7] || '');
+  const search = arr => { if (!arr || !arr.length) return null;
+    let m = arr.find(r => sk(r) && sk(r) === norm); if (m) return { r: m, how: 'Amazon SKU' };
+    m = arr.find(r => pn(r) === norm); if (m) return { r: m, how: 'part #' };
+    m = packNo(norm) && arr.find(r => baseSKU_awd(pn(r)) === base && packNo(pn(r)) === packNo(norm)); if (m) return { r: m, how: 'same pack number' };
+    m = arr.find(r => baseSKU_awd(pn(r)) === base); return m ? { r: m, how: 'another pack size' } : null; };
+  const hit = search(AWD_DB.awdMaster) || (typeof DB !== 'undefined' && DB && DB.awdMaster ? search(DB.awdMaster) : null);
+  let label = '', upc = '', from = '', guessed = false;
+  if (hit) {
+    const partNum = String(hit.r.partNum || hit.r[6] || '').trim();
+    upc = String(hit.r.upc || hit.r[2] || '').trim();
+    // Rebuild label: suffix=warehouseName (same as cardAWD in warehouse app)
+    let suffix = partNum.includes('=') ? partNum.split('=')[1].trim() : partNum.trim();
+    const basePart = partNum.includes('=') ? partNum.split('=')[0].trim() : partNum.trim();
+    if (hit.how === 'another pack size') { guessed = true; if (packNo(norm)) suffix = packNo(norm); } // never another pack's number
+    const whName = getAWDWarehouseName(basePart);
+    label = whName ? (suffix + '=' + whName) : suffix;
+    from = partNum + ' (AWD_Master, by ' + hit.how + ')';
+  }
+  const ed = (AWD_DB.tpl || {})[norm.toUpperCase()];
+  return { label: ed && ed.label ? ed.label : label, upc: ed && ed.upc ? ed.upc : upc, autoLabel: label, autoUpc: upc, from, guessed, edited: ed || null };
+}
+async function awdTplLoad() {
+  try { const d = await wFetch(W + '/awd/label-template').then(r => r.json()); if (d && d.ok) { AWD_DB.tpl = {}; (d.list || []).forEach(x => { AWD_DB.tpl[x.sku] = x; }); } } catch (e) { console.error('[XFITTING] templates', e); }
+}
+// ✏️ See / edit one SKU's template: the whole template as it prints, the label line + UPC can be changed (blank = worked out).
+function awdTplEdit(sku, prefix) {
+  const x = awdTplInfo(sku), e = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let ov = ge('awd-tpl-ov'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'awd-tpl-ov';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:40px 12px;overflow:auto';
+  ov.innerHTML = '<div style="background:#fff;color:#111827;border-radius:12px;max-width:520px;width:100%;padding:16px;font-size:13px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><b style="font-size:15px">✏️ Template · <span style="font-family:monospace">' + e(sku) + '</span></b><button type="button" class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="ge(\'awd-tpl-ov\').remove()">✕</button></div>'
+    + '<div style="font-size:11px;color:#6B7280;margin-bottom:4px">How it prints now:</div><pre id="awd-tpl-pre" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;padding:8px;font-size:14px;font-weight:700;white-space:pre-wrap;margin:0 0 8px">' + e(buildLabelCopyText(sku, prefix) || '(nothing found for this SKU)') + '</pre>'
+    + (x.guessed ? '<div style="color:#C2410C;font-weight:700;margin-bottom:6px">⚠ No AWD_Master row for this SKU or its pack number — made from ' + e(x.from) + '. Check it, and fix it below if it\'s wrong.</div>' : '')
+    + '<div style="font-size:11px;color:#6B7280;margin-bottom:8px">Worked out: <b>' + e(x.autoLabel || '—') + '</b> · UPC <b>' + e(x.autoUpc || '—') + '</b>' + (x.from ? ' · from ' + e(x.from) : '') + '</div>'
+    + '<label style="display:block;font-weight:700;margin-bottom:2px">Label line</label><input id="awd-tpl-label" class="cfg-inp" style="width:100%;margin-bottom:6px" value="' + e(x.edited && x.edited.label || '') + '" placeholder="' + e(x.autoLabel || 'e.g. 10=3/4XB') + '  (blank = worked out)">'
+    + '<label style="display:block;font-weight:700;margin-bottom:2px">UPC</label><input id="awd-tpl-upc" class="cfg-inp" inputmode="numeric" style="width:100%;margin-bottom:8px" value="' + e(x.edited && x.edited.upc || '') + '" placeholder="' + e(x.autoUpc || '8–14 digits') + '  (blank = worked out)">'
+    + (x.edited ? '<div style="font-size:11px;color:#7C3AED;margin-bottom:6px">✏️ Edited by ' + e(x.edited.by || '?') + ' · ' + e(String(x.edited.at || '').slice(0, 16).replace('T', ' ')) + '</div>' : '')
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn btn-primary" onclick="awdTplSave(' + e(JSON.stringify(sku)) + ',' + e(JSON.stringify(prefix || '')) + ',false)">💾 Save</button>'
+    + (x.edited ? '<button type="button" class="btn btn-secondary" onclick="awdTplSave(' + e(JSON.stringify(sku)) + ',' + e(JSON.stringify(prefix || '')) + ',true)">↺ Back to worked out</button>' : '')
+    + '<button type="button" class="btn btn-secondary" onclick="copyLabelFromBuilder(' + e(JSON.stringify(sku)) + ',' + e(JSON.stringify(prefix || '')) + ')">📋 Copy</button></div>'
+    + '<div id="awd-tpl-msg" style="margin-top:6px;font-size:12px"></div></div>';
+  document.body.appendChild(ov);
+}
+async function awdTplSave(sku, prefix, reset) {
+  const msg = ge('awd-tpl-msg'); if (msg) msg.textContent = 'Saving…';
+  try {
+    const d = await wFetch(W + '/awd/label-template', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sku, label: (ge('awd-tpl-label') || {}).value || '', upc: (ge('awd-tpl-upc') || {}).value || '', reset: !!reset }) }).then(r => r.json());
+    if (!d || !d.ok) { if (msg) { msg.style.color = '#DC2626'; msg.textContent = (d && d.error) || 'Not saved'; } return; }
+    const k = normalizeAmazonSKU(sku).toUpperCase();
+    if (d.label || d.upc) AWD_DB.tpl[k] = { sku: k, label: d.label, upc: d.upc, by: d.by, at: d.at }; else delete AWD_DB.tpl[k];
+    awd_planner_toast(reset ? 'Template back to worked out: ' + sku : 'Template saved: ' + sku, 'success');
+    awdTplEdit(sku, prefix); if (typeof renderBuilder === 'function') renderBuilder();
+  } catch (e) { if (msg) { msg.style.color = '#DC2626'; msg.textContent = 'Not saved — check WiFi'; } }
+}
+
 // ── BUILD LABEL COPY TEXT (AWD Planner version) ──
 // Mirrors warehouse cardAWD logic: label\nupc\nloc1\nloc2...
 // Prepends casePrefix (e.g. "2/1$") as first line
@@ -3366,27 +3433,8 @@ function buildLabelCopyText(amazonSku, casePrefix) {
   const base = baseSKU_awd(norm);
 
   // Find AWD master record — try AWD_DB first, then DB.awdMaster
-  let awdRec = null;
-  const searchAWD = arr => {
-    if (!arr || !arr.length) return null;
-    // exact match on partNum
-    let m = arr.find(r => String(r.partNum||r[6]||'').trim().toLowerCase() === norm);
-    if (!m) m = arr.find(r => baseSKU_awd(String(r.partNum||r[6]||'').trim().toLowerCase()) === base);
-    return m;
-  };
-  awdRec = searchAWD(AWD_DB.awdMaster);
-  if (!awdRec && DB && DB.awdMaster) awdRec = searchAWD(DB.awdMaster);
-
-  let label = '', upc = '';
-  if (awdRec) {
-    const partNum = String(awdRec.partNum || awdRec[6] || '').trim();
-    upc = String(awdRec.upc || awdRec[2] || '').trim();
-    // Rebuild label: suffix=warehouseName (same as cardAWD in warehouse app)
-    const suffix = partNum.includes('=') ? partNum.split('=')[1].trim() : partNum.trim();
-    const basePart = partNum.includes('=') ? partNum.split('=')[0].trim() : partNum.trim();
-    const whName = getAWDWarehouseName(basePart);
-    label = whName ? (suffix + '=' + whName) : suffix;
-  }
+  const info = awdTplInfo(amazonSku);
+  const label = info.label, upc = info.upc;
 
   // Collect locations from WH.stock
   const ws = checkWarehouseStock(amazonSku);
