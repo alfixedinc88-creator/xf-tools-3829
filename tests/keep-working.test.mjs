@@ -8649,7 +8649,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 8\)\}`;/.test(ah), null);
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -9551,6 +9551,23 @@ console.log('\n🧰 AWD prep fix: waits for Amazon\'s answer, names SKUs still m
   const { readFileSync: rfP3 } = await import('node:fs');
   const ah = rfP3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   check('…page: "↻ Send again for those SKUs" (paste them) + "⚠ Amazon still shows no prep category for …" with what to do', /function awdPrepAgain\(outId\)/.test(ah) && /awdPrepFix\(skus, outId, true\)/.test(ah) && /⚠ Amazon still shows no prep category for /.test(ah), null);
+}
+
+// Owner (2026-10-24): "Shipment Builder → Shipment Contents: put the time each SKU was put there, so I can arrange by time —
+// easier to find what's on the previous finished pallet (I did that pallet first)".
+console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown and sortable');
+{
+  const { readFileSync: rfT2 } = await import('node:fs');
+  const ah = rfT2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const line = n => (ah.match(new RegExp('function ' + n + '\\([^\\n]*')) || [''])[0];
+  const S0 = { shipment: {} }; let saved = 0;
+  new Function('S', 'saveShipmentToSheet', line('stage') + '\n; stage({ sku: "30-3-4=10X", recSend: 24 });')(S0, () => { saved++; });
+  const it = S0.shipment['30-3-4=10X'] || {};
+  check('a SKU put in the shipment gets the time it was put in (and is saved)', it.qty === 24 && !isNaN(Date.parse(it.addedAt)) && Date.now() - Date.parse(it.addedAt) < 60000 && saved === 1, it);
+  check('…kept with the shipment (sheet column "added") and read back after a reload; also kept in 🕘 History',
+    /const values = \[\['sku','qty','added'\], \.\.\.items\.map\(\(\[sku,i\]\) => \[sku, i\.qty, i\.addedAt \|\| ''\]\)\];/.test(ah) && /S\.shipment\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
+  check('…"🕒 Added" column (New York time), tap to sort oldest → newest / newest → oldest; SKUs put in before 10-24 show — and sort as oldest',
+    /onclick="bldToggleSort\('time'\)"[^>]*>🕒 Added/.test(ah) && /class="bld-added"/.test(ah) && /_bldSortKey==='time'\s*\n\s*\? \(\[a,x\],\[b,y\]\)=>_bldSortDir\*\(String\(x\.addedAt\|\|''\)\.localeCompare\(String\(y\.addedAt\|\|''\)\)/.test(ah), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
