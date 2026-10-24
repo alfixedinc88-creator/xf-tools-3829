@@ -7213,7 +7213,9 @@ console.log('\n📍 Locations with spaces (PR=1 - 1 - 7) → PR=1-1-7: found by 
   check('a spot with spaces is read without them (PR=1 - 1 - 7 → PR=1-1-7, C1 = 5-2-3 → C1=5-2-3); part #s, words and notes are never changed',
     tight.pr === 'PR=1-1-7' && tight.c1 === 'C1=5-2-3' && tight.part === '8-8-8=10X' && tight.word === 'BACK ROOM' && tight.ok === 'PR=1-1-7'
     && rb.location === 'PR=1-1-7' && rb.toLocation === 'BSMT=3-1-2' && rb.partNum === '24-3-1=10' && rb.notes === 'moved 2 - 3 boxes' && rq === 'PR=2-2-2', { tight, rb, rq });
-  // the saved ones: fixed once on a fresh server start (cases stay the same)
+  // the saved ones: fixed once on a fresh server start (cases stay the same) — rows saved before the 2026-10-24 one-spelling rule
+  // (the database rule fixes new saves at once, so it is off while these old rows are put in)
+  sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_ins"); sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_upd");
   sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('924-3-1','straight valve','924-3-1=10','PR=1 - 1 - 4',3,10), ('924-3-1','straight valve','924-3-1=5','PR=1 - 1 - 5',2,5)").run();
   sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'IN', '924-3-1=10', 'PR=1 - 1 - 4', 3, 'TS', 'spaced', 'Approved')").run(new Date().toISOString());
   sq.prepare("DELETE FROM app_config WHERE key = 'loc_space_fix_20261017'").run();
@@ -9417,6 +9419,34 @@ console.log('\n📍 Recount report: Columns list at the top, no gap before 🏬 
   const iTop = f.indexOf("↻ Refresh</a></div><!--rc-cols-->'"), iOver = f.indexOf("h += '<div class=\"rc-over10\""), iCols = f.indexOf("colsH += '<div style=\"font-weight:800;color:var(--text);margin:12px 0 4px\">📍 Columns (newest first)");
   check('📍 Columns (newest first) goes right under the report\'s first line (before ⏱ over 10 min, By area, By person); the table is only as wide as what\'s in it (What was done next to 🏬 SKU Mgr now)',
     iTop > 0 && iOver > iTop && iCols > 0 && /h = h\.replace\('<!--rc-cols-->', function\(\) \{ return colsH; \}\);/.test(f) && /<table class="rc-cols-table" style="border-collapse:separate;border-spacing:0;width:auto;/.test(f), null);
+}
+
+// Owner (2026-10-24, C1=1-1-21: "I audited it at least two times, right items and quantities — why does SKU Mgr still show different
+// stuff there?"): the same spot saved as "C1=1–1-21" (long dash, typed) and "C1=1-1-21" (the label) = two spots to the database.
+console.log('\n🔤 Look-alike spot names (C1=1–1-21 vs C1=1-1-21) are ONE spot: fixed, with History; SKU Mgr search + Audit see all of it');
+{
+  sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_ins"); sq.exec("DROP TRIGGER IF EXISTS ml_spot_canon_upd"); // rows saved the old way (before the rule)
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('761-1-11','push elbow','761-1-11=2XX','Q8=1–1-21',2,250), ('761-1-11','push elbow','761-1-11=5XX','Q8=1‑1‑21',2,250),
+    ('762-1-10','nipple','762-1-10=5XX','Q8=1-1-21',2,100), ('762-1-10','nipple','762-1-10=OLD','Q8=1-1-21 ',1,100)`).run();
+  const Q = () => sq.prepare("SELECT part_num p, location l, cases c FROM master_list WHERE base_sku IN ('761-1-11','762-1-10') ORDER BY part_num").all();
+  const tot0 = Q().reduce((a, r) => a + r.c, 0);
+  // reads see all 4 already (any spelling), before any clean-up
+  const ph = await get('/inventory/location-search?loc=Q8=1-1-21'), sk = await get('/inventory/sku-search?location=Q8=1–1-21'), sp = await get('/inventory/recount/spot?loc=Q8=1-1-21');
+  check('before the clean-up: the phone\'s column list, SKU Mgr → By Location (typed with a long dash) and the Audit spot screen all show the same 4 lines (6 + 1 cases)',
+    (ph.results || []).length === 4 && (sk.results || []).length === 4 && (sp.skuMgr || []).length === 4, { ph: (ph.results || []).map(x => x.location), sk: (sk.results || []).length, sp: (sp.skuMgr || []).length });
+  const n = (await get('/inventory/recount/check?dry=1')) && sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE notes LIKE '[SPOT NAME FIX]%' AND part_num LIKE '76_-1-1_=%'").get().n;
+  await get('/inventory/recount/report?dry=1'); // the report runs the clean-up (its auto-fix is off with dry=1, the clean-up is not)
+  const after = Q(), h = sq.prepare("SELECT * FROM inventory_log WHERE notes LIKE '[SPOT NAME FIX]%' AND part_num = '761-1-11=2XX'").get() || {};
+  check('…cleaned up: every row now "Q8=1-1-21" (long dash, non-breaking hyphen, no-break space fixed), cases unchanged (' + tot0 + ' = ' + after.reduce((a, r) => a + r.c, 0) + '), each with a History line saying what was wrong',
+    after.every(r => r.l === 'Q8=1-1-21') && after.reduce((a, r) => a + r.c, 0) === tot0 && /"Q8=1–1-21" → "Q8=1-1-21"/.test(h.notes) && /a long dash \/ minus, not "-"/.test(h.notes)
+      && +h.total_before === +h.total_after && sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE notes LIKE '[SPOT NAME FIX]%' AND part_num LIKE '76_-1-1_=%'").get().n === 3, { after, h: h.notes });
+  // …and it can't happen again: any new save with a look-alike spelling is put in the one spelling by the database itself
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('763-1-1','cap','763-1-1=10','Q8=1—1-22 ',1,10)").run();
+  sq.prepare("UPDATE master_list SET location = 'Q8 = 1–1-23' WHERE part_num = '762-1-10=OLD'").run();
+  check('…a new save typed "Q8=1—1-22 " is saved as Q8=1-1-22; a change to "Q8 = 1–1-23" is saved as Q8=1-1-23 (one spelling, whatever screen)',
+    sq.prepare("SELECT location l FROM master_list WHERE part_num = '763-1-1=10'").get().l === 'Q8=1-1-22' && sq.prepare("SELECT location l FROM master_list WHERE part_num = '762-1-10=OLD'").get().l === 'Q8=1-1-23', null);
+  sq.prepare("DELETE FROM master_list WHERE base_sku IN ('761-1-11','762-1-10','763-1-1')").run(); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '76_-1-1%'").run();
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

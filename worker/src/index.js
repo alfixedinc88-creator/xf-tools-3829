@@ -1475,6 +1475,59 @@ function parentOf(p) { return reorderGetBaseSku(String(p || '')).trim().toUpperC
 // master_list's own parent (SKU / base_sku column): the Part # before "=",
 // kept as-is (27-3-4C stays 27-3-4C here; parentOf() is the one that folds C).
 function mlParent(p) { return String(p || '').split('=')[0].trim().toUpperCase(); }
+// 🔤 Owner (2026-10-24, C1=1-1-21: "I audited it at least two times, right items and quantities — why does SKU Mgr still show
+// different stuff there?"): the spot was saved twice with look-alike characters — "C1=1–1-21" (a long dash, typed) and "C1=1-1-21"
+// (the label's normal dash). To the database those were two spots: the audit only ever saw one, SKU Mgr's search the other. One
+// spelling now: long / short dashes and minus signs → "-", a full-width ＝ → "=", no-break / hidden spaces dropped; a spot with "="
+// has no spaces at all (C1= 1 - 1 - 21 = C1=1-1-21). The same rule in JS (spotCanon) and in SQL (sqlSpotCanon) — kept in step.
+const SPOT_DASH = [8208, 8209, 8210, 8211, 8212, 8213, 8722, 65112, 65123, 65293], SPOT_GONE = [8203, 8204, 8205, 65279];
+function spotCanon(s) {
+  let t = String(s == null ? '' : s);
+  SPOT_DASH.forEach(c => { t = t.split(String.fromCharCode(c)).join('-'); });
+  SPOT_GONE.forEach(c => { t = t.split(String.fromCharCode(c)).join(''); });
+  t = t.split('＝').join('=').replace(/[ \t]/g, ' ');
+  return t.includes('=') ? t.split(' ').join('') : t.replace(/^ +| +$/g, '');
+}
+function spotKey(s) { return spotCanon(s).replace(/\s+/g, '').toUpperCase(); }
+function sqlSpotCanon(col) {
+  let e = col;
+  SPOT_DASH.forEach(c => { e = `REPLACE(${e}, char(${c}), '-')`; });
+  SPOT_GONE.forEach(c => { e = `REPLACE(${e}, char(${c}), '')`; });
+  e = `REPLACE(REPLACE(REPLACE(${e}, char(65309), '='), char(160), ' '), char(9), ' ')`;
+  return `(CASE WHEN instr(${e}, '=') > 0 THEN REPLACE(${e}, ' ', '') ELSE TRIM(${e}) END)`;
+}
+function sqlSpotKey(col) { return `UPPER(REPLACE(${sqlSpotCanon(col)}, ' ', ''))`; }
+// Every save of a SKU Mgr spot (any screen) is put in the one spelling by the database itself; spots already saved the odd way are
+// renamed by spotNameCleanup, each with a History line ([SPOT NAME FIX], cases unchanged).
+async function ensureSpotCanon(env) {
+  const c = sqlSpotCanon('NEW.location');
+  await env.DB.prepare(`CREATE TRIGGER IF NOT EXISTS ml_spot_canon_ins AFTER INSERT ON master_list WHEN NEW.location IS NOT NULL AND NEW.location != ${c} BEGIN UPDATE master_list SET location = ${c} WHERE id = NEW.id; END`).run().catch(e => console.error('[spot canon trigger]', e.message));
+  await env.DB.prepare(`CREATE TRIGGER IF NOT EXISTS ml_spot_canon_upd AFTER UPDATE OF location ON master_list WHEN NEW.location IS NOT NULL AND NEW.location != ${c} BEGIN UPDATE master_list SET location = ${c} WHERE id = NEW.id; END`).run().catch(e => console.error('[spot canon trigger]', e.message));
+}
+async function spotNameCleanup(env) {
+  await ensureSpotCanon(env);
+  const rows = await d1All(env, `SELECT *, ${sqlSpotCanon('location')} AS canon FROM master_list WHERE location IS NOT NULL AND location != '' AND location != ${sqlSpotCanon('location')} LIMIT 500`, []);
+  const what = raw => { const f = []; for (const ch of String(raw)) { const c = ch.charCodeAt(0);
+      if (SPOT_DASH.includes(c)) f.push('"' + ch + '" (a long dash / minus, not "-")'); else if (SPOT_GONE.includes(c)) f.push('a hidden character'); else if (c === 160) f.push('a no-break space'); else if (c === 65309) f.push('a full-width "＝"'); }
+    if (/^\s|\s$/.test(raw)) f.push('a space at the start / end'); if (String(raw).includes('=') && /\s/.test(String(raw).trim())) f.push('spaces inside');
+    return [...new Set(f)].join(', ') || 'a different spelling'; };
+  let n = 0;
+  for (const r of rows) {
+    const to = r.canon; if (!to || to === r.location) continue;
+    const part = String(r.part_num || '').trim().toUpperCase(), tot = part ? await skuMgrTotalsBefore(env, r.id, 0, part) : null;
+    await env.DB.prepare('UPDATE master_list SET location = ?, updated_at = ? WHERE id = ?').bind(to, new Date().toISOString(), r.id).run();
+    await _skuMgrInsertLog(env, 'SYSTEM', { ...r, location: to }, `[SPOT NAME FIX] ${part} @ "${r.location}" → "${to}" — the same spot: ${what(r.location)} made it look like another spot (SKU Mgr search / Audit missed it). Cases unchanged (${parseFloat(r.cases) || 0}).`, tot).catch(e => console.error('[spot name fix history]', e.message));
+    n++;
+  }
+  // the registered spots list: one spelling too
+  const locs = await d1All(env, `SELECT location, ${sqlSpotCanon('location')} AS canon FROM locations WHERE location != ${sqlSpotCanon('location')} LIMIT 500`, []).catch(() => []);
+  for (const l of locs) {
+    await env.DB.prepare('INSERT OR IGNORE INTO locations (location, prefix, active, created_at) SELECT ?, prefix, active, created_at FROM locations WHERE location = ?').bind(l.canon, l.location).run().catch(() => {});
+    await env.DB.prepare('DELETE FROM locations WHERE location = ?').bind(l.location).run().catch(() => {});
+  }
+  if (n) await invalidateMasterListCache(env);
+  return n;
+}
 
 // Real, established part-number format: digits-digits-digits(&digits)=qty
 // Distinguishes real SKUs from randomized legacy Amazon MSKU codes.
@@ -7574,9 +7627,9 @@ async function inventoryLocationSearch(url, env) {
         const [d1Rows, pMap] = await Promise.all([
           env.DB.prepare(
             `SELECT id,sku,name,part_num,location,cases,units_per_case,sheet_row FROM master_list
-             WHERE UPPER(TRIM(location)) = ?
-                OR UPPER(TRIM(location)) LIKE ?
-                OR UPPER(TRIM(location)) LIKE ?`).bind(q, q + '-%', q + '=%').all().then(r => r.results || []),
+             WHERE ${sqlSpotKey('location')} = ?
+                OR ${sqlSpotKey('location')} LIKE ?
+                OR ${sqlSpotKey('location')} LIKE ?`).bind(spotKey(q), spotKey(q) + '-%', spotKey(q) + '=%').all().then(r => r.results || []),
           buildPendingMap(env)
         ]);
         for (const r of d1Rows) {
@@ -8192,7 +8245,8 @@ async function recountColumnDone(request, env, session) {
 // in time order (Stock In / Out / Transfer, 🧹 found empty = 0, ✏️ SKU Mgr edit = its Part Total change) → should be = SKU Mgr now.
 // Each line carries its step-by-step timeline; ?all=1 also returns the ones that match (for the ⬇ CSV).
 async function recountCheck(env, url) {
-  // ?dry=1 = look only (nothing set) — for tests / looking into a problem
+  // ?dry=1 = look only (no cases set) — for tests / looking into a problem; one spelling per spot always
+  try { await spotNameCleanup(env); } catch (e) { console.error('[spot name cleanup]', e.message); }
   if (!(url && url.searchParams.get('dry') === '1')) try { await recountAutoFix(env, null); } catch (e) { console.error('[recount auto-fix]', e.message); }
   return cors(new Response(JSON.stringify(await recountCheckData(env, url)), { headers: { 'Content-Type': 'application/json' } }));
 }
@@ -8205,7 +8259,7 @@ async function recountCheckData(env, url) {
   const wantAll = !!(url && url.searchParams.get('all') === '1'), allLines = [];
   // Owner's screenshot (2026-10-22): "PR= 2 - 2 - 1" (saved with spaces) is PR=2-2-1, and "12X15 BAG" (renamed later) is 12X15=BAG —
   // the same spot / part #, not a difference. Spots: no spaces; a part # with no "=": its space is the "=".
-  const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
+  const U = x => String(x || '').trim().toUpperCase(), UL = x => spotKey(x), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
   const cols = await d1All(env, 'SELECT id, ts, started_at, location, by_user, detail FROM recount_columns WHERE ts >= ? AND COALESCE(stopped, 0) = 0 ORDER BY ts', [roundStart]);
   const last = {}; cols.forEach(c => { last[UL(c.location)] = c; }); // the latest finished count of each column
   // 📜 Owner (2026-10-23): "everything we can think of that changes the inventory quantities". Every History line since the date, read
@@ -8336,7 +8390,7 @@ async function recountFix(request, env, session) {
   const want = (Array.isArray(b.lines) ? b.lines : []).slice(0, 500);
   if (!want.length) return J({ ok: false, error: 'Nothing to fix' }, 400);
   const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
-  const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
+  const U = x => String(x || '').trim().toUpperCase(), UL = x => spotKey(x), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
   const ck = await recountCheckData(env, null);
   if (!ck || !ck.ok) return J({ ok: false, error: 'Could not check the numbers — try again' }, 503);
   const prob = {}; (ck.problems || []).forEach(p => { if (p.why !== 'unreadable') prob[UP(p.part) + '|' + UL(p.location)] = p; });
@@ -8361,7 +8415,8 @@ async function recountFix(request, env, session) {
 // done, when the report / check opens, and on the timer — so a count that arrives late (no WiFi) and lands twice is put right on
 // the next pass. Left alone: a spot being counted again right now (its new count isn't done yet), a column that can't be read.
 async function recountAutoFix(env, onlyLoc, tag, who) {
-  const UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+  try { await spotNameCleanup(env); } catch (e) { console.error('[spot name cleanup]', e.message); } // one spelling per spot first
+  const UL = x => spotKey(x);
   const ck = await recountCheckData(env, null), fixed = [], left = [];
   if (!ck || !ck.ok) return { fixed, left };
   const P = (ck.problems || []).filter(p => !onlyLoc || UL(p.location) === UL(onlyLoc));
@@ -8376,10 +8431,10 @@ async function recountAutoFix(env, onlyLoc, tag, who) {
 // Sets SKU Mgr at the spot to the check's "should be" (one row carries it; a gone row is made again), History [AUDIT FIX] with
 // the before → after, the count it came from and the reason it was off.
 async function recountApplyFix(env, who, p, tag) {
-  const U = x => String(x || '').trim().toUpperCase(), UL = x => U(x).replace(/\s+/g, ''), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
+  const U = x => String(x || '').trim().toUpperCase(), UL = x => spotKey(x), UP = x => { const v = U(x).replace(/\s+/g, ' '); return v.includes('=') ? v.replace(/\s+/g, '') : v.replace(/ /, '=').replace(/\s+/g, ''); };
   {
     const to = Math.max(0, Math.round(p.expected * 1000) / 1000);
-    const rows = (await d1All(env, "SELECT * FROM master_list WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY id", [UL(p.location)])).filter(r => UP(r.part_num) === UP(p.part));
+    const rows = (await d1All(env, `SELECT * FROM master_list WHERE ${sqlSpotKey('location')} = ? ORDER BY id`, [UL(p.location)])).filter(r => UP(r.part_num) === UP(p.part));
     let row = rows[0] || null;
     const part = row ? U(row.part_num) : UP(p.part);
     const tot = await skuMgrTotalsBefore(env, row ? row.id : 0, 0, part);
@@ -8407,7 +8462,8 @@ async function recountReport(env, url) {
   // 🏬 Owner (2026-10-23): "under Columns I want to also see what we have in SKU Mgr, so you can double check it too — no more mistakes;
   // if it ends up not matching, give us the warning". The same check as 🔎 Are the audit numbers right? (count + what moved there
   // after = SKU Mgr now), per column: every part # SKU Mgr has at that spot now, and ⚠ when it doesn't add up.
-  const UL = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '');
+  const UL = x => spotKey(x);
+  try { await spotNameCleanup(env); } catch (e) { console.error('[spot name cleanup]', e.message); } // spellings only, never cases — even with dry=1
   if (!(url && url.searchParams.get('dry') === '1')) try { await recountAutoFix(env, null); } catch (e) { console.error('[recount auto-fix]', e.message); }
   let ck = null; try { ck = await recountCheckData(env, new URL('https://x/?all=1')); } catch (e) { ck = { ok: false, error: String(e && e.message || e) }; }
   const fixBy = {}; (await d1All(env, "SELECT id, timestamp, part_num, location, initials, notes, total_before, total_after FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[AUDIT FIX]%' AND timestamp >= ? ORDER BY id DESC LIMIT 2000", [roundStart]))
@@ -8540,17 +8596,17 @@ async function recountReport(env, url) {
 // and stock in — any change to that column". SKU Mgr now, every recount of the column, and every History entry at that spot.
 async function recountSpot(env, url) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
-  const L = String(url.searchParams.get('loc') || '').trim().toUpperCase().replace(/\s+/g, '');
+  const L = spotKey(url.searchParams.get('loc') || '');
   if (!L) return J({ ok: false, error: 'loc needed' });
   await recountTables(env);
-  const sku = (await d1All(env, `SELECT id, part_num, name, cases, units_per_case, updated_at FROM master_list WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY part_num, units_per_case`, [L]).catch(() => []))
+  const sku = (await d1All(env, `SELECT id, part_num, name, cases, units_per_case, updated_at FROM master_list WHERE ${sqlSpotKey('location')} = ? ORDER BY part_num, units_per_case`, [L]).catch(() => []))
     .map(r => ({ id: r.id, part: r.part_num, name: r.name || '', cases: +r.cases || 0, each: +r.units_per_case || 0, pcs: Math.round((+r.cases || 0) * (+r.units_per_case || 0) * 100) / 100, updatedAt: r.updated_at || null }));
-  const counts = (await d1All(env, `SELECT id, ts, started_at, by_user, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY ts DESC LIMIT 30`, [L]).catch(() => []))
+  const counts = (await d1All(env, `SELECT id, ts, started_at, by_user, detail, COALESCE(stopped, 0) AS stopped, COALESCE(recheck, 0) AS recheck FROM recount_columns WHERE ${sqlSpotKey('location')} = ? ORDER BY ts DESC LIMIT 30`, [L]).catch(() => []))
     .map(r => { let d = []; try { d = JSON.parse(r.detail || '[]') || []; } catch (_) {}
       return { id: r.id, at: r.ts, startedAt: r.started_at || null, by: r.by_user || '?', stopped: !!r.stopped, recheck: !!r.recheck,
         lines: d.map(x => ({ part: x.part, pcs: x.pcs, before: x.system, after: x.counted, how: x.how || 'scan', new: !!x.new })) }; });
   const changes = (await d1All(env, `SELECT id, timestamp, type, part_num, cases, initials, status, verified_by, verified_at, notes, total_before, total_after, paired_location, cancelled_at
-      FROM inventory_log WHERE UPPER(REPLACE(TRIM(location), ' ', '')) = ? ORDER BY timestamp DESC, id DESC LIMIT 300`, [L]).catch(() => []))
+      FROM inventory_log WHERE ${sqlSpotKey('location')} = ? ORDER BY timestamp DESC, id DESC LIMIT 300`, [L]).catch(() => []))
     .map(r => ({ id: r.id, at: r.timestamp, type: r.type, part: r.part_num, cases: r.cases, by: r.initials || '', status: r.status || '', approvedBy: r.verified_by || '', approvedAt: r.verified_at || '',
       notes: String(r.notes || '').slice(0, 400), before: r.total_before, after: r.total_after, other: r.paired_location || '', cancelled: r.cancelled_at || null }));
   const R = v => Math.round(v * 100) / 100;
@@ -15975,10 +16031,10 @@ async function inventorySkuSearch(url, env) {
                 m.part_num, m.location, m.cases, m.units_per_case,
                 m.vendor, m.price, m.prev_notes, m.sheet_row
          FROM master_list m
-         WHERE UPPER(m.location) = ?
+         WHERE ${sqlSpotKey('m.location')} = ?
            AND m.cases > 0
          ORDER BY m.part_num`,
-        [locQ]
+        [spotKey(locQ)]
       );
       await skuSearchAddPending(env, rows);
       return cors(new Response(JSON.stringify({ ok: true, results: rows, count: rows.length, mode: 'location', summary: areaSum(rows) }),
