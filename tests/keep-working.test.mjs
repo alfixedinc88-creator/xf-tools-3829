@@ -8649,7 +8649,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 8\)\}`;/.test(ah), null);
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -9365,7 +9365,7 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
   check('the list: an ASIN (any case) → every box of its SKU; "ASIN 2" → only 2 boxes; a SKU works too; SKUs not on it keep our template',
     prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
   check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
-    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
+    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED · Box ' \+ seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
       && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);  // Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it".
   const fr = new Function(fnA('awdPrevFromRows') + 'return awdPrevFromRows;')();
   const a1 = fr([['ASIN', 'Title', 'Units', 'Boxes'], ['B0AAA11111', 'Tee', '120', '5'], ['b0bbb22222', 'Cap', '40', ''], ['B0AAA11111', 'Tee', '24', '1'], ['', 'total', '184', '6']]);
@@ -9572,6 +9572,127 @@ console.log('\n⚡ Audit speed: column done / SKU Mgr spot / background check st
   check('…400 more columns × 5 lines, 6,000 History lines: ✅ column done ' + Math.round(msDone) + ' ms, SKU Mgr spot search ' + Math.round(msSpot) + ' ms (each under 3 s; it was 18 s)',
     cd.ok && msDone < 3000 && msSpot < 3000 && (await get('/inventory/recount/check?dry=1')).columns >= 400, { msDone, msSpot });
   sq.prepare("DELETE FROM master_list WHERE name = 'perf'").run(); sq.prepare("DELETE FROM inventory_log WHERE initials = 'PF' OR part_num LIKE '880-%'").run(); sq.prepare("DELETE FROM recount_columns WHERE by_user = 'PF' OR location LIKE 'Z9=%'").run();
+}
+
+// Owner (2026-10-24): "Shipment Builder → Shipment Contents: put the time each SKU was put there, so I can arrange by time —
+// easier to find what's on the previous finished pallet (I did that pallet first)".
+console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown and sortable');
+{
+  const { readFileSync: rfT2 } = await import('node:fs');
+  const ah = rfT2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const line = n => (ah.match(new RegExp('function ' + n + '\\([^\\n]*')) || [''])[0];
+  const S0 = { shipment: {} }; let saved = 0;
+  new Function('S', 'saveShipmentToSheet', line('stage') + '\n; stage({ sku: "30-3-4=10X", recSend: 24 });')(S0, () => { saved++; });
+  const it = S0.shipment['30-3-4=10X'] || {};
+  check('a SKU put in the shipment gets the time it was put in (and is saved)', it.qty === 24 && !isNaN(Date.parse(it.addedAt)) && Date.now() - Date.parse(it.addedAt) < 60000 && saved === 1, it);
+  check('…kept with the shipment (sheet column "added") and read back after a reload; also kept in 🕘 History',
+    /const values = \[\['sku','qty','added'\], \.\.\.items\.map\(\(\[sku,i\]\) => \[sku, i\.qty, i\.addedAt \|\| ''\]\)\];/.test(ah) && /S\.shipment\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
+  check('…"🕒 Added" column (New York time), tap to sort oldest → newest / newest → oldest; SKUs put in before 10-24 show — and sort as oldest',
+    /onclick="bldToggleSort\('time'\)"[^>]*>🕒 Added/.test(ah) && /class="bld-added"/.test(ah) && /_bldSortKey==='time'\s*\n\s*\? \(\[a,x\],\[b,y\]\)=>_bldSortDir\*\(String\(x\.addedAt\|\|''\)\.localeCompare\(String\(y\.addedAt\|\|''\)\)/.test(ah), null);
+}
+
+// Owner (2026-10-24, AWD label "Box 1 of 324 · SKU 2-3-4=2XX-"): "it pops up, but our template is not on the label". AWD labels are
+// full (no empty spot, nothing may be covered) → our template / PREVIOUS PACKED on its own label right after the Amazon one.
+console.log('\n📄 AWD box labels with no empty spot: our template on its own label right after');
+{
+  const { readFileSync: rfL2 } = await import('node:fs');
+  const ah = rfL2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const W0 = 720, H0 = 1080, texts = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {},
+    fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }); // every pixel black = no empty spot anywhere
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const pageOf = (sku, box) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'AWD Box ' + box + ' of 324', transform: [1, 0, 0, 1, 10, 420] }, { str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }] }) });
+  const pdfPages = [pageOf('2-3-4=2XX-', 1), pageOf('23-4-6=2X-', 2)];
+  let printed = '';
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '2-3-4=2XX-' }, 'awd-lbl-bc': { checked: true } };
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
+    id => els[id], { shipment: { '2-3-4=2XX-': { row: {} }, '23-4-6=2X-': { row: {} } }, tplPrefix: {}, joined: [] },
+    { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 2, getPage: async p => pdfPages[p - 1] }) }) }),
+    sku => sku === '23-4-6=2X-' ? '1 need label\nTee 1/2"\n850031110001\nC1=1-1-1' : 'x',
+    () => Promise.reject(new Error('offline')), '', cb => cb(), (c) => { c.width = 300; c.height = 100; }, () => {});
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
+  check('2 full AWD labels (no empty spot) → 4 labels to print: each Amazon label + our own right after it; PREVIOUS PACKED on the 1st, our template on the 2nd; "Box 1 of 324" named on ours',
+    imgs === 4 && texts.some(t => /2-3-4=2XX-\s+·\s+Box 1-1\s+\(Box 1 of 324\)/.test(t)) && texts.includes('✅ PREVIOUS PACKED') && texts.includes('C1=1-1-1') && texts.some(t => /goes WITH the Amazon label before it/.test(t))
+      && /📄 <b>2<\/b> Amazon labels have no empty spot/.test(out) && /\(4 labels to print\)/.test(out) && /PREVIOUS PACKED on <b>1<\/b> label/.test(out) && !/No template for/.test(out), { imgs, out, texts: texts.slice(0, 12) });
+}
+
+// Owner (2026-10-24): "can we make it the same label? a separate label wastes a lot of labels" → ☑ One label per box.
+console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label at 85% + our info under it');
+{
+  const { readFileSync: rfL2 } = await import('node:fs');
+  const ah = rfL2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const W0 = 720, H0 = 1080, texts = [], drawn = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage(...a) { drawn.push(a); }, save() {}, restore() {}, translate() {}, rotate() {},
+    fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) }); // every pixel black = no empty spot anywhere
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const pageOf = (sku, box) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'AWD Box ' + box + ' of 324', transform: [1, 0, 0, 1, 10, 420] }, { str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }] }) });
+  const pdfPages = [pageOf('2-3-4=2XX-', 1), pageOf('23-4-6=2X-', 2)];
+  let printed = '';
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '2-3-4=2XX-' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
+    id => els[id], { shipment: { '2-3-4=2XX-': { row: {} }, '23-4-6=2X-': { row: {} } }, tplPrefix: {}, joined: [] },
+    { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 2, getPage: async p => pdfPages[p - 1] }) }) }),
+    sku => sku === '23-4-6=2X-' ? '1 need label\nTee 1/2"\n850031110001\nC1=1-1-1' : 'x',
+    () => Promise.reject(new Error('offline')), '', cb => cb(), (c) => { c.width = 300; c.height = 100; }, () => {});
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
+  const scaled = drawn.filter(d => d[0] && d[0].toDataURL && d[3] === Math.round(720 * 0.85) && d[4] === Math.round(1080 * 0.85));
+  check('2 full AWD labels → still 2 labels to print: each Amazon label drawn at 85% (top) with PREVIOUS PACKED / our template in the strip under it; says "one label per box"',
+    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED · Box 1-1/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
+    { imgs, scaled: scaled.length, out });
+  check('…a choice (☑ One label per box), remembered on this computer (on unless turned off); off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) !== '0'/.test(ah) && /id="awd-lbl-one" checked/.test(ah), null);
+  // Owner (2026-10-24): "I have to scroll all the way down the window to scroll that panel" + the one-label choice was off → on by default.
+  check('…☑ One label per box is ON by default (unless turned off); the Shipment Builder\'s right panel scrolls by itself when taller than the window',
+    /\.sum-card\{position:sticky;top:88px;max-height:calc\(100vh - 100px\);overflow-y:auto\}/.test(ah), null);
+}
+
+// Owner (2026-10-24): "1. 23-4-1=10- has 5 boxes → 5 labels, number them 5-1 … 5-5. 2. 201-1-9=10- shows Amazon's barcode but we use our
+// manufacturer UPC — only 24-1-1=10– and 23-2-1=10XA use Amazon labels in this shipment. 3. the words under the label are too small".
+console.log('\n🔢 AWD box labels: box N-k numbering, the barcode from the label\'s own FNSKU, big strip text');
+{
+  const { readFileSync: rfL3 } = await import('node:fs');
+  const ah = rfL3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const texts = [], fonts = [], codes = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, drawImage() {}, save() {}, restore() {}, translate() {}, rotate() {},
+    fillText(t) { texts.push(t); fonts.push([t, parseInt(String(this.font).replace(/\D+/, ''))]); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) });
+  const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
+  const pageOf = (sku, fn) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
+    getTextContent: async () => ({ items: [{ str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }, { str: 'FNSKU: ' + fn, transform: [1, 0, 0, 1, 10, 380] }] }) });
+  // 23-4-1=10- ×3 (manufacturer barcode: FNSKU = its ASIN) and 24-1-1=10- ×1 (Amazon barcode: X0…)
+  const pdfPages = [pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('24-1-1=10-', 'X001ABCDEF'), pageOf('23-4-1=10-', 'B07BCXWTFX')];
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const amz = [{ sku: '23-4-1=10-', barcode: 'amazon', fnsku: 'X00WRONG01' }]; // the old list says Amazon barcode — the label says otherwise
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
+    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdAmzList = () => Promise.resolve(' + JSON.stringify(amz) + '); return awdLabelsDo;')(
+    id => els[id], { shipment: {}, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() }, { open: () => ({ document: { write() {}, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 4, getPage: async p => pdfPages[p - 1] }) }) }),
+    sku => sku === '24-1-1=10-' ? 'Ball valve\n850031110024\nC2=2-2-2' : '5 need label\nTee 1/2"\n850031110001\nC1=1-1-1\nBSMT=3-1-2',
+    () => Promise.reject(new Error('offline')), '', cb => cb(), (c, code) => { codes.push(code); c.width = 300; c.height = 100; }, () => {});
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const boxes = texts.filter(t => /^Box \d+-\d+/.test(t)).map(t => t.match(/^Box (\d+-\d+)/)[1]);
+  check('23-4-1=10- has 3 labels in the PDF → Box 3-1, 3-2, 3-3 (in order, even with another SKU between); 24-1-1=10- → Box 1-1',
+    boxes.join() === '3-1,3-2,1-1,3-3', boxes);
+  check('…the scan barcode comes from the FNSKU on the label: 23-4-1=10- (FNSKU = its ASIN → manufacturer barcode) → our UPC 850031110001, not the old list\'s X00WRONG01; 24-1-1=10- (X0…) → X001ABCDEF',
+    codes.filter(c => c === '850031110001').length === 3 && codes.includes('X001ABCDEF') && !codes.includes('X00WRONG01'), codes);
+  const big = fonts.filter(([t]) => /^Box 3-1/.test(t)).map(x => x[1])[0] || 0, H = 432 * 2.5;
+  check('…one label: the strip under Amazon\'s label is only 3 big lines (box + need label · the spots · the item), the barcode turned on its side on the right; text at least 3.5% of the label height (was ~2%)',
+    big >= H * 0.035 && texts.includes('Box 3-1 · 5 need label') && texts.includes('C1=1-1-1  /  BSMT=3-1-2') && texts.some(t => /^Tee 1\/2"$/.test(t)), { big, min: H * 0.035, t: texts.slice(0, 8) });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

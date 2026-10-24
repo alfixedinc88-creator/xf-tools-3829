@@ -15338,7 +15338,8 @@ async function awdShipHistory(request, url, env, session) {
     const b = await request.json().catch(() => ({}));
     const n = v => { const x = parseFloat(v); return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : 0; };
     const items = (Array.isArray(b.items) ? b.items : []).slice(0, 1000).map(x => ({ sku: String(x.sku || '').trim().slice(0, 80), name: String(x.name || '').slice(0, 160),
-      qty: n(x.qty), units: n(x.units), unitsPerBox: n(x.unitsPerBox), boxes: n(x.boxes), label: String(x.label || '').slice(0, 60) })).filter(x => x.sku);
+      qty: n(x.qty), units: n(x.units), unitsPerBox: n(x.unitsPerBox), boxes: n(x.boxes), label: String(x.label || '').slice(0, 60),
+      addedAt: x.addedAt && !isNaN(Date.parse(x.addedAt)) ? new Date(x.addedAt).toISOString() : '' })).filter(x => x.sku);
     if (!items.length) return J({ ok: false, error: 'No SKUs in the shipment' }, 400);
     const rid = String(b._requestId || '').slice(0, 80) || null;
     if (rid) { const had = await env.DB.prepare('SELECT id FROM awd_ship_history WHERE request_id = ?').bind(rid).first(); if (had) return J({ ok: true, id: had.id, duplicate: true }); }

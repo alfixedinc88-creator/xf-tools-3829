@@ -125,7 +125,7 @@ select.fsel:focus{outline:none;border-color:var(--blue)}.mla{margin-left:auto}
 @media(max-width:1100px){.bld-layout{grid-template-columns:1fr}}
 .qty-inp{width:72px;text-align:center;border:1px solid var(--gray-200);border-radius:var(--rs);padding:5px 8px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
 .qty-inp:focus{outline:none;border-color:var(--blue)}
-.sum-card{position:sticky;top:88px}
+.sum-card{position:sticky;top:88px;max-height:calc(100vh - 100px);overflow-y:auto} /* owner 2026-10-24: taller than the window → it scrolls by itself (no scrolling the whole page to the end) */
 .sum-item{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--gray-100)}
 .sum-item:last-child{border-bottom:none}
 .sum-sku{font-size:12px;font-family:monospace;color:var(--gray-600)}.sum-qty{font-size:13px;font-weight:600;color:var(--gray-800)}
@@ -1020,6 +1020,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
                 <th class="r">Case Pack / Export Qty</th><th>Label</th>
+                <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="bldToggleSort('time')" title="When this SKU was put in the shipment — tap to sort">🕒 Added <span id="bld-sort-time" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th>
                 <th></th>
               </tr></thead><tbody id="bld-tbody"></tbody></table></div>
             </div>
@@ -1052,6 +1053,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <input type="file" id="awd-lbl-file" accept="application/pdf,.pdf" style="display:none" onchange="awdLabelsDo(this.files[0]); this.value=''">
                 <p style="font-size:11px;color:var(--gray-400);margin-top:6px;line-height:1.4">The FBA or AWD box label PDF Amazon gives you. Each label's SKU is read off the label; our template (need label · name · UPC · spot) is printed in an empty spot on it.</p>
                 <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-bc" checked> <span>Add the scan barcode + product photo (the packer scans the label, then the product — 🔍 Box check on Stock Out Big Company)</span></label>
+                <!-- 🏷 Owner (2026-10-24): "can we make it the same label? a separate label wastes a lot of labels". Full AWD label → Amazon's at 85%
+                     (its SSCC bars stay above the GS1 minimum) with our info in the strip under it, instead of a 2nd label. -->
+                <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-one" checked onchange="try{localStorage.setItem('awd_lbl_one',this.checked?'1':'0')}catch(e){}"> <span><b>One label per box:</b> when Amazon's label is full (AWD), print it at 85% and put our info under it — no 2nd label. Off = our info on its own label right after.</span></label>
                 <!-- ✅ Owner (2026-10-23): "some items we have already packed — give you the ASIN, and when I upload the box labels put
                      'previous packed' on them, so our guy knows that one on the pallet is done and doesn't go down to the warehouse". -->
                 <div id="awd-prev-wrap" style="margin-top:8px">
@@ -1588,7 +1592,7 @@ function findRow(sku){
   var normalized = normalizeSkuForMatch(sku);
   return S.joined.find(function(r){ return normalizeSkuForMatch(r.sku) === normalized; });
 }
-function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};saveShipmentToSheet();}
+function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0,addedAt:new Date().toISOString()};saveShipmentToSheet();} // 🕒 when it was put in (owner 2026-10-24)
 
 function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
@@ -1625,7 +1629,7 @@ function bldManualAdd(){
   const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
   const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
   if(existing&&name)row.name=name;
-  S.shipment[sku]={row,qty};
+  S.shipment[sku]={row,qty,addedAt:new Date().toISOString()};
   updateBadges();renderRecs();renderInv();renderBuilder();saveShipmentToSheet();
   awd_planner_toast('Added: '+sku,'success');
   ge('bld-manual-sku').value='';ge('bld-manual-name').value='';ge('bld-manual-qty').value='0';
@@ -1643,12 +1647,16 @@ function invAddToBuilder(sku){
 
 
 var _bldSortDir = 0; // 0=none, 1=asc, -1=desc
-function bldToggleSort(){
-  _bldSortDir = _bldSortDir === 1 ? -1 : 1;
-  var arrow = ge('bld-sort-arrow');
-  if(arrow) arrow.innerHTML = _bldSortDir === 1 ? '&#9650;' : '&#9660;';
+var _bldSortKey = 'sku'; // 'sku' | 'time' (🕒 Added, owner 2026-10-24: "arrange by the time we put it there")
+function bldToggleSort(key){
+  key = key || 'sku';
+  _bldSortDir = _bldSortKey === key && _bldSortDir === 1 ? -1 : 1; _bldSortKey = key;
+  var arrow = ge('bld-sort-arrow'), ta = ge('bld-sort-time');
+  if(arrow) arrow.innerHTML = key === 'sku' ? (_bldSortDir === 1 ? '&#9650;' : '&#9660;') : '&#8645;';
+  if(ta) ta.innerHTML = key === 'time' ? (_bldSortDir === 1 ? '&#9650;' : '&#9660;') : '&#8645;';
   renderBuilder();
 }
+function bldAddedTxt(iso) { if (!iso) return ''; try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
 // ── SHARED BULK POOL ALLOCATION ──
 // FIX: confirmed real bug — when multiple pack-size variants of the
 // same base SKU are all in the shipment builder, each one's "bulk
@@ -1852,7 +1860,9 @@ function renderBuilder(){
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
   let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
-  if(_bldSortDir!==0) filt=filt.slice().sort(([a],[b])=>_bldSortDir*a.localeCompare(b));
+  if(_bldSortDir!==0) filt=filt.slice().sort(_bldSortKey==='time'
+    ? ([a,x],[b,y])=>_bldSortDir*(String(x.addedAt||'').localeCompare(String(y.addedAt||''))||a.localeCompare(b)) // no time (put in before 10-24) = oldest
+    : ([a],[b])=>_bldSortDir*a.localeCompare(b));
   ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
   { var fw = ge('bld-fam-warn'); if (!fw) { fw = document.createElement('div'); fw.id = 'bld-fam-warn'; var bb = ge('bld-body'); if (bb) bb.insertBefore(fw, bb.firstChild); } if (fw) fw.innerHTML = awdFamWarnHtml(); }
   const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
@@ -1923,8 +1933,9 @@ function renderBuilder(){
       <td>${lPrefix
         ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
+      <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>${awdStockRow(r, 8)}`;
+    </tr>${awdStockRow(r, 9)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
@@ -1995,12 +2006,50 @@ function awdDrawTemplate(ctx, rect, lines, maxFs) {
 // that barcode — so the packer scans the label, then the product, and knows they didn't grab the wrong one (main point: never ship
 // the wrong product to AWD / FBA)". The code to scan: the listing's FNSKU when Amazon's barcode is required (every unit carries it),
 // else our UPC (from the template). → { code, kind } or null
-function awdScanCode(sku, lines, amz) {
+function awdScanCode(sku, lines, amz, labelFn) {
   const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  // 🏷 Owner (2026-10-24): "201-1-9=10- shows Amazon's barcode, but we use our manufacturer UPC on it". The FNSKU Amazon printed on THIS
+  // label is the truth for this shipment: X0… = Amazon barcode on every unit; the ASIN (B0…) = manufacturer barcode → our UPC.
+  if (labelFn) {
+    if (/^X0/i.test(labelFn)) return { code: String(labelFn).toUpperCase(), kind: 'FNSKU' };
+    const u = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
+    return u ? { code: u, kind: 'UPC' } : null;
+  }
   const hit = (amz || []).find(x => x.barcode === 'amazon' && (n(x.sku) === n(sku) || n(x.part) === n(sku)));
   if (hit && hit.fnsku) return { code: hit.fnsku, kind: 'FNSKU' };
   const upc = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
   return upc ? { code: upc, kind: 'UPC' } : null;
+}
+// The FNSKU printed on the label nearest the SKU line (several labels can share a page).
+function awdLabelFnsku(lines, y) {
+  let best = null;
+  (lines || []).forEach(l => { const m = /FNSKU\s*:?\s*([0-9A-Z]{10})\b/i.exec(l.text || ''); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, code: m[1].toUpperCase() }; });
+  return best ? best.code : '';
+}
+// 🏷 One label (owner 2026-10-24: "the words under the label are so small no one can see them"): Amazon's label at 85% top-left;
+// our scan barcode turned on its side in the free column on the right; the strip under it is ONLY big text, 3 lines
+// (box N-k + need label · the spots · the item), as big as fits.
+function awdBigText(ctx, rect, text, maxFs) {
+  const p = Math.max(4, Math.round(rect.h * 0.04)), n = Math.max(1, text.length);
+  let fs = Math.min(maxFs || 999, Math.floor((rect.h - 2 * p) / (n * 1.12)));
+  ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
+  for (; fs > 8; fs--) { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; if (Math.max(...text.map(l => ctx.measureText(l).width)) <= rect.w - 2 * p) break; }
+  ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
+  const top = rect.y + Math.round((rect.h - n * fs * 1.12) / 2);
+  text.forEach((l, i) => ctx.fillText(l, rect.x + p, top + i * fs * 1.12));
+  return fs;
+}
+function awdStripText(seq, lns, bc) {
+  const digits = l => /^\d{8,14}$/.test(String(l).trim());
+  const need = lns.find(l => /need label|\/\d/i.test(l)) || '', locs = lns.filter(l => /^[A-Z0-9]+=/i.test(l) && /\d-\d/.test(l) && l !== need);
+  const rest = lns.filter(l => l !== need && !locs.includes(l) && !(bc && digits(l)));
+  return ['Box ' + seq + (need ? ' · ' + need : ''), locs.slice(0, 2).join('  /  '), rest.join(' · ')].filter(Boolean);
+}
+function awdDrawSideBarcode(ctx, col, bc) { // the barcode turned 90°, as long as the column allows
+  const p = Math.max(3, Math.round(col.w * 0.08)), long = col.h - 2 * p, thick = col.w - 2 * p;
+  const T = thick, L = Math.min(long, Math.round(thick * 5)); // stretched along its length: wider bars scan more easily
+  ctx.save(); ctx.translate(col.x + col.w / 2, col.y + col.h / 2); ctx.rotate(-Math.PI / 2); ctx.drawImage(bc, -L / 2, -T / 2, L, T); ctx.restore();
+  return true;
 }
 let _awdAmzP = null; const _awdPhotos = {};
 function awdAmzList() { if (!_awdAmzP) _awdAmzP = wFetch(W + '/inventory/amazon-barcode').then(r => r.json()).then(d => (d && d.list) || []).catch(() => { _awdAmzP = null; return []; }); return _awdAmzP; }
@@ -2081,48 +2130,90 @@ async function awdLabelsDo(file) {
   out.innerHTML = '⏳ Reading the labels…';
   try {
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
-    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0;
+    const pages = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0, oneLabel = 0;
     const amz = await awdAmzList();
     const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
+    // 🔢 Owner (2026-10-24): "23-4-1=10- has 5 boxes → 5 labels: 5-1, 5-2 … 5-5, so a label found alone tells how many boxes we had".
+    // Read every page's text first: how many labels each SKU has in this PDF; then number them in order.
+    const readPage = async page => { const vp1 = page.getViewport({ scale: 1 }), tc = await page.getTextContent(), byY = {};
+      tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
+      return Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') })); };
+    const boxTot = {}, boxSeen = {};
+    for (let p = 1; p <= pdf.numPages; p++) awdLabelSkus(await readPage(await pdf.getPage(p))).forEach(f => { const k = awdLabelMatch(f.sku).toUpperCase(); boxTot[k] = (boxTot[k] || 0) + 1; });
+    const seqOf = sku => { const k = sku.toUpperCase(); boxSeen[k] = (boxSeen[k] || 0) + 1; return boxTot[k] + '-' + boxSeen[k]; };
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
       const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      const tc = await page.getTextContent(), byY = {};
-      tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
-      const lines = Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') }));
+      const lines = await readPage(page);
       const found = awdLabelSkus(lines);
       // one label per page (4×6), or several stacked on a letter page: each SKU owns the band around it
       const n = Math.max(1, found.length); labels += n;
       if (!found.length) noSku.push(p);
       const img = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      // 📄 Owner (2026-10-24, AWD label "Box 1 of 324"): AWD labels are full — no empty spot, and nothing on them may be covered.
+      // Then our template goes on its OWN label (same size), printed right after that Amazon label: stick both on the box.
+      const one = !!(ge('awd-lbl-one') && ge('awd-lbl-one').checked) && found.length === 1; // ☑ One label per box
+      const own = [], boxTxt = (lines.map(l => l.text).join(' ').match(/Box\s+\d+\s+of\s+\d+/i) || [''])[0];
       for (let i = 0; i < found.length; i++) {
         const f = found[i], top = i === 0 ? 0 : Math.round(cv.height * i / n), bot = Math.round(cv.height * (i + 1) / n), band = bot - top;
-        const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60);
+        const sku = awdLabelMatch(f.sku), cell = Math.round(cv.width / 60), seq = seqOf(sku), lfn = awdLabelFnsku(lines, f.y);
         const ph = awdPrevHit(prev, sku, amz);
         if (ph) { // ✅ already packed: the words, big — no template (nothing to grab in the warehouse)
           const pr = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-          if (!pr) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
-          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED', 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
+          if (!pr) { own.push({ sku, seq, prev: true, box: n > 1 ? '' : boxTxt }); prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue; }
+          awdDrawTemplate(ctx, pr, ['✅ PREVIOUS PACKED · Box ' + seq, 'Already on the pallet —', 'do NOT go to the warehouse', sku], Math.round(band * 0.05));
           prevDone[ph.key] = (prevDone[ph.key] || 0) + 1; done++; continue;
         }
-        const lns = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
-        if (!lns.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
+        const lns0 = (buildLabelCopyText(sku, (S.tplPrefix || {})[sku.toUpperCase()] || '') || '').split('\n').filter(Boolean);
+        if (!lns0.length) { noTpl[f.sku] = (noTpl[f.sku] || 0) + 1; continue; }
+        const lns = ['Box ' + seq].concat(lns0);
         // room for text + barcode (+ photo) first; else the smaller spot (text only) as before
         // room for text + photo + barcode → text + barcode (the barcode matters most: the packer scans it) → text only
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const mid = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         const rect = mid || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.3, band * 0.12);
-        if (!rect) { noTpl[f.sku + ' (no empty spot)'] = (noTpl[f.sku + ' (no empty spot)'] || 0) + 1; continue; }
         const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
-        const sc = mid && extra ? awdScanCode(sku, lns, amz) : null;
+        if (!rect) { own.push({ sku, seq, lns: lns0, lfn, box: n > 1 ? '' : boxTxt, extra }); done++; continue; }
+        const sc = mid && extra ? awdScanCode(sku, lns, amz, lfn) : null;
         const bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = big && extra ? await awdPhoto(sku) : null;
         const fs = Math.round(band * 0.032); // ≈ 14 pt on a 6" label
         const r = mid ? awdDrawBlock(ctx, rect, lns, bc, photo, big ? fs : Math.round(fs * 0.8)) : (awdDrawTemplate(ctx, rect, lns, fs), { photo: false, barcode: false });
         done++; if (r.barcode) withBc++; if (r.photo) withPhoto++;
       }
+      if (one && own.length) { // Amazon's label at 85%, top centre; our info in the strip under it — one label
+        const o = own[0], c3 = document.createElement('canvas'); c3.width = cv.width; c3.height = cv.height;
+        const x3 = c3.getContext('2d'), K = 0.85, H = c3.height, Wd = c3.width; x3.fillStyle = '#fff'; x3.fillRect(0, 0, Wd, H);
+        x3.drawImage(cv, 0, 0, Math.round(Wd * K), Math.round(H * K));
+        const col = { x: Math.round(Wd * K), y: 0, w: Wd - Math.round(Wd * K), h: Math.round(H * K) };
+        const strip = { x: Math.round(Wd * 0.01), y: Math.round(H * K) + Math.round(H * 0.005), w: Math.round(Wd * 0.98), h: H - Math.round(H * K) - Math.round(H * 0.01) };
+        x3.strokeStyle = '#000'; x3.lineWidth = Math.max(2, Math.round(Wd * 0.004)); x3.strokeRect(strip.x, strip.y, strip.w, strip.h);
+        if (o.prev) awdBigText(x3, strip, ['✅ PREVIOUS PACKED · Box ' + o.seq, 'on the pallet — do NOT go to the warehouse']);
+        else {
+          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null;
+          if (bc && awdDrawSideBarcode(x3, col, bc)) withBc++;
+          awdBigText(x3, strip, awdStripText(o.seq, o.lns, bc));
+        }
+        pages.push({ url: c3.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); oneLabel++;
+        continue;
+      }
       pages.push({ url: cv.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 });
+      for (const o of own) { // our own label, right after the Amazon one
+        const c2 = document.createElement('canvas'); c2.width = cv.width; c2.height = cv.height;
+        const x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, c2.width, c2.height);
+        const H = c2.height, Wd = c2.width, m = Math.round(Wd * 0.05);
+        x2.strokeStyle = '#000'; x2.lineWidth = Math.max(3, Math.round(Wd * 0.006)); x2.strokeRect(m / 2, m / 2, Wd - m, H - m);
+        awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.sku + '  ·  Box ' + o.seq + (o.box ? '  (' + o.box + ')' : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
+        const body = { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m };
+        if (o.prev) awdDrawTemplate(x2, body, ['✅ PREVIOUS PACKED', 'Box ' + o.seq, 'Already on the pallet —', 'do NOT go to the', 'warehouse', o.sku], Math.round(H * 0.06));
+        else {
+          const sc = o.extra ? awdScanCode(o.sku, o.lns, amz, o.lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = o.extra ? await awdPhoto(o.sku) : null;
+          const r = awdDrawBlock(x2, body, ['Box ' + o.seq].concat(o.lns), bc, photo, Math.round(H * 0.045));
+          if (r.barcode) withBc++; if (r.photo) withPhoto++;
+        }
+        pages.push({ url: c2.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); ownPages++;
+      }
     }
     const w = window.open('', '_blank');
     if (!w) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
@@ -2132,6 +2223,8 @@ async function awdLabelsDo(file) {
     w.document.close();
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+      + (oneLabel ? '<div style="color:#1D4ED8">🏷 <b>' + oneLabel + '</b> full Amazon label' + (oneLabel === 1 ? '' : 's') + ' printed at 85% with our info under it — one label per box (' + pages.length + ' labels to print).</div>' : '')
+      + (ownPages ? '<div style="color:#1D4ED8">📄 <b>' + ownPages + '</b> Amazon label' + (ownPages === 1 ? ' has' : 's have') + ' no empty spot (AWD labels are full) — our template is printed on its <b>own label right after it</b> (' + (pages.length) + ' labels to print): stick both on the box.</div>' : '')
       + (pk.length ? '<div style="color:#15803D">✅ PREVIOUS PACKED on <b>' + pdN + '</b> label' + (pdN === 1 ? '' : 's') + ': ' + pk.map(k => k + ' ' + (prevDone[k] || 0) + (prevAsked[k] !== Infinity ? ' of ' + prevAsked[k] : '')).join(' · ') + '</div>'
         + (pk.filter(k => !prevDone[k]).length ? '<div style="color:#C2410C">⚠ Not on any label: ' + pk.filter(k => !prevDone[k]).join(', ') + ' (check the ASIN / SKU)</div>' : '')
         + (pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).length ? '<div style="color:#C2410C">⚠ Fewer boxes than asked: ' + pk.filter(k => prevAsked[k] !== Infinity && prevDone[k] && prevDone[k] < prevAsked[k]).map(k => k + ' ' + prevDone[k] + ' of ' + prevAsked[k]).join(', ') + '</div>' : '') : '')
@@ -2523,6 +2616,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
+  if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
@@ -3146,11 +3240,11 @@ function saveShipmentToSheet() {
         // Clear the sheet
         await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
           method: 'PUT', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({values: [['sku','qty']]})
+          body: JSON.stringify({values: [['sku','qty','added']]})
         });
         return;
       }
-      const values = [['sku','qty'], ...items.map(([sku,i]) => [sku, i.qty])];
+      const values = [['sku','qty','added'], ...items.map(([sku,i]) => [sku, i.qty, i.addedAt || ''])];
       await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
@@ -3173,7 +3267,7 @@ async function loadShipmentFromSheet() {
       if (!sku || sku === 'sku') return;
       const r = findRow(sku);
       if (r) {
-        S.shipment[sku] = {row: r, qty: qty};
+        S.shipment[sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
         loaded++;
       }
     });
@@ -3317,7 +3411,7 @@ function buildLabelCopyText(amazonSku, casePrefix) {
 function awdHistSave(name, format, items) {
   const list = items.map(([sku, i]) => {
     const cp = S.cpackMap[sku.toUpperCase()], hasCP = cp && cp.unitsPerBox > 0, boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : 0;
-    return { sku, name: (i.row && i.row.name) || '', qty: i.qty, units: hasCP ? boxes * cp.unitsPerBox : i.qty, unitsPerBox: hasCP ? cp.unitsPerBox : 0, boxes, label: (S.tplPrefix || {})[sku.toUpperCase()] || '' };
+    return { sku, name: (i.row && i.row.name) || '', qty: i.qty, units: hasCP ? boxes * cp.unitsPerBox : i.qty, unitsPerBox: hasCP ? cp.unitsPerBox : 0, boxes, label: (S.tplPrefix || {})[sku.toUpperCase()] || '', addedAt: i.addedAt || '' };
   });
   const rid = 'awdship-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   const send = n => wFetch(W + '/awd/ship-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, format, items: list, _requestId: rid }) })
