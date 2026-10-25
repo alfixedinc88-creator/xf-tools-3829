@@ -10052,9 +10052,27 @@ console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case when the A
   const a = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 1000 }], bulkRows: [] }, {})('96-1-1=100X', [20]);
   const b = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 0 }], bulkRows: [] }, {})('96-1-1=100X', [20]);
   const c = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 1000 }], bulkRows: [] }, { '96-1-1=100': 20 })('96-1-1=100X', [20]);
-  check('no AWD_Master size → SKU Mgr Ea/Case 1,000 pcs: 2,000 pcs = "grab 2 cases" (not "1 case (? pcs a case)"); neither has it → "? pcs a case — no Ea/Case in SKU Mgr"; the sheet still wins when it has one (20 bags × 100 = 2,000 → 1 case)',
+  check('no AWD_Master size → SKU Mgr Ea/Case 1,000 pcs: 2,000 pcs = "grab 2 cases" (not "1 case (? pcs a case)"); neither has it → "? pcs a case — no Ea/Case in SKU Mgr"; owner (2026-10-25, 23-5-2=50) changed the rule: SKU Mgr Ea/Case wins over the sheet too (1,000 pcs → 2 cases, not the sheet 2,000 → 1)',
     a.summary === 'GRAB 2 cases (enough for our 1 box): BO=1-1-1-3: grab 2 cases' && b.summary === 'GRAB 1 case (enough for our 1 box): BO=1-1-1-3: grab 1 case (? pcs a case — no Ea/Case in SKU Mgr)'
-      && c.summary === 'GRAB 1 case (enough for our 1 box): BO=1-1-1-3: grab 1 case' && /casesNum: casesNum, eachPcs: parseFloat\(r\[9\]\) \|\| 0 \}/.test(ah), [a.summary, b.summary, c.summary]);
+      && c.summary === 'GRAB 2 cases (enough for our 1 box): BO=1-1-1-3: grab 2 cases' && /casesNum: casesNum, eachPcs: parseFloat\(r\[9\]\) \|\| 0 \}/.test(ah), [a.summary, b.summary, c.summary]);
+}
+
+// Owner (2026-10-25, label Box 4-1 of 23-5-2=50-, Units 12): "this box is 600 pcs in total, one case matches one Amazon box — why does it
+// say GRAB 1 case (enough for our 4 boxes) … take 2400 pcs, rest stays?" The plan took the case size from the AWD_Master packages per
+// case (× 50), not SKU Mgr's Ea/Case (600 pcs).
+console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case first (23-5-2=50: 600 pcs a case → 4 cases for 4 boxes)');
+{
+  const { readFileSync: rfW3 } = await import('node:fs');
+  const ah = rfW3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
+  // SKU Mgr: BO=1-1-1-4 has 5 cases of 600 pcs (Ea/Case); AWD_Master says 60 packages a case (× 50 = 3,000 pcs) — SKU Mgr wins
+  const p1 = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'BO=1-1-1-4', casesNum: 5, eachPcs: 600 }], bulkRows: [] }, { '23-5-2=50': 60 })('23-5-2=50-', [12, 12, 12, 12]);
+  const p2 = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'BO=1-1-1-4', casesNum: 5 }], bulkRows: [] }, { '23-5-2=50': 60 })('23-5-2=50-', [12, 12, 12, 12]);
+  check('4 Amazon boxes × 12 bags × 50 = 2,400 pcs, SKU Mgr 600 pcs a case → "GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases", each label its own case; no Ea/Case in SKU Mgr → the AWD_Master size (3,000) as before',
+    p1.summary === 'GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases' && p1.locOf.join() === 'BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4'
+      && p2.summary === 'GRAB 1 case (enough for our 4 boxes): BO=1-1-1-4: grab 1 case — take 2400 pcs, rest stays', [p1.summary, p2.summary]);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
