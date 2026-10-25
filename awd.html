@@ -2170,7 +2170,9 @@ function awdGrabPlan(sku, unitsList) {
   const cases = []; let got = 0;
   for (const x of rows) {
     // pcs a case: the AWD_Master sheet (bags a case × pack), else SKU Mgr's Ea/Case for that spot (owner 2026-10-25: "why the ?")
-    const upc = getUnitsPerCase(x.r.partNum), pcs = upc > 0 ? upc * packOf(x.r.partNum) : (x.r.eachPcs > 0 ? x.r.eachPcs : 0);
+    // pieces a case: SKU Mgr's Ea/Case first (owner 2026-10-25, 23-5-2=50: "one case is 600 pcs = one Amazon box" — the AWD_Master
+    // packages-per-case made it look like one case covered all 4 boxes); AWD_Master packages × the pack number only when SKU Mgr has none
+    const upc = getUnitsPerCase(x.r.partNum), pcs = (x.r.eachPcs > 0 ? x.r.eachPcs : 0) || (upc > 0 ? upc * packOf(x.r.partNum) : 0);
     for (let c = 0; c < Math.floor(x.r.casesNum || 0) && got < needPcs && cases.length < 500; c++) {
       cases.push({ loc: x.r.location || '?', part: x.r.partNum, pcs, exact: x.exact, used: 0 });
       got += pcs || needPcs; // a case with no Ea/Case on record: counted as enough (said so below)
