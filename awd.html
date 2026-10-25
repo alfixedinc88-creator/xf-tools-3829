@@ -1962,11 +1962,12 @@ function awdLoadPdfjs() {
 // The SKU(s) Amazon printed on a label page: "Single SKU 30-3-6=2X- Qty 10" (FBA) or "SKU: 31-6-1=2XX- Units: 25" (AWD) — never the
 // FNSKU. lines = [{ y, text }] top → bottom (y = 0 at the top). → [{ sku, y }]
 function awdLabelSkus(lines) {
-  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*([0-9A-Z][0-9A-Z=\-\/\.\(\)#]*)/gi;
+  // A SKU Amazon has with a space after "-" / "=" ("SKU: 26-4- 2=1000 Units: 1", owner 2026-10-25) is read whole: 26-4-2=1000.
+  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*((?:[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*[-=]\s+(?!UNITS|QTY)[0-9A-Z=][0-9A-Z=\-\/\.\(\)#]*)|[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*)/gi;
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].text + ' ' + ((lines[i + 1] && /^\s*(SINGLE\s+SKU|SKU)\s*:?\s*$/i.test(lines[i].text)) ? lines[i + 1].text : '');
     let m; re.lastIndex = 0;
-    while ((m = re.exec(t))) { if (/^(QTY|UNITS|MIXED)/i.test(m[1]) || !/\d/.test(m[1])) continue; out.push({ sku: m[1].toUpperCase(), y: lines[i].y }); } // "Mixed SKUs" is no SKU (a part # has digits)
+    while ((m = re.exec(t))) { if (/^(QTY|UNITS|MIXED)/i.test(m[1]) || !/\d/.test(m[1])) continue; out.push({ sku: m[1].toUpperCase().replace(/\s+/g, ''), y: lines[i].y }); } // "Mixed SKUs" is no SKU (a part # has digits)
   }
   return out;
 }
@@ -2037,7 +2038,8 @@ function awdPrevInfo(sku, units, amz) {
   const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
   const it = (S.shipment || {})[sku], j = (S.joined || []).find(r => n(r.sku) === n(sku)), a = (amz || []).find(x => n(x.sku) === n(sku));
   const name = String((it && it.row && it.row.name) || (j && j.name) || (a && a.name) || '').replace(/\s+/g, ' ').trim();
-  const pm = String(sku || '').split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0;
+  const pm = String(sku || '').split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0, co = awdCaseOf(sku);
+  if (co) return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: (bags || 1) + ' whole case' + ((bags || 1) === 1 ? '' : 's') + ' of ' + co + ' (sold as a case)' };
   return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: bags ? bags + ' bag' + (bags === 1 ? '' : 's') + ' × ' + pack + ' pc' + (pack === 1 ? '' : 's') + ' = ' + (bags * pack) + ' pcs' : pack + ' pcs a bag' };
 }
 // The SSCC (the big box barcode) printed on the label nearest the SKU line — 18 digits.
@@ -2079,6 +2081,13 @@ function awdDrawSideBarcode(ctx, col, bc) { // the barcode turned 90°, as long 
   return true;
 }
 let _awdAmzP = null; const _awdPhotos = {};
+// 📦 "Sold as a whole case of" (Reorder → 🏷 Barcode / vendor for a part # → 📦): an Amazon unit of that SKU = ONE whole case of the
+// other part #, shipped as is (owner 2026-10-25: "this one we sell as a case"). → { part: target }, keys without spaces / trailing "-".
+var AWD_CASEOF = {}, _awdCaseOfP = null;
+const awdCoKey = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+function awdCaseOfLoad() { if (!_awdCaseOfP) _awdCaseOfP = wFetch(W + '/reorder/fix/case-of').then(r => r.json()).then(d => { AWD_CASEOF = {}; ((d && d.list) || []).forEach(x => { if (x.part && x.target) AWD_CASEOF[awdCoKey(x.part)] = String(x.target).toUpperCase(); }); return AWD_CASEOF; })
+  .catch(() => { _awdCaseOfP = null; return AWD_CASEOF; }); return _awdCaseOfP; }
+function awdCaseOf(sku) { const k = awdCoKey(sku); return AWD_CASEOF[k] || AWD_CASEOF[k.replace(/X+$/, '')] || Object.keys(AWD_CASEOF).filter(p => p.replace(/X+$/, '') === k.replace(/X+$/, '')).map(p => AWD_CASEOF[p])[0] || ''; }
 function awdAmzList() { if (!_awdAmzP) _awdAmzP = wFetch(W + '/inventory/amazon-barcode').then(r => r.json()).then(d => (d && d.list) || []).catch(() => { _awdAmzP = null; return []; }); return _awdAmzP; }
 async function awdPhoto(base) {
   base = String(base || '').toUpperCase().split('=')[0]; if (!base) return null;
@@ -2159,6 +2168,17 @@ function awdLocCompare(a, b) { return (awdAreaRank(a) - awdAreaRank(b)) || Strin
 // C2…), whether it is a full case or has to be split into how many boxes; each label shows the spot its box comes from".
 // unitsList = the bags on each of the SKU's labels (to pick), in order. → { summary, locOf: [loc per label], cases, short }
 function awdGrabPlan(sku, unitsList) {
+  const co = awdCaseOf(sku);
+  if (co) { // each unit (bag) on the label = 1 whole case of `co`, shipped as is — no pieces / rebag
+    const sr = l => (l || []).slice().sort((a, b) => awdLocCompare(a.location, b.location)), spots = [];
+    sr(checkWarehouseStock(co).exactRows).forEach(r => { for (let c = 0; c < Math.floor(r.casesNum || 0); c++) spots.push(r.location || '?'); });
+    const need = unitsList.reduce((a, u) => a + (u || 0), 0), got = Math.min(need, spots.length), short = need - got;
+    let ci = 0; const locOf = unitsList.map(u => { const l = []; for (let k = 0; k < (u || 0); k++, ci++) if (spots[ci] && !l.includes(spots[ci])) l.push(spots[ci]); return l.length ? l.join(' + ') : '⚠ not on our shelves'; });
+    const grp = []; spots.slice(0, got).forEach(loc => { const g = grp.find(z => z.loc === loc); if (g) g.n++; else grp.push({ loc, n: 1 }); });
+    const cs = n => n + ' whole case' + (n === 1 ? '' : 's');
+    return { summary: got ? 'GRAB ' + cs(got) + ' of ' + co + ' (sold as a case — ship it as is): ' + grp.map(g => g.loc + ': ' + g.n).join(' · ') + (short ? ' · ⚠ SHORT ' + cs(short) : '')
+      : '⚠ Not on our shelves — ' + cs(need) + ' of ' + co + ' needed', locOf, cases: got, short, caseOf: co };
+  }
   const packOf = x => { const m = String(x || '').split('=').pop().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; };
   const pack = packOf(sku), needPcs = unitsList.reduce((a, u) => a + (u || 0), 0) * pack;
   const ws = checkWarehouseStock(sku), sortRows = l => (l || []).slice().sort((a, b) => awdLocCompare(a.location, b.location));
@@ -2230,7 +2250,7 @@ async function awdLabelsDo(file) {
   try {
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
     const groups = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0, oneLabel = 0;
-    const amz = await awdAmzList();
+    const amz = await awdAmzList(); _awdCaseOfP = null; await awdCaseOfLoad(); // fresh: a case just set in Reorder counts
     const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
     const readPage = async page => { const vp1 = page.getViewport({ scale: 1 }), tc = await page.getTextContent(), byY = {};
       tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });

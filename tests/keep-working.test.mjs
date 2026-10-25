@@ -9987,7 +9987,7 @@ console.log('\n📦 AWD grab plan wording: whole cases = "grab N cases (enough f
   const { readFileSync: rfW2 } = await import('node:fs');
   const ah = rfW2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
-  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
     + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
   // 23-5-2=50: 10 Amazon boxes × 4 bags × 50 pcs = 2,000 pcs; cases of 20 bags × 50 = 1,000 pcs, 2 in C3=2-2-2 → 2 whole cases
   const a = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 20 })('23-5-2=50-', Array(10).fill(4));
@@ -10052,7 +10052,7 @@ console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case when the A
   const { readFileSync: rfQ } = await import('node:fs');
   const ah = rfQ(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
-  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
     + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
   // 1 Amazon box: 20 bags × 100 pcs = 2,000 pcs. Before: no AWD_Master row → "grab 1 case (? pcs a case)". SKU Mgr: 1,000 pcs a case → 2 cases.
   const a = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 1000 }], bulkRows: [] }, {})('96-1-1=100X', [20]);
@@ -10071,7 +10071,7 @@ console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case first (23-
   const { readFileSync: rfW3 } = await import('node:fs');
   const ah = rfW3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
-  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
     + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
   // SKU Mgr: BO=1-1-1-4 has 5 cases of 600 pcs (Ea/Case); AWD_Master says 60 packages a case (× 50 = 3,000 pcs) — SKU Mgr wins
   const p1 = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'BO=1-1-1-4', casesNum: 5, eachPcs: 600 }], bulkRows: [] }, { '23-5-2=50': 60 })('23-5-2=50-', [12, 12, 12, 12]);
@@ -10079,6 +10079,31 @@ console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case first (23-
   check('4 Amazon boxes × 12 bags × 50 = 2,400 pcs, SKU Mgr 600 pcs a case → "GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases", each label its own case; no Ea/Case in SKU Mgr → the AWD_Master size (3,000) as before',
     p1.summary === 'GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases' && p1.locOf.join() === 'BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4'
       && p2.summary === 'GRAB 1 case (enough for our 4 boxes): BO=1-1-1-4: grab 1 case — take 2400 pcs, rest stays', [p1.summary, p2.summary]);
+}
+
+// Owner (2026-10-25, an AWD label "SKU: 26-4- 2=1000 · Units: 1" that came out "⚠ not on our shelves · 26-4- · 1 bag × 26 pcs"): "this one we
+// sell as a case, how can I let the system know?". The SKU has a space → it was read as "26-4-"; and Reorder's 📦 "Sold as a whole case of"
+// is now used by the box labels: 1 unit = 1 whole case of that part #, shipped as is.
+console.log('\n📦 AWD box labels: a SKU with a space is read whole; "sold as a whole case of" → grab whole cases, ship as is');
+{
+  const { readFileSync: rfC } = await import('node:fs');
+  const ah = rfC(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const skus = new Function(fnA('awdLabelSkus') + '; return awdLabelSkus;')();
+  const r = t => skus([{ y: 10, text: t }]).map(x => x.sku).join(',');
+  check('label SKU "26-4- 2=1000 Units: 1" → 26-4-2=1000 (before: 26-4-); "Single SKU 30-3-6=2X- Qty 10" and "SKU: 31-6-1=2XX- Units: 25" read as before',
+    r('SKU: 26-4- 2=1000 Units: 1') === '26-4-2=1000' && r('Single SKU 30-3-6=2X- Qty 10') === '30-3-6=2X-' && r('SKU: 31-6-1=2XX- Units: 25') === '31-6-1=2XX-' && r('Mixed SKUs') === '', [r('SKU: 26-4- 2=1000 Units: 1'), r('Single SKU 30-3-6=2X- Qty 10')]);
+  const co = (ah.match(/const awdCoKey = [^\n]*/) || [''])[0] + '\n' + (ah.match(/function awdCaseOf\(sku\) \{[^\n]*/) || [''])[0];
+  const mk = (ws, map) => new Function('checkWarehouseStock', 'getUnitsPerCase', 'AWD_CASEOF', 'S', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];" + co + '\n'
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + fnA('awdPrevInfo') + '; return { plan: awdGrabPlan, info: awdPrevInfo };')(p => ws[p] || { exactRows: [], bulkRows: [] }, () => 0, map, { shipment: {}, joined: [] });
+  // 26-4-2=1000 = a whole case of 26-4-2=100 (set in Reorder); shelves: 26-4-2=100 1 case at C2=1-1-1, 2 at BO=1-1-1
+  const ws = { '26-4-2=100': { exactRows: [{ partNum: '26-4-2=100', location: 'C2=1-1-1', casesNum: 1 }, { partNum: '26-4-2=100', location: 'BO=1-1-1', casesNum: 2 }], bulkRows: [] } };
+  const A = mk(ws, { '26-4-2=1000': '26-4-2=100' });
+  const one = A.plan('26-4-2=1000', [1]), four = A.plan('26-4-2=1000', [1, 1, 1, 1]), info = A.info('26-4-2=1000', 1, []), notCase = mk(ws, {}).info('26-4-2=1000', 1, []);
+  check('…"sold as a whole case of 26-4-2=100": 1 label = "GRAB 1 whole case of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 1" (walking order, BO first) and "1 whole case of 26-4-2=100"; 4 labels, 3 on the shelves → ⚠ SHORT 1 whole case; not set → as before (1 bag × 1000 pcs)',
+    one.summary === 'GRAB 1 whole case of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 1' && one.locOf[0] === 'BO=1-1-1' && /1 whole case of 26-4-2=100 \(sold as a case\)/.test(info.qty)
+      && four.summary === 'GRAB 3 whole cases of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 2 · C2=1-1-1: 1 · ⚠ SHORT 1 whole case' && four.locOf[3] === '⚠ not on our shelves'
+      && notCase.qty === '1 bag × 1000 pcs = 1000 pcs' && /_awdCaseOfP = null; await awdCaseOfLoad\(\);/.test(ah), { one: one.summary, four: four.summary, info, notCase });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
