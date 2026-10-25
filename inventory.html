@@ -2608,7 +2608,7 @@ window.invCredLogin = async function() {
   };
   // One box for part # / UPC / name: the part # / UPC lookup always goes first;
   // only when nothing matches and the text has letters is it searched as a name.
-  window.invNameFallback = function(code, d) { return !!(d && !d.partNum && !d.upcNotLinked && /[a-z]{2}/i.test(String(code || ''))); };
+  window.invNameFallback = function(code, d) { return !!(d && !d.partNum && !d.upcNotLinked && !d.amazonCode && /[a-z]{2}/i.test(String(code || ''))); };
 
   // ── Location scan for stock in/out — same as audit location search ──────────
   var _invLocScanHtml5 = null;
@@ -3198,6 +3198,10 @@ window.invCredLogin = async function() {
   function _invRenderLookupResult(code, d) {
     invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
     if (!d.partNum && d.upcNotLinked) { invAskUpcPart(d.code || code); return; }
+    // 🏷 An Amazon FNSKU (inside bag) / ASIN (outside box) that isn't on ONE of our FBA listings — say why, never a part # named after it.
+    if (!d.partNum && d.amazonCode) { var ac = d.amazonCode;
+      invFlash('🏷 Amazon ' + ac.kind + ' ' + code + (ac.parts && ac.parts.length > 1 ? ' is on ' + ac.parts.length + ' part #s (' + ac.parts.join(', ') + ') — scan the FNSKU on the bag, or type the part #'
+        : ' is not on any of our FBA listings yet (⚡ sync Amazon, or ✏️ map the listing) — type the part #'), 'error'); return; }
     if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
     if (d.upcNotLinked) invFlash("⚠ " + code + " is a UPC saved as a part # — Stock Out this row and Stock In the real part # to fix it", "error");
     invPart = d;

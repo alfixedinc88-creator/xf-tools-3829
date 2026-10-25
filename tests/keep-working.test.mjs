@@ -9931,5 +9931,48 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('61-1-1','62-2-2'); DELETE FROM awd_label_map");
 }
 
+// Owner (2026-10-25): "for the ones using the Amazon labels, when we order from our vendor, instead of our outside box UPC and inside bag
+// UPC: the outside box gets the Amazon ASIN and the inside bag the FNSKU, so we don't relabel — and every Inventory tab must know that
+// FNSKU and ASIN when orders come in, no issue with receiving and stock out, they know those numbers go to which of our part #".
+console.log('\n🏷 Amazon-barcode listings: ASIN on the box / FNSKU on the bag → every scan finds our part #; vendor sheet prints them');
+{
+  const now = new Date().toISOString();
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('77-1-1','amz elbow','77-1-1=10X','C3=1-1-1',4,100), ('77-1-1','amz elbow','77-1-1=10X','GARAGE',2,100), ('77-1-1','amz elbow','77-1-1=5','C3=1-1-2',3,50)").run();
+  sq.prepare("INSERT OR REPLACE INTO fba_catalog (sku, asin, fnsku, product_name, available, updated_at) VALUES ('77-1-1=10X','B0AMZ77111','X00AMZ7711','Elbow 10X',5,?), ('77-1-1=5','B0MKR77115','B0MKR77115','Elbow 5',5,?), ('78-1-1=10','B0SHR78110','X00SHR7811','Tee',1,?), ('78-2-2=10','B0SHR78110','X00SHR7822','Tee 2',1,?), ('amzn.gr.77-1-1-junk','B0AMZ77111','X00GRD7711','Elbow returned',0,?)").run(now, now, now, now, now);
+  const lk = async c => await get('/inventory/lookup?code=' + c);
+  const f = await lk('X00AMZ7711'), a = await lk('B0AMZ77111'), m = await lk('B0MKR77115'), amb = await lk('B0SHR78110'), one = await lk('X00SHR7811'), byPart = await lk('77-1-1=10X');
+  const cs = l => (l.locations || []).filter(x => x.partNum === '77-1-1=10X').reduce((t, x) => t + (+x.cases || 0), 0);
+  check('before: scanning X00AMZ7711 / B0AMZ77111 found nothing; now the inside bag FNSKU and the outside box ASIN (also on an Amazon returns SKU, not in SKU Mgr) → 77-1-1=10X, the same spots and cases (4 + 2 = 6) as typing the part #',
+    f.partNum === '77-1-1=10X' && a.partNum === '77-1-1=10X' && f.amazonCode.kind === 'FNSKU' && a.amazonCode.kind === 'ASIN' && cs(f) === 6 && cs(a) === 6 && cs(byPart) === 6
+      && JSON.stringify(f.locations) === JSON.stringify(byPart.locations), { f: f.partNum, a: a.partNum, c: [cs(f), cs(a), cs(byPart)] });
+  const nope = await lk('X00NOPE000');
+  check('…a listing with our UPC (FNSKU = ASIN) → its own part # 77-1-1=5; one ASIN on 2 different part #s is NOT guessed (each FNSKU still finds its own); an unknown FNSKU → no part # (never a row named X00…)',
+    m.partNum === '77-1-1=5' && amb.partNum === null && amb.amazonCode && amb.amazonCode.part === null && amb.amazonCode.parts.join(',') === '78-1-1=10,78-2-2=10' && !(amb.locations || []).length && one.partNum === '78-1-1=10'
+      && nope.partNum === null && nope.amazonCode && nope.amazonCode.kind === 'FNSKU' && nope.amazonCode.parts.length === 0, { m: m.partNum, amb, one: one.partNum, nope });
+  const cscan = await get('/inventory/containers/scan?code=B0AMZ77111'), sk = await get('/inventory/sku-search?q=X00AMZ7711');
+  check('…🚢 Container here box scan (ASIN on the box) and SKU Mgr search (FNSKU) find 77-1-1=10X too',
+    cscan.ok && cscan.part === '77-1-1=10X' && sk.ok && sk.matchedBy === 'amazon' && sk.results.length === 2 && sk.results.every(r => r.part_num === '77-1-1=10X'), { cscan, sk: sk.results && sk.results.length });
+  const { readFileSync: rfA } = await import('node:fs');
+  const sw = rfA(fileURLToPath(new URL('../sw.js', import.meta.url)), 'utf8');
+  const grab = n => { const i = sw.indexOf('function ' + n + '('); const j = sw.indexOf('\n}\n', i); return i < 0 ? '' : sw.slice(i, j + 2); };
+  const packLookup = new Function(grab('packBase') + '\n' + grab('packLookup') + '; return packLookup;')();
+  const pk = await get('/inventory/offline-pack'), off = packLookup(pk, 'X00AMZ7711'), offA = packLookup(pk, 'B0AMZ77111');
+  check('…📴 no internet: the device copy knows them too (same spots / cases as the server); the 2-part # ASIN is left out',
+    pk.amz['X00AMZ7711'] === '77-1-1=10X' && pk.amz['B0AMZ77111'] === '77-1-1=10X' && !pk.amz['B0SHR78110'] && off.partNum === '77-1-1=10X' && offA.partNum === '77-1-1=10X'
+      && JSON.stringify(off.locations.map(l => [l.location, l.cases])) === JSON.stringify(f.locations.map(l => [l.location, l.cases])) && packLookup(pk, 'X00NOPE000').partNum === null, { amz: pk.amz, off: off.partNum });
+  const ihA = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the scan screen says why (on 2 part #s → scan the FNSKU on the bag; not our listing → ⚡ sync / ✏️ map) instead of searching it as a name',
+    /if \(!d\.partNum && d\.amazonCode\) \{ var ac = d\.amazonCode;/.test(ihA) && /!d\.upcNotLinked && !d\.amazonCode && \/\[a-z\]\{2\}\/i/.test(ihA), null);
+  const imp = await post('/reorder/vendor-catalog/import', { vendor: 'AMZV', file: 'amz.xlsx', rows: [{ part: '77-1-1=10X', description: 'elbow', outside_upc: 'B0AMZ77111', inside_upc: 'X00AMZ7711' }] });
+  const vc = sq.prepare("SELECT outside_upc, inside_upc, asin FROM reorder_vendor_catalog WHERE vendor = 'AMZV' AND part = '77-1-1=10X'").get() || {};
+  check('…the vendor\'s sheet back with ASIN / FNSKU in the UPC columns: never saved as a UPC (ASIN kept as the ASIN)', imp.ok !== false && vc.outside_upc === '' && vc.inside_upc === '' && vc.asin === 'B0AMZ77111', { imp, vc });
+  const rh = rfA(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('…⬇ Download sheet for vendor: one Amazon-barcode listing → Outside Box = ASIN, Inside Bag = FNSKU + a note; 2+ listings → our UPC + "ASK US FIRST"; kept in 🕘 History',
+    /upcCell\(amz \? amz\.asin : r\.outsideUpc\), upcCell\(amz \? amz\.fnsku : r\.insideUpc\)/.test(rh) && /'AMAZON BARCODE: outside box = ASIN ' \+ amz\.asin \+ ', every inside bag = FNSKU ' \+ amz\.fnsku/.test(rh)
+      && /L && L\.length === 1 && L\[0\]\.asin && L\[0\]\.fnsku \? L\[0\] : null/.test(rh) && /'ASK US FIRST: needs Amazon barcode - '/.test(rh) && /' · 🏷 Amazon barcode \(ASIN on box, FNSKU on bag\): '/.test(rh)
+      && /return !amzOf\(r\) && \(/.test(rh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '77-1-1'; DELETE FROM fba_catalog WHERE sku IN ('77-1-1=10X','77-1-1=5','78-1-1=10','78-2-2=10','amzn.gr.77-1-1-junk'); DELETE FROM reorder_vendor_catalog WHERE vendor = 'AMZV'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

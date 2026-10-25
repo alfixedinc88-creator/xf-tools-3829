@@ -5681,8 +5681,23 @@ async function rvoCsv() {
       + noV.slice(0, 30).map(function (r) { return r.sku + ' — ' + rvoQty(r) + ' units'; }).join('\n') + (noV.length > 30 ? '\n…' : '')
       + '\n\nSet their vendor with ✏️ (or pick "(no vendor in SKU Mgr)" to see them).\nOK = download ' + v + '\'s file anyway.')) return;
   }
+  // 🏷 Owner (2026-10-25): "for the ones using Amazon's labels, when we order from our vendor, instead of our outside box UPC and
+  // inside bag UPC: the outside box gets the Amazon ASIN and the inside bag the FNSKU, so we don't have to relabel". From 🏷 Listings
+  // that need Amazon's barcode (Inventory → Stock Out Big Company): a part # with ONE such listing gets its ASIN / FNSKU in the UPC
+  // columns. 2+ such listings (different FNSKUs) on one part # are not guessed: our UPCs stay and the line says to ask.
+  var amzBc = {}, amzErr = '';
+  try { var ad = await (await wFetch(W + '/inventory/amazon-barcode')).json(); if (!ad || !ad.ok) throw new Error((ad && ad.error) || 'not loaded');
+    (ad.list || []).forEach(function (x) { if (x.barcode !== 'amazon' || !x.part) return; var o = amzBc[String(x.part).toUpperCase()] = amzBc[String(x.part).toUpperCase()] || [];
+      if (!o.some(function (y) { return y.fnsku === x.fnsku; })) o.push({ fnsku: x.fnsku, asin: x.asin, sku: x.sku }); });
+  } catch (e) { amzErr = e.message || 'error'; }
+  if (amzErr && !confirm('⚠ Could not check which part #s need Amazon\'s barcode (' + amzErr + ').\nTheir boxes / bags would get our UPC, not the ASIN / FNSKU.\n\nOK = download anyway.')) return;
+  var amzOf = function (r) { var L = amzBc[String(r.sku || '').toUpperCase()]; return L && L.length === 1 && L[0].asin && L[0].fnsku ? L[0] : null; };
+  var amzAsk = rows.filter(function (r) { var L = amzBc[String(r.sku || '').toUpperCase()]; return L && !amzOf(r); });
+  if (amzAsk.length && !confirm('🏷 ' + amzAsk.length + ' part # need Amazon\'s barcode but can\'t be put on the sheet by itself (they keep our UPC):\n\n' + amzAsk.slice(0, 20).map(function (r) {
+      var L = amzBc[String(r.sku).toUpperCase()]; return r.sku + ' — ' + (L.length > 1 ? L.length + ' Amazon listings: FNSKU ' + L.map(function (x) { return x.fnsku; }).join(' / ') : 'no ASIN on record'); }).join('\n')
+    + '\n\nOK = download anyway (the line says to ask which).')) return;
   // 🔢 Owner (2026-10-17): "if the UPC codes are not right, we are going to have a lot of issues when we receive" — say which first.
-  var upcBad = rows.filter(function (r) { return /SWAPPED|not a real UPC|NO outside box UPC|are the same code/.test(r.upcWarn || '') || !r.outsideUpc; });
+  var upcBad = rows.filter(function (r) { return !amzOf(r) && (/SWAPPED|not a real UPC|NO outside box UPC|are the same code/.test(r.upcWarn || '') || !r.outsideUpc); });
   if (upcBad.length && !confirm('⚠ ' + upcBad.length + ' part # in this file have a UPC problem:\n\n' + upcBad.slice(0, 25).map(function (r) {
       return r.sku + ' — ' + (r.outsideUpc ? String(r.upcWarn || '').split(' · ').filter(function (x) { return /SWAPPED|not a real|NO outside|same code/.test(x); }).join('; ').replace(/⚠ /g, '') : 'no outside box UPC'); }).join('\n')
     + (upcBad.length > 25 ? '\n…' : '') + '\n\nFix them with 🔢 Check every UPC first.\nOK = download anyway.')) return;
@@ -5724,7 +5739,10 @@ async function rvoCsv() {
       + ((r.calc.famSales || [])[0] ? ' (biggest seller: ' + r.calc.famSales[0].sku + ' ' + r.calc.famSales[0].ch + ' ' + r.calc.famSales[0].u90 + ' units = ' + r.calc.famSales[0].p90 + ' pcs in 90 d)' : ''));
     (r.caseFrom || []).forEach(function (x) { notes.push('Incl. ' + x.sku + ' (we sell it as a whole case of ' + r.sku + ')'); });
     String(r.note || '').split(' · ').filter(function (x) { return /^⚠/.test(x); }).forEach(function (x) { notes.push(x); });
-    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), pcs, cases, box || '',
+    var amz = amzOf(r), amzL = amzBc[String(r.sku || '').toUpperCase()];
+    if (amz) notes.unshift('AMAZON BARCODE: outside box = ASIN ' + amz.asin + ', every inside bag = FNSKU ' + amz.fnsku + ' (Amazon label) - NOT our UPC');
+    else if (amzL) notes.unshift('ASK US FIRST: needs Amazon barcode - ' + (amzL.length > 1 ? amzL.length + ' Amazon listings (FNSKU ' + amzL.map(function (x) { return x.fnsku; }).join(' / ') + ')' : 'no ASIN on record') + ', which label to print?');
+    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(amz ? amz.asin : r.outsideUpc), upcCell(amz ? amz.fnsku : r.insideUpc), cell(r.description), pcs, cases, box || '',
       pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].concat(chCells(r)));
   });
   money = Math.round(money * 100) / 100;
@@ -5744,7 +5762,8 @@ async function rvoCsv() {
   name += sheet.ext;
   var a = document.createElement('a'); a.href = URL.createObjectURL(sheet.blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers' + (urgentN ? ', 🔥 ' + urgentN + ' URGENT at the top' : '') + ') · 💲 $' + money.toFixed(2) + (unpriced.length ? ' (+' + unpriced.length + ' with no price)' : '') + ' · ✓ totals match: ' + ck.text);
+  var amzOn = rows.filter(function (r) { return amzOf(r); }).map(function (r) { return r.sku; });
+  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers' + (urgentN ? ', 🔥 ' + urgentN + ' URGENT at the top' : '') + (amzOn.length ? ', 🏷 ' + amzOn.length + ' with Amazon ASIN / FNSKU' : '') + ') · 💲 $' + money.toFixed(2) + (unpriced.length ? ' (+' + unpriced.length + ' with no price)' : '') + ' · ✓ totals match: ' + ck.text);
   // Remember the vendor each part # was ordered from — next time a part #
   // several vendors sell defaults to this vendor.
   wFetch(W + '/reorder/fix/last-vendor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: rows.filter(function (r) { return r.vendor; }).map(function (r) { return { part: r.sku, vendor: r.vendor }; }) }) }).catch(function () {});
@@ -5754,7 +5773,8 @@ async function rvoCsv() {
   var skipped = rvoVisible().filter(function (r) { return RVO.off[r.sku] && r.orderUnits > 0; }).map(function (r) { return r.sku; });
   var m = RVO.meta || {};
   var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s' + (urgentN ? ' (🔥 ' + urgentN + ' URGENT, first container: ' + rows.filter(function (r) { return r.urgent; }).map(function (r) { return r.sku; }).join(', ') + ')' : '') + ', ' + tot + ' units (' + (Math.round(pcsTot * 1000) / 1000) + ' pcs' + (casesTot ? ', ' + casesTot + ' cases' : '') + '), 💲 $' + money.toFixed(2) + (unpriced.length ? ' (' + unpriced.length + ' with no price)' : '') + ' (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
-    + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '') + ' · vendor totals: ' + ck.text;
+    + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '')
+    + (amzOn.length ? ' · 🏷 Amazon barcode (ASIN on box, FNSKU on bag): ' + amzOn.join(', ') : '') + (amzAsk.length ? ' · 🏷 ask which Amazon label: ' + amzAsk.map(function (r) { return r.sku; }).join(', ') : '') + ' · vendor totals: ' + ck.text;
   wFetch(W + '/reorder/fix/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', part: v && v !== '__none' ? v : '', detail: detail }) })
     .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});
 }

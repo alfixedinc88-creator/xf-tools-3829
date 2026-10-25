@@ -1465,6 +1465,47 @@ async function inventoryAmazonBarcode(env) {
   const n = k => list.filter(x => x.barcode === k).length;
   return J({ ok: true, list, counts: { amazon: n('amazon'), maker: n('maker'), unknown: n('') }, asOf: list.reduce((a, x) => x.at > a ? x.at : a, '') });
 }
+// 🏷 Owner (2026-10-25): "for the ones using Amazon's label, the vendor puts the ASIN on the outside box and the FNSKU on the inside
+// bag (instead of our UPCs) so we don't relabel — and every Inventory tab must know those numbers go to which part #". A scanned
+// FNSKU (X0…) or ASIN (B0…) → our part #, from the same Amazon copies as 🏷 Listings that need Amazon's barcode (Amazon now →
+// FBA inventory report → FBA catalog → the FNSKU saved for AWD labels), each Amazon SKU read as our part # (✏️ mapped).
+// One code on 2+ different part #s is NOT guessed: { part: null, parts: [...] }.
+const AMZ_CODE_RE = /^(X0|B0)[0-9A-Z]{8}$/;
+async function amzCodeRows(env, code) {
+  const all = async (sql, b) => { try { return (await env.DB.prepare(sql).bind(...(b || [])).all()).results || []; } catch (_) { return []; } };
+  const w = code ? ' WHERE UPPER(TRIM(fnsku)) = ? OR UPPER(TRIM(asin)) = ?' : '', b = code ? [code, code] : [];
+  const live = await all('SELECT sku, asin, fnsku FROM amazon_barcode_live' + w, b);
+  const inv = await all("SELECT sku, asin, fnsku FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'" + (code ? ' AND (UPPER(TRIM(fnsku)) = ? OR UPPER(TRIM(asin)) = ?)' : ''), b);
+  const cat = await all('SELECT sku, asin, fnsku FROM fba_catalog' + w, b);
+  const ps = await all("SELECT sku, '' AS asin, fnsku FROM platform_skus WHERE platform = 'amazon' AND fnsku IS NOT NULL AND fnsku != ''" + (code ? ' AND UPPER(TRIM(fnsku)) = ?' : ''), code ? [code] : []);
+  return live.concat(inv, cat, ps);
+}
+async function amzCodeMap(env, code) {
+  const U = x => String(x || '').trim().toUpperCase();
+  const rows = await amzCodeRows(env, code);
+  const alias = {};
+  try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); }); } catch (_) {}
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const by = {};
+  rows.forEach(r => { const part = r.sku ? P(r.sku) : ''; if (!part) return;
+    [[U(r.fnsku), 'FNSKU'], [U(r.asin), 'ASIN']].forEach(([c, kind]) => { if (!AMZ_CODE_RE.test(c)) return;
+      const o = by[c] = by[c] || { code: c, kind: c.startsWith('X0') ? 'FNSKU' : 'ASIN', parts: new Set() }; o.parts.add(part); }); });
+  // Only part #s SKU Mgr has count when there are some (an Amazon returns / junk SKU on the same ASIN doesn't make it "2 part #s").
+  const inMgr = new Set();
+  try { const cand = [...new Set(Object.values(by).flatMap(o => [...o.parts]))];
+    for (let i = 0; i < cand.length; i += 90) { const c = cand.slice(i, i + 90);
+      ((await env.DB.prepare(`SELECT DISTINCT UPPER(TRIM(part_num)) AS p FROM master_list WHERE UPPER(TRIM(part_num)) IN (${c.map(() => '?').join(',')})`).bind(...c).all()).results || []).forEach(r => inMgr.add(r.p)); }
+  } catch (_) {}
+  const out = {};
+  Object.values(by).forEach(o => { const all = [...o.parts].sort(), known = all.filter(p => inMgr.has(p)), parts = known.length ? known : all;
+    out[o.code] = { code: o.code, kind: o.kind, part: parts.length === 1 ? parts[0] : null, parts }; });
+  return out;
+}
+async function amzCodeToPart(env, code) {
+  code = String(code || '').trim().toUpperCase();
+  if (!AMZ_CODE_RE.test(code) || !env.DB) return null;
+  return (await amzCodeMap(env, code))[code] || null;
+}
 // 🏷 Owner (2026-10-24): "201-1-9=10- showed Amazon's barcode, but we use our UPC on it — check Amazon, why do 24-1-1=10– and
 // 23-2-1=10XA use the Amazon label, find all of them". The saved reports kept an OLD X00… FNSKU after a listing moved to the
 // manufacturer barcode. Amazon's FBA Inventory API gives each SKU's FNSKU NOW — kept here (every ⚡ sync + 🔄 Check live) and it wins.
@@ -2007,6 +2048,8 @@ async function reorderCatalogImport(request, env, session) {
   if (b.replace && !title) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
   let incParts = 0, incUnits = 0;
   const now = new Date().toISOString(), t = v => (v == null ? '' : String(v)).trim().slice(0, 300), n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  // 🏷 An ASIN / FNSKU the vendor printed instead of our UPC (Amazon-barcode listings) is not a UPC — never saved as one.
+  const upcOnly = v => /[A-Z]/i.test(t(v)) ? '' : t(v);
   const num = v => parseFloat(String(v == null ? '' : v).replace(/,/g, ''));
   const stage = title && (b.stage === 'shipped' || b.stage === 'production') ? b.stage : '';
   if (stage) await env.DB.prepare(`INSERT INTO reorder_title (title, stage, updated_at, created_at) VALUES (?,?,?,?)
@@ -2101,7 +2144,7 @@ async function reorderCatalogImport(request, env, session) {
       outside_upc = COALESCE(NULLIF(excluded.outside_upc,''), outside_upc), inside_upc = COALESCE(NULLIF(excluded.inside_upc,''), inside_upc),
       asin = COALESCE(NULLIF(excluded.asin,''), asin), inner_pcs = COALESCE(excluded.inner_pcs, inner_pcs), case_pcs = COALESCE(excluded.case_pcs, case_pcs),
       raw_part = excluded.raw_part, updated_at = excluded.updated_at`)
-      .bind(vendor, part, t(r.item_no), t(r.description), t(r.outside_upc), t(r.inside_upc), t(r.asin).toUpperCase(), n(r.inner_pcs), n(r.case_pcs), t(r.part), now));
+      .bind(vendor, part, t(r.item_no), t(r.description), upcOnly(r.outside_upc), upcOnly(r.inside_upc), (t(r.asin) || (/^B0[0-9A-Z]{8}$/i.test(t(r.outside_upc)) ? t(r.outside_upc) : '')).toUpperCase(), n(r.inner_pcs), n(r.case_pcs), t(r.part), now));
   }
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   for (let i = 0; i < priceStmts.length; i += 50) await env.DB.batch(priceStmts.slice(i, i + 50));
@@ -4041,7 +4084,7 @@ async function inventoryOfflinePack(env) {
   ed.byPart.forEach((e, P) => e.z.forEach(z => { if (!prim[z]) prim[z] = [P, e.inside || '', e.outside || '']; }));
   const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
   upcRows.forEach(r => { const P = U(r.sku); [r.outside_upc, r.inside_upc].forEach(c => { const z = upcZ(c); if (z && !prim[z] && live(P, z)) prim[z] = [String(r.sku || '').trim(), r.inside_upc || '', r.outside_upc || '']; }); });
-  const addSec = (P, c) => { const z = upcZ(c); if (z && !(z in sec) && live(U(P), z)) sec[z] = U(P); };
+  const addSec = (P, c) => { if (/[A-Z]/i.test(String(c || ''))) return; const z = upcZ(c); if (z && !(z in sec) && live(U(P), z)) sec[z] = U(P); }; // letters = not a UPC (e.g. an ASIN)
   (await all('SELECT upc, part FROM upc_link')).forEach(r => addSec(r.part, r.upc));
   vendorUpcMap().byUpc.forEach((P, z) => addSec(P, z));
   upcRows.forEach(r => { addSec(r.sku, r.outside_upc); addSec(r.sku, r.inside_upc); });
@@ -4051,7 +4094,9 @@ async function inventoryOfflinePack(env) {
   const editZ = {}; ed.byPart.forEach((e, P) => { editZ[P] = e.z; });
   const cParts = [...vendorUpcMap().allParts].filter(P => /\d[C](?=\s*$|=)/.test(P));
   const caseOf = {}; (await all('SELECT part, target FROM reorder_case_of')).forEach(r => { caseOf[U(r.part)] = U(r.target); });
-  return cors(new Response(JSON.stringify({ ok: true, at: new Date().toISOString(), rows, pending, prim, sec, sheet, editZ, cParts, caseOf }), { headers: { 'Content-Type': 'application/json' } }));
+  // 🏷 Amazon FNSKU (X0…) / ASIN (B0…) → our part # (only codes on ONE part #), so a scan finds it with no internet too.
+  const amz = {}; Object.values(await amzCodeMap(env).catch(() => ({}))).forEach(o => { if (o.part) amz[o.code] = o.part; });
+  return cors(new Response(JSON.stringify({ ok: true, at: new Date().toISOString(), rows, pending, prim, sec, sheet, editZ, cParts, caseOf, amz }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 async function buildPendingMap(env) {
@@ -4724,6 +4769,14 @@ async function inventoryLookup(url, env) {
     const found = await upcToPart(env, code);
     if (found) { partNum = found; sku = found; }
   }
+  // 🏷 Amazon's FNSKU (X0…, the inside bag) or ASIN (B0…, the outside box) of one of our FBA listings → its part #.
+  let amazonCode = null;
+  if (!partNum && AMZ_CODE_RE.test(code) && env.DB && !(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [code]).catch(() => null))) {
+    amazonCode = await amzCodeToPart(env, code).catch(() => null) || { code, kind: code.startsWith('X0') ? 'FNSKU' : 'ASIN', part: null, parts: [] };
+    if (amazonCode.part) partNum = sku = amazonCode.part;
+    // Not one of our listings, or on 2+ part #s: say so — never a row named after the Amazon code (Stock In would make one).
+    else return cors(new Response(JSON.stringify({ partNum: null, amazonCode, code, locations: [] }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   // Still not found: a UPC-looking code is NOT a part # — say so (Stock In
   // asks for the part # and links it) instead of making rows named after
   // the barcode. Rows already made that way still show, so they can be fixed.
@@ -4895,7 +4948,7 @@ async function inventoryLookup(url, env) {
   try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked, caseOf
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked, caseOf, ...(amazonCode ? { amazonCode } : {})
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -6932,6 +6985,7 @@ async function inventoryContainerScan(url, env) {
   if (alias && alias.part) part = String(alias.part).toUpperCase();
   if (!part && await d1First(env, `SELECT 1 AS x FROM reorder_pallet WHERE UPPER(part) = ? UNION SELECT 1 FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1`, [code, code]).catch(() => null)) part = code;
   if (!part && isUpcLike(code)) part = await upcToPart(env, code);
+  if (!part && AMZ_CODE_RE.test(code)) { const a = await amzCodeToPart(env, code).catch(() => null); if (a && a.part) part = a.part; } // 🏷 ASIN box / FNSKU bag
   if (!part) return J({ ok: true, part: null, lines: [] });
   const got = await receivedContainerTitles(env);
   const { lines } = await containerPalletLines(env, { q: part });
@@ -16304,6 +16358,12 @@ async function inventorySkuSearch(url, env) {
           const inst = url.searchParams.get('instock') === '1' ? 'AND m.cases > 0' : '';
           const SEL = `SELECT m.id, m.sku, m.base_sku, COALESCE(NULLIF(m.name,''), (SELECT p.name FROM products p WHERE UPPER(p.sku)=UPPER(m.base_sku) LIMIT 1), '') as name,
                   m.part_num, m.location, m.cases, m.units_per_case, m.vendor, m.price, m.prev_notes, m.sheet_row FROM master_list m`;
+          if (AMZ_CODE_RE.test(q)) { // 🏷 an ASIN (B0…) / FNSKU (X0…) of our FBA listing → its part #'s rows
+            const a = await amzCodeToPart(env, q).catch(() => null);
+            const r2 = a && a.part ? await d1All(env, `${SEL} WHERE UPPER(TRIM(m.part_num)) = ? ${inst} ORDER BY m.location`, [a.part]) : [];
+            await skuSearchAddPending(env, r2);
+            return cors(new Response(JSON.stringify({ ok: true, results: r2, source: 'd1', matchedBy: 'amazon', amazonCode: a }), { headers: { 'Content-Type': 'application/json' } }));
+          }
           const digits = q.replace(/[\s-]/g, '');
           if (/^\d{8,14}$/.test(digits)) {
             const part = await upcToPart(env, digits).catch(() => null);
