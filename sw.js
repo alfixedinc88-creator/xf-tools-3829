@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v298-stockout-report-qty-20261024';
+const CACHE_VERSION = 'v299-amazon-codes-20261025';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
@@ -408,6 +408,11 @@ function packLookup(pk, raw) {
   // 4. other UPC lists (part # only)
   const upcLike = /^\d{11,14}$/.test(code);
   if (!partNum && upcLike) { const f = pk.sec[z] || (z11 ? (pk.prim[z11] && pk.editZ[pk.prim[z11][0].toUpperCase()] ? pk.prim[z11][0] : pk.sec[z11]) : null); if (f) partNum = sku = f; }
+  // 🏷 Amazon's FNSKU (X0…, inside bag) / ASIN (B0…, outside box) of our FBA listing → its part # (same as the Worker).
+  if (!partNum && /^(X0|B0)[0-9A-Z]{8}$/.test(code) && !has(code)) {
+    if (pk.amz && pk.amz[code]) partNum = sku = pk.amz[code];
+    else return { partNum: null, amazonCode: { code, kind: code.startsWith('X0') ? 'FNSKU' : 'ASIN', part: null, parts: [] }, code, locations: [], offlineCopy: pk.at };
+  }
   if (!partNum && upcLike && !has(code)) return { partNum: null, upcNotLinked: true, code, locations: [], offlineCopy: pk.at };
   const upcNotLinked = !partNum && upcLike;
   if (!partNum) partNum = code;
