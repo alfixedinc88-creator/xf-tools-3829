@@ -7757,7 +7757,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261022b/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261025a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -9989,6 +9989,54 @@ console.log('\n📦 AWD grab plan wording: whole cases = "grab N cases (enough f
   const b = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 24 })('23-5-2=50-', Array(5).fill(4));
   check('whole cases → "GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases" (no "take … pcs"); part of a case → "grab 1 case — take 1000 pcs, rest stays"',
     a.summary === 'GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases' && b.summary === 'GRAB 1 case (enough for our 5 boxes): C3=2-2-2: grab 1 case — take 1000 pcs, rest stays', [a.summary, b.summary]);
+}
+
+// Owner (2026-10-25): "over the 'stock out big company' I want the system to have whatever we need to grab for this shipment — a button in
+// 'shipment builder' like 'send the shipment to stock out big company'; after we click it, all the boxes we need are on Stock Out Big
+// Company so they can start getting all the boxes, like how many boxes and what we need".
+console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 Current AWD shipment shows what to grab, by location');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('93-7-1','Nipple','93-7-1=10','C3=1-1-1',2,100), ('93-7-1','Nipple','93-7-1=10','BO=1-1-1',1,100), ('94-7-4','Cap','94-7-4=5','PR=2-2-2',4,50)").run();
+  // the Builder's lines: 93-7-1=10- Send 25 units, case pack 10 a box → 3 boxes = 30 units; 94-7-4=5- Send 10 units, no case pack
+  const lines = new Function('S', (ah.match(/function awdSendLines\(\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdSendLines();')({
+    shipment: { '93-7-1=10-': { qty: 25, row: { name: 'Nipple' } }, '94-7-4=5-': { qty: 10, row: { name: 'Cap' } }, '95-7-5=2-': { qty: 0, row: {} } }, cpackMap: { '93-7-1=10-': { unitsPerBox: 10 } } });
+  check('the Builder sends the same units / boxes as the Amazon upload file: 25 → 3 boxes × 10 = 30 units; no case pack → 10 units, 0 boxes; Send Qty 0 left out',
+    lines.length === 2 && lines[0].units === 30 && lines[0].boxes === 3 && lines[1].units === 10 && lines[1].boxes === 0, lines);
+  const empty = await post('/awd/ship-send', { shipment: 'X', lines: [] });
+  const sent = await post('/awd/ship-send', { shipment: 'STAR-SEND1', lines });
+  const back = await get('/awd/ship-send');
+  check('POST /awd/ship-send keeps who / when / every line (Amazon SKU read as our part #: 93-7-1=10- → 93-7-1=10); nothing to send → refused',
+    empty.ok === false && sent.ok && sent.skus === 2 && sent.units === 40 && sent.boxes === 3 && back.send.shipment === 'STAR-SEND1' && back.send.lines[0].part === '93-7-1=10' && back.send.lines[1].part === '94-7-4=5' && !!back.send.by, { sent, back });
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const mk = () => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = [];
+    const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+      invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {} };
+    const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+      function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+      ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+      return { AWDS, load: window.invAwdShipLoad };`)(...Object.values(env2), pull);
+    return { run, g }; };
+  const loadCard = async () => { const c = mk(); c.run.load(); for (let i = 0; i < 60 && !/inv-awdship-area|No shipment|Could not/.test(c.g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25)); return { h: c.g('inv-awdship-out').innerHTML, A: c.run.AWDS }; };
+  const c1 = await loadCard(), sum = (A, a) => A.takes.filter(t => t.area === a).reduce((x, t) => x + t.cases, 0);
+  check('📦 Current AWD shipment shows the send: "📤 from the Shipment Builder · 2 SKUs · 3 Amazon boxes · sent by …"; 93-7-1=10: 30 units × 10 = 300 pcs = 3 cases → C3 ×2 + BO ×1 (no more on the shelves); 94-7-4=5: 10 × 5 = 50 pcs = 1 case → PR; areas in walking order',
+    /📤 from the Shipment Builder · 2 SKUs · 3 Amazon boxes · sent by /.test(c1.h) && sum(c1.A, 'C3') === 2 && sum(c1.A, 'BO') === 1 && sum(c1.A, 'PR') === 1
+      && c1.h.indexOf('data-a="BO"') < c1.h.indexOf('data-a="PR"') && c1.h.indexOf('data-a="PR"') < c1.h.indexOf('data-a="C3"'), { takes: c1.A.takes.map(t => [t.area, t.partNum, t.cases]), h: c1.h.slice(0, 300) });
+  // the Amazon box labels uploaded later (newer) win — they know which boxes are PREVIOUS PACKED
+  sq.prepare("UPDATE awd_ship_send SET at = '2026-01-01T00:00:00.000Z'").run();
+  await post('/awd/label-map', { shipment: 'STAR-SEND1', labels: [{ sscc: '201952611628557390', sku: '93-7-1=10-', part: '93-7-1=10', seq: '1-1', units: 10, loc: 'C3=1-1-1' }] });
+  const c2 = await loadCard(), all = A => A.takes.reduce((x, t) => x + t.cases, 0);
+  await post('/awd/ship-send', { shipment: 'STAR-SEND2', lines: lines.slice(1) });
+  const c3 = await loadCard();
+  check('…the Amazon box labels uploaded after the send are newer → the card follows the labels (1 box → 1 case in all); a newer send wins again over older labels',
+    !/from the Shipment Builder/.test(c2.h) && /1 Amazon boxes/.test(c2.h) && all(c2.A) === 1 && /STAR-SEND2<\/b> · 📤 from the Shipment Builder · 1 SKU ·/.test(c3.h) && all(c3.A) === 1 && sum(c3.A, 'PR') === 1,
+    { h: c2.h.slice(0, 200), h3: c3.h.slice(0, 200) });
+  check('…📤 Send this shipment to Stock Out Big Company button in the Builder (asks first; says sent / not sent), 🧩 check mark; the card reads /awd/ship-send',
+    /onclick="awdSendToStockOut\(\)">📤 Send this shipment to Stock Out Big Company<\/button>/.test(ah) && /if \(!confirm\('📤 Send "'/.test(ah) && /✗ Not sent: /.test(ah)
+      && /sel: '#awd-send-so'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /wFetch\(W \+ '\/awd\/ship-send'\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

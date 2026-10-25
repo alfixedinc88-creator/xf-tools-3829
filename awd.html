@@ -1041,6 +1041,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .xlsx
               </button>
               <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:7px">Amazon AWD shipment upload format</p>
+              <!-- 📤 Owner (2026-10-25): "a button in Shipment Builder: send the shipment to Stock Out Big Company — all the boxes we need show
+                   there so they can start getting them, how many boxes and what we need". -->
+              <div id="awd-send-so" style="margin-top:8px">
+                <button class="btn btn-primary" style="width:100%;justify-content:center;background:#1D4ED8;border-color:#1D4ED8" onclick="awdSendToStockOut()">📤 Send this shipment to Stock Out Big Company</button>
+                <div id="awd-send-so-out" style="font-size:12px;margin-top:4px;line-height:1.4"></div>
+              </div>
               <!-- 🧰 Owner (2026-10-24): Amazon said "Prep category is missing" on 22 SKUs after the upload — set it for them on Amazon. -->
               <div id="awd-prep-card" style="margin-top:8px">
                 <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="awdPrepFix()">🧰 Fix "Prep category is missing" on Amazon</button>
@@ -3530,6 +3536,29 @@ function buildLabelCopyText(amazonSku, casePrefix) {
 }
 
 // ── 🕘 SHIPMENT HISTORY (owner 2026-10-23) ──
+// 📤 The Builder's SKUs → Stock Out Big Company → 📦 Current AWD shipment (what to grab, by location). Same units / boxes as the
+// Amazon upload file (rounded up to whole boxes when the SKU has a case pack). Kept on the server: who / when / every line.
+function awdSendLines() {
+  return Object.entries(S.shipment).filter(([, i]) => i.qty > 0).map(([sku, i]) => {
+    const cp = S.cpackMap[sku.toUpperCase()], hasCP = cp && cp.unitsPerBox > 0, boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : 0;
+    return { sku, units: hasCP ? boxes * cp.unitsPerBox : i.qty, boxes, unitsPerBox: hasCP ? cp.unitsPerBox : 0, name: (i.row && i.row.name) || '' };
+  });
+}
+async function awdSendToStockOut() {
+  const out = ge('awd-send-so-out'), lines = awdSendLines(), h = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!lines.length) { awd_planner_toast('No units staged', 'error'); return; }
+  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD shipment';
+  const units = lines.reduce((a, x) => a + x.units, 0), boxes = lines.reduce((a, x) => a + x.boxes, 0), noBox = lines.filter(x => !x.boxes).length;
+  if (!confirm('📤 Send "' + name + '" to Stock Out Big Company?\n\n' + lines.length + ' SKUs · ' + units + ' units' + (boxes ? ' · ' + boxes + ' boxes' : '') + (noBox ? '\n(' + noBox + ' SKU with no case pack — counted in units only)' : '')
+    + '\n\nThe floor sees what to grab, by location (📦 Current AWD shipment). It replaces the shipment they see now.')) return;
+  if (out) out.innerHTML = '⏳ Sending…';
+  try {
+    const d = await (await wFetch(W + '/awd/ship-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: name, lines }) })).json();
+    if (!d || !d.ok) throw new Error((d && d.error) || 'not sent');
+    if (out) out.innerHTML = '<span style="color:#15803D">✅ Sent ' + d.skus + ' SKUs · ' + d.units + ' units' + (d.boxes ? ' · ' + d.boxes + ' boxes' : '') + ' — on Stock Out Big Company → 📦 Current AWD shipment (' + h(d.by || '') + ', ' + h(awdHistWhen(d.at)) + ')</span>';
+    awd_planner_toast('📤 Sent to Stock Out Big Company');
+  } catch (e) { if (out) out.innerHTML = '<span style="color:#DC2626">✗ Not sent: ' + h(e.message) + ' — try again</span>'; }
+}
 function awdHistSave(name, format, items) {
   const list = items.map(([sku, i]) => {
     const cp = S.cpackMap[sku.toUpperCase()], hasCP = cp && cp.unitsPerBox > 0, boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : 0;
@@ -6248,6 +6277,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261022b"></script>
+<script src="xf-access.js?v=20261025a"></script>
 </body>
 </html>

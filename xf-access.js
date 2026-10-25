@@ -61,6 +61,7 @@ document.addEventListener('input', function (e) {
       { key: 'builder', label: 'Shipment Builder', sel: '#tab-builder', parts: [
         { key: 'addsku', label: '＋ Add SKU (manual)', sel: '#page-builder button[onclick="bldShowManualAdd()"], #bld-manual-panel' },
         { key: 'clearall', label: 'Clear All', sel: '#page-builder button[onclick="clearBuilder()"]' },
+        { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
         { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
