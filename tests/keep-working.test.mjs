@@ -9375,7 +9375,7 @@ console.log('\n✅ AWD box labels: PREVIOUS PACKED for the ASINs / SKUs already 
   check('the list: an ASIN (any case) → every box of its SKU; "ASIN 2" → only 2 boxes; a SKU works too; SKUs not on it keep our template',
     prev.B0AAA11111 === Infinity && prev.B0BBB22222 === 0 && seq.join() === 'true,true,true,true,false,true,false', { seq, prev });
   check('…upload: those labels get "✅ PREVIOUS PACKED / Already on the pallet — / do NOT go to the warehouse / <SKU>" instead of our template; the result says how many, and any ASIN not on a label in orange',
-    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /\['✅ PREVIOUS PACKED · Box ' \+ seq, pi\.name, pi\.qty, 'on the pallet — do NOT go to the warehouse'\]/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
+    /const ph = awdPrevHit\(prev, sku, amz\);/.test(ah) && /m\.prevKey \? '✅ PREVIOUS PACKED · Box ' \+ m\.seq \+ ' \(on the pallet\)'/.test(ah) && /⚠ Not on any label: /.test(ah) && /id="awd-prev-list"/.test(ah)
       && /key: 'prevpacked'/.test(rfV(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);  // Owner (2026-10-23): "there's a lot this time — can I just upload all the ASINs and the system does it".
   const fr = new Function(fnA('awdPrevFromRows') + 'return awdPrevFromRows;')();
   const a1 = fr([['ASIN', 'Title', 'Units', 'Boxes'], ['B0AAA11111', 'Tee', '120', '5'], ['b0bbb22222', 'Cap', '40', ''], ['B0AAA11111', 'Tee', '24', '1'], ['', 'total', '184', '6']]);
@@ -9617,10 +9617,12 @@ console.log('\n📄 AWD box labels with no empty spot: our template on its own l
   const pageOf = (sku, box) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
     getTextContent: async () => ({ items: [{ str: 'AWD Box ' + box + ' of 324', transform: [1, 0, 0, 1, 10, 420] }, { str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }] }) });
   const pdfPages = [pageOf('2-3-4=2XX-', 1), pageOf('23-4-6=2X-', 2)];
+  globalThis.__awdWs = { '23-4-6=2X-': { exactRows: [{ partNum: '23-4-6=2X', location: 'C1=1-1-1', casesNum: 2 }], bulkRows: [] } }; globalThis.__awdUpc = { '23-4-6=2X': 10 };
+  globalThis.__awdTpl = { '23-4-6=2X-': { label: '2X=TEE 1/2', upc: '850031110001' } };
   let printed = '';
   const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '2-3-4=2XX-' }, 'awd-lbl-bc': { checked: true } };
   const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
-    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
+    code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }" + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
     id => els[id], { shipment: { '2-3-4=2XX-': { row: {} }, '23-4-6=2X-': { row: {} } }, tplPrefix: {}, joined: [] },
     { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
     async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 2, getPage: async p => pdfPages[p - 1] }) }) }),
@@ -9629,7 +9631,7 @@ console.log('\n📄 AWD box labels with no empty spot: our template on its own l
   await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
   const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
   check('2 full AWD labels (no empty spot) → 4 labels to print: each Amazon label + our own right after it; PREVIOUS PACKED on the 1st, our template on the 2nd; "Box 1 of 324" named on ours',
-    imgs === 4 && texts.some(t => /2-3-4=2XX-\s+·\s+Box 1-1\s+\(Box 1 of 324\)/.test(t)) && texts.includes('✅ PREVIOUS PACKED') && texts.includes('C1=1-1-1') && texts.some(t => /goes WITH the Amazon label before it/.test(t))
+    imgs === 4 && texts.some(t => /2-3-4=2XX-\s+·\s+Box 1-1\s+\(Box 1 of 324\)/.test(t)) && texts.some(t => /^✅ PREVIOUS PACKED/.test(t)) && texts.some(t => t.includes('C1=1-1-1')) && texts.some(t => /goes WITH the Amazon label before it/.test(t))
       && /📄 <b>2<\/b> Amazon labels have no empty spot/.test(out) && /\(4 labels to print\)/.test(out) && /PREVIOUS PACKED on <b>1<\/b> label/.test(out) && !/No template for/.test(out), { imgs, out, texts: texts.slice(0, 12) });
 }
 
@@ -9648,10 +9650,12 @@ console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label
   const pageOf = (sku, box) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
     getTextContent: async () => ({ items: [{ str: 'AWD Box ' + box + ' of 324', transform: [1, 0, 0, 1, 10, 420] }, { str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }] }) });
   const pdfPages = [pageOf('2-3-4=2XX-', 1), pageOf('23-4-6=2X-', 2)];
+  globalThis.__awdWs = { '23-4-6=2X-': { exactRows: [{ partNum: '23-4-6=2X', location: 'C1=1-1-1', casesNum: 2 }], bulkRows: [] } }; globalThis.__awdUpc = { '23-4-6=2X': 10 };
+  globalThis.__awdTpl = { '23-4-6=2X-': { label: '2X=TEE 1/2', upc: '850031110001' } };
   let printed = '';
   const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '2-3-4=2XX-' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
   const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
-    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
+    code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }" + fnA('awdPrevParse') + fnA('awdPrevHit') + '; return awdLabelsDo;')(
     id => els[id], { shipment: { '2-3-4=2XX-': { row: {} }, '23-4-6=2X-': { row: {} } }, tplPrefix: {}, joined: [] },
     { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
     async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 2, getPage: async p => pdfPages[p - 1] }) }) }),
@@ -9661,7 +9665,7 @@ console.log('\n🏷 AWD box labels, ☑ One label per box: the full Amazon label
   const out = els['awd-lbl-out'].innerHTML, imgs = (printed.match(/<img /g) || []).length;
   const scaled = drawn.filter(d => d[0] && d[0].toDataURL && d[3] === Math.round(720 * 0.85) && d[4] === Math.round(1080 * 0.85));
   check('2 full AWD labels → still 2 labels to print: each Amazon label drawn at 85% (top) with PREVIOUS PACKED / our template in the strip under it; says "one label per box"',
-    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED · Box 1-1/.test(t)) && texts.includes('C1=1-1-1') && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
+    imgs === 2 && scaled.length === 2 && texts.some(t => /✅ PREVIOUS PACKED · Box 1-1/.test(t)) && texts.some(t => t.includes('C1=1-1-1')) && /🏷 <b>2<\/b> full Amazon labels printed at 85% with our info under it/.test(out) && /\(2 labels to print\)/.test(out) && !/📄/.test(out),
     { imgs, scaled: scaled.length, out });
   check('…a choice (☑ One label per box), remembered on this computer (on unless turned off); off = our info on its own label after', /id="awd-lbl-one"/.test(ah) && /localStorage\.setItem\('awd_lbl_one'/.test(ah) && /ge\('awd-lbl-one'\)\.checked = localStorage\.getItem\('awd_lbl_one'\) !== '0'/.test(ah) && /id="awd-lbl-one" checked/.test(ah), null);
   // Owner (2026-10-24): "I have to scroll all the way down the window to scroll that panel" + the one-label choice was off → on by default.
@@ -9683,13 +9687,16 @@ console.log('\n🔢 AWD box labels: box N-k numbering, the barcode from the labe
     getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) });
   const mkCanvas = () => { const c = { width: 0, height: 0, toDataURL: () => 'data:png' }; const x = mkCtx(); c.getContext = () => x; return c; };
   const pageOf = (sku, fn) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: () => ({ promise: Promise.resolve() }),
-    getTextContent: async () => ({ items: [{ str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }, { str: 'FNSKU: ' + fn, transform: [1, 0, 0, 1, 10, 380] }] }) });
+    getTextContent: async () => ({ items: [{ str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }, { str: 'Units: 10', transform: [1, 0, 0, 1, 200, 400] }, { str: 'FNSKU: ' + fn, transform: [1, 0, 0, 1, 10, 380] }] }) });
+  globalThis.__awdWs = { '23-4-1=10-': { exactRows: [{ partNum: '23-4-1=10', location: 'C1=1-1-1', casesNum: 1 }], bulkRows: [] }, '24-1-1=10-': { exactRows: [{ partNum: '24-1-1=10', location: 'C2=2-2-2', casesNum: 3 }], bulkRows: [] } };
+  globalThis.__awdUpc = { '23-4-1=10': 50, '24-1-1=10': 10 };
+  globalThis.__awdTpl = { '23-4-1=10-': { label: '10=TEE 1/2', upc: '850031110001' }, '24-1-1=10-': { label: '10=BALL VALVE', upc: '850031110024' } };
   // 23-4-1=10- ×3 (manufacturer barcode: FNSKU = its ASIN) and 24-1-1=10- ×1 (Amazon barcode: X0…)
   const pdfPages = [pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('23-4-1=10-', 'B07BCXWTFX'), pageOf('24-1-1=10-', 'X001ABCDEF'), pageOf('23-4-1=10-', 'B07BCXWTFX')];
   const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
   const amz = [{ sku: '23-4-1=10-', barcode: 'amazon', fnsku: 'X00WRONG01' }]; // the old list says Amazon barcode — the label says otherwise
   const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast',
-    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdAmzList = () => Promise.resolve(' + JSON.stringify(amz) + '); return awdLabelsDo;')(
+    code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }" + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdAmzList = () => Promise.resolve(' + JSON.stringify(amz) + '); return awdLabelsDo;')(
     id => els[id], { shipment: {}, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() }, { open: () => ({ document: { write() {}, close() {} } }) },
     async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 4, getPage: async p => pdfPages[p - 1] }) }) }),
     sku => sku === '24-1-1=10-' ? 'Ball valve\n850031110024\nC2=2-2-2' : '5 need label\nTee 1/2"\n850031110001\nC1=1-1-1\nBSMT=3-1-2',
@@ -9700,9 +9707,10 @@ console.log('\n🔢 AWD box labels: box N-k numbering, the barcode from the labe
     boxes.join() === '3-1,3-2,1-1,3-3', boxes);
   check('…the scan barcode comes from the FNSKU on the label: 23-4-1=10- (FNSKU = its ASIN → manufacturer barcode) → our UPC 850031110001, not the old list\'s X00WRONG01; 24-1-1=10- (X0…) → X001ABCDEF',
     codes.filter(c => c === '850031110001').length === 3 && codes.includes('X001ABCDEF') && !codes.includes('X00WRONG01'), codes);
-  const big = fonts.filter(([t]) => /^Box 3-1/.test(t)).map(x => x[1])[0] || 0, H = 432 * 2.5;
-  check('…one label: the strip under Amazon\'s label is only 3 big lines (box + need label · the spots · the item), the barcode turned on its side on the right; text at least 3.5% of the label height (was ~2%)',
-    big >= H * 0.035 && texts.includes('Box 3-1 · 5 need label') && texts.includes('C1=1-1-1  /  BSMT=3-1-2') && texts.some(t => /^Tee 1\/2"$/.test(t)), { big, min: H * 0.035, t: texts.slice(0, 8) });
+  const big = fonts.filter(([t]) => /^Box 3-2/.test(t)).map(x => x[1])[0] || 0, H = 432 * 2.5;
+  // Owner (2026-10-25): the lines are now Box N-k · its spot · the label line (name) · bags × pcs (+ the grab plan on the 1st label).
+  check('…one label: big lines under Amazon\'s label (box + its spot · the label line · bags × pcs), the barcode on its side on the right; text at least 3.5% of the label height (was ~2%)',
+    big >= H * 0.035 && texts.includes('Box 3-2 · C1=1-1-1') && texts.includes('10=TEE 1/2') && texts.includes('10 bags × 10 pcs = 100 pcs'), { big, min: H * 0.035, t: texts.slice(0, 10) });
 }
 
 // Owner (2026-10-24): "I tried to see the template of 23-2-1=10XA but it was wrong — it said 1=3/4XB, but that listing is 10=3/4XB.
@@ -9813,8 +9821,9 @@ console.log('\n✅ PREVIOUS PACKED label: product name, bags × pieces a bag = p
     getTextContent: async () => ({ items: [{ str: 'SKU: 2-3-4=2XX-', transform: [1, 0, 0, 1, 10, 400] }, { str: 'Units: 5', transform: [1, 0, 0, 1, 200, 400] }, { str: 'FNSKU: B0DCLY31Z2', transform: [1, 0, 0, 1, 10, 380] }] }) };
   const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: 'B0DCLY31Z2' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
   const PHOTO = { width: 100, height: 80, photo: true };
+  globalThis.__awdWs = {}; globalThis.__awdUpc = {}; globalThis.__awdTpl = {};
   const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast', 'PHOTO',
-    code + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return awdLabelsDo;')(
+    code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }" + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return awdLabelsDo;')(
     id => els[id], { shipment: { '2-3-4=2XX-': { row: { asin: 'B0DCLY31Z2', name: '2 Pack XFITTING 1/2" Brass Tee' } } }, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() },
     { open: () => ({ document: { write() {}, close() {} } }) },
     async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 1, getPage: async () => page }) }) }),
@@ -9823,6 +9832,103 @@ console.log('\n✅ PREVIOUS PACKED label: product name, bags × pieces a bag = p
   check('a full AWD label for 2-3-4=2XX- (Units: 5) on the PREVIOUS PACKED list → "✅ PREVIOUS PACKED · Box 1-1 (on the pallet)", the product name, "5 bags × 2 pcs = 10 pcs", and the product photo on the same label',
     texts.includes('✅ PREVIOUS PACKED · Box 1-1 (on the pallet)') && texts.includes('2 Pack XFITTING 1/2" Brass Tee') && texts.includes('5 bags × 2 pcs = 10 pcs') && drawn.some(d => d[0] === PHOTO)
       && /<b>1<\/b> with the photo/.test(els['awd-lbl-out'].innerHTML), { texts, out: els['awd-lbl-out'].innerHTML.slice(0, 200) });
+}
+
+// Owner (2026-10-25): "1. PREVIOUS PACKED gets the UPC (or Amazon) barcode too. 2. the name = the label line. 3. bags × pcs = total on
+// EVERY label. 4. a photo on every label. 5. the 1st label of a SKU: how many pieces / cases to grab and where, full case or split into
+// how many; each label its own spot (1st case C1 → those labels say C1, 2nd case C2 …). 6. the labels printed in the order of where we grab".
+console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its spot, printed by location, every label with barcode + photo');
+{
+  const { readFileSync: rfG } = await import('node:fs');
+  const ah = rfG(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('function awdForceTpl('));
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const texts = [], codes = [], photos = [];
+  const mkCtx = () => ({ fillStyle: '', strokeStyle: '', lineWidth: 1, font: '10px', textBaseline: '', fillRect() {}, strokeRect() {}, save() {}, restore() {}, translate() {}, rotate() {},
+    drawImage(...a) { if (a[0] && a[0].getContext && a[0].getContext().__p) this.__p = a[0].getContext().__p; if (a[0] && a[0].photo) photos.push(a[0]); },
+    fillText(t) { texts.push(t); }, measureText(t) { return { width: String(t).length * (parseInt(String(this.font).replace(/\D+/, '')) || 10) * 0.5 }; },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) });
+  const mkCanvas = () => { const x = mkCtx(), c = { width: 0, height: 0, getContext: () => x, toDataURL: () => 'data:p' + (x.__p || 0) }; return c; };
+  const pageOf = (no, sku, units, fn) => ({ getViewport: ({ scale }) => ({ width: 288 * scale, height: 432 * scale }), render: ({ canvasContext }) => { canvasContext.__p = no; return { promise: Promise.resolve() }; },
+    getTextContent: async () => ({ items: [{ str: 'SKU: ' + sku, transform: [1, 0, 0, 1, 10, 400] }, { str: 'Units: ' + units, transform: [1, 0, 0, 1, 200, 400] }, { str: 'FNSKU: ' + fn, transform: [1, 0, 0, 1, 10, 380] }] }) });
+  // page 1–4: 8-8-8=10- ×4 (10 bags × 10 pcs = 100 pcs a box); page 5: 9-9-9=5- (in BSMT); page 6: 7-7-7=2X- PREVIOUS PACKED
+  const pdfPages = [1, 2, 3, 4].map(i => pageOf(i, '8-8-8=10-', 10, 'B0EIGHT888')).concat([pageOf(5, '9-9-9=5-', 4, 'B0NINE9999'), pageOf(6, '7-7-7=2X-', 5, 'X00SEVEN77')]);
+  // 8-8-8=10: 30 bags a case = 300 pcs; one case in C2=5-1-1, one in C1=1-1-1 → C1 first (walking order), 400 pcs = 2 cases
+  globalThis.__awdWs = { '8-8-8=10-': { exactRows: [{ partNum: '8-8-8=10', location: 'C2=5-1-1', casesNum: 1 }, { partNum: '8-8-8=10', location: 'C1=1-1-1', casesNum: 1 }], bulkRows: [] },
+    '9-9-9=5-': { exactRows: [{ partNum: '9-9-9=5', location: 'BSMT=1-1-1', casesNum: 2 }], bulkRows: [] } };
+  globalThis.__awdUpc = { '8-8-8=10': 30, '9-9-9=5': 4 };
+  globalThis.__awdTpl = { '8-8-8=10-': { label: '10=ELBOW 1/2 PEX', upc: '850000008881' }, '9-9-9=5-': { label: '5=TEE 3/4', upc: '850000009991' }, '7-7-7=2X-': { label: '2X=CAP 1/2', upc: '850000007771' } };
+  let printed = '';
+  const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-prev-list': { value: '7-7-7=2X-' }, 'awd-lbl-bc': { checked: true }, 'awd-lbl-one': { checked: true } };
+  const PHOTO = { width: 100, height: 100, photo: true };
+  const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast', 'PHOTO',
+    code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }"
+      + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return awdLabelsDo;')(
+    id => els[id], { shipment: {}, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
+    async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 6, getPage: async p => pdfPages[p - 1] }) }) }),
+    () => '', () => Promise.reject(new Error('offline')), '', cb => cb(), (c, code) => { codes.push(code); c.width = 300; c.height = 100; }, () => {}, PHOTO);
+  await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
+  const heads = texts.filter(t => /^Box \d+-\d+ · /.test(t));
+  check('8-8-8=10- (4 boxes × 100 pcs = 400 pcs, cases of 300 pcs): the 1st label says GRAB 2 cases (400 pcs): C1=1-1-1 ×1 split into 3 boxes · C2=5-1-1 ×1 open, take 100 pcs (1 box), rest stays; boxes 1–3 say C1=1-1-1, box 4 C2=5-1-1; 9-9-9 (20 pcs = a case) FULL CASE',
+    texts.includes('GRAB 2 cases = 400 pcs: C1=1-1-1 ×1 → 3 boxes each · C2=5-1-1 ×1 → take 100 pcs (rest stays)') && texts.includes('GRAB 1 case = 20 pcs: BSMT=1-1-1 ×1 → FULL CASE')
+      && heads.slice(0, 4).join('|') === 'Box 4-1 · C1=1-1-1|Box 4-2 · C1=1-1-1|Box 4-3 · C1=1-1-1|Box 4-4 · C2=5-1-1' && texts.filter(t => /^GRAB /.test(t)).length === 2, { heads, grab: texts.filter(t => /^GRAB/.test(t)) });
+  check('…every label: the label line as the name, bags × pcs = total (8-8-8: 10 bags × 10 pcs = 100 pcs; 9-9-9: 4 bags × 5 pcs = 20 pcs; PREVIOUS PACKED 7-7-7: 5 bags × 2 pcs = 10 pcs)',
+    texts.filter(t => t === '10=ELBOW 1/2 PEX').length === 4 && texts.includes('5=TEE 3/4') && texts.includes('2X=CAP 1/2') && texts.filter(t => t === '10 bags × 10 pcs = 100 pcs').length === 4 && texts.includes('4 bags × 5 pcs = 20 pcs') && texts.includes('5 bags × 2 pcs = 10 pcs'), texts.slice(0, 20));
+  check('…every label has the scan barcode and the photo — PREVIOUS PACKED too (its FNSKU is X00… → the Amazon barcode)',
+    codes.length === 6 && codes.includes('X00SEVEN77') && codes.filter(c => c === '850000008881').length === 4 && photos.length === 6, { codes, photos: photos.length });
+  const order = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
+  check('…printed in the order of where they are grabbed: PREVIOUS PACKED (on the pallet) first, then BSMT (9-9-9), then C1 (8-8-8 boxes 1–3), then C2 (box 4); the result line counts each area',
+    order === '6,5,1,2,3,4' && /🗺 Printed by where they are grabbed: <b>PREVIOUS PACKED<\/b> 1 · <b>BSMT<\/b> 1 · <b>C1<\/b> 3 · <b>C2<\/b> 1/.test(els['awd-lbl-out'].innerHTML), { order, out: els['awd-lbl-out'].innerHTML.slice(0, 300) });
+  globalThis.__awdWs = globalThis.__awdUpc = globalThis.__awdTpl = undefined;
+}
+
+// Owner (2026-10-25): "6. Stock Out Big Company: a tab for the current shipment — the system picks whatever we need so they don't have to
+// scan; by where they grab (tap C1 → grab all the C1 items, bring them to the garage); and the people matching the labels scan our Amazon
+// box label, then the box they grabbed: match → next label, not a match → a warning to double check".
+console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location) + Box check reads the Amazon box label (SSCC)');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  // the office printed the labels: 3 boxes of 61-1-1=10- (10 bags × 10 pcs each = 300 pcs) + 1 PREVIOUS PACKED box; 1 box of 62-2-2=5-
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('61-1-1','Elbow','61-1-1=10','C2=1-1-1',3,100), ('61-1-1','Elbow','61-1-1=10','C1=4-4-4',1,100), ('62-2-2','Tee','62-2-2=5','BSMT=1-1-1',2,25)").run();
+  const lm = await post('/awd/label-map', { shipment: 'STAR-TEST1', labels: [
+    { sscc: '201952611628557385', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-1', units: 10, loc: 'C2=1-1-1' }, { sscc: '201952611628557386', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-2', units: 10, loc: 'C2=1-1-1' },
+    { sscc: '201952611628557387', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-3', units: 10, loc: 'C2=1-1-1' }, { sscc: '201952611628557388', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-4', units: 10, prev: true },
+    { sscc: '201952611628557389', sku: '62-2-2=5-', part: '62-2-2=5', seq: '1-1', units: 5, loc: 'BSMT=1-1-1' }] });
+  const one = await get('/awd/label-map?code=00201952611628557386'), last = await get('/awd/label-map');
+  const pkTok = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await (await call('/awd/label-map?code=201952611628557386', { headers: { 'X-Cred-Token': pkTok } })).json();
+  check('the box labels are kept (5 boxes of STAR-TEST1); a scanned SSCC (00 + 18 digits) finds its box: 61-1-1=10, Box 4-2, from C2=1-1-1; a picker\'s phone can read it',
+    lm.ok && lm.saved === 5 && one.box && one.box.part === '61-1-1=10' && one.box.seq === '4-2' && one.box.loc === 'C2=1-1-1' && last.shipment === 'STAR-TEST1' && last.labels.length === 5 && pk.box && pk.box.seq === '4-2', { lm, one, pk });
+  // run the page's own code (the card + the real Big Company pick rules) against the Worker
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), flashes = [], pull = [];
+  const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v),
+    invFlash: m => flashes.push(m), invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {} };
+  const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+    function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+    ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+    return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd, render: window.invAwdShipRender };`)(...Object.values(env2), pull);
+  run.load(); for (let i = 0; i < 40 && !/inv-awdship-area/.test(g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25));
+  const h = g('inv-awdship-out').innerHTML, A = run.AWDS;
+  const c2 = A.takes.filter(t => t.area === 'C2').reduce((a, t) => a + t.cases, 0), bs = A.takes.filter(t => t.area === 'BSMT').reduce((a, t) => a + t.cases, 0);
+  check('📦 Current AWD shipment: PREVIOUS PACKED box left out; 61-1-1=10 needs 3 boxes × 100 pcs = 300 pcs = 3 cases of 100 → C2=1-1-1 ×3; 62-2-2=5 needs 25 pcs = 1 case → BSMT; areas in walking order (BSMT before C2)',
+    /1 PREVIOUS PACKED, on the pallet — not listed/.test(h) && c2 === 3 && bs === 1 && h.indexOf('data-a="BSMT"') > 0 && h.indexOf('data-a="BSMT"') < h.indexOf('data-a="C2"'), { takes: A.takes.map(t => [t.area, t.partNum, t.cases]), h: h.slice(0, 300) });
+  A.area = 'C2'; run.render(); const h2 = g('inv-awdship-out').innerHTML;
+  run.add('C2'); run.add('C2');
+  check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',
+    /📍 C2=1-1-1<\/b> — <b>3 cases<\/b> of/.test(h2) && /➕ Put C2 on my Pull List/.test(h2) && pull.length === 1 && pull[0].partNum === '61-1-1=10' && pull[0].cases === '3' && pull[0].dest === 'company' && pull[0].forPart === '61-1-1=10' && pull[0].awdShipment === 'STAR-TEST1'
+      && flashes.some(f => /3 spots|1 spot in C2 on your Pull List/.test(f)) && flashes.some(f => /Nothing new to add in C2/.test(f)), { pull, flashes });
+  // Box check: the Amazon box label (SSCC) then the box grabbed
+  check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
+    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(ok && lp && lp\.box\) setTimeout\(function\(\) \{ BXC\.label = null;/.test(ih) && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
+      && new Function((ih.match(/function invBcSscc\(code\) \{[^\n]*/) || [''])[0] + '; return invBcSscc("00201952611628557386") === "201952611628557386" && invBcSscc("850031110001") === "";')(), null);
+  const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const sscc = new Function((ah.match(/function awdLabelSscc\(lines, y\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdLabelSscc;')();
+  check('…the AWD Planner reads each label\'s SSCC and saves every box (SKU, box N-k, bags, spot, PREVIOUS PACKED) when the labels are made',
+    sscc([{ y: 300, text: 'SSCC: 201952611628557385' }], 280) === '201952611628557385' && /wFetch\(W \+ '\/awd\/label-map', \{ method: 'POST'/.test(ah), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('61-1-1','62-2-2'); DELETE FROM awd_label_map");
 }
 
 // Owner (2026-10-25): "for the ones using the Amazon labels, when we order from our vendor, instead of our outside box UPC and inside bag

@@ -657,9 +657,17 @@ window.invCredLogin = async function() {
   </details>
   <!-- 🔍 Owner (2026-10-23): "the packer scans the label, then scans the package, so they know they didn't grab the wrong product — main
        point: never ship the wrong product to AWD / FBA". Big Company only. Every check is kept (who / when / right or wrong). -->
+  <!-- 📦 Owner (2026-10-25): "Stock Out Big Company: a tab for the current shipment we are working on — the system picks whatever we need,
+       so they don't have to scan; arranged by where they grab: tap C1, grab all the C1 items, bring them to the garage". From the boxes the
+       office saved with the Amazon box labels (AWD Planner); PREVIOUS PACKED boxes left out. Same pick rules and Pull List as Big Company. -->
+  <details class="icard" id="inv-awdship-card" style="display:none;border:2px solid #1D4ED8" ontoggle="if(this.open&&!AWDS.data)invAwdShipLoad()">
+    <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 Current AWD shipment — what to grab, by location</summary>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0">From the Amazon box labels the office printed. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad();return false">↻ Refresh</a></div>
+    <div id="inv-awdship-out" style="font-size:13px">Loading…</div>
+  </details>
   <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="font-weight:800;color:#7c3aed">🔍 Box check — scan the box label, then the product</div>
+      <div style="font-weight:800;color:#7c3aed">🔍 Box check — scan the box label (or the Amazon box label), then the product / the box you grabbed</div>
       <button type="button" onclick="invBoxCheckReset()" style="padding:5px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">📦 Next box</button>
     </div>
     <div id="inv-bc-step" style="font-size:14px;font-weight:700;margin:8px 0 6px">1️⃣ Scan the barcode on the BOX LABEL</div>
@@ -2194,6 +2202,7 @@ window.invCredLogin = async function() {
     var stockoutReportsCard = g("inv-stockout-card");
     if (stockoutReportsCard) stockoutReportsCard.style.display = (mode === "out" && invStockOutDest === 'shelving') ? "block" : "none";
     var amzBc = g("inv-amzbc-card"); if (amzBc) amzBc.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
+    var awdSh = g("inv-awdship-card"); if (awdSh) awdSh.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     var bxC = g("inv-boxcheck-card"); if (bxC) bxC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
@@ -2277,8 +2286,15 @@ window.invCredLogin = async function() {
   // unit going in can be scanned against it.
   var BXC = { label: null };
   function invBcNorm(c) { c = String(c || '').trim().toUpperCase(); return /^\d+$/.test(c) ? c.replace(/^0+/, '') : c; }
+  // 🗺 Owner (2026-10-25): "they scan our Amazon box label, then the box they grabbed; match → next label, not a match → a warning".
+  // The big SSCC barcode on an Amazon box label (18 digits, scanned as 00 + 18) → the box the office printed (SKU, box N-k, spot).
+  function invBcSscc(code) { var d = String(code || '').replace(/\D/g, ''); return /^\d{18,20}$/.test(String(code || '').trim()) && d.length >= 18 ? d.slice(-18) : ''; }
   function invBcPart(code) {
-    var c = String(code || '').trim().toUpperCase();
+    var c = String(code || '').trim().toUpperCase(), ss = invBcSscc(c);
+    if (ss) return wFetch(W + '/awd/label-map?code=' + ss).then(function(r) { return r.json(); }).then(function(d) {
+      var b = d && d.box; if (!b) return null;
+      return { part: String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''), name: b.name || '', box: b };
+    }).catch(function() { return null; });
     return invAmzBcLoad(true).then(function(d) {
       var hit = d && d.list.filter(function(x) { return String(x.fnsku).toUpperCase() === c; })[0];
       if (hit) return { part: String(hit.part).toUpperCase(), name: hit.name || '' };
@@ -2294,19 +2310,25 @@ window.invCredLogin = async function() {
       BXC.label = { code: v, info: null };
       if (st) st.textContent = '2️⃣ Now scan the PRODUCT going in this box';
       if (res) res.innerHTML = '<div style="font-size:13px">📦 Box label: <b style="font-family:var(--mono)">' + ckE(v) + '</b> <span id="inv-bc-lp" style="color:var(--text3)">…</span></div>';
-      invBcPart(v).then(function(p) { BXC.label.info = p; var e = g('inv-bc-lp'); if (e) e.innerHTML = p ? '= <b>' + ckE(p.part) + '</b> ' + ckE(p.name) : '<span style="color:var(--orange)">(not a part # we know — it is checked by the code itself)</span>'; });
+      invBcPart(v).then(function(p) { BXC.label.info = p; var e = g('inv-bc-lp'); if (!e) return;
+        e.innerHTML = p ? '= <b>' + ckE(p.part) + '</b> ' + ckE(p.name) + (p.box ? '<div style="font-size:15px;font-weight:800;color:var(--text);margin-top:3px">Amazon box ' + ckE(p.box.seq) + (p.box.prev ? ' · ✅ PREVIOUS PACKED (on the pallet)' : p.box.loc ? ' · from ' + ckE(p.box.loc) : '') + '</div>' : '')
+          : invBcSscc(v) ? '<span style="color:var(--red)">⚠ This Amazon box label is not in the boxes saved by the office — upload the labels in the AWD Planner first</span>' : '<span style="color:var(--orange)">(not a part # we know — it is checked by the code itself)</span>'; });
       return;
     }
     var L = BXC.label;
     var same = invBcNorm(L.code) === invBcNorm(v);
     Promise.all([L.info ? Promise.resolve(L.info) : invBcPart(L.code), same ? Promise.resolve(null) : invBcPart(v)]).then(function(ps) {
       var lp = ps[0], pp = ps[1] || lp, ok = same || !!(lp && ps[1] && lp.part === ps[1].part);
+      // same item, another bag count (=100 for an =10 box): only right if this box gets rebagged — said in orange, kept as not a match
+      var sameItem = !ok && lp && ps[1] && lp.part.split('=')[0] === ps[1].part.split('=')[0];
       res.innerHTML = '<div style="font-size:13px;margin-bottom:6px">📦 Box label: <b style="font-family:var(--mono)">' + ckE(L.code) + '</b>' + (lp ? ' = <b>' + ckE(lp.part) + '</b>' : '') + '</div>'
-        + '<div class="inv-bc-' + (ok ? 'ok' : 'bad') + '" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:' + (ok ? 'var(--green)' : 'var(--red)') + '">'
-        + (ok ? '✅ RIGHT PRODUCT' : '❌ WRONG PRODUCT — don\'t pack it!') + '</div>'
+        + '<div class="inv-bc-' + (ok ? 'ok' : 'bad') + '" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:' + (ok ? 'var(--green)' : sameItem ? '#ea580c' : 'var(--red)') + '">'
+        + (ok ? '✅ RIGHT PRODUCT' + (lp && lp.box ? ' — next label' : '') : sameItem ? '⚠ NOT A MATCH — same item, different bag count (' + ckE(ps[1].part) + ' vs ' + ckE(lp.part) + '): double check, only right if it gets rebagged' : '❌ WRONG PRODUCT — don\'t pack it! Double check') + '</div>'
         + '<div style="font-size:13px;margin-top:6px">Product scanned: <b style="font-family:var(--mono)">' + ckE(v) + '</b>' + (ps[1] ? ' = <b>' + ckE(ps[1].part) + '</b> ' + ckE(ps[1].name) : '') + '</div>';
       if (!ok && navigator.vibrate) navigator.vibrate([300, 100, 300]);
       if (st) st.textContent = '2️⃣ Scan the next product for this box — or 📦 Next box';
+      // An Amazon box label (SSCC) that matched → straight on to the next label
+      if (ok && lp && lp.box) setTimeout(function() { BXC.label = null; if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; var i = g('inv-bc-inp'); if (i) i.focus(); }, 900);
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: L.code, product: v, labelPart: lp ? lp.part : '', productPart: ps[1] ? ps[1].part : (same && lp ? lp.part : ''), ok: ok, at: new Date().toISOString() }) })
         .then(function(r) { return r.json(); }).then(function() { invBoxCheckDay(); }).catch(function() {});
     });
@@ -2318,6 +2340,86 @@ window.invCredLogin = async function() {
       el.innerHTML = 'Today: <b style="color:var(--green)">✅ ' + d.right + '</b> right · <b style="color:var(--red)">❌ ' + d.wrong + '</b> wrong'
         + (d.wrong ? '<div style="margin-top:3px">' + d.checks.filter(function(x) { return !x.ok; }).slice(0, 5).map(function(x) { return '❌ ' + ckE(xfrFmtT(x.at)) + ' · ' + ckE(x.by_user) + ' · label ' + ckE(x.label_part || x.label) + ' ≠ ' + ckE(x.product_part || x.product); }).join('<br>') + '</div>' : '');
     }).catch(function() {});
+  };
+  // 📦 Current AWD shipment (owner 2026-10-25): the boxes saved with the Amazon box labels → per part #: bags still to grab (PREVIOUS PACKED
+  // left out) → the Big Company pick rules (pieces, Each/Case, the exact part # first, pallets last…) → every spot to grab, by area in walking order.
+  var AWDS = { data: null, takes: [], area: '', added: {} };
+  window.AWDS = AWDS;
+  var AWD_AREA_ORDER = ['BO', '2FL', 'FRONT', 'BSMT', 'PR', 'GARAGE', 'C1', 'C2', 'BARN', 'C3', 'C4', 'C5'];
+  function invAwdArea(loc) { return String(loc || '').toUpperCase().split('=')[0].trim() || '?'; }
+  function invAwdAreaRank(a) { var i = AWD_AREA_ORDER.indexOf(a); return i >= 0 ? i : 99; }
+  window.invAwdShipLoad = function() {
+    var out = g('inv-awdship-out'); if (!out) return;
+    out.innerHTML = '⏳ Reading the current shipment…'; AWDS.takes = []; AWDS.area = '';
+    wFetch(W + '/awd/label-map').then(function(r) { return r.json(); }).then(function(d) {
+      AWDS.data = d;
+      if (!d || !d.ok || !(d.labels || []).length) { out.innerHTML = '<span style="color:var(--text3)">No shipment saved yet — in the AWD Planner, upload the Amazon box labels (🏷) first.</span>'; return; }
+      var by = {}, prevN = 0;
+      d.labels.forEach(function(b) { if (b.prev) { prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+        var o = by[P] = by[P] || { part: P, units: 0, boxes: 0, name: b.name || '' }; o.units += parseFloat(b.units) || 0; o.boxes++; });
+      var parts = Object.keys(by), i = 0, keep = invPart, noSize = [], short = [];
+      var next = function() {
+        if (i >= parts.length) { invPart = keep; AWDS.prevN = prevN; AWDS.noSize = noSize; AWDS.short = short; window.invAwdShipRender(); return; }
+        var o = by[parts[i++]]; out.innerHTML = '⏳ Working out where to grab… ' + i + ' of ' + parts.length + ' part #s';
+        _invFetchLookupRaw(o.part).then(function(L) {
+          if (!L || !L.partNum) { short.push(o.part + ' (not found)'); return next(); }
+          invPart = L;
+          var pm = String(o.part).split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, pcs = o.units * pack;
+          var each = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === o.part) each = Math.max(each, parseFloat(l.eachQty) || 0); });
+          var need = each > 0 ? pcs / each : o.boxes, plan;
+          try { plan = invPlanCompanyPull(o.part, need); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
+          plan.takes.forEach(function(t) { AWDS.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L }); });
+          if (plan.short > 0.001) short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
+          (plan.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
+          next();
+        }).catch(function() { short.push(o.part + ' (no WiFi?)'); next(); });
+      };
+      next();
+    }).catch(function() { out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
+  };
+  window.invAwdShipRender = function() {
+    var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
+    var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
+    var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
+    var h = '<div style="margin-bottom:6px"><b>' + ckE(d.shipment || 'Shipment') + '</b> · ' + d.labels.length + ' Amazon boxes' + (AWDS.prevN ? ' (' + AWDS.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + '</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
+          var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
+          return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
+            + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs</span></button>'; }).join('') + '</div>';
+    if (AWDS.area && areas[AWDS.area]) {
+      var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });
+      h += '<div style="border:1.5px solid #1D4ED8;border-radius:10px;padding:8px">' + L.map(function(i) { var t = AWDS.takes[i];
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border)' + (AWDS.added[i] ? ';opacity:.5' : '') + '"><b style="font-family:var(--mono)">📍 ' + ckE(t.loc.location) + '</b> — <b>' + ckE(String(Math.round(t.cases * 100) / 100)) + ' case' + (t.cases === 1 ? '' : 's') + '</b> of <span style="font-family:var(--mono);font-weight:700">' + ckE(t.partNum) + '</span>'
+            + (t.partNum !== t.target ? ' <span style="color:#b45309">for ' + ckE(t.target) + '</span>' : '') + (t.how ? '<div style="font-size:11px;color:var(--text2)">' + ckE(t.how) + '</div>' : '') + (t.name ? '<div style="font-size:11px;color:var(--text3)">' + ckE(t.name) + '</div>' : '') + (AWDS.added[i] ? ' <span style="color:var(--green)">✓ on the Pull List</span>' : '') + '</div>'; }).join('')
+        + '<button type="button" id="inv-awdship-add" onclick="invAwdShipAdd(AWDS.area)" style="width:100%;margin-top:8px;padding:13px;border:none;border-radius:10px;background:#1D4ED8;color:#fff;font-size:16px;font-weight:800;cursor:pointer">➕ Put ' + ckE(AWDS.area) + ' on my Pull List</button></div>';
+    }
+    if ((AWDS.short || []).length) h += '<div style="color:var(--red);font-size:12px;margin-top:6px">⚠ Not enough on the shelves: ' + AWDS.short.map(ckE).join(' · ') + '</div>';
+    if ((AWDS.noSize || []).length) h += '<div style="color:var(--orange);font-size:12px">⚠ Each/Case not on file (counted in cases): ' + AWDS.noSize.map(ckE).join(', ') + ' — set it in SKU Mgr</div>';
+    out.innerHTML = h;
+  };
+  // ➕ the area's spots onto the Pull List (Big Company, for that part #) — the same steps as a Big Company search.
+  window.invAwdShipAdd = function(area) {
+    if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
+    var keep = invPart, n = 0;
+    AWDS.takes.forEach(function(t, i) {
+      if (t.area !== area || AWDS.added[i]) return;
+      var key = invPullItemKey(t.partNum, t.loc), ex = null;
+      invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted && x.dest === 'company' && x.forPart === t.target) ex = x; });
+      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; }
+      else {
+        invPart = Object.assign({}, t.L, { partNum: t.partNum });
+        var before = invPullList.length, any = invPullList.some(function(x) { return x.key === key; });
+        if (any) invPullList.push({ key: key, partNum: t.partNum, sku: t.L.sku || t.partNum, name: t.L.name || '', location: t.loc.location, cases: String(t.cases),
+          systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
+          isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString() });
+        else { invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null; _invPendingStockoutSourceId = null; invAddToPullList(invPart, t.loc); invPullListPendingCases = null; }
+        if (invPullList.length > before) { var it = invPullList[invPullList.length - 1]; if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
+          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (AWDS.data && AWDS.data.shipment) || ''; }
+      }
+      AWDS.added[i] = true; n++;
+    });
+    invPart = keep; invSavePullList(); invRenderPullList(); window.invAwdShipRender();
+    invFlash(n ? '✓ ' + n + ' spot' + (n === 1 ? '' : 's') + ' in ' + area + ' on your Pull List — grab them, bring them to the garage, ✓ Grabbed' : 'Nothing new to add in ' + area, n ? 'success' : 'warn');
   };
   // A part # picked for Big Company that ships with Amazon's barcode → said once (it never stops the pick).
   window.invAmzBcWarn = function(part) {

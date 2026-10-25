@@ -1395,6 +1395,34 @@ async function inventoryBoxCheck(request, url, env, session) {
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
+// 🗺 Owner (2026-10-25): "the people who match the label scan our Amazon box label, then the box they grabbed — match → next label, not a
+// match → a warning"; "Stock Out Big Company: what we need for the current shipment, by location, without scanning". When the office
+// makes the box labels (AWD Planner), every Amazon box is kept: its SSCC (the big barcode), SKU / part #, box N-k, bags, the spot it is
+// grabbed from, and whether it was PREVIOUS PACKED. POST { shipment, labels:[…] } · GET ?code=SSCC (one box) · GET ?latest=1 (newest shipment).
+async function awdLabelMap(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
+    prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), S18 = c => { const d = String(c || '').replace(/\D/g, ''); return d.length >= 18 ? d.slice(-18) : ''; };
+  if (request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const shipment = t(b.shipment, 60) || 'shipment ' + new Date().toISOString().slice(0, 10), now = new Date().toISOString(), by = t((session && (session.displayName || session.username)) || '?', 40);
+    const L = (Array.isArray(b.labels) ? b.labels : []).slice(0, 3000).map(x => ({ sscc: S18(x.sscc), sku: t(x.sku), part: t(x.part), seq: t(x.seq, 12), units: parseFloat(x.units) || 0,
+      loc: t(x.loc, 120), prev: x.prev ? 1 : 0, fnsku: t(x.fnsku, 20), upc: t(x.upc, 20), name: t(x.name, 120) })).filter(x => x.sscc && x.sku);
+    for (let i = 0; i < L.length; i += 40) await env.DB.batch(L.slice(i, i + 40).map(x => env.DB.prepare(`INSERT INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, upc, name, at, by_user)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(sscc) DO UPDATE SET shipment = excluded.shipment, sku = excluded.sku, part = excluded.part, seq = excluded.seq, units = excluded.units,
+      loc = excluded.loc, prev = excluded.prev, fnsku = excluded.fnsku, upc = excluded.upc, name = excluded.name, at = excluded.at, by_user = excluded.by_user`)
+      .bind(x.sscc, shipment, x.sku, x.part, x.seq, x.units, x.loc, x.prev, x.fnsku, x.upc, x.name, now, by)));
+    if (session && session.userId) await logUserActivity(env, session.userId, 'awd_label_map', { shipment, boxes: L.length }).catch(() => {});
+    return J({ ok: true, shipment, saved: L.length });
+  }
+  const code = S18(url.searchParams.get('code'));
+  if (code) { const r = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(code).first(); return J({ ok: true, box: r || null }); }
+  const last = await env.DB.prepare('SELECT shipment, MAX(at) AS at, by_user FROM awd_label_map GROUP BY shipment ORDER BY MAX(at) DESC LIMIT 1').first();
+  if (!last) return J({ ok: true, shipment: null, labels: [] });
+  const labels = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, loc, prev, fnsku, upc, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(last.shipment).all()).results || []);
+  return J({ ok: true, shipment: last.shipment, at: last.at, by: last.by_user, labels });
+}
 async function inventoryAmazonBarcode(env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   await ensureFbaCatalogTable(env);
@@ -10154,6 +10182,7 @@ const _app = {
     }
     // 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who".
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
+    if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       try { return await amazonBarcodeLiveCheck(env); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } })); }
