@@ -2169,7 +2169,8 @@ function awdGrabPlan(sku, unitsList) {
   }
   const cases = []; let got = 0;
   for (const x of rows) {
-    const upc = getUnitsPerCase(x.r.partNum), pcs = upc > 0 ? upc * packOf(x.r.partNum) : 0;
+    // pcs a case: the AWD_Master sheet (bags a case × pack), else SKU Mgr's Ea/Case for that spot (owner 2026-10-25: "why the ?")
+    const upc = getUnitsPerCase(x.r.partNum), pcs = upc > 0 ? upc * packOf(x.r.partNum) : (x.r.eachPcs > 0 ? x.r.eachPcs : 0);
     for (let c = 0; c < Math.floor(x.r.casesNum || 0) && got < needPcs && cases.length < 500; c++) {
       cases.push({ loc: x.r.location || '?', part: x.r.partNum, pcs, exact: x.exact, used: 0 });
       got += pcs || needPcs; // a case with no Ea/Case on record: counted as enough (said so below)
@@ -2193,7 +2194,7 @@ function awdGrabPlan(sku, unitsList) {
   // Owner (2026-10-25): "if it's whole cases just say grab 4 cases; if not a whole case, grab the pieces and the rest stays; if 2 cases are
   // enough for our 10 boxes, say grab 2 cases, enough for our 10 boxes"; "the number after the spot = grab 1 case on that spot".
   const cs = n => n + ' case' + (n === 1 ? '' : 's');
-  const how = g => g.loc + ': grab ' + cs(g.n) + (!g.pcs ? ' (? pcs a case)' : !g.exact ? ' of ' + g.part + ' — rebag' : g.used < g.n * g.pcs ? ' — take ' + g.used + ' pcs, rest stays' : '');
+  const how = g => g.loc + ': grab ' + cs(g.n) + (!g.pcs ? ' (? pcs a case — no Ea/Case in SKU Mgr)' : !g.exact ? ' of ' + g.part + ' — rebag' : g.used < g.n * g.pcs ? ' — take ' + g.used + ' pcs, rest stays' : '');
   const boxes = unitsList.length;
   const summary = cases.length ? 'GRAB ' + cs(cases.length) + ' (enough for our ' + boxes + ' box' + (boxes === 1 ? '' : 'es') + '): ' + grp.map(how).join(' · ') + (short ? ' · ⚠ SHORT ' + short + ' pcs' : '')
     : '⚠ Not on our shelves — ' + needPcs + ' pcs needed';
@@ -2763,7 +2764,7 @@ async function loadWarehouseStock() {
       // Normalize key: strip spaces around '=' so "26-2-1 =2" matches "26-2-1=2"
       var key = partNum.toLowerCase().replace(/\s*=\s*/g, '=').replace(/-+$/, '');
       if (!WH.stock[key]) WH.stock[key] = [];
-      WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum });
+      WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum, eachPcs: parseFloat(r[9]) || 0 }); // SKU Mgr Ea/Case (pcs)
     }
     WH.loaded = true;
     console.log('[XFITTING] WH stock loaded:', Object.keys(WH.stock).length, 'unique partNums');

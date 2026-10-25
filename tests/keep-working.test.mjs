@@ -10039,5 +10039,23 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send");
 }
 
+// Owner (2026-10-25, a label "BO=1-1-1-3: grab 1 case (? pcs a case)" for 100=1/2X): "why we have the ?". The pieces a case came only from
+// the old AWD_Master sheet; SKU Mgr's Ea/Case (already loaded with the stock) is used when the sheet has none.
+console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case when the AWD_Master sheet has none (no more "?")');
+{
+  const { readFileSync: rfQ } = await import('node:fs');
+  const ah = rfQ(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
+  // 1 Amazon box: 20 bags × 100 pcs = 2,000 pcs. Before: no AWD_Master row → "grab 1 case (? pcs a case)". SKU Mgr: 1,000 pcs a case → 2 cases.
+  const a = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 1000 }], bulkRows: [] }, {})('96-1-1=100X', [20]);
+  const b = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 0 }], bulkRows: [] }, {})('96-1-1=100X', [20]);
+  const c = plan({ exactRows: [{ partNum: '96-1-1=100', location: 'BO=1-1-1-3', casesNum: 3, eachPcs: 1000 }], bulkRows: [] }, { '96-1-1=100': 20 })('96-1-1=100X', [20]);
+  check('no AWD_Master size → SKU Mgr Ea/Case 1,000 pcs: 2,000 pcs = "grab 2 cases" (not "1 case (? pcs a case)"); neither has it → "? pcs a case — no Ea/Case in SKU Mgr"; the sheet still wins when it has one (20 bags × 100 = 2,000 → 1 case)',
+    a.summary === 'GRAB 2 cases (enough for our 1 box): BO=1-1-1-3: grab 2 cases' && b.summary === 'GRAB 1 case (enough for our 1 box): BO=1-1-1-3: grab 1 case (? pcs a case — no Ea/Case in SKU Mgr)'
+      && c.summary === 'GRAB 1 case (enough for our 1 box): BO=1-1-1-3: grab 1 case' && /casesNum: casesNum, eachPcs: parseFloat\(r\[9\]\) \|\| 0 \}/.test(ah), [a.summary, b.summary, c.summary]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
