@@ -9870,7 +9870,8 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
   const heads = texts.filter(t => /^Box \d+-\d+ · /.test(t));
   check('8-8-8=10- (4 boxes × 100 pcs = 400 pcs, cases of 300 pcs): the 1st label says GRAB 2 cases (400 pcs): C1=1-1-1 ×1 split into 3 boxes · C2=5-1-1 ×1 open, take 100 pcs (1 box), rest stays; boxes 1–3 say C1=1-1-1, box 4 C2=5-1-1; 9-9-9 (20 pcs = a case) FULL CASE',
-    texts.includes('GRAB 2 cases (enough for our 4 boxes): C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case — take 100 pcs, rest stays') && texts.includes('GRAB 1 case (enough for our 1 box): BSMT=1-1-1: grab 1 case') // wording: owner 2026-10-25
+    // a long plan is drawn on 2+ lines (owner 2026-10-25: "way too small, no one can read it") — read back in the order drawn, same words
+    texts.join(' ').includes('GRAB 2 cases (enough for our 4 boxes): C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case — take 100 pcs, rest stays') && texts.includes('GRAB 1 case (enough for our 1 box): BSMT=1-1-1: grab 1 case') // wording: owner 2026-10-25
       && heads.slice(0, 4).join('|') === 'Box 4-1 · C1=1-1-1|Box 4-2 · C1=1-1-1|Box 4-3 · C1=1-1-1|Box 4-4 · C2=5-1-1' && texts.filter(t => /^GRAB /.test(t)).length === 2, { heads, grab: texts.filter(t => /^GRAB/.test(t)) });
   check('…every label: the label line as the name, bags × pcs = total (8-8-8: 10 bags × 10 pcs = 100 pcs; 9-9-9: 4 bags × 5 pcs = 20 pcs; PREVIOUS PACKED 7-7-7: 5 bags × 2 pcs = 10 pcs)',
     texts.filter(t => t === '10=ELBOW 1/2 PEX').length === 4 && texts.includes('5=TEE 3/4') && texts.includes('2X=CAP 1/2') && texts.filter(t => t === '10 bags × 10 pcs = 100 pcs').length === 4 && texts.includes('4 bags × 5 pcs = 20 pcs') && texts.includes('5 bags × 2 pcs = 10 pcs'), texts.slice(0, 20));
@@ -10149,6 +10150,20 @@ console.log('\n📦 Stock Out Big Company, sold as a whole case: only cases with
   check('…× 4 with only 3 matching cases: 3 picked, 1,000 pcs short (not made up from 800-pc cases)', took(p4) === 3 && p4.short === 1000 && p4.byPieces, { took: took(p4), short: p4.short });
   check('…the 📦 Current AWD shipment card does the same (each Amazon unit = 1 whole case, only matching cases)',
     /var caseTo = L\.caseOf && L\.caseOf\[o\.part\]/.test(ih) && /plan = caseTo \? invCaseOfPlan\(L, o\.part, caseTo, o\.units\) : invPlanCompanyPull\(o\.part, need\)/.test(ih), null);
+}
+
+// Owner (2026-10-25, label screenshot): "the words on the bottom are way too small, no one can read it — make it bigger".
+console.log('\n🔎 AWD one-label strip: a long grab plan goes onto more lines, never shrunk to tiny print');
+{
+  const { readFileSync: rfB } = await import('node:fs');
+  const ah = rfB(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), i = ah.indexOf('function awdBigText(');
+  const big = new Function(ah.slice(i, ah.indexOf('\nfunction awdStripText(', i)) + '; return awdBigText;')();
+  const drawn = [], ctx = { font: '', set textBaseline(v) {}, set fillStyle(v) {}, measureText(l) { return { width: l.length * (+(/(\d+)px/.exec(this.font) || [0, 10])[1]) * 0.56 }; }, fillText(l) { drawn.push([l, +(/(\d+)px/.exec(this.font))[1]]); } };
+  const plan = 'GRAB 6 cases (enough for our 1 box): BARN=9-1-5: grab 4 cases of 28-2-3=1W.1C — rebag · BARN=9-1-5: grab 2 cases of 28-2-3=5W.1C — rebag';
+  const mx = big(ctx, { x: 7, y: 923, w: 706, h: 151 }, ['Box 1-1 · BARN=9-1-5', '1XX=3/4 P B HOT', '10 bags × 28 pcs = 280 pcs', plan]);
+  const planRows = drawn.slice(3), all = drawn.reduce((a, d) => a + d[1] * 1.12, 0);
+  check('the label\'s grab plan (' + plan.length + ' letters): on ' + planRows.length + ' lines at ' + (planRows[0] || [])[1] + ' px (big lines ' + mx + ' px) — at least 70% of the big lines, every word kept, all inside the strip',
+    planRows.length >= 2 && planRows.every(d => d[1] >= Math.round(mx * 0.7)) && planRows.map(d => d[0]).join(' ').replace(/\s+/g, ' ') === plan && all <= 151 && drawn.slice(0, 3).every(d => d[1] === mx), drawn);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

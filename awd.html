@@ -2059,14 +2059,26 @@ function awdLabelFnsku(lines, y) {
 // (box N-k + need label · the spots · the item), as big as fits.
 function awdBigText(ctx, rect, text, maxFs) {
   // each line as big as fits (owner 2026-10-25: a long grab-plan line must not make the other lines small)
-  const p = Math.max(4, Math.round(rect.h * 0.04)), n = Math.max(1, text.length);
-  const base = Math.min(maxFs || 999, Math.floor((rect.h - 2 * p) / (n * 1.12)));
+  // 🔎 Owner (2026-10-25, label screenshot: "the words on the bottom are way too small, no one can read it"): a line is never made
+  // smaller than about half the big lines — a long one (the grab plan) goes onto more lines instead (broken at " · ", then words);
+  // only when everything can't fit is all of it made a bit smaller together.
+  const p = Math.max(4, Math.round(rect.h * 0.04)), W = rect.w - 2 * p, H = rect.h - 2 * p;
   ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
-  const fsOf = l => { let fs = base; for (; fs > 8; fs--) { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; if (ctx.measureText(l).width <= rect.w - 2 * p) break; } return fs; };
-  const sizes = text.map(fsOf), tot = sizes.reduce((a, f) => a + f * 1.12, 0);
+  const fits = (l, fs) => { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; return ctx.measureText(l).width <= W; };
+  const wrap = (l, fs) => { // pieces of l that fit W at fs: " · " parts first, then words
+    const toks = [], out = []; let cur = '';
+    String(l).split(' · ').forEach((part, k) => { const pre = k ? '· ' : ''; if (fits(pre + part, fs)) toks.push(pre + part); else part.split(' ').forEach((w, q) => toks.push((q ? '' : pre) + w)); });
+    toks.forEach(t => { const c = cur ? cur + ' ' + t : t; if (!cur || fits(c, fs)) cur = c; else { out.push(cur); cur = t; } });
+    if (cur) out.push(cur); return out; };
+  const layout = base => { const min = Math.max(10, Math.round(base * 0.7)), rows = [];
+    text.forEach(l => { let fs = base; while (fs > min && !fits(l, fs)) fs--; if (fits(l, fs)) rows.push([l, fs]); else wrap(l, min).forEach(x => rows.push([x, min])); });
+    return rows; };
+  let base = Math.min(maxFs || 999, Math.floor(H / (Math.max(1, text.length) * 1.12))), rows = layout(base);
+  while (base > 10 && rows.reduce((a, r) => a + r[1] * 1.12, 0) > H) { base--; rows = layout(base); }
+  const tot = rows.reduce((a, r) => a + r[1] * 1.12, 0);
   let y = rect.y + Math.round((rect.h - tot) / 2);
-  text.forEach((l, i) => { ctx.font = 'bold ' + sizes[i] + 'px Arial, sans-serif'; ctx.fillText(l, rect.x + p, y); y += sizes[i] * 1.12; });
-  return Math.max(...sizes);
+  rows.forEach(([l, fs]) => { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; ctx.fillText(l, rect.x + p, y); y += fs * 1.12; });
+  return Math.max(...rows.map(r => r[1]));
 }
 function awdStripText(seq, lns, bc) {
   const digits = l => /^\d{8,14}$/.test(String(l).trim());
