@@ -2373,8 +2373,12 @@ window.invCredLogin = async function() {
           var pm = String(o.part).split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, pcs = o.units * pack;
           var each = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === o.part) each = Math.max(each, parseFloat(l.eachQty) || 0); });
           var need = each > 0 ? pcs / each : o.boxes, plan;
-          if (!(need > 0)) { short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return next(); }
-          try { plan = invPlanCompanyPull(o.part, need); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
+          if (!(need > 0) && !(L.caseOf && L.caseOf[o.part])) { short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return next(); }
+          // 📦 sold as a whole case of another part # (Reorder 📦): each Amazon unit = 1 whole case, only cases with the right pieces
+          var caseTo = L.caseOf && L.caseOf[o.part] ? String(L.caseOf[o.part]).toUpperCase() : null;
+          try { plan = caseTo ? invCaseOfPlan(L, o.part, caseTo, o.units) : invPlanCompanyPull(o.part, need); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
+          if (caseTo) { plan.takes.forEach(function(t) { if (!t.how) t.how = 'a whole case of ' + caseTo + ' (' + plan.want + ' pcs) = 1 × ' + o.part + ' — ship the case as it is'; });
+            if (plan.off.length) short.push(o.part + ' = a case of ' + caseTo + ': ' + invCaseOffTxt(plan).replace(/^ · /, '')); }
           plan.takes.forEach(function(t) { AWDS.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L }); });
           if (plan.short > 0.001) short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
           (plan.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
@@ -2902,6 +2906,20 @@ window.invCredLogin = async function() {
   // fromReport = { id, cases } when this came from tapping a Stock Out
   // Report: the report's case count is used and every row it adds is tagged
   // with the report, so grabbing it resolves the report.
+  // 📦 Sold as a whole case (owner 2026-10-25: "the quantities must match to let them grab"): only spots of `caseTo` whose Ea/Case is
+  // exactly the pieces `target` sells (26-4-2=1000 → cases of 1,000 pcs) — a case with another count (or none on file) is named, not used.
+  function invCaseOfPlan(d, target, caseTo, need) {
+    var m = /=(\d+)/.exec(String(target)), want = m ? parseInt(m[1], 10) : 0, off = [], keep = invPart, plan;
+    var locs = (d.locations || []).filter(function(l) {
+      if (String(l.partNum || '').toUpperCase() !== caseTo || l.isPlaceholder) return false;
+      var e = parseFloat(l.eachQty) || 0; if (e === want) return true;
+      if ((parseFloat(l.cases) || 0) > 0) off.push(l.location + ' (' + (e ? e + ' pcs a case' : 'no Ea/Case in SKU Mgr') + ')');
+      return false; });
+    invPart = Object.assign({}, d, { locations: locs });
+    try { plan = invPlanCompanyPull(caseTo, need); } finally { invPart = keep; }
+    plan.off = off; plan.want = want; return plan;
+  }
+  function invCaseOffTxt(plan) { return plan && plan.off && plan.off.length ? ' · ⚠ NOT ' + plan.want + ' pcs a case, don\'t grab: ' + plan.off.join(', ') : ''; }
   function invMaybeAutoPick(d, fromReport) {
     var inp = g('inv-need-cases');
     var need = fromReport ? fromReport.cases : (inp ? parseFloat(inp.value) : 0);
@@ -2919,7 +2937,7 @@ window.invCredLogin = async function() {
     // 📦 Owner (2026-10-17): "30-4-6=100X is a case — when they order 30-4-6=100X we ship a whole case of 30-4-6=10X". A part #
     // set as "sold as a whole case of" (Reorder 📦) → each one asked for = 1 whole case of that part #, picked by the same rules.
     var caseTo = company && d.caseOf && d.caseOf[target] ? String(d.caseOf[target]).toUpperCase() : null;
-    try { plan = company ? invPlanCompanyPull(caseTo || target, need) : invPlanShelvingPull(need); }
+    try { plan = company ? (caseTo ? invCaseOfPlan(d, target, caseTo, need) : invPlanCompanyPull(target, need)) : invPlanShelvingPull(need); }
     catch (e) { invFlash('Could not pick a spot (' + e.message + ') — choose one below', 'error'); return; }
     if (!plan.takes.length) {
       // Nothing free to take: say exactly why (on the shelves, waiting for
@@ -2931,6 +2949,7 @@ window.invCredLogin = async function() {
       invFlash('Nothing free to grab for ' + (d.baseSku || d.partNum) + ': ' + shelf + ' case(s) on the shelves'
         + (pend ? ', ' + pend + ' already taken (waiting for approval)' : '') + (listed ? ', ' + listed + ' already on your Pull List' : '')
         + (company && plan.noSize.length ? '. Case size (Each/Case) not on file for ' + plan.noSize.join(', ') + ' — set it in SKU Mgr' : '')
+        + (caseTo ? '. 📦 ' + target + ' = a whole case of ' + caseTo + ' with ' + plan.want + ' pcs' + invCaseOffTxt(plan) : '')
         + '. Found some anyway? Use "found it" below.', 'error');
       if (shelf - pend - listed <= 0.001) invSoldOutOpen(d);
       return;
@@ -2965,7 +2984,7 @@ window.invCredLogin = async function() {
     var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
     var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + (company ? ' for Big Company ' + target + ' × ' + need : '')
       + (caseTo ? ' (📦 ' + target + ' = a whole case of ' + caseTo + ' → ' + need + ' whole case' + (need === 1 ? '' : 's') + ' of ' + caseTo + ')' : '') + ': '
-      + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location + (company && t.how ? ' (' + t.how + ')' : ''); }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
+      + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location + (company && t.how ? ' (' + t.how + ')' : ''); }).join(' + ') + invCaseOffTxt(plan) + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
     if (company) {
       if (plan.short > 0.001) invFlash(msg + ' — ⚠ ' + plan.short + (plan.byPieces ? ' pcs' : ' cases') + ' short' + (plan.noSize.length ? ' (Each/Case not on file for ' + plan.noSize.join(', ') + ')' : ''), 'warn');
       else invFlash(msg, plan.takes.some(function(t) { return t.tier > 0 || t.how || t.pallet; }) ? 'warn' : 'success');
