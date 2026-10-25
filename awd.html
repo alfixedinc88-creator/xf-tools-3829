@@ -1822,7 +1822,7 @@ function awdFamWarnHtml() {
     + bad.map(function(u) { return '⚠ <b>' + awdH(u.fam) + '</b>: this shipment takes <b>' + fn(u.pcs) + ' pcs</b> (' + u.parts.map(awdH).join(' · ') + ') but ' + (u.pcs > u.shelf ? 'we only have <b>' + fn(u.shelf) + ' pcs</b> on the shelf'
         : 'we only have <b>' + fn(u.shelf) + ' pcs</b> and keep ' + fn(u.reserve) + ' for our other channels (' + u.keepDays + ' days) → <b>' + fn(u.spare) + ' pcs</b> to send') + ' — lower it'; }).join('<br>') + '</div>';
 }
-function awdPackOf(sku) { var m = String(sku || '').split('=').pop().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
+function awdPackOf(sku) { var m = String(sku || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
 function awdStockEnsure() {
   var skus = (S.joined || []).map(function(r) { return r.sku; }), key = skus.length + '|' + (skus[0] || '') + '|' + (skus[skus.length - 1] || '');
   if (!skus.length || AWDSS.loading || (AWDSS.loaded && AWDSS.key === key)) return;
@@ -2038,7 +2038,7 @@ function awdPrevInfo(sku, units, amz) {
   const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
   const it = (S.shipment || {})[sku], j = (S.joined || []).find(r => n(r.sku) === n(sku)), a = (amz || []).find(x => n(x.sku) === n(sku));
   const name = String((it && it.row && it.row.name) || (j && j.name) || (a && a.name) || '').replace(/\s+/g, ' ').trim();
-  const pm = String(sku || '').split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0, co = awdCaseOf(sku);
+  const pm = String(sku || '').split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0, co = awdCaseOf(sku);
   if (co) return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: (bags || 1) + ' whole case' + ((bags || 1) === 1 ? '' : 's') + ' of ' + co + ' (sold as a case)' };
   return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: bags ? bags + ' bag' + (bags === 1 ? '' : 's') + ' × ' + pack + ' pc' + (pack === 1 ? '' : 's') + ' = ' + (bags * pack) + ' pcs' : pack + ' pcs a bag' };
 }
@@ -2179,7 +2179,7 @@ function awdGrabPlan(sku, unitsList) {
     return { summary: got ? 'GRAB ' + cs(got) + ' of ' + co + ' (sold as a case — ship it as is): ' + grp.map(g => g.loc + ': ' + g.n).join(' · ') + (short ? ' · ⚠ SHORT ' + cs(short) : '')
       : '⚠ Not on our shelves — ' + cs(need) + ' of ' + co + ' needed', locOf, cases: got, short, caseOf: co };
   }
-  const packOf = x => { const m = String(x || '').split('=').pop().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; };
+  const packOf = x => { const m = String(x || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; };
   const pack = packOf(sku), needPcs = unitsList.reduce((a, u) => a + (u || 0), 0) * pack;
   const ws = checkWarehouseStock(sku), sortRows = l => (l || []).slice().sort((a, b) => awdLocCompare(a.location, b.location));
   const rows = sortRows(ws.exactRows).map(r => ({ r, exact: true })).concat(sortRows(ws.bulkRows).map(r => ({ r, exact: false })));
