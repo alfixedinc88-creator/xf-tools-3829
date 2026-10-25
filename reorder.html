@@ -2172,6 +2172,19 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       </div>
       <div id="rvo-inc" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 10px;padding:8px 10px;background:#EFF6FF;border-radius:8px;font-size:12px"></div>
       <div id="rvo-ord" style="display:none;margin:-4px 0 10px;padding:8px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:12px"></div>
+      <!-- 🏷 Owner (2026-10-23): "some FBA listings are not our brand — we have to use Amazon's own barcode; find out which". Moved
+           here from Inventory → Stock Out Big Company (owner 2026-10-25: "keep our Stock Out as simple as possible for our workers").
+           A listing whose FNSKU is an X00… code needs Amazon's label on every unit; the ⬇ vendor CSV puts its ASIN on the box and
+           its FNSKU on the bag. -->
+      <details class="icard" id="rvo-amzbc-card" style="margin:0 0 10px;padding:8px 10px;border:1.5px solid #FCD34D;border-radius:8px;font-size:12px" ontoggle="if(this.open)rvoAmzLoad()">
+        <summary style="cursor:pointer;font-weight:800;color:#b45309">🏷 Listings that need Amazon's barcode (not our UPC) <span id="rvo-amzbc-n" style="font-weight:400;color:var(--text3)"></span></summary>
+        <div style="color:var(--text2);margin:6px 0">Amazon's own data: a listing whose FNSKU is an <b>X00…</b> code needs Amazon's label on every unit — when we order it, the vendor sheet puts its <b>ASIN on the outside box</b> and its <b>FNSKU on every inside bag</b>. One whose FNSKU is the ASIN (B0…) ships with our UPC.</div>
+        <button type="button" id="rvo-amzbc-live" onclick="rvoAmzLive()" class="btn btn-secondary" style="font-size:12px;margin:0 6px 6px 0">🔄 Check live with Amazon now</button><span id="rvo-amzbc-live-msg" style="color:var(--text2)"></span><br>
+        <button type="button" id="rvo-amzbc-dl" onclick="rvoAmzCsv()" class="btn btn-secondary" style="font-size:12px;margin-bottom:6px">⬇ Download the list (CSV)</button>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--red);margin:0 0 6px"><input type="checkbox" id="rvo-amzbc-noasin" onchange="rvoAmzRender()"> ⚠ Only the ones with NO ASIN on record <span id="rvo-amzbc-noasin-n" style="font-weight:400;color:var(--text3)"></span></label>
+        <input id="rvo-amzbc-q" placeholder="Search part # / SKU / name / FNSKU…" oninput="rvoAmzRender()" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:6px">
+        <div id="rvo-amzbc-list" style="max-height:50vh;overflow:auto">Loading…</div>
+      </details>
       <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
         <div style="margin:6px 0"><input type="text" id="rvo-hist-q" placeholder="Search part #, name, text…" oninput="clearTimeout(window._rvoHq);window._rvoHq=setTimeout(rvoLoadHistory,300)" style="width:220px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)"></div>
         <div id="rvo-hist" style="max-height:320px;overflow:auto"></div></details>
@@ -4251,6 +4264,79 @@ function rvoRenderIncoming(titles) {
       + '<button onclick="rvoReceive(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="It arrived — stock it into SKU Mgr (GARAGE) and take it off On the way" style="border:none;background:#D1FAE5;color:#065F46;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer">📦 Received</button>'
       + '<button onclick="rvoRemoveTitle(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Cancelled or imported by mistake — take it off On the way without touching SKU Mgr" style="border:none;background:#FEE2E2;color:#991B1B;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🗑 Remove</button></span>';
   }).join('') + ' <span style="flex:1"></span><button onclick="rvoResetWidths()" class="btn btn-secondary" style="font-size:11px;padding:2px 8px">↔ Reset column widths</button>';
+}
+// 🏷 Listings that need Amazon's barcode (moved from Inventory → Stock Out Big Company, owner 2026-10-25). Same data and actions:
+// search, 🔄 Check live with Amazon, ⬇ CSV, and ✏️ the ASIN for a listing Amazon's data has none for (managers; Amazon's own
+// ASIN always wins; every change kept with who / when on the server).
+var RVO_AMZ = null, RVO_AMZ_P = null;
+function rvoAmzLoad() {
+  if (RVO_AMZ) { rvoAmzRender(); return Promise.resolve(RVO_AMZ); }
+  if (!RVO_AMZ_P) RVO_AMZ_P = wFetch(W + '/inventory/amazon-barcode').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+    RVO_AMZ = d; var n = document.getElementById('rvo-amzbc-n'); if (n) n.textContent = '(' + d.counts.amazon + ' of ' + d.list.length + ' FBA listings)'; rvoAmzRender(); return d;
+  }).catch(function (e) { RVO_AMZ_P = null; var b = document.getElementById('rvo-amzbc-list'); if (b) b.innerHTML = '<span style="color:var(--red)">Could not load — ' + escHtml(e.message) + '</span>'; return null; });
+  return RVO_AMZ_P;
+}
+function rvoAmzMatch(x, q) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); }
+function rvoAmzRender() {
+  var b = document.getElementById('rvo-amzbc-list'); if (!b || !RVO_AMZ) return;
+  var q = String((document.getElementById('rvo-amzbc-q') || {}).value || '').trim().toUpperCase();
+  var noAsin = !!(document.getElementById('rvo-amzbc-noasin') || {}).checked;
+  var amz = RVO_AMZ.list.filter(function (x) { return x.barcode === 'amazon'; });
+  var nn = document.getElementById('rvo-amzbc-noasin-n');
+  if (nn) nn.textContent = '(' + amz.filter(function (x) { return !x.asin; }).length + ' with no ASIN, ' + amz.filter(function (x) { return x.asinTyped; }).length + ' typed in)';
+  var L = RVO_AMZ.list.filter(function (x) { return rvoAmzMatch(x, q) && (!noAsin || !x.asin || x.asinTyped); });
+  var asinCell = function (x) {
+    if (x.asin && !x.asinTyped) return escHtml(x.asin);
+    var i = RVO_AMZ.list.indexOf(x);
+    return '<span style="white-space:nowrap"><input id="rvo-amzbc-asin-' + i + '" value="' + escHtml(x.asin || '') + '" placeholder="B0…" maxlength="10" style="width:100px;padding:3px 5px;border:1.5px solid ' + (x.asin ? 'var(--border)' : 'var(--red)') + ';border-radius:5px;font-family:var(--mono);text-transform:uppercase;background:var(--bg);color:var(--text)">'
+      + ' <button type="button" onclick="rvoAmzSaveAsin(' + i + ')" style="padding:3px 8px;border:none;border-radius:5px;background:#b45309;color:#fff;font-weight:700;cursor:pointer">Save</button></span>'
+      + (x.asinTyped ? '<div style="font-size:10px;color:var(--text3)">typed by ' + escHtml(x.asinTyped.by) + ' ' + escHtml(String(x.asinTyped.at || '').slice(0, 10)) + '</div>' : '');
+  };
+  var td = function (v, st) { return '<td style="padding:3px 6px;' + (st || '') + '">' + v + '</td>'; };
+  b.innerHTML = L.length ? '<table style="border-collapse:collapse;width:100%"><tr>' + ['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'Why (likely)'].map(function (h) { return '<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + h + '</th>'; }).join('') + '</tr>'
+    + L.map(function (x) { return '<tr class="rvo-amzbc-row">' + td(escHtml(x.part), 'font-family:var(--mono);font-weight:700;white-space:nowrap') + td(escHtml(x.sku), 'font-family:var(--mono);white-space:nowrap')
+      + td(escHtml(x.fnsku), 'font-family:var(--mono);color:#b45309;font-weight:700') + td(asinCell(x), 'font-family:var(--mono)') + td(escHtml(x.name)) + td(escHtml(x.why || ''), 'font-size:11px;color:var(--text2)') + '</tr>'; }).join('') + '</table>'
+    : '<span style="color:var(--text3)">' + (q ? 'None found for "' + escHtml(q) + '"' : noAsin ? 'Every listing that needs Amazon\'s barcode has its ASIN ✓' : 'No FBA listing needs Amazon\'s barcode') + '</span>';
+}
+function rvoAmzSaveAsin(i) {
+  var x = RVO_AMZ && RVO_AMZ.list[i], el = document.getElementById('rvo-amzbc-asin-' + i); if (!x || !el) return;
+  var asin = String(el.value || '').trim().toUpperCase();
+  if (asin && !/^[A-Z0-9]{10}$/.test(asin)) { alert('An ASIN is 10 letters / numbers, e.g. B07NMNSYJD'); el.focus(); return; }
+  if (!asin && !confirm('Take the typed ASIN off ' + x.sku + '?')) return;
+  wFetch(W + '/inventory/amazon-barcode/asin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: x.sku, asin: asin }) })
+    .then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+      x.asin = asin; x.asinTyped = asin ? { by: d.by, at: d.at } : null; rvoAmzRender();
+      showToast(asin ? '✓ ' + x.sku + ' → ASIN ' + asin : 'ASIN taken off ' + x.sku);
+    }).catch(function (e) { alert('Could not save: ' + e.message); });
+}
+// ⬇ Owner (2026-10-23): "a listing I can download of the ones using Amazon's barcode" — what the search shows (all of them when empty).
+function rvoAmzCsvText(d, q) {
+  q = String(q || '').trim().toUpperCase();
+  var L = (d && d.list || []).filter(function (x) { return rvoAmzMatch(x, q); });
+  var c = function (v) { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  return [['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'Brand on Amazon', 'Why (likely)', 'From', 'Updated']].concat(L.map(function (x) { return [x.part, x.sku, x.fnsku, x.asin, x.name, x.brand || '', x.why || '', (x.from || []).join(' + '), x.at]; }))
+    .map(function (r) { return r.map(c).join(','); }).join('\r\n');
+}
+function rvoAmzCsv() {
+  return rvoAmzLoad().then(function (d) {
+    if (!d) { alert('Could not load the list — try again'); return; }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + rvoAmzCsvText(d, (document.getElementById('rvo-amzbc-q') || {}).value)], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'amazon-barcode-listings-' + new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) + '.csv'; a.click();
+  });
+}
+// 🔄 Owner (2026-10-24): "check on Amazon why these use the Amazon label and find all of them" — every FBA SKU's FNSKU from Amazon now.
+function rvoAmzLive() {
+  var m = document.getElementById('rvo-amzbc-live-msg'); if (m) { m.style.color = 'var(--text2)'; m.textContent = '⏳ Asking Amazon for every FBA listing (about a minute)…'; }
+  wFetch(W + '/inventory/amazon-barcode/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+    RVO_AMZ = null; RVO_AMZ_P = null; rvoAmzLoad();
+    if (m) { m.style.color = 'var(--green)'; m.innerHTML = '✓ ' + d.fromAmazon + ' FBA listings checked with Amazon — <b>' + d.amazonBarcode + '</b> need Amazon\'s barcode'
+      + (d.changed.length ? '<br><span style="color:#b45309">Changed: ' + d.changed.map(function (c) { return escHtml(c.sku) + ' ' + (c.from === 'amazon' ? 'Amazon → our UPC' : c.to === 'amazon' ? 'our UPC → Amazon' : c.from + ' → ' + c.to); }).join(' · ') + '</span>' : '')
+      + ((d.errors || []).length ? '<br><span style="color:var(--red)">Brand lookup: ' + escHtml(d.errors.join(' · ')) + '</span>' : ''); }
+  }).catch(function (e) { if (m) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + e.message; } });
 }
 // 🏭 Orders: what each order has shipped (by which container) and what the
 // vendor still owes; fully shipped orders move to their own list.

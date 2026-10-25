@@ -92,7 +92,6 @@ document.addEventListener('input', function (e) {
         { key: 'allpulls', label: '👥 Everyone\'s Un-grabbed Items', sel: '#inv-allpull-card' },
         { key: 'pulllist', label: 'Pull List', sel: '#inv-pulllist-card' } ] },
       { key: 'stockoutco', label: '🏢 Stock Out Big Company', sel: '#inv-tab-stockoutco', parts: [
-        { key: 'amzbarcode', label: "🏷 Listings that need Amazon's barcode", sel: '#inv-amzbc-card' },
         { key: 'awdship', label: '📦 Current AWD shipment — what to grab, by location', sel: '#inv-awdship-card' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
@@ -299,6 +298,7 @@ document.addEventListener('input', function (e) {
         { key: 'notours', label: '🔗 All listings NOT under our SKU', sel: '#ro-panel-reorder button[onclick*="roTab(\'listings\')"]' },
         { key: 'weird', label: '📋 Weird list (copy / CSV)', sel: '#ro-panel-reorder button[onclick="rvoWeirdCopy()"], #ro-panel-reorder button[onclick="rvoWeirdCsv()"]' },
         { key: 'csv', label: '⬇ Download CSV for vendor', sel: '#ro-panel-reorder button[onclick="rvoCsv()"]' },
+        { key: 'amzbarcode', label: "🏷 Listings that need Amazon's barcode", sel: '#rvo-amzbc-card' },
         { key: 'barcode', label: '🏷 Barcode / vendor for a part #', sel: '#ro-panel-reorder button[onclick="rvoPartOpen()"]' },
         { key: 'upccheck', label: '🔢 Check every UPC', sel: '#ro-panel-reorder button[onclick="rvoUpcCheck()"], #rvo-part button[onclick="rvoUpcCheck()"]' },
         { key: 'import', label: 'Vendor sheets import', sel: '#ro-panel-reorder > div:has(> #rvo-imp-file)' },

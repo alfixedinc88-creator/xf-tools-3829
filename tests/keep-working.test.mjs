@@ -9248,10 +9248,29 @@ console.log('\n🏷 FBA listings that need Amazon\'s barcode (FNSKU X00…) — 
   check('X00… FNSKU = Amazon\'s barcode (710-1-1=10X from the FBA inventory report, 710-1-3=2X from the FBA catalog); FNSKU = ASIN = our UPC (710-1-2=5); a listing not on FBA is left out',
     d.ok && by['710-1-1=10X'].barcode === 'amazon' && by['710-1-1=10X'].fnsku === 'X00ABC1234' && by['710-1-3=2X'].barcode === 'amazon' && by['710-1-2=5'].barcode === 'maker' && !by['710-1-9=5'] && d.counts.amazon >= 2, by);
   const { readFileSync: rfB } = await import('node:fs');
-  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-  check('…Stock Out Big Company: the "🏷 Listings that need Amazon\'s barcode" card (only there — not on Shelving), and picking such a part # says "needs AMAZON\'s barcode (FNSKU …)"; 🧩 check mark',
-    /<details class="icard" id="inv-amzbc-card" style="display:none"/.test(ih) && /amzBc\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ih) && /if \(company\) invAmzBcWarn\(target\);/.test(ih)
-      && /needs AMAZON\\'s barcode \(FNSKU /.test(ih) && /sel: '#inv-amzbc-card'/.test(rfB(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), rh = rfB(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const xa = rfB(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  // Owner (2026-10-25): "move that 'Listings that need Amazon's barcode' to the Reorder Planner → Reorder tab, keep our Stock Out as
+  // simple as possible for our workers" — the card is on Reorder; Big Company keeps only the pick warning (and 🔍 Box check's FNSKUs).
+  check('…the "🏷 Listings that need Amazon\'s barcode" card is on Reorder Planner → 🧾 Reorder (🧩 check mark there), NOT on Stock Out; picking such a part # on Big Company still says "needs AMAZON\'s barcode (FNSKU …)"',
+    /<details class="icard" id="rvo-amzbc-card"/.test(rh) && rh.indexOf('id="rvo-amzbc-card"') > rh.indexOf('id="ro-panel-reorder"') && /onclick="rvoAmzLive\(\)"/.test(rh) && /onclick="rvoAmzCsv\(\)"/.test(rh)
+      && !/id="inv-amzbc-card"/.test(ih) && !/inv-amzbc-list/.test(ih) && /if \(company\) invAmzBcWarn\(target\);/.test(ih) && /window\.invAmzBcLoad = function/.test(ih)
+      && /needs AMAZON\\'s barcode \(FNSKU /.test(ih) && /sel: '#rvo-amzbc-card'/.test(xa) && !/sel: '#inv-amzbc-card'/.test(xa), null);
+  // Owner (2026-10-25): "a listing marked Amazon-label but with no ASIN on record — give me all of them, I will find the ASIN and update it"
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('710-1-4=10', 'X00NOASIN1', '', 'Amazon label, no ASIN', 'Yes', now);
+  const a0 = (await get('/inventory/amazon-barcode')).list.find(x => x.sku === '710-1-4=10');
+  const bad = await post('/inventory/amazon-barcode/asin', { sku: '710-1-4=10', asin: 'B0123' });
+  const ok1 = await post('/inventory/amazon-barcode/asin', { sku: '710-1-4=10', asin: 'b0typed001' });
+  const a1 = (await get('/inventory/amazon-barcode')).list.find(x => x.sku === '710-1-4=10');
+  const own = await post('/inventory/amazon-barcode/asin', { sku: '710-1-1=10X', asin: 'B0WRONG000' });
+  const a2 = (await get('/inventory/amazon-barcode')).list.find(x => x.sku === '710-1-1=10X');
+  await post('/inventory/amazon-barcode/asin', { sku: '710-1-4=10', asin: '' });
+  const a3 = (await get('/inventory/amazon-barcode')).list.find(x => x.sku === '710-1-4=10');
+  const logN = sq.prepare("SELECT COUNT(*) AS n FROM amazon_asin_fix_log WHERE sku IN ('710-1-4=10', '710-1-1=10X')").get().n;
+  check('✏️ ASIN for an Amazon-label listing with none on record: listed with no ASIN → a bad one ("B0123") refused → B0TYPED001 saved (typed by who) and used; Amazon\'s own ASIN always wins over a typed one; cleared → no ASIN again; every change kept in the log',
+    a0 && a0.barcode === 'amazon' && !a0.asin && !bad.ok && ok1.ok && a1.asin === 'B0TYPED001' && a1.asinTyped && a1.asinTyped.by && own.ok && a2.asin === 'B0AAAA1111' && !a2.asinTyped
+      && a3 && !a3.asin && logN === 3 && /onclick="rvoAmzSaveAsin\(/.test(rh) && /id="rvo-amzbc-noasin"/.test(rh), { a0, bad, ok1, a1, a2, a3, logN });
+  sq.exec("DELETE FROM amazon_asin_fix WHERE sku LIKE '710-1-%'; DELETE FROM amazon_asin_fix_log WHERE sku LIKE '710-1-%'");
   sq.exec("DELETE FROM amazon_fba_inventory WHERE sku LIKE '710-1-%'; DELETE FROM fba_catalog WHERE sku LIKE '710-1-%'");
 }
 
@@ -9325,15 +9344,15 @@ console.log('\n🔍 Box check: scan the box label, then the product → ✅ righ
 console.log('\n⬇ Download the Amazon-barcode listings (CSV)');
 {
   const { readFileSync: rfX } = await import('node:fs');
-  const ih = rfX(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-  const fn = new Function(ih.slice(ih.indexOf('  function invAmzBcCsvText('), ih.indexOf('  window.invAmzBcCsvText = invAmzBcCsvText;')) + '; return invAmzBcCsvText;')();
+  const ih = rfX(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'); // moved from Stock Out Big Company to Reorder (owner 2026-10-25)
+  const fn = new Function(ih.slice(ih.indexOf('function rvoAmzMatch('), ih.indexOf('function rvoAmzRender(')) + ih.slice(ih.indexOf('function rvoAmzCsvText('), ih.indexOf('function rvoAmzCsv()')) + '; return rvoAmzCsvText;')();
   const d = { list: [{ part: '30-3-6=2X', sku: '30-3-6=2X-', fnsku: 'X00ABC1234', asin: 'B0AAA', name: 'Cap, "1/2" brass', from: ['FBA catalog'], at: '2026-10-20', barcode: 'amazon' },
     { part: '31-6-1=2XX', sku: '31-6-1=2XX-', fnsku: 'B0BBB', asin: 'B0BBB', name: 'tee', from: [], at: '', barcode: 'maker' },
     { part: '24-4-6=5', sku: '24-4-6=5-', fnsku: 'X00ZZZ9999', asin: 'B0CCC', name: 'elbow', from: [], at: '', barcode: 'amazon' }] };
   const all = fn(d, '').split('\r\n'), one = fn(d, 'elbow').split('\r\n');
   check('⬇ Download the list (CSV): only the listings needing Amazon\'s barcode (X00…), never the ones with our UPC; follows the search; commas/quotes kept safe',
     all.length === 3 && all[0].startsWith('Part #,Amazon SKU,FNSKU (Amazon barcode)') && all[1] === '30-3-6=2X,30-3-6=2X-,X00ABC1234,B0AAA,"Cap, ""1/2"" brass",,,FBA catalog,2026-10-20' // Brand + Why columns added 2026-10-24
-      && !all.join().includes('B0BBB') && one.length === 2 && one[1].startsWith('24-4-6=5,') && /id="inv-amzbc-dl" onclick="invAmzBcCsv\(\)"/.test(ih), { all, one });
+      && !all.join().includes('B0BBB') && one.length === 2 && one[1].startsWith('24-4-6=5,') && /id="rvo-amzbc-dl" onclick="rvoAmzCsv\(\)"/.test(ih), { all, one });
 }
 
 // Owner (2026-10-23): "AWD shipment planner — a History of record: when, what shipment we did and by who; can we still see our last shipment?"
@@ -9766,9 +9785,9 @@ console.log('\n🏷 Amazon-barcode listings: 🔄 checked live with Amazon (FNSK
     row('24-1-1=10-').barcode === 'amazon' && row('23-2-1=10XA').barcode === 'amazon' && /Brand on Amazon: Generic — not our brand/.test(row('23-2-1=10XA').why) && /No UPC on record for 24-1-1=10/.test(row('24-1-1=10-').why) && row('23-2-1=10XA').from[0] === 'Amazon now', [row('24-1-1=10-').why, row('23-2-1=10XA').why]);
   const pk = await call('/inventory/amazon-barcode/live', { method: 'POST', headers: { 'X-Cred-Token': (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, 'Content-Type': 'application/json' }, body: '{}' });
   const { readFileSync: rfB } = await import('node:fs');
-  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), wk = rfB(workerPath, 'utf8');
+  const ih = rfB(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'), wk = rfB(workerPath, 'utf8'); // the 🏷 card moved to Reorder (owner 2026-10-25)
   check('…managers only; the list has a "Why (likely)" column, the download has Brand + Why; every ⚡ Amazon sync keeps each SKU\'s FNSKU too',
-    pk.status === 403 && /onclick="invAmzBcLive\(\)"[^>]*>🔄 Check live with Amazon now/.test(ih) && /'Brand on Amazon', 'Why \(likely\)'/.test(ih) && /try \{ await amazonBarcodeLiveSave\(env, items\); \}/.test(wk), pk.status);
+    pk.status === 403 && /onclick="rvoAmzLive\(\)"[^>]*>🔄 Check live with Amazon now/.test(ih) && /'Brand on Amazon', 'Why \(likely\)'/.test(ih) && /try \{ await amazonBarcodeLiveSave\(env, items\); \}/.test(wk), pk.status);
   sq.exec("DELETE FROM fba_catalog WHERE sku IN ('201-1-9=10-','24-1-1=10-','23-2-1=10XA'); DELETE FROM amazon_barcode_live; DELETE FROM upc WHERE sku = '23-2-1=10XA'");
 }
 
