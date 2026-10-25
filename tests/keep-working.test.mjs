@@ -9870,7 +9870,7 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   await run({ type: 'application/pdf', name: 'labels.pdf', arrayBuffer: async () => new ArrayBuffer(8) });
   const heads = texts.filter(t => /^Box \d+-\d+ · /.test(t));
   check('8-8-8=10- (4 boxes × 100 pcs = 400 pcs, cases of 300 pcs): the 1st label says GRAB 2 cases (400 pcs): C1=1-1-1 ×1 split into 3 boxes · C2=5-1-1 ×1 open, take 100 pcs (1 box), rest stays; boxes 1–3 say C1=1-1-1, box 4 C2=5-1-1; 9-9-9 (20 pcs = a case) FULL CASE',
-    texts.includes('GRAB 2 cases = 400 pcs: C1=1-1-1 ×1 → 3 boxes each · C2=5-1-1 ×1 → take 100 pcs (rest stays)') && texts.includes('GRAB 1 case = 20 pcs: BSMT=1-1-1 ×1 → FULL CASE')
+    texts.includes('GRAB 2 cases (enough for our 4 boxes): C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case — take 100 pcs, rest stays') && texts.includes('GRAB 1 case (enough for our 1 box): BSMT=1-1-1: grab 1 case') // wording: owner 2026-10-25
       && heads.slice(0, 4).join('|') === 'Box 4-1 · C1=1-1-1|Box 4-2 · C1=1-1-1|Box 4-3 · C1=1-1-1|Box 4-4 · C2=5-1-1' && texts.filter(t => /^GRAB /.test(t)).length === 2, { heads, grab: texts.filter(t => /^GRAB/.test(t)) });
   check('…every label: the label line as the name, bags × pcs = total (8-8-8: 10 bags × 10 pcs = 100 pcs; 9-9-9: 4 bags × 5 pcs = 20 pcs; PREVIOUS PACKED 7-7-7: 5 bags × 2 pcs = 10 pcs)',
     texts.filter(t => t === '10=ELBOW 1/2 PEX').length === 4 && texts.includes('5=TEE 3/4') && texts.includes('2X=CAP 1/2') && texts.filter(t => t === '10 bags × 10 pcs = 100 pcs').length === 4 && texts.includes('4 bags × 5 pcs = 20 pcs') && texts.includes('5 bags × 2 pcs = 10 pcs'), texts.slice(0, 20));
@@ -9972,6 +9972,23 @@ console.log('\n🏷 Amazon-barcode listings: ASIN on the box / FNSKU on the bag 
       && /L && L\.length === 1 && L\[0\]\.asin && L\[0\]\.fnsku \? L\[0\] : null/.test(rh) && /'ASK US FIRST: needs Amazon barcode - '/.test(rh) && /' · 🏷 Amazon barcode \(ASIN on box, FNSKU on bag\): '/.test(rh)
       && /return !amzOf\(r\) && \(/.test(rh), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '77-1-1'; DELETE FROM fba_catalog WHERE sku IN ('77-1-1=10X','77-1-1=5','78-1-1=10','78-2-2=10','amzn.gr.77-1-1-junk'); DELETE FROM reorder_vendor_catalog WHERE vendor = 'AMZV'");
+}
+
+// Owner (2026-10-25): "23-5-2=50: if it's whole cases don't write 'take 2400 pcs (rest stays)', just say grab 4 cases; if 2 cases are enough
+// for our 10 boxes say grab 2 cases, enough for our 10 boxes; the number after the spot = grab 1 case on that spot".
+console.log('\n📦 AWD grab plan wording: whole cases = "grab N cases (enough for our M boxes)"; part of a case = "take X pcs, rest stays"');
+{
+  const { readFileSync: rfW2 } = await import('node:fs');
+  const ah = rfW2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
+  // 23-5-2=50: 10 Amazon boxes × 4 bags × 50 pcs = 2,000 pcs; cases of 20 bags × 50 = 1,000 pcs, 2 in C3=2-2-2 → 2 whole cases
+  const a = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 20 })('23-5-2=50-', Array(10).fill(4));
+  // 1,000 pcs needed from cases of 1,200 pcs → 1 case, take 1,000 pcs, rest stays
+  const b = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 24 })('23-5-2=50-', Array(5).fill(4));
+  check('whole cases → "GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases" (no "take … pcs"); part of a case → "grab 1 case — take 1000 pcs, rest stays"',
+    a.summary === 'GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases' && b.summary === 'GRAB 1 case (enough for our 5 boxes): C3=2-2-2: grab 1 case — take 1000 pcs, rest stays', [a.summary, b.summary]);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
