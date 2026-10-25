@@ -2184,9 +2184,12 @@ function awdGrabPlan(sku, unitsList) {
   const grp = []; cases.forEach(c => { const g = grp.find(z => z.loc === c.loc && z.part === c.part); if (g) { g.n++; g.used += c.used; } else grp.push({ loc: c.loc, part: c.part, n: 1, pcs: c.pcs, exact: c.exact, used: c.used }); });
   const boxPcs = (unitsList[0] || 0) * pack, short = Math.max(0, needPcs - got);
   // a case used up → FULL CASE (1 box) or split into N boxes; a case only partly needed → how many pieces to take out, the rest stays
-  const how = g => !g.pcs ? '? pcs a case' : !g.exact ? 'rebag from ' + g.part : g.used < g.n * g.pcs ? 'take ' + g.used + ' pcs (rest stays)'
-    : g.pcs === boxPcs ? 'FULL CASE' : g.pcs % boxPcs === 0 ? (g.pcs / boxPcs) + ' boxes each' : 'open & repack';
-  const summary = cases.length ? 'GRAB ' + cases.length + ' case' + (cases.length === 1 ? '' : 's') + ' = ' + needPcs + ' pcs: ' + grp.map(g => g.loc + ' ×' + g.n + ' → ' + how(g)).join(' · ') + (short ? ' · ⚠ SHORT ' + short + ' pcs' : '')
+  // Owner (2026-10-25): "if it's whole cases just say grab 4 cases; if not a whole case, grab the pieces and the rest stays; if 2 cases are
+  // enough for our 10 boxes, say grab 2 cases, enough for our 10 boxes"; "the number after the spot = grab 1 case on that spot".
+  const cs = n => n + ' case' + (n === 1 ? '' : 's');
+  const how = g => g.loc + ': grab ' + cs(g.n) + (!g.pcs ? ' (? pcs a case)' : !g.exact ? ' of ' + g.part + ' — rebag' : g.used < g.n * g.pcs ? ' — take ' + g.used + ' pcs, rest stays' : '');
+  const boxes = unitsList.length;
+  const summary = cases.length ? 'GRAB ' + cs(cases.length) + ' (enough for our ' + boxes + ' box' + (boxes === 1 ? '' : 'es') + '): ' + grp.map(how).join(' · ') + (short ? ' · ⚠ SHORT ' + short + ' pcs' : '')
     : '⚠ Not on our shelves — ' + needPcs + ' pcs needed';
   return { summary, locOf, cases: cases.length, short };
 }
