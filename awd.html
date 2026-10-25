@@ -2034,6 +2034,12 @@ function awdPrevInfo(sku, units, amz) {
   const pm = String(sku || '').split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, bags = units || 0;
   return { name: name.length > 48 ? name.slice(0, 46) + '…' : name, qty: bags ? bags + ' bag' + (bags === 1 ? '' : 's') + ' × ' + pack + ' pc' + (pack === 1 ? '' : 's') + ' = ' + (bags * pack) + ' pcs' : pack + ' pcs a bag' };
 }
+// The SSCC (the big box barcode) printed on the label nearest the SKU line — 18 digits.
+function awdLabelSscc(lines, y) {
+  let best = null;
+  (lines || []).forEach(l => { const m = /SSCC\s*:?\s*(\d[\d ]{17,24})/i.exec(l.text || ''); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, code: m[1].replace(/\D/g, '').slice(-18) }; });
+  return best ? best.code : '';
+}
 // The FNSKU printed on the label nearest the SKU line (several labels can share a page).
 function awdLabelFnsku(lines, y) {
   let best = null;
@@ -2197,11 +2203,12 @@ async function awdLabelsDo(file) {
       tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
       return Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') })); };
     // 1) Every label first: SKU, bags ("Units"), box N-k (owner: 5-1 … 5-5), PREVIOUS PACKED or not — then each SKU's grab plan.
-    const metas = [], bySku = {};
+    const metas = [], bySku = {}; let shipId = '';
     for (let p = 1; p <= pdf.numPages; p++) {
       const lines = await readPage(await pdf.getPage(p));
+      if (!shipId) { const sm = /Shipment\s*ID\s*:?\s*([A-Z0-9-]{6,})/i.exec(lines.map(l => l.text).join(' ')); if (sm) shipId = sm[1].toUpperCase(); }
       awdLabelSkus(lines).forEach((f, i) => { const sku = awdLabelMatch(f.sku), K = sku.toUpperCase();
-        const cp = (S.cpackMap || {})[K], m = { p, i, sku, units: awdLabelUnits(lines, f.y) || (cp && cp.unitsPerBox) || 0, prevKey: '' };
+        const cp = (S.cpackMap || {})[K], m = { p, i, sku, units: awdLabelUnits(lines, f.y) || (cp && cp.unitsPerBox) || 0, prevKey: '', sscc: awdLabelSscc(lines, f.y), fnsku: awdLabelFnsku(lines, f.y) };
         const ph = awdPrevHit(prev, sku, amz); if (ph) m.prevKey = ph.key;
         metas.push(m); (bySku[K] = bySku[K] || []).push(m); });
     }
@@ -2269,6 +2276,14 @@ async function awdLabelsDo(file) {
     groups.sort((a, b) => a.key.localeCompare(b.key));
     const pages = [].concat(...groups.map(g => g.pages));
     const byArea = {}; metas.forEach(m => { const a = m.prevKey ? 'PREVIOUS PACKED' : (String(m.loc || '?').split('=')[0] || '?'); byArea[a] = (byArea[a] || 0) + 1; });
+    // 🗺 Every Amazon box kept on the server (SSCC → SKU, box N-k, bags, spot, PREVIOUS PACKED): the phones' Box check reads the box label,
+    // and Stock Out Big Company → 📦 Current AWD shipment lists what to grab by location.
+    const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase(), seq: m.seq, units: m.units,
+      loc: m.loc || '', prev: !!m.prevKey, fnsku: m.fnsku || '', upc: tpl.upc || '', name: tpl.label || '' }; });
+    let mapNote = '';
+    if (mapRows.length) try { const d = await wFetch(W + '/awd/label-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: shipId, labels: mapRows }) }).then(r => r.json());
+      mapNote = d && d.ok ? '<div style="color:#15803D">📱 ' + d.saved + ' boxes of ' + (d.shipment || 'this shipment') + ' saved — the phones can scan these labels (🔍 Box check) and see what to grab (Stock Out Big Company → 📦 Current AWD shipment)</div>' : '<div style="color:#DC2626">⚠ Boxes not saved for the phones: ' + ((d && d.error) || 'error') + '</div>';
+    } catch (e) { mapNote = '<div style="color:#DC2626">⚠ Boxes not saved for the phones (no WiFi?) — upload the labels again</div>'; }
     const w = window.open('', '_blank');
     if (!w) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
     const pg = pages[0];
@@ -2277,6 +2292,7 @@ async function awdLabelsDo(file) {
     w.document.close();
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+      + mapNote
       + '<div style="color:#1D4ED8">🗺 Printed by where they are grabbed: ' + Object.keys(byArea).sort((a, b) => (a === 'PREVIOUS PACKED' ? -1 : b === 'PREVIOUS PACKED' ? 1 : awdAreaRank(a) - awdAreaRank(b))).map(a => '<b>' + String(a).replace(/[<&]/g, '') + '</b> ' + byArea[a]).join(' · ') + '</div>'
       + (oneLabel ? '<div style="color:#1D4ED8">🏷 <b>' + oneLabel + '</b> full Amazon label' + (oneLabel === 1 ? '' : 's') + ' printed at 85% with our info under it — one label per box (' + pages.length + ' labels to print).</div>' : '')
       + (ownPages ? '<div style="color:#1D4ED8">📄 <b>' + ownPages + '</b> Amazon label' + (ownPages === 1 ? ' has' : 's have') + ' no empty spot (AWD labels are full) — our template is printed on its <b>own label right after it</b> (' + (pages.length) + ' labels to print): stick both on the box.</div>' : '')
