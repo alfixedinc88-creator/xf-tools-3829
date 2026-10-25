@@ -10107,6 +10107,16 @@ console.log('\n📦 AWD box labels: a SKU with a space is read whole; "sold as a
       && notCase.qty === '1 bag × 1000 pcs = 1000 pcs' && /_awdCaseOfP = null; await awdCaseOfLoad\(\);/.test(ah), { one: one.summary, four: four.summary, info, notCase });
 }
 
+// Owner (2026-10-25, label of SKU "25-4-1= 2", Units 100): "this one is 2 pieces per bag, why does it say 1 pc per bag?" A space after "=".
+console.log('\n🔢 AWD labels: pieces a bag read past a space after "=" ("25-4-1= 2" → 2 pcs)');
+{
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const ah = rfS2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const packOf = new Function((ah.match(/function awdPackOf\(sku\) \{[^\n]*/) || [''])[0] + '; return awdPackOf;')();
+  check('"25-4-1= 2" → 2 pcs a bag (100 bags × 2 pcs = 200 pcs); "23-5-2=50-" → 50; every pack-size reader in the AWD Planner skips the space',
+    packOf('25-4-1= 2') === 2 && packOf('23-5-2=50-') === 50 && packOf('8-8-8=10XX') === 10 && !/split\('='\)\.pop\(\)\.match\(/.test(ah), [packOf('25-4-1= 2')]);
+}
+
 // Owner (2026-10-25): "26-4-2=1000 is already set as a case of 26-4-2=100 — when we sell as a case make sure our quantities match, the
 // quantities sometimes change; the quantities must match to let them grab".
 console.log('\n📦 AWD box labels, sold as a case: only cases with exactly the pieces the SKU sells are grabbed');
