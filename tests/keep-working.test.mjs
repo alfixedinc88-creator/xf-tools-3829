@@ -7422,7 +7422,7 @@ console.log('\n📦 Sold as a whole case of: Stock Out Big Company ships whole c
   check('…inventory adds up: 5 cases (500 pcs) − 2 whole cases (200 pcs = 2 × 30-4-6=100X of 100 pcs) = 3 cases (300 pcs) left; nothing counted twice',
     before === 5 && took === 2 && pcs === 200 && before - took === 3 && (before - took) * 100 === 300, { before, took, pcs });
   check('page: Stock Out uses the 📦 setting (caseOf from the lookup) — plans whole cases of that part #, the Pull List row says "BIG CO → 30-4-6=100X (📦 whole case)", the record says "= whole case of …"; None Found / 🔁 Replace look for that part #',
-    /var caseTo = company && d\.caseOf && d\.caseOf\[target\] \? String\(d\.caseOf\[target\]\)\.toUpperCase\(\) : null;/.test(ih) && /plan = company \? invPlanCompanyPull\(caseTo \|\| target, need\)/.test(ih)
+    /var caseTo = company && d\.caseOf && d\.caseOf\[target\] \? String\(d\.caseOf\[target\]\)\.toUpperCase\(\) : null;/.test(ih) && /plan = company \? \(caseTo \? invCaseOfPlan\(d, target, caseTo, need\) : invPlanCompanyPull\(target, need\)\)/.test(ih)
       && /x\.how = 'a whole case of ' \+ caseTo \+ ' = 1 × ' \+ target \+ ' — ship the case as it is'/.test(ih) && /\(item\.caseOf \? ' \(📦 whole case\)' : ''\)/.test(ih) && /\(item\.caseOf \? ' = whole case of ' \+ item\.caseOf : ''\)/.test(ih)
       && /U\(it\.caseOf \|\| it\.forPart \|\| it\.partNum\)/.test(ih) && /pn !== U\(it\.caseOf\) && !confirm\('Big Company asked for '/.test(ih), null);
   // Worker: the lookup carries it; 🔢 Check every UPC uses the case's box codes.
@@ -10097,13 +10097,58 @@ console.log('\n📦 AWD box labels: a SKU with a space is read whole; "sold as a
   const mk = (ws, map) => new Function('checkWarehouseStock', 'getUnitsPerCase', 'AWD_CASEOF', 'S', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];" + co + '\n'
     + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + fnA('awdPrevInfo') + '; return { plan: awdGrabPlan, info: awdPrevInfo };')(p => ws[p] || { exactRows: [], bulkRows: [] }, () => 0, map, { shipment: {}, joined: [] });
   // 26-4-2=1000 = a whole case of 26-4-2=100 (set in Reorder); shelves: 26-4-2=100 1 case at C2=1-1-1, 2 at BO=1-1-1
-  const ws = { '26-4-2=100': { exactRows: [{ partNum: '26-4-2=100', location: 'C2=1-1-1', casesNum: 1 }, { partNum: '26-4-2=100', location: 'BO=1-1-1', casesNum: 2 }], bulkRows: [] } };
+  const ws = { '26-4-2=100': { exactRows: [{ partNum: '26-4-2=100', location: 'C2=1-1-1', casesNum: 1, eachPcs: 1000 }, { partNum: '26-4-2=100', location: 'BO=1-1-1', casesNum: 2, eachPcs: 1000 }], bulkRows: [] } };
   const A = mk(ws, { '26-4-2=1000': '26-4-2=100' });
   const one = A.plan('26-4-2=1000', [1]), four = A.plan('26-4-2=1000', [1, 1, 1, 1]), info = A.info('26-4-2=1000', 1, []), notCase = mk(ws, {}).info('26-4-2=1000', 1, []);
   check('…"sold as a whole case of 26-4-2=100": 1 label = "GRAB 1 whole case of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 1" (walking order, BO first) and "1 whole case of 26-4-2=100"; 4 labels, 3 on the shelves → ⚠ SHORT 1 whole case; not set → as before (1 bag × 1000 pcs)',
-    one.summary === 'GRAB 1 whole case of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 1' && one.locOf[0] === 'BO=1-1-1' && /1 whole case of 26-4-2=100 \(sold as a case\)/.test(info.qty)
-      && four.summary === 'GRAB 3 whole cases of 26-4-2=100 (sold as a case — ship it as is): BO=1-1-1: 2 · C2=1-1-1: 1 · ⚠ SHORT 1 whole case' && four.locOf[3] === '⚠ not on our shelves'
+    one.summary === 'GRAB 1 whole case of 26-4-2=100 (1000 pcs each — sold as a case, ship it as is): BO=1-1-1: 1' && one.locOf[0] === 'BO=1-1-1' && /1 whole case of 26-4-2=100 \(sold as a case\)/.test(info.qty)
+      && four.summary === 'GRAB 3 whole cases of 26-4-2=100 (1000 pcs each — sold as a case, ship it as is): BO=1-1-1: 2 · C2=1-1-1: 1 · ⚠ SHORT 1 whole case' && four.locOf[3] === '⚠ not on our shelves'
       && notCase.qty === '1 bag × 1000 pcs = 1000 pcs' && /_awdCaseOfP = null; await awdCaseOfLoad\(\);/.test(ah), { one: one.summary, four: four.summary, info, notCase });
+}
+
+// Owner (2026-10-25): "26-4-2=1000 is already set as a case of 26-4-2=100 — when we sell as a case make sure our quantities match, the
+// quantities sometimes change; the quantities must match to let them grab".
+console.log('\n📦 AWD box labels, sold as a case: only cases with exactly the pieces the SKU sells are grabbed');
+{
+  const { readFileSync: rfM } = await import('node:fs');
+  const ah = rfM(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const co = (ah.match(/const awdCoKey = [^\n]*/) || [''])[0] + '\n' + (ah.match(/function awdCaseOf\(sku\) \{[^\n]*/) || [''])[0];
+  const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', 'AWD_CASEOF', "const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];" + co + '\n'
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(p => ws[p] || { exactRows: [], bulkRows: [] }, p => upc[p] || 0, { '26-4-2=1000': '26-4-2=100' });
+  // 26-4-2=100 on the shelves: BO=1-1-1 1 case of 1,000 pcs ✓ · C1=1-1-1 2 cases of 800 pcs ✗ · C2=1-1-1 1 case, no Ea/Case ✗ · C3=1-1-1 2 cases of 1,000 pcs ✓
+  const ws = { '26-4-2=100': { bulkRows: [], exactRows: [{ partNum: '26-4-2=100', location: 'BO=1-1-1', casesNum: 1, eachPcs: 1000 }, { partNum: '26-4-2=100', location: 'C1=1-1-1', casesNum: 2, eachPcs: 800 },
+    { partNum: '26-4-2=100', location: 'C2=1-1-1', casesNum: 1, eachPcs: 0 }, { partNum: '26-4-2=100', location: 'C3=1-1-1', casesNum: 2, eachPcs: 1000 }] } };
+  const a = plan(ws, {})('26-4-2=1000', [1, 1, 1]), b = plan(ws, {})('26-4-2=1000', [1, 1, 1, 1]);
+  const c = plan(ws, { '26-4-2=100': 10 })('26-4-2=1000', [1]); // no SKU Mgr size at C2, but AWD_Master says 10 bags × 100 = 1,000 → OK there
+  check('3 labels (3,000 pcs): BO 1 + C3 2 cases of 1,000 pcs → "GRAB 3 whole cases … (1000 pcs each …)"; C1 (800 pcs a case) and C2 (no Ea/Case) are named "don\'t grab", never counted',
+    a.summary === 'GRAB 3 whole cases of 26-4-2=100 (1000 pcs each — sold as a case, ship it as is): BO=1-1-1: 1 · C3=1-1-1: 2 · ⚠ NOT 1000 pcs a case, don\'t grab: C1=1-1-1 (2 cases of 800 pcs), C2=1-1-1 (1 case of ? pcs — no Ea/Case in SKU Mgr)'
+      && a.cases === 3 && a.locOf.join('|') === 'BO=1-1-1|C3=1-1-1|C3=1-1-1', a.summary);
+  check('…4 labels: only 3 matching cases → ⚠ SHORT 1 whole case (the 800-pc cases are not used to make it up); a spot with the AWD_Master size (10 bags × 100 = 1,000) counts',
+    b.cases === 3 && b.short === 1 && /⚠ SHORT 1 whole case/.test(b.summary) && b.locOf[3] === '⚠ not on our shelves' && c.cases === 1 && !/C2=1-1-1 \(/.test(c.summary), [b.summary, c.summary]);
+}
+
+// Owner (2026-10-25): "when we sell as a case make sure our quantities match — the quantities sometimes change — they must match to let
+// them grab". Stock Out Big Company (search and 📦 Current AWD shipment) only uses cases whose Ea/Case = the pieces the part # sells.
+console.log('\n📦 Stock Out Big Company, sold as a whole case: only cases with the matching pieces are picked');
+{
+  const { readFileSync: rfQ2 } = await import('node:fs');
+  const ih = rfQ2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fnSrc = name => { const i = ih.indexOf('  function ' + name + '('); const j = ih.indexOf('\n  }\n', i); return i < 0 || j < 0 ? '' : ih.slice(i, j + 4); };
+  const mk = new Function('ctx', 'var invPart = ctx.part, invPullList = [], INV_FBA_LOW_CASES = 2; function invOnPallet() { return false; } function invFifoBoxSize() { return 0; }\n'
+    + fnSrc('invRankForCompany') + fnSrc('invPlanCompanyPull') + fnSrc('invCaseOfPlan') + fnSrc('invCaseOffTxt') + '; return { plan: invCaseOfPlan, txt: invCaseOffTxt, cur: () => invPart };');
+  // 26-4-2=1000 = a whole case of 26-4-2=100. Shelf: BO 1 case of 1,000 pcs ✓ · C1 3 cases of 800 pcs ✗ · C2 1 case, no Ea/Case ✗ · C3 2 cases of 1,000 ✓
+  const d = { partNum: '26-4-2=100', fbaParts: [], locations: [{ partNum: '26-4-2=100', location: 'BO=1-1-1', cases: 1, eachQty: 1000 }, { partNum: '26-4-2=100', location: 'C1=1-1-1', cases: 3, eachQty: 800 },
+    { partNum: '26-4-2=100', location: 'C2=1-1-1', cases: 1, eachQty: 0 }, { partNum: '26-4-2=100', location: 'C3=1-1-1', cases: 2, eachQty: 1000 }] };
+  const F = mk({ part: d });
+  const p3 = F.plan(d, '26-4-2=1000', '26-4-2=100', 3), p4 = F.plan(d, '26-4-2=1000', '26-4-2=100', 4);
+  const took = p => p.takes.reduce((a, t) => a + t.cases, 0), where = p => p.takes.map(t => t.loc.location).sort().join(',');
+  check('26-4-2=1000 × 3: 3 whole cases of 1,000 pcs (BO + C3), the 800-pc cases (C1) and the one with no Ea/Case (C2) are never picked, named "don\'t grab"; invPart put back',
+    took(p3) === 3 && where(p3) === 'BO=1-1-1,C3=1-1-1' && p3.short === 0 && F.txt(p3) === " · ⚠ NOT 1000 pcs a case, don't grab: C1=1-1-1 (800 pcs a case), C2=1-1-1 (no Ea/Case in SKU Mgr)" && F.cur() === d,
+    { t: p3.takes.map(t => [t.loc.location, t.cases]), txt: F.txt(p3) });
+  check('…× 4 with only 3 matching cases: 3 picked, 1,000 pcs short (not made up from 800-pc cases)', took(p4) === 3 && p4.short === 1000 && p4.byPieces, { took: took(p4), short: p4.short });
+  check('…the 📦 Current AWD shipment card does the same (each Amazon unit = 1 whole case, only matching cases)',
+    /var caseTo = L\.caseOf && L\.caseOf\[o\.part\]/.test(ih) && /plan = caseTo \? invCaseOfPlan\(L, o\.part, caseTo, o\.units\) : invPlanCompanyPull\(o\.part, need\)/.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
