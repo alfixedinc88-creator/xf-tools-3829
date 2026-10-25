@@ -2222,6 +2222,27 @@ function awdGrabPlan(sku, unitsList) {
     : '⚠ Not on our shelves — ' + needPcs + ' pcs needed';
   return { summary, locOf, cases: cases.length, short };
 }
+// 🖨 Owner (2026-10-25): "after the labels are done, I want to click a location like C1 and print just what is in C1".
+function awdPrintPages(pages, title) {
+  if (!pages || !pages.length) return true;
+  const w = window.open('', '_blank'); if (!w) return false;
+  const pg = pages[0];
+  w.document.write('<!doctype html><html><head><title>' + String(title || 'Box labels').replace(/[<&]/g, '') + '</title><style>@page{size:' + pg.w + 'in ' + pg.h + 'in;margin:0}body{margin:0}img{width:' + pg.w + 'in;height:' + pg.h + 'in;display:block;page-break-after:always}</style></head><body>'
+    + pages.map(x => '<img src="' + x.url + '">').join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
+  w.document.close();
+  return true;
+}
+function awdAreaButtons(groups) {
+  const areas = []; (groups || []).forEach(g => { const a = g.area || '?'; let x = areas.find(z => z.a === a); if (!x) areas.push(x = { a, n: 0 }); x.n += g.pages.length; });
+  const b = 'padding:5px 10px;border-radius:7px;border:1.5px solid #1D4ED8;background:#fff;color:#1D4ED8;font-weight:800;font-size:12px;cursor:pointer;margin:3px 4px 0 0';
+  return '<div class="awd-area-print" style="margin-top:4px">🖨 Print just one area: ' + areas.map(x => '<button type="button" style="' + b + '" data-a="' + String(x.a).replace(/["<&]/g, '') + '" onclick="awdPrintArea(this.dataset.a)">'
+    + String(x.a).replace(/[<&]/g, '') + ' · ' + x.n + '</button>').join('') + '<button type="button" style="' + b + ';background:#1D4ED8;color:#fff" onclick="awdPrintArea(\'\')">All</button></div>';
+}
+function awdPrintArea(area) {
+  const G = window.AWD_LBL_GROUPS || [], pages = [].concat(...G.filter(g => !area || (g.area || '?') === area).map(g => g.pages));
+  if (!pages.length) { awd_planner_toast('No labels for ' + (area || 'this shipment') + ' — make the labels again', 'error'); return; }
+  if (!awdPrintPages(pages, 'Box labels — ' + (area || 'all'))) awd_planner_toast('Allow pop-ups for this page, then try again', 'error');
+}
 async function awdLabelsDo(file) {
   const out = ge('awd-lbl-out'); if (!file) return;
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
@@ -2268,6 +2289,7 @@ async function awdLabelsDo(file) {
         const m = metaAt(p, i), sku = m.sku, cell = Math.round(cv.width / 60), lfn = awdLabelFnsku(lines, f.y), I = info(m);
         if (m.prevKey) prevDone[m.prevKey] = (prevDone[m.prevKey] || 0) + 1;
         if (!I.tpl.label && !I.tpl.upc) noTpl[f.sku] = (noTpl[f.sku] || 0) + 1;
+        if (!grp.key) grp.area = m.prevKey ? 'PREVIOUS PACKED' : (String(m.loc || '?').split('=')[0] || '?');
         if (!grp.key) grp.key = m.prevKey ? '0' : '1|' + String(awdAreaRank(m.loc)).padStart(2, '0') + '|' + (m.loc || '') + '|' + sku + '|' + String(metas.indexOf(m)).padStart(5, '0');
         const sc = extra ? awdScanCode(sku, [I.tpl.upc], amz, lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = extra ? await awdPhoto(sku) : null;
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
@@ -2316,16 +2338,13 @@ async function awdLabelsDo(file) {
     if (mapRows.length) try { const d = await wFetch(W + '/awd/label-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: shipId, labels: mapRows }) }).then(r => r.json());
       mapNote = d && d.ok ? '<div style="color:#15803D">📱 ' + d.saved + ' boxes of ' + (d.shipment || 'this shipment') + ' saved — the phones can scan these labels (🔍 Box check) and see what to grab (Stock Out Big Company → 📦 Current AWD shipment)</div>' : '<div style="color:#DC2626">⚠ Boxes not saved for the phones: ' + ((d && d.error) || 'error') + '</div>';
     } catch (e) { mapNote = '<div style="color:#DC2626">⚠ Boxes not saved for the phones (no WiFi?) — upload the labels again</div>'; }
-    const w = window.open('', '_blank');
-    if (!w) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
-    const pg = pages[0];
-    w.document.write('<!doctype html><html><head><title>Box labels with our template</title><style>@page{size:' + pg.w + 'in ' + pg.h + 'in;margin:0}body{margin:0}img{width:' + pg.w + 'in;height:' + pg.h + 'in;display:block;page-break-after:always}</style></head><body>'
-      + pages.map(x => '<img src="' + x.url + '">').join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
-    w.document.close();
+    window.AWD_LBL_GROUPS = groups; // 🖨 by area afterwards (awdPrintArea)
+    if (!awdPrintPages(pages, 'Box labels with our template')) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
       + mapNote
       + '<div style="color:#1D4ED8">🗺 Printed by where they are grabbed: ' + Object.keys(byArea).sort((a, b) => (a === 'PREVIOUS PACKED' ? -1 : b === 'PREVIOUS PACKED' ? 1 : awdAreaRank(a) - awdAreaRank(b))).map(a => '<b>' + String(a).replace(/[<&]/g, '') + '</b> ' + byArea[a]).join(' · ') + '</div>'
+      + awdAreaButtons(groups)
       + (oneLabel ? '<div style="color:#1D4ED8">🏷 <b>' + oneLabel + '</b> full Amazon label' + (oneLabel === 1 ? '' : 's') + ' printed at 85% with our info under it — one label per box (' + pages.length + ' labels to print).</div>' : '')
       + (ownPages ? '<div style="color:#1D4ED8">📄 <b>' + ownPages + '</b> Amazon label' + (ownPages === 1 ? ' has' : 's have') + ' no empty spot (AWD labels are full) — our template is printed on its <b>own label right after it</b> (' + (pages.length) + ' labels to print): stick both on the box.</div>' : '')
       + (pk.length ? '<div style="color:#15803D">✅ PREVIOUS PACKED on <b>' + pdN + '</b> label' + (pdN === 1 ? '' : 's') + ': ' + pk.map(k => k + ' ' + (prevDone[k] || 0) + (prevAsked[k] !== Infinity ? ' of ' + prevAsked[k] : '')).join(' · ') + '</div>'

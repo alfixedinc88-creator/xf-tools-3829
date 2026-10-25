@@ -9863,7 +9863,7 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   const PHOTO = { width: 100, height: 100, photo: true };
   const run = new Function('ge', 'S', 'document', 'window', 'awdLoadPdfjs', 'buildLabelCopyText', 'wFetch', 'W', 'loadJsBarcode', 'JsBarcode', 'awd_planner_toast', 'PHOTO',
     code + "function awdTplInfo(s) { return (globalThis.__awdTpl || {})[s] || { label: '', upc: '' }; } function checkWarehouseStock(s) { return (globalThis.__awdWs || {})[s] || { exactRows: [], bulkRows: [] }; } function getUnitsPerCase(p) { return (globalThis.__awdUpc || {})[p] || 0; }"
-      + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return awdLabelsDo;')(
+      + fnA('awdPrevParse') + fnA('awdPrevHit') + '; awdPhoto = async () => PHOTO; return Object.assign(awdLabelsDo, { printArea: awdPrintArea });')(
     id => els[id], { shipment: {}, tplPrefix: {}, joined: [] }, { createElement: () => mkCanvas() }, { open: () => ({ document: { write: h => { printed += h; }, close() {} } }) },
     async () => ({ getDocument: () => ({ promise: Promise.resolve({ numPages: 6, getPage: async p => pdfPages[p - 1] }) }) }),
     () => '', () => Promise.reject(new Error('offline')), '', cb => cb(), (c, code) => { codes.push(code); c.width = 300; c.height = 100; }, () => {}, PHOTO);
@@ -9879,6 +9879,12 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   const order = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
   check('…printed in the order of where they are grabbed: PREVIOUS PACKED (on the pallet) first, then BSMT (9-9-9), then C1 (8-8-8 boxes 1–3), then C2 (box 4); the result line counts each area',
     order === '6,5,1,2,3,4' && /🗺 Printed by where they are grabbed: <b>PREVIOUS PACKED<\/b> 1 · <b>BSMT<\/b> 1 · <b>C1<\/b> 3 · <b>C2<\/b> 1/.test(els['awd-lbl-out'].innerHTML), { order, out: els['awd-lbl-out'].innerHTML.slice(0, 300) });
+  // Owner (2026-10-25): "after the labels are done, click a location like C1 and print just what's in C1".
+  printed = ''; run.printArea('C1'); const c1 = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
+  printed = ''; run.printArea('PREVIOUS PACKED'); const pp = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
+  printed = ''; run.printArea(''); const all = (printed.match(/src="data:p(\d+)"/g) || []).length;
+  check('…then 🖨 one area: C1 prints only the C1 labels (8-8-8 boxes 1–3), PREVIOUS PACKED only those, All = all 6; a button per area under the result',
+    c1 === '1,2,3' && pp === '6' && all === 6 && /🖨 Print just one area: .*data-a="C1"[^>]*>C1 · 3<\/button>.*data-a="C2"[^>]*>C2 · 1<\/button>/.test(els['awd-lbl-out'].innerHTML), { c1, pp, all });
   globalThis.__awdWs = globalThis.__awdUpc = globalThis.__awdTpl = undefined;
 }
 
