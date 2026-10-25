@@ -2351,12 +2351,18 @@ window.invCredLogin = async function() {
   window.invAwdShipLoad = function() {
     var out = g('inv-awdship-out'); if (!out) return;
     out.innerHTML = '⏳ Reading the current shipment…'; AWDS.takes = []; AWDS.area = '';
-    wFetch(W + '/awd/label-map').then(function(r) { return r.json(); }).then(function(d) {
+    // 📤 Also what the office sent from the Shipment Builder (owner 2026-10-25) — the newer of the two is shown.
+    Promise.all([wFetch(W + '/awd/label-map').then(function(r) { return r.json(); }),
+      wFetch(W + '/awd/ship-send').then(function(r) { return r.json(); }).catch(function() { return null; })]).then(function(res) {
+      var d = res[0], snd = res[1] && res[1].ok && res[1].send;
+      if (snd && (snd.lines || []).length && (!d || !d.ok || !(d.labels || []).length || String(snd.at || '') > String(d.at || '')))
+        d = { ok: true, shipment: snd.shipment, at: snd.at, by: snd.by, fromSend: true, boxesN: snd.boxes,
+          labels: snd.lines.map(function(x) { return { sku: x.sku, part: x.part, units: x.units, boxes: x.boxes || 0, name: x.name || '', prev: 0 }; }) };
       AWDS.data = d;
-      if (!d || !d.ok || !(d.labels || []).length) { out.innerHTML = '<span style="color:var(--text3)">No shipment saved yet — in the AWD Planner, upload the Amazon box labels (🏷) first.</span>'; return; }
+      if (!d || !d.ok || !(d.labels || []).length) { out.innerHTML = '<span style="color:var(--text3)">No shipment saved yet — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>'; return; }
       var by = {}, prevN = 0;
       d.labels.forEach(function(b) { if (b.prev) { prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
-        var o = by[P] = by[P] || { part: P, units: 0, boxes: 0, name: b.name || '' }; o.units += parseFloat(b.units) || 0; o.boxes++; });
+        var o = by[P] = by[P] || { part: P, units: 0, boxes: 0, name: b.name || '' }; o.units += parseFloat(b.units) || 0; o.boxes += d.fromSend ? (parseFloat(b.boxes) || 0) : 1; });
       var parts = Object.keys(by), i = 0, keep = invPart, noSize = [], short = [];
       var next = function() {
         if (i >= parts.length) { invPart = keep; AWDS.prevN = prevN; AWDS.noSize = noSize; AWDS.short = short; window.invAwdShipRender(); return; }
@@ -2367,6 +2373,7 @@ window.invCredLogin = async function() {
           var pm = String(o.part).split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, pcs = o.units * pack;
           var each = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === o.part) each = Math.max(each, parseFloat(l.eachQty) || 0); });
           var need = each > 0 ? pcs / each : o.boxes, plan;
+          if (!(need > 0)) { short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return next(); }
           try { plan = invPlanCompanyPull(o.part, need); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
           plan.takes.forEach(function(t) { AWDS.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L }); });
           if (plan.short > 0.001) short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
@@ -2381,7 +2388,8 @@ window.invCredLogin = async function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
-    var h = '<div style="margin-bottom:6px"><b>' + ckE(d.shipment || 'Shipment') + '</b> · ' + d.labels.length + ' Amazon boxes' + (AWDS.prevN ? ' (' + AWDS.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + '</div>'
+    var h = '<div style="margin-bottom:6px"><b>' + ckE(d.shipment || 'Shipment') + '</b> · ' + (d.fromSend ? '📤 from the Shipment Builder · ' + d.labels.length + ' SKU' + (d.labels.length === 1 ? '' : 's')
+        + (d.boxesN ? ' · ' + d.boxesN + ' Amazon boxes' : '') + ' · sent by ' + ckE(d.by || '?') + (d.at ? ' ' + ckE(xfrFmtT(d.at)) : '') : d.labels.length + ' Amazon boxes') + (AWDS.prevN ? ' (' + AWDS.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
           var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
           return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
@@ -16013,6 +16021,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261022b"></script>
+<script src="xf-access.js?v=20261025a"></script>
 </body>
 </html>
