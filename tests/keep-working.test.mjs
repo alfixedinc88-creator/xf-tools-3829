@@ -9882,5 +9882,54 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   globalThis.__awdWs = globalThis.__awdUpc = globalThis.__awdTpl = undefined;
 }
 
+// Owner (2026-10-25): "6. Stock Out Big Company: a tab for the current shipment — the system picks whatever we need so they don't have to
+// scan; by where they grab (tap C1 → grab all the C1 items, bring them to the garage); and the people matching the labels scan our Amazon
+// box label, then the box they grabbed: match → next label, not a match → a warning to double check".
+console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location) + Box check reads the Amazon box label (SSCC)');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  // the office printed the labels: 3 boxes of 61-1-1=10- (10 bags × 10 pcs each = 300 pcs) + 1 PREVIOUS PACKED box; 1 box of 62-2-2=5-
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('61-1-1','Elbow','61-1-1=10','C2=1-1-1',3,100), ('61-1-1','Elbow','61-1-1=10','C1=4-4-4',1,100), ('62-2-2','Tee','62-2-2=5','BSMT=1-1-1',2,25)").run();
+  const lm = await post('/awd/label-map', { shipment: 'STAR-TEST1', labels: [
+    { sscc: '201952611628557385', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-1', units: 10, loc: 'C2=1-1-1' }, { sscc: '201952611628557386', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-2', units: 10, loc: 'C2=1-1-1' },
+    { sscc: '201952611628557387', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-3', units: 10, loc: 'C2=1-1-1' }, { sscc: '201952611628557388', sku: '61-1-1=10-', part: '61-1-1=10', seq: '4-4', units: 10, prev: true },
+    { sscc: '201952611628557389', sku: '62-2-2=5-', part: '62-2-2=5', seq: '1-1', units: 5, loc: 'BSMT=1-1-1' }] });
+  const one = await get('/awd/label-map?code=00201952611628557386'), last = await get('/awd/label-map');
+  const pkTok = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await (await call('/awd/label-map?code=201952611628557386', { headers: { 'X-Cred-Token': pkTok } })).json();
+  check('the box labels are kept (5 boxes of STAR-TEST1); a scanned SSCC (00 + 18 digits) finds its box: 61-1-1=10, Box 4-2, from C2=1-1-1; a picker\'s phone can read it',
+    lm.ok && lm.saved === 5 && one.box && one.box.part === '61-1-1=10' && one.box.seq === '4-2' && one.box.loc === 'C2=1-1-1' && last.shipment === 'STAR-TEST1' && last.labels.length === 5 && pk.box && pk.box.seq === '4-2', { lm, one, pk });
+  // run the page's own code (the card + the real Big Company pick rules) against the Worker
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), flashes = [], pull = [];
+  const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v),
+    invFlash: m => flashes.push(m), invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {} };
+  const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+    function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+    ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+    return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd, render: window.invAwdShipRender };`)(...Object.values(env2), pull);
+  run.load(); for (let i = 0; i < 40 && !/inv-awdship-area/.test(g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25));
+  const h = g('inv-awdship-out').innerHTML, A = run.AWDS;
+  const c2 = A.takes.filter(t => t.area === 'C2').reduce((a, t) => a + t.cases, 0), bs = A.takes.filter(t => t.area === 'BSMT').reduce((a, t) => a + t.cases, 0);
+  check('📦 Current AWD shipment: PREVIOUS PACKED box left out; 61-1-1=10 needs 3 boxes × 100 pcs = 300 pcs = 3 cases of 100 → C2=1-1-1 ×3; 62-2-2=5 needs 25 pcs = 1 case → BSMT; areas in walking order (BSMT before C2)',
+    /1 PREVIOUS PACKED, on the pallet — not listed/.test(h) && c2 === 3 && bs === 1 && h.indexOf('data-a="BSMT"') > 0 && h.indexOf('data-a="BSMT"') < h.indexOf('data-a="C2"'), { takes: A.takes.map(t => [t.area, t.partNum, t.cases]), h: h.slice(0, 300) });
+  A.area = 'C2'; run.render(); const h2 = g('inv-awdship-out').innerHTML;
+  run.add('C2'); run.add('C2');
+  check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',
+    /📍 C2=1-1-1<\/b> — <b>3 cases<\/b> of/.test(h2) && /➕ Put C2 on my Pull List/.test(h2) && pull.length === 1 && pull[0].partNum === '61-1-1=10' && pull[0].cases === '3' && pull[0].dest === 'company' && pull[0].forPart === '61-1-1=10' && pull[0].awdShipment === 'STAR-TEST1'
+      && flashes.some(f => /3 spots|1 spot in C2 on your Pull List/.test(f)) && flashes.some(f => /Nothing new to add in C2/.test(f)), { pull, flashes });
+  // Box check: the Amazon box label (SSCC) then the box grabbed
+  check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
+    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(ok && lp && lp\.box\) setTimeout\(function\(\) \{ BXC\.label = null;/.test(ih) && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
+      && new Function((ih.match(/function invBcSscc\(code\) \{[^\n]*/) || [''])[0] + '; return invBcSscc("00201952611628557386") === "201952611628557386" && invBcSscc("850031110001") === "";')(), null);
+  const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const sscc = new Function((ah.match(/function awdLabelSscc\(lines, y\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdLabelSscc;')();
+  check('…the AWD Planner reads each label\'s SSCC and saves every box (SKU, box N-k, bags, spot, PREVIOUS PACKED) when the labels are made',
+    sscc([{ y: 300, text: 'SSCC: 201952611628557385' }], 280) === '201952611628557385' && /wFetch\(W \+ '\/awd\/label-map', \{ method: 'POST'/.test(ah), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('61-1-1','62-2-2'); DELETE FROM awd_label_map");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
