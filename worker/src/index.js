@@ -1476,6 +1476,10 @@ async function inventoryAmazonBarcode(env) {
     o.fnsku = U(r.fnsku); o.at = r.at || o.at; if (r.asin) o.asin = U(r.asin); if (r.name && !o.name) o.name = String(r.name).slice(0, 160); o.brand = r.brand || ''; o.live = true;
     o.from = ['Amazon now'].concat(o.from.filter(x => x !== 'Amazon now'));
   });
+  // ✏️ Owner (2026-10-25): "give me the Amazon-label listings with no ASIN on record — I will find the ASIN and update it". An ASIN
+  // typed in 🏷 Listings fills the gap ONLY where Amazon's data has none (Amazon's own ASIN always wins); who / when kept.
+  await amazonAsinFixTable(env);
+  (await all('SELECT sku, asin, by_user, at FROM amazon_asin_fix')).forEach(r => { const o = rows[U(r.sku)]; if (o && !o.asin && r.asin) { o.asin = U(r.asin); o.asinTyped = { by: r.by_user || '', at: r.at || '' }; } });
   // Why a listing needs Amazon's barcode — the likely reason, from what we know.
   const upcs = await all('SELECT sku, inside_upc, outside_upc FROM upc'), upcOf = {}, byCode = {};
   const Z = c => String(c || '').replace(/\D/g, '').replace(/^0+/, '');
@@ -1538,6 +1542,27 @@ async function amzCodeToPart(env, code) {
 // 🏷 Owner (2026-10-24): "201-1-9=10- showed Amazon's barcode, but we use our UPC on it — check Amazon, why do 24-1-1=10– and
 // 23-2-1=10XA use the Amazon label, find all of them". The saved reports kept an OLD X00… FNSKU after a listing moved to the
 // manufacturer barcode. Amazon's FBA Inventory API gives each SKU's FNSKU NOW — kept here (every ⚡ sync + 🔄 Check live) and it wins.
+async function amazonAsinFixTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_asin_fix (sku TEXT PRIMARY KEY, asin TEXT, by_user TEXT, at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_asin_fix_log (id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT, old_asin TEXT, asin TEXT, by_user TEXT, at TEXT)').run();
+}
+// POST /inventory/amazon-barcode/asin { sku, asin } (managers) — the ASIN of an Amazon SKU whose ASIN Amazon's data doesn't have.
+// asin '' = take the typed one off. Every change is kept in amazon_asin_fix_log (old → new, who, when).
+async function amazonAsinFixSave(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await amazonAsinFixTable(env);
+  const b = await request.json().catch(() => ({}));
+  const sku = String(b.sku || '').trim().toUpperCase().slice(0, 80), asin = String(b.asin || '').trim().toUpperCase();
+  if (!sku) return J({ ok: false, error: 'Amazon SKU needed' }, 400);
+  if (asin && !/^[A-Z0-9]{10}$/.test(asin)) return J({ ok: false, error: 'An ASIN is 10 letters / numbers, e.g. B07NMNSYJD' }, 400);
+  const by = String((session && (session.displayName || session.username)) || '?').slice(0, 40), now = new Date().toISOString();
+  const old = await env.DB.prepare('SELECT asin FROM amazon_asin_fix WHERE sku = ?').bind(sku).first();
+  if (asin) await env.DB.prepare('INSERT INTO amazon_asin_fix (sku, asin, by_user, at) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET asin = excluded.asin, by_user = excluded.by_user, at = excluded.at').bind(sku, asin, by, now).run();
+  else await env.DB.prepare('DELETE FROM amazon_asin_fix WHERE sku = ?').bind(sku).run();
+  await env.DB.prepare('INSERT INTO amazon_asin_fix_log (sku, old_asin, asin, by_user, at) VALUES (?,?,?,?,?)').bind(sku, old ? old.asin : '', asin, by, now).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'amazon_asin_fix', { sku, from: old ? old.asin : '', to: asin }).catch(() => {});
+  return J({ ok: true, sku, asin, by, at: now });
+}
 async function amazonBarcodeLiveTable(env) {
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_barcode_live (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, name TEXT, brand TEXT, at TEXT)').run();
 }
@@ -10217,6 +10242,10 @@ const _app = {
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       try { return await amazonBarcodeLiveCheck(env); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } })); }
+    }
+    if (url.pathname === '/inventory/amazon-barcode/asin' && method === 'POST') {
+      if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      return await amazonAsinFixSave(request, env, session);
     }
     // 🧰 Owner (2026-10-24): Send to Amazon says "Prep category is missing" on 22 SKUs — set it on Amazon for the shipment's SKUs.
     if (url.pathname === '/awd/prep-fix' && method === 'POST') {

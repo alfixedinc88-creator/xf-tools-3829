@@ -652,6 +652,7 @@ window.invCredLogin = async function() {
     <div style="font-size:12px;color:var(--text2);margin:6px 0">Amazon's own data: a listing whose FNSKU is an <b>X00…</b> code needs Amazon's label on every unit — don't ship it with our UPC. One whose FNSKU is the ASIN (B0…) ships with our UPC.</div>
     <button type="button" id="inv-amzbc-live" onclick="invAmzBcLive()" style="padding:7px 12px;border:none;border-radius:8px;background:#b45309;color:#fff;font-weight:800;font-size:12px;cursor:pointer;margin:0 6px 6px 0">🔄 Check live with Amazon now</button><span id="inv-amzbc-live-msg" style="font-size:12px;color:var(--text2)"></span><br>
     <button type="button" id="inv-amzbc-dl" onclick="invAmzBcCsv()" style="padding:7px 12px;border:1.5px solid #b45309;border-radius:8px;background:var(--bg);color:#b45309;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:6px">⬇ Download the list (CSV)</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--red);margin:0 0 6px"><input type="checkbox" id="inv-amzbc-noasin" onchange="invAmzBcRender()"> ⚠ Only the ones with NO ASIN on record <span id="inv-amzbc-noasin-n" style="font-weight:400;color:var(--text3)"></span></label>
     <input id="inv-amzbc-q" placeholder="Search part # / SKU / name / FNSKU…" oninput="invAmzBcRender()" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:6px">
     <div id="inv-amzbc-list" style="font-size:12px;max-height:50vh;overflow:auto">Loading…</div>
   </details>
@@ -2246,11 +2247,37 @@ window.invCredLogin = async function() {
   window.invAmzBcRender = function() {
     var b = g('inv-amzbc-list'); if (!b || !_invAmzBc) return;
     var q = String((g('inv-amzbc-q') || {}).value || '').trim().toUpperCase();
-    var L = _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
+    // ⚠ Owner (2026-10-25): "the Amazon-label listings with no ASIN on record — I will find the ASIN and update it". The Reorder vendor
+    // sheet can't put the ASIN on the outside box without it; a manager types it here (Amazon's own ASIN always wins when it has one).
+    var noAsin = !!(g('inv-amzbc-noasin') || {}).checked, mgr = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.includes('mgmt'));
+    var missing = _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && (!x.asin || x.asinTyped); });
+    var nn = g('inv-amzbc-noasin-n'); if (nn) nn.textContent = '(' + _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && !x.asin; }).length + ' with no ASIN'
+      + (missing.length ? ', ' + missing.filter(function(x) { return x.asinTyped; }).length + ' typed in' : '') + ')';
+    var L = _invAmzBc.list.filter(function(x) { return x.barcode === 'amazon' && (!noAsin || !x.asin || x.asinTyped) && (!q || (x.part + ' ' + x.sku + ' ' + x.fnsku + ' ' + x.asin + ' ' + x.name).toUpperCase().indexOf(q) >= 0); });
+    var asinCell = function(x) {
+      var i = _invAmzBc.list.indexOf(x);
+      if (x.asin && !x.asinTyped) return ckE(x.asin);
+      var typed = x.asinTyped ? '<div style="font-size:10px;color:var(--text3)">typed by ' + ckE(x.asinTyped.by) + ' ' + ckE(String(x.asinTyped.at || '').slice(0, 10)) + '</div>' : '';
+      if (!mgr) return x.asin ? ckE(x.asin) + typed : '<b style="color:var(--red)">⚠ no ASIN</b>';
+      return '<span style="white-space:nowrap"><input id="inv-amzbc-asin-' + i + '" value="' + ckE(x.asin || '') + '" placeholder="B0…" maxlength="10" style="width:100px;padding:3px 5px;border:1.5px solid ' + (x.asin ? 'var(--border)' : 'var(--red)') + ';border-radius:5px;font-family:var(--mono);text-transform:uppercase;background:var(--bg);color:var(--text)">'
+        + ' <button type="button" onclick="invAmzBcSaveAsin(' + i + ')" style="padding:3px 8px;border:none;border-radius:5px;background:#b45309;color:#fff;font-weight:700;cursor:pointer">Save</button></span>' + typed;
+    };
     b.innerHTML = L.length ? '<table style="border-collapse:collapse;width:100%"><tr>' + ['Part #', 'Amazon SKU', 'FNSKU (Amazon barcode)', 'ASIN', 'Name', 'Why (likely)'].map(function(h) { return '<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + h + '</th>'; }).join('') + '</tr>'
       + L.map(function(x) { return '<tr class="inv-amzbc-row"><td style="padding:3px 6px;font-family:var(--mono);font-weight:700;white-space:nowrap">' + ckE(x.part) + '</td><td style="padding:3px 6px;font-family:var(--mono);white-space:nowrap">' + ckE(x.sku) + '</td>'
-        + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + ckE(x.asin) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td><td class="inv-amzbc-why" style="padding:3px 6px;font-size:11px;color:var(--text2)">' + ckE(x.why || '') + '</td></tr>'; }).join('') + '</table>'
+        + '<td style="padding:3px 6px;font-family:var(--mono);color:#b45309;font-weight:700">' + ckE(x.fnsku) + '</td><td style="padding:3px 6px;font-family:var(--mono)">' + asinCell(x) + '</td><td style="padding:3px 6px">' + ckE(x.name) + '</td><td class="inv-amzbc-why" style="padding:3px 6px;font-size:11px;color:var(--text2)">' + ckE(x.why || '') + '</td></tr>'; }).join('') + '</table>'
       : '<span style="color:var(--text3)">' + (q ? 'None found for "' + ckE(q) + '"' : 'No FBA listing needs Amazon\'s barcode') + '</span>';
+  };
+  window.invAmzBcSaveAsin = function(i) {
+    var x = _invAmzBc && _invAmzBc.list[i], el = g('inv-amzbc-asin-' + i); if (!x || !el) return;
+    var asin = String(el.value || '').trim().toUpperCase();
+    if (asin && !/^[A-Z0-9]{10}$/.test(asin)) { alert('An ASIN is 10 letters / numbers, e.g. B07NMNSYJD'); el.focus(); return; }
+    if (!asin && !confirm('Take the typed ASIN off ' + x.sku + '?')) return;
+    wFetch(W + '/inventory/amazon-barcode/asin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: x.sku, asin: asin }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) throw new Error((d && d.error) || 'failed');
+        x.asin = asin; x.asinTyped = asin ? { by: d.by, at: d.at } : null; invAmzBcRender();
+        if (typeof showToast === 'function') showToast(asin ? '✓ ' + x.sku + ' → ASIN ' + asin : 'ASIN taken off ' + x.sku);
+      }).catch(function(e) { alert('Could not save: ' + e.message); });
   };
   // ⬇ Owner (2026-10-23): "a listing I can download of the ones using Amazon's barcode" — what the search shows (all of them when empty).
   function invAmzBcCsvText(d, q) {
