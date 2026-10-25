@@ -2370,7 +2370,7 @@ window.invCredLogin = async function() {
         _invFetchLookupRaw(o.part).then(function(L) {
           if (!L || !L.partNum) { short.push(o.part + ' (not found)'); return next(); }
           invPart = L;
-          var pm = String(o.part).split('=').pop().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, pcs = o.units * pack;
+          var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, pcs = o.units * pack;
           var each = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === o.part) each = Math.max(each, parseFloat(l.eachQty) || 0); });
           var need = each > 0 ? pcs / each : o.boxes, plan;
           if (!(need > 0) && !(L.caseOf && L.caseOf[o.part])) { short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return next(); }
