@@ -8865,7 +8865,10 @@ async function recountAssignTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_assign (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, to_user_id INTEGER, to_name TEXT,
     area TEXT, spots TEXT, note TEXT, closed_at TEXT, closed_by TEXT, closed_how TEXT)`).run();
   // 👀 Owner (2026-10-19): "I sent it to MG, but nothing shows on her end" — when the person first opened it is on record.
-  if (!_raSeenCol) { await env.DB.prepare('ALTER TABLE recount_assign ADD COLUMN seen_at TEXT').run().catch(() => {}); _raSeenCol = true; }
+  if (!_raSeenCol) { await env.DB.prepare('ALTER TABLE recount_assign ADD COLUMN seen_at TEXT').run().catch(() => {});
+    // 🔁 Owner (2026-10-26): "select the aisle, pick not scanned / started / … whatever I want, and send it to the people I need to
+    // redo or do it" — spots already done when sent are a REDO: done again only by a count made after the list was sent.
+    await env.DB.prepare('ALTER TABLE recount_assign ADD COLUMN redo TEXT').run().catch(() => {}); _raSeenCol = true; }
 }
 let _raSeenCol = false;
 // Each spot's state in this round: done (a finished column) · started (recount lines / ✕ stopped) · none.
@@ -8882,16 +8885,21 @@ async function recountAssignList(env, where, args) {
   await recountAssignTable(env); await recountTables(env);
   const roundStart = await recountRoundStart(env), st = await recountSpotStates(env, roundStart);
   const rows = await d1All(env, `SELECT * FROM recount_assign WHERE closed_at IS NULL ${where} ORDER BY id DESC LIMIT 100`, args);
-  const out = [];
+  const out = [], since = {};
   for (const r of rows) {
-    let spots = []; try { spots = JSON.parse(r.spots || '[]') || []; } catch (_) {}
-    const list = spots.map(l => ({ l, ...(st[String(l).toUpperCase()] || { st: 'none' }) }));
+    let spots = [], redo = []; try { spots = JSON.parse(r.spots || '[]') || []; } catch (_) {} try { redo = JSON.parse(r.redo || '[]') || []; } catch (_) {}
+    // 🔁 A redo spot (done when it was sent): its state counts only from the list's send time; the count before is shown as prev.
+    const rs = new Set(redo.map(x => String(x).toUpperCase())), stR = rs.size ? (since[r.at] = since[r.at] || await recountSpotStates(env, r.at)) : null;
+    const list = spots.map(l => { const L = String(l).toUpperCase();
+      if (!rs.has(L)) return { l, ...(st[L] || { st: 'none' }) };
+      const p = st[L] && st[L].at && st[L].at < r.at ? st[L] : null;
+      return { l, ...(stR[L] || { st: 'none' }), redo: true, prev: p ? { by: p.by || '', at: p.at } : null }; });
     const done = list.filter(x => x.st === 'done').length;
     if (list.length && done === list.length) { // every spot done → closes by itself
       await env.DB.prepare("UPDATE recount_assign SET closed_at = ?, closed_by = ?, closed_how = 'all done' WHERE id = ? AND closed_at IS NULL").bind(new Date().toISOString(), r.to_name || '', r.id).run();
       continue;
     }
-    out.push({ id: r.id, at: r.at, by: r.by_user, toUserId: r.to_user_id, to: r.to_name, area: r.area, note: r.note || '', spots: list, done, total: list.length, seenAt: r.seen_at || null });
+    out.push({ id: r.id, at: r.at, by: r.by_user, toUserId: r.to_user_id, to: r.to_name, area: r.area, note: r.note || '', spots: list, done, total: list.length, redo: rs.size, seenAt: r.seen_at || null });
   }
   return out;
 }
@@ -8917,10 +8925,13 @@ async function inventoryRecountAssign(path, request, env, session) {
     if (!spots.length) return J({ ok: false, error: 'No spot to send' }, 400);
     const u = uid ? await d1First(env, 'SELECT id, username, display_name FROM cred_users WHERE id = ? AND active = 1', [uid]).catch(() => null) : null;
     if (!u) return J({ ok: false, error: 'Pick who gets it' }, 400);
-    const ins = await env.DB.prepare('INSERT INTO recount_assign (at, by_user, to_user_id, to_name, area, spots, note) VALUES (?,?,?,?,?,?,?)')
-      .bind(new Date().toISOString(), who, u.id, u.display_name || u.username, String(b.area || '').slice(0, 30), JSON.stringify(spots), String(b.note || '').slice(0, 300)).run();
-    if (session && session.userId) await logUserActivity(env, session.userId, 'recount_assign', { to: u.display_name || u.username, area: b.area, spots: spots.length }).catch(() => {});
-    return J({ ok: true, id: ins.meta.last_row_id, to: u.display_name || u.username, spots: spots.length });
+    // Spots already done in this round when sent = 🔁 redo (decided here from the counts on record, not by the phone).
+    await recountTables(env);
+    const nowSt = await recountSpotStates(env, await recountRoundStart(env)), redo = spots.filter(l => nowSt[l] && nowSt[l].st === 'done');
+    const ins = await env.DB.prepare('INSERT INTO recount_assign (at, by_user, to_user_id, to_name, area, spots, note, redo) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(new Date().toISOString(), who, u.id, u.display_name || u.username, String(b.area || '').slice(0, 30), JSON.stringify(spots), String(b.note || '').slice(0, 300), JSON.stringify(redo)).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'recount_assign', { to: u.display_name || u.username, area: b.area, spots: spots.length, redo: redo.length }).catch(() => {});
+    return J({ ok: true, id: ins.meta.last_row_id, to: u.display_name || u.username, spots: spots.length, redo: redo.length });
   }
   if (path === '/inventory/recount/assign/close') {
     await env.DB.prepare("UPDATE recount_assign SET closed_at = ?, closed_by = ?, closed_how = 'cancelled' WHERE id = ? AND closed_at IS NULL").bind(new Date().toISOString(), who, parseInt(b.id, 10) || 0).run();
