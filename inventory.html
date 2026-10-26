@@ -14442,8 +14442,10 @@ window.invCredLogin = async function() {
         return '<div class="icard" style="border:2px solid var(--orange)"><div class="icard-label">📋 For you: ' + ckE(a.area || '') + ' — ' + (a.total - a.done) + ' spot' + (a.total - a.done === 1 ? '' : 's') + ' to finish</div>'
           + '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Sent by ' + ckE(a.by) + ' · ' + ckE(xfrFmtT(a.at)) + (a.note ? ' · “' + ckE(a.note) + '”' : '') + ' · ' + a.done + ' of ' + a.total + ' done. Tap a spot to start it (or scan its label).</div>'
           + '<div style="display:flex;flex-wrap:wrap;gap:4px">' + a.spots.slice().sort(function(x, y) { return invPullWalkCompare(x.l, y.l); }).map(function(sp) { var c = col[sp.st] || col.none;
-              return '<button type="button" ' + (sp.st === 'done' ? 'disabled ' : 'onclick="rcGo(this.dataset.l)" ') + 'data-l="' + ckE(sp.l) + '" style="padding:6px 8px;border-radius:7px;font-family:var(--mono);font-size:12px;font-weight:800;cursor:' + (sp.st === 'done' ? 'default' : 'pointer') + ';background:' + c[0] + ';border:1.5px solid ' + c[1] + ';color:var(--text)">'
-                + (sp.st === 'done' ? '✓ ' : '') + ckE(sp.l) + (sp.st === 'started' ? '<div style="font-size:10px;font-weight:600">' + (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + '</div>' : '') + '</button>'; }).join('') + '</div></div>';
+              // 🔁 A spot sent to redo (it was done before): tap → 🔁 Checking, kept as a check of the count before (who / when).
+              var go = sp.redo && sp.st !== 'started' ? 'onclick="rcCheckCol(this.dataset.l, this.dataset.by, this.dataset.at)" data-by="' + ckE((sp.prev && sp.prev.by) || '') + '" data-at="' + ckE((sp.prev && sp.prev.at) || '') + '" ' : 'onclick="rcGo(this.dataset.l)" ';
+              return '<button type="button" ' + (sp.st === 'done' ? 'disabled ' : go) + 'data-l="' + ckE(sp.l) + '" style="padding:6px 8px;border-radius:7px;font-family:var(--mono);font-size:12px;font-weight:800;cursor:' + (sp.st === 'done' ? 'default' : 'pointer') + ';background:' + c[0] + ';border:1.5px solid ' + c[1] + ';color:var(--text)">'
+                + (sp.st === 'done' ? '✓ ' : sp.redo ? '🔁 ' : '') + ckE(sp.l) + (sp.st === 'started' ? '<div style="font-size:10px;font-weight:600">' + (sp.stopped ? '✕ stopped' : sp.lines + ' line' + (sp.lines === 1 ? '' : 's') + ' scanned') + '</div>' : sp.redo && sp.st !== 'done' ? '<div style="font-size:10px;font-weight:600">redo</div>' : '') + '</button>'; }).join('') + '</div></div>';
       }).join('');
     }).catch(function() {});
   };
@@ -14979,7 +14981,8 @@ window.invCredLogin = async function() {
       + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px;color:var(--text)"><b style="font-family:var(--mono);font-size:14px">' + ckE(a.area) + '</b>'
       + (a.off ? '<span class="rc-off-legend" style="color:#c2410c;font-weight:800">🟧 ≠ SKU Mgr ' + a.off + '</span>' : '')
       + '<span>🟩 done ' + a.done + '</span><span class="rc-chk-legend" style="color:#7c3aed;font-weight:700">🟪 double checked ' + (a.checked || 0) + ' of ' + a.done + '</span><span>🟨 scanned / started, not done ' + a.started + '</span><span>🟥 not scanned ' + a.notScanned + '</span>'
-      + (a.started + a.notScanned ? '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">📤 Send the ' + (a.started + a.notScanned) + ' unfinished (pick which) to…</button>' : '')
+      + '<button type="button" onclick="rcAssignOpen(this.dataset.a)" data-a="' + ckE(a.area) + '" style="padding:5px 10px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;font-size:12px">'
+      + (a.started + a.notScanned ? '📤 Send the ' + (a.started + a.notScanned) + ' unfinished (pick which) to…' : '📤 Send spots to redo (pick which) to…') + '</button>'
       + '<a href="#" onclick="rcArea(\'\');return false" style="margin-left:auto">close</a></div>'
       // 🧭 Owner (2026-10-21): "each aisle on its own line — 1A stays with 1A: 1A-1-1, 1A-1-2 … 1A-2-1, 1A-2-2 …". One row per aisle
       // (the part after "=" up to the first "-"), its spots in walking order; the aisles in walking order too.
@@ -15069,20 +15072,41 @@ window.invCredLogin = async function() {
     }).catch(function() { invFlash('📶 Not deleted — check WiFi', 'error'); });
   };
   // 📤 Send every 🟥 not scanned / 🟨 started spot of an area to one person (owner 2026-10-19, C4).
+  // 🎨 Owner (2026-10-26): "select whatever aisle and pick not scanned / scanned-started-not-done / whatever I want, and send it to
+  // the people I need to redo or do it". Each spot's color on the area map: 🟥 none · 🟨 started · 🟩 done · 🟪 double checked ·
+  // 🟧 ≠ SKU Mgr. A done one sent is a 🔁 redo on their list (the server only counts a count made after it was sent).
+  var RC_AS_KINDS = [['none', '🟥 not scanned'], ['started', '🟨 scanned / started, not done'], ['done', '🟩 done'], ['checked', '🟪 double checked'], ['off', '🟧 ≠ SKU Mgr']];
+  function rcSpotKind(sp) { return sp.st !== 'done' ? (sp.st === 'started' ? 'started' : 'none') : sp.off ? 'off' : sp.checked ? 'checked' : 'done'; }
   window.rcAssignOpen = function(area) {
     var a = (RC.rep && RC.rep.areas || []).filter(function(x) { return x.area === area; })[0]; if (!a) return;
-    var spots = a.spots.filter(function(sp) { return sp.st !== 'done'; }).map(function(sp) { return sp.l; });
+    var kinds = {}; a.spots.forEach(function(sp) { kinds[String(sp.l).toUpperCase()] = rcSpotKind(sp); });
+    var unfinished = a.spots.filter(function(sp) { return sp.st !== 'done'; }).length;
+    RC._asKinds = kinds; RC._asArea = area; RC._asOn = unfinished ? { none: 1, started: 1 } : {};
+    var n = {}; a.spots.forEach(function(sp) { var k = rcSpotKind(sp); n[k] = (n[k] || 0) + 1; });
+    var spots = a.spots.map(function(sp) { return sp.l; });
     wFetch(W + '/inventory/recount/people').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { invFlash((d && d.error) || 'Could not load people', 'error'); return; }
-      xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">📤 Send unfinished ' + ckE(area) + ' spots</div>'
-        + rcAssignPickHtml(spots, (RC.rep && RC.rep.assigned) || [])
+      xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">📤 Send ' + ckE(area) + ' spots</div>'
+        + '<div style="font-size:12px;font-weight:700;margin-bottom:3px">Which spots? (tick the colors)</div><div style="display:flex;flex-wrap:wrap;gap:4px 10px;margin-bottom:6px;font-size:12px">'
+        + RC_AS_KINDS.map(function(k) { return '<label style="display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="rc-as-kind" value="' + k[0] + '"' + (RC._asOn[k[0]] ? ' checked' : '') + (n[k[0]] ? '' : ' disabled') + ' onchange="rcAssignKinds()"> ' + k[1] + ' (' + (n[k[0]] || 0) + ')</label>'; }).join('') + '</div>'
+        + '<div id="rc-as-pickwrap">' + rcAssignPickHtml(spots, (RC.rep && RC.rep.assigned) || []) + '</div>'
         + '<div style="font-size:13px;font-weight:700;margin-bottom:4px">To who?</div><select id="rc-as-to" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:15px;margin-bottom:8px;background:var(--bg);color:var(--text)"><option value="">— pick a person —</option>'
         + d.people.map(function(p) { return '<option value="' + p.id + '">' + ckE(p.name) + '</option>'; }).join('') + '</select>'
         + '<input id="rc-as-note" placeholder="Note (optional), e.g. pull the boxes out and recount" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px;background:var(--bg);color:var(--text)">'
         + '<button type="button" id="rc-as-send" onclick="rcAssignSend(this.dataset.a)" data-a="' + ckE(area) + '" style="width:100%;padding:13px;border-radius:11px;border:none;background:var(--accent);color:#fff;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:6px">📤 Send</button>'
         + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:11px;border-radius:11px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:14px;cursor:pointer">Cancel</button>');
-      RC._asSpots = spots; rcAssignCount();
+      RC._asSpots = spots; rcAssignKinds();
     }).catch(function() { invFlash('📶 Could not load — check WiFi', 'error'); });
+  };
+  // Show only the spots of the ticked colors (a line with none of them hides); a color ticked again shows its spots ticked.
+  window.rcAssignKinds = function() {
+    var on = {}; document.querySelectorAll('.rc-as-kind').forEach(function(c) { if (c.checked) on[c.value] = 1; });
+    var was = RC._asOn || {}; RC._asOn = on;
+    document.querySelectorAll('.rc-as-spot').forEach(function(c) { var k = (RC._asKinds || {})[String(c.value).toUpperCase()] || 'none', lab = c.parentNode;
+      if (lab) lab.style.display = on[k] ? '' : 'none';
+      if (!on[k]) c.checked = false; else if (!was[k]) c.checked = !c.getAttribute('data-sent'); });
+    document.querySelectorAll('.rc-as-lineblock').forEach(function(b) { var any = false; b.querySelectorAll('.rc-as-spot').forEach(function(c) { if (on[(RC._asKinds || {})[String(c.value).toUpperCase()] || 'none']) any = true; }); b.style.display = any ? '' : 'none'; });
+    rcAssignCount();
   };
   // ☑ Owner (2026-10-21): "BARN is a big section — let me pick which unfinished spots to send, and to who". Every unfinished spot
   // with a tick box, one line per aisle + row (as in By area) with a tick for the whole line; All / None. A spot already on someone's
@@ -15096,32 +15120,34 @@ window.invCredLogin = async function() {
       + '<a href="#" onclick="rcAssignAll(true);return false">✓ All</a><a href="#" onclick="rcAssignAll(false);return false">✗ None</a></div>'
       + '<div class="rc-as-pick" style="max-height:45vh;overflow:auto;border:1px solid var(--border);border-radius:9px;padding:4px 6px;margin-bottom:8px">'
       + order.map(function(k, li) {
-          return '<div style="padding:4px 0;border-top:' + (li ? '1px solid var(--border)' : 'none') + '"><label style="font-family:var(--mono);font-weight:800;font-size:13px;cursor:pointer"><input type="checkbox" class="rc-as-line" data-line="' + li + '" onchange="rcAssignLine(this)"> ' + ckE(k) + '</label>'
+          return '<div class="rc-as-lineblock" style="padding:4px 0;border-top:' + (li ? '1px solid var(--border)' : 'none') + '"><label style="font-family:var(--mono);font-weight:800;font-size:13px;cursor:pointer"><input type="checkbox" class="rc-as-line" data-line="' + li + '" onchange="rcAssignLine(this)"> ' + ckE(k) + '</label>'
             + '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">' + by[k].map(function(l) { var st = sentTo[String(l).toUpperCase()];
                 return '<label style="display:inline-flex;align-items:center;gap:3px;padding:3px 6px;border-radius:7px;border:1.5px solid ' + (st ? 'var(--orange)' : 'var(--border)') + ';font-family:var(--mono);font-size:12px;cursor:pointer;background:var(--bg)">'
-                  + '<input type="checkbox" class="rc-as-spot" data-line="' + li + '" value="' + ckE(l) + '"' + (st ? '' : ' checked') + ' onchange="rcAssignCount()">' + ckE(l.slice(l.indexOf('=') + 1) || l)
+                  + '<input type="checkbox" class="rc-as-spot" data-line="' + li + '" value="' + ckE(l) + '"' + (st ? ' data-sent="1"' : ' checked') + ' onchange="rcAssignCount()">' + ckE(l.slice(l.indexOf('=') + 1) || l)
+                  + ({ done: ' 🟩', checked: ' 🟪', off: ' 🟧' }[(RC._asKinds || {})[String(l).toUpperCase()]] || '')
                   + (st ? ' <span style="color:var(--orange);font-family:var(--sans);font-size:10px">📤 ' + ckE(st) + '</span>' : '') + '</label>'; }).join('') + '</div></div>';
         }).join('') + '</div>';
   }
   window.rcAssignCount = function() {
-    var all = document.querySelectorAll('.rc-as-spot'), n = 0, lines = {};
+    var all = [].filter.call(document.querySelectorAll('.rc-as-spot'), function(c) { return !c.parentNode || c.parentNode.style.display !== 'none'; }), n = 0, lines = {};
     all.forEach(function(c) { if (c.checked) n++; var k = c.getAttribute('data-line'); lines[k] = lines[k] || { n: 0, on: 0 }; lines[k].n++; if (c.checked) lines[k].on++; });
     document.querySelectorAll('.rc-as-line').forEach(function(c) { var x = lines[c.getAttribute('data-line')] || { n: 0, on: 0 }; c.checked = x.n > 0 && x.on === x.n; c.indeterminate = x.on > 0 && x.on < x.n; });
     var el = g('rc-as-count'); if (el) el.textContent = n + ' of ' + all.length + ' picked';
     var b = g('rc-as-send'); if (b) b.textContent = '📤 Send ' + n + ' spot' + (n === 1 ? '' : 's');
   };
-  window.rcAssignLine = function(box) { var k = box.getAttribute('data-line'); document.querySelectorAll('.rc-as-spot[data-line="' + k + '"]').forEach(function(c) { c.checked = box.checked; }); rcAssignCount(); };
-  window.rcAssignAll = function(on) { document.querySelectorAll('.rc-as-spot').forEach(function(c) { c.checked = on; }); rcAssignCount(); };
+  function rcAsShown(c) { return !c.parentNode || c.parentNode.style.display !== 'none'; }
+  window.rcAssignLine = function(box) { var k = box.getAttribute('data-line'); document.querySelectorAll('.rc-as-spot[data-line="' + k + '"]').forEach(function(c) { if (rcAsShown(c)) c.checked = box.checked; }); rcAssignCount(); };
+  window.rcAssignAll = function(on) { document.querySelectorAll('.rc-as-spot').forEach(function(c) { if (rcAsShown(c)) c.checked = on; }); rcAssignCount(); };
   window.rcAssignSend = function(area) {
     var to = (g('rc-as-to') || {}).value; if (!to) { invFlash('Pick who gets it', 'error'); return; }
     var boxes = document.querySelectorAll('.rc-as-spot'), picked = [];
-    boxes.forEach(function(c) { if (c.checked) picked.push(c.value); });
+    boxes.forEach(function(c) { if (c.checked && rcAsShown(c)) picked.push(c.value); });
     var spots = boxes.length ? picked : (RC._asSpots || []);
     if (!spots.length) { invFlash('Tick at least one spot to send', 'error'); return; }
     wFetch(W + '/inventory/recount/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, spots: spots, toUserId: to, note: (g('rc-as-note') || {}).value || '' }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('✗ ' + ((d && d.error) || 'Not sent'), 'error'); return; }
-        xfrPopupClose(); invFlash('📤 Sent ' + d.spots + ' spot' + (d.spots === 1 ? '' : 's') + ' to ' + d.to + ' — they see it on Audit → 📋 Recount', 'success'); rcReport();
+        xfrPopupClose(); invFlash('📤 Sent ' + d.spots + ' spot' + (d.spots === 1 ? '' : 's') + (d.redo ? ' (' + d.redo + ' to 🔁 redo)' : '') + ' to ' + d.to + ' — they see it on Audit → 📋 Recount', 'success'); rcReport();
       }).catch(function() { invFlash('📶 Not sent — check WiFi', 'error'); });
   };
   window.rcAssignCancel = function(id) {

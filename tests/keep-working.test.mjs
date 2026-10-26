@@ -7628,6 +7628,39 @@ console.log('\n📤 Recount by area: send the unfinished spots to someone → "�
   sq.exec("DELETE FROM master_list WHERE base_sku = '938-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q8=%'; DELETE FROM inventory_log WHERE part_num = '938-1-1=10'; DELETE FROM recount_assign");
 }
 
+// Owner (2026-10-26): "for the audit, I want to select whatever aisle and pick 'not scanned', 'scanned / started not done', whatever
+// I want, and send it to the people I need to redo or do it" — any color (🟥 🟨 🟩 🟪 🟧) can be sent; a done spot is a 🔁 redo.
+console.log('\n🎨 Recount by area: pick the colors to send (not scanned / started / done / double checked / ≠ SKU Mgr) — done ones are a 🔁 redo');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('937-1-1','tee','937-1-1=10','Q7=11-1-1',2,10), ('937-1-1','tee','937-1-1=10','Q7=11-1-2',1,10)`).run();
+  await post('/inventory/recount/column-done', { location: 'Q7=11-1-1', items: 1, changed: 0, detail: [] }); // done before it is sent
+  await new Promise(r => setTimeout(r, 5));
+  const pkTok = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pkId = sq.prepare("SELECT id FROM cred_users WHERE username = 'picker'").get().id;
+  const sent = await post('/inventory/recount/assign', { area: 'Q7', spots: ['Q7=11-1-1', 'Q7=11-1-2'], toUserId: pkId, note: 'redo the done one' });
+  await new Promise(r => setTimeout(r, 5));
+  const m1 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  const L1 = (m1.lists || []).find(x => x.id === sent.id) || { spots: [] }, S1 = Object.fromEntries(L1.spots.map(x => [x.l, x]));
+  check('send a 🟩 done spot + a 🟥 not scanned one → the done one is a 🔁 redo: NOT done on their list (the count before is shown as prev), so the list does not close by itself',
+    sent.ok && sent.spots === 2 && sent.redo === 1 && L1.total === 2 && L1.done === 0 && L1.redo === 1 && S1['Q7=11-1-1'].redo === true && S1['Q7=11-1-1'].st === 'none' && S1['Q7=11-1-1'].prev && S1['Q7=11-1-1'].prev.by === 'TS'
+      && !S1['Q7=11-1-2'].redo && S1['Q7=11-1-2'].st === 'none', L1);
+  await post('/inventory/recount/column-done', { location: 'Q7=11-1-1', items: 1, changed: 0, detail: [] }); // counted again after it was sent
+  const m2 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  const L2 = (m2.lists || []).find(x => x.id === sent.id) || { spots: [] };
+  await post('/inventory/recount/column-done', { location: 'Q7=11-1-2', items: 1, changed: 0, detail: [] });
+  const m3 = await (await call('/inventory/recount/assigned', { headers: { 'X-Cred-Token': pkTok } })).json();
+  check('…the redo spot is done once counted again AFTER it was sent (1 of 2); both done → the list closes by itself',
+    L2.done === 1 && L2.spots.find(x => x.l === 'Q7=11-1-1').st === 'done' && !(m3.lists || []).some(x => x.id === sent.id) && sq.prepare('SELECT closed_how FROM recount_assign WHERE id = ?').get(sent.id).closed_how === 'all done', { L2 });
+  const { readFileSync: rfK } = await import('node:fs');
+  const ih = rfK(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…📤 box: tick the colors (🟥 not scanned · 🟨 started · 🟩 done · 🟪 double checked · 🟧 ≠ SKU Mgr; 🟥 + 🟨 ticked when there are unfinished ones, as before); button shows even when all are done; a 🔁 redo spot opens 🔁 Checking',
+    /var RC_AS_KINDS = \[\['none', '🟥 not scanned'\], \['started', '🟨 scanned \/ started, not done'\], \['done', '🟩 done'\], \['checked', '🟪 double checked'\], \['off', '🟧 ≠ SKU Mgr'\]\];/.test(ih)
+      && /RC\._asOn = unfinished \? \{ none: 1, started: 1 \} : \{\};/.test(ih) && /📤 Send spots to redo \(pick which\) to…/.test(ih) && /📤 Send the ' \+ \(a\.started \+ a\.notScanned\) \+ ' unfinished \(pick which\) to…/.test(ih)
+      && /sp\.redo && sp\.st !== 'started' \? 'onclick="rcCheckCol\(this\.dataset\.l, this\.dataset\.by, this\.dataset\.at\)"/.test(ih) && /class="rc-as-kind"/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '937-1-1'; DELETE FROM recount_columns WHERE location LIKE 'Q7=%'; DELETE FROM recount_assign");
+}
+
 // Owner (2026-10-17, Recount report → 🗺 By area): "why do we have '3/7/26 order 500', '810097203419', 'jq2605b-17 8/17/26' there?"
 console.log('\n⚠ Recount report: SKU Mgr Locations that are a note / barcode / container are not spots — listed apart to fix');
 {
