@@ -2742,8 +2742,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   check('🚚 a driver (own sign-in, not management) can see today\'s scan forms and print them; the rest of Auto Label (rules, buying) stays management-only',
     dl.ok && (dl.forms.find(f => f.id === sfRow.id) || {}).saved === 2 && df.status === 200 && dcfg.status === 401, { list: dl.ok, file: df.status, cfg: dcfg.status });
   const phU = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…🚚 Leaving for USPS → today\'s scan forms come up to print (USPS labels not on a form yet → offers to make one first)',
-    /await psCloseBatch\(\);\s*await psUspsScanFormsPrompt\(\);/.test(phU) && /Today\\'s USPS scan forms: /.test(phU) && /not on a scan form yet\.\\n\\nMake a scan form/.test(phU), null);
+  // Owner (2026-10-26) changed this rule: Leaving for USPS no longer prompts to print the scan form (📄 Make scan form now does it).
+  const runStart = (phU.match(/window\.psUspsRunStart = async function[\s\S]*?\n\};/) || [''])[0];
+  check('…🚚 Leaving for USPS closes the batch but does NOT auto print / ask to print the scan form; 📄 Make scan form now + 🖨 Print stay under Close Batch',
+    /await psCloseBatch\(\);/.test(runStart) && !/psUspsScanFormsPrompt|_psSfPrintSomewhere|scanform-make|ScanFormPrint|ScanFormMake/.test(runStart)
+      && /Make scan form now/.test(phU) && /window\.psCbScanFormPrint = /.test(phU) && /psCbLoadScanForms\(\)/.test(runStart), { len: runStart.length });
   const tl = new Function((phU.match(/function _psAlClock[\s\S]*?\n\}/) || [''])[0] + '\n' + (phU.match(/function _psAlTimesLines[\s\S]*?\n\}/) || [''])[0] + '; return [_psAlTimesLines, _psAlClock];')();
   const lines = tl[0]('Mon-Fri 16:30, 20:50; Sat 13:45; Sun 20:50');
   check('📅 the schedule in plain words (not 16:30): "Mon–Fri: 4:30 pm and 8:50 pm · Saturday: 1:45 pm · Sunday: 8:50 pm", night check 8:55 pm; in a small 📅 Schedule box',

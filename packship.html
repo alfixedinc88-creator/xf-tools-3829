@@ -3614,9 +3614,11 @@ window.psUspsRunStart = async function() {
     // so there's no separate Close Batch button anymore. psCloseBatch()
     // already no-ops safely (just re-syncs Veeqo) if it's already closed,
     // so this stays harmless on a second/third run of the same day.
-    // psCloseBatch never throws (its Veeqo sync is caught) — so the scan form step below always runs.
     await psCloseBatch();
-    await psUspsScanFormsPrompt(); // 📄 today's scan forms → print to hand to USPS
+    // 📄 Owner (2026-10-26): "when we click Leaving for USPS don't need to auto print the scan form no more, since we
+    // already have the Make scan form now button" — no print prompt here; the Close Batch 📄 USPS scan form list just
+    // refreshes, and forms are made / printed from 📄 Make scan form now and 🖨 Print there.
+    if (typeof psCbLoadScanForms === 'function') psCbLoadScanForms();
   } catch(e) { _psToast('Failed to start run: ' + e.message, 'error'); } finally { btn.disabled = false; }
 };
 
@@ -9716,7 +9718,7 @@ window.psAlLoadScanForms = async function() {
       + ' <details style="display:inline-block;vertical-align:top"><summary style="cursor:pointer;color:var(--accent)">📅 Schedule</summary><div style="margin:4px 0 6px;line-height:1.6">'
       + _psAlTimesLines(d.times).map(function(l) { return '• ' + e(l); }).join('<br>')
       + '<br>• Every night at ' + e(_psAlClock(d.checkAt)) + ': any USPS label after the last form → one more form, before the USPS 9 pm cut-off'
-      + '<br>• Forms are saved here — print them any time (🚚 Leaving for USPS asks to print today\'s forms)</div></details>'
+      + '<br>• Forms are saved here — print them any time (Close Batch → 📄 USPS scan form: 🖨 Print / 📄 Make scan form now)</div></details>'
     : '⏰ By hand only (turn it on in Rules)')
     // Owner 2026-10-08: "make sure the 8:50 pm scan form is made" — when the next one is due, and whether the server's own alarm is set.
     + (d.on && d.nextForm ? '<br>⏭ Next: <b>' + e(new Date(d.nextForm).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })) + '</b> (New York)'
@@ -9808,7 +9810,7 @@ window.psCbPrintScanForms = async function(btn) {
     var todo = (d.forms || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && (f.parts || 0) > 0 && !f.printed_at && String(f.created_at || '') >= PS_SF_PRINT_FROM; })
       .sort(function(a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
     var miss = (d.missing && d.missing.labels) || [];
-    if (!todo.length) { alert('📄 Every scan form is printed — nothing new to print.' + (miss.length ? '\n\n⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? ' is' : 's are') + ' not on a scan form yet — 🚚 Leaving for USPS (or Auto Label → 📄 Make scan form now) makes one.' : '')); return; }
+    if (!todo.length) { alert('📄 Every scan form is printed — nothing new to print.' + (miss.length ? '\n\n⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? ' is' : 's are') + ' not on a scan form yet — 📄 Make scan form now makes one.' : '')); return; }
     var pages = todo.reduce(function(t, f) { return t + (f.parts || 1); }, 0);
     _psToast('📄 Printing ' + pages + ' scan form' + (pages === 1 ? '' : 's') + ' not printed yet (made ' + todo.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ') + ')');
     await _psSfPrintSomewhere(todo.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }), btn);
