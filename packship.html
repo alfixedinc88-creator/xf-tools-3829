@@ -2766,7 +2766,7 @@ window.psFocusScan = function() {
 // voice": without it, this same 2s loop was yanking focus back to the scan
 // box while the dropdown was still open, closing it out from under
 // whoever was trying to pick an option.
-var PS_SCAN_TYPING_FIELDS = ['ps-scan-summary-namefilter', 'ps-scan-summary-date', 'ps-scan-voice-select'];
+var PS_SCAN_TYPING_FIELDS = ['ps-scan-summary-namefilter', 'ps-scan-summary-date', 'ps-scan-voice-select', 'ps-link-pack']; // 🔗 order # for a Stamps.com label
 var psScanRefocusInterval = null;
 function psScanStartRefocus() {
   if (psScanRefocusInterval) return;
@@ -3065,6 +3065,38 @@ function _psScanProductCardHtml(li, ctx) {
     + '</div>';
 }
 
+// 🔗 Owner (2026-10-26): "the label we print in stamps.com not show up anything in our app". A label bought outside Veeqo (Stamps.com)
+// has no order in Veeqo for its tracking #, so a scan finds no items. Picking / Packing ask for the order # (type it, or tap the box and
+// scan the order # barcode on the packing slip) → the server reads the order from Veeqo and links it to this label for good (who / when kept).
+function _psLinkBoxHtml(tracking, mode) {
+  var e = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
+  return '<div class="ps-link-box" style="font-size:13px;color:var(--text2)">'
+    + '<div style="font-weight:700;color:var(--text)">No order linked to this label.</div>'
+    + '<div style="margin:2px 0 6px">Printed in <b>Stamps.com</b> (not Veeqo)? Type or scan the <b>order #</b> from the label / packing slip:</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    + '<input id="ps-link-' + mode + '" data-tracking="' + e(tracking) + '" placeholder="Order #" autocomplete="off" onkeydown="if(event.key===\'Enter\'){event.preventDefault();event.stopPropagation();psLinkOrder(\'' + mode + '\');}" '
+    + 'style="flex:1;min-width:140px;padding:8px 10px;border:1.5px solid var(--accent);border-radius:8px;font-size:14px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+    + '<button type="button" onclick="psLinkOrder(\'' + mode + '\')" style="padding:8px 14px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:800;cursor:pointer">🔗 Link</button></div>'
+    + '<div id="ps-link-msg-' + mode + '" style="margin-top:4px;font-size:12px"></div></div>';
+}
+window.psLinkOrder = function(mode, confirmed) {
+  var inp = document.getElementById('ps-link-' + mode), msg = document.getElementById('ps-link-msg-' + mode);
+  if (!inp) return;
+  var tracking = inp.getAttribute('data-tracking') || '', order = String(inp.value || '').trim();
+  if (!order) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = 'Type or scan the order # first'; } inp.focus(); return; }
+  if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = '⏳ Looking up order ' + order + ' in Veeqo…'; }
+  _psPostWithTimeout(PS_WORKER + '/ship/link-order', { tracking: tracking, order: order, initials: psInitials, confirm: !!confirmed }).then(function(d) {
+    if (d && d.needConfirm) { if (confirm('⚠ ' + d.message)) return psLinkOrder(mode, true); if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = 'Not linked.'; } return; }
+    if (!d || !d.ok) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'Not linked'); } return; }
+    if (mode === 'pick') _psRenderPickProduct(tracking, d.lineItems, d.orderNum); else _psRenderScanProduct(tracking, d.lineItems);
+    var itEl = document.getElementById(mode === 'pick' ? 'ps-pick-product-items' : 'ps-scan-product-items');
+    if (itEl) itEl.insertAdjacentHTML('afterbegin', '<div style="grid-column:1/-1;font-size:12px;padding:6px 8px;margin-bottom:4px;border-radius:8px;background:#ecfdf5;color:#065f46">🔗 Linked to order <b>' + String(d.orderNum).replace(/</g, '&lt;') + '</b>'
+      + (d.channel ? ' (' + String(d.channel).replace(/</g, '&lt;') + ')' : '') + ' — ship to <b>' + String(d.customer || '?').replace(/</g, '&lt;') + '</b>' + (d.city ? ', ' + String(d.city).replace(/</g, '&lt;') + (d.state ? ' ' + String(d.state).replace(/</g, '&lt;') : '') : '')
+      + '. Check it matches the label.</div>');
+    if (typeof _psToast === 'function') _psToast('🔗 Label linked to order ' + d.orderNum, 'ok');
+  }).catch(function() { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '📶 Not linked — check WiFi and try again'; } });
+};
+
 // Just sets up the "Loading…" placeholder — no network call. Split out of
 // _psLoadScanProduct so a fresh scan can show this immediately without also
 // kicking off the order-lookup fetch that used to race the /ship/scan POST.
@@ -3091,7 +3123,7 @@ function _psRenderScanProduct(tracking, items) {
   if (trkEl) trkEl.textContent = tracking;
   items = (items || []).slice(0, PS_SCAN_MAX_ITEMS);
   if (!items.length) {
-    itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
+    itEl.innerHTML = _psLinkBoxHtml(tracking, 'pack');
     if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
     return;
   }
@@ -6423,7 +6455,7 @@ function _psRenderPickProduct(tracking, items, orderNum, showNoStock) {
   items = (items || []).slice(0, PS_SCAN_MAX_ITEMS);
   window._psPickStockoutCtx = [];
   if (!items.length) {
-    itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
+    itEl.innerHTML = _psLinkBoxHtml(tracking, 'pick');
     if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
     if (subEl) subEl.style.display = 'none';
     return;

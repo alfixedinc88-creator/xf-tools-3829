@@ -22794,6 +22794,8 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
   const path = url.pathname;
   try {
     if (path === '/ship/scan'         && method === 'POST') return await shipScan(request, env, ctx);
+    // 🔗 Owner (2026-10-26): "the label we print in stamps.com not show up anything in our app" — link the label to its order #.
+    if (path === '/ship/link-order'   && method === 'POST') return await shipLinkOrder(request, env, session);
     // Packing / Picking show the items from our saved copy right away, while the scan is still being saved.
     if (path === '/ship/items'        && method === 'GET')  { const o = await shipLocalOrder(env, normalizeShipTracking(url.searchParams.get('tracking') || ''));
       return cors(new Response(JSON.stringify({ ok: true, found: !!o, orderNum: o ? o.orderNum : '', lineItems: o ? o.items : null }), { headers: { 'Content-Type': 'application/json' } })); }
@@ -23314,6 +23316,46 @@ async function shipLocalOrder(env, clean) {
     if (best) return best;
   } catch (_) {}
   return null;
+}
+// 🔗 POST /ship/link-order { tracking, order, initials, confirm } — Owner (2026-10-26): "the label we print in stamps.com not show up
+// anything in our app" (store orders that are in Veeqo; the label was bought in Stamps.com, so Veeqo never had its tracking #).
+// Picking / Packing ask for the order # when a scanned label has no order: the order is read from Veeqo, its items are saved for
+// that tracking # (ship_manifest_log, uploaded_by 'stamps-link', so every later scan / pick / pack / report sees them), today's
+// scan + pick rows get the order #, and every link is kept (ship_label_link: who, when, tracking, order, items). An order that
+// already has its own Veeqo label asks first (two labels for one order?). Returns the ship-to name / city to check on the label.
+async function shipLinkOrder(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await ensureShipD1Tables(env);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ship_label_link (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, tracking TEXT, order_num TEXT,
+    channel TEXT, customer TEXT, items INTEGER, prev_order TEXT, note TEXT)`).run();
+  const b = await request.json().catch(() => ({}));
+  const clean = normalizeShipTracking(b.tracking || ''), num = String(b.order || '').trim().replace(/^#/, '');
+  if (!clean) return J({ ok: false, error: 'No tracking #' }, 400);
+  if (!num) return J({ ok: false, error: 'Type or scan the order #' }, 400);
+  if (!env.VEEQO_API_KEY) return J({ ok: false, error: 'Veeqo is not connected' }, 400);
+  const o = await veeqoLiveOrder(env, num);
+  if (!o) return J({ ok: false, error: `Order ${num} not found in Veeqo — check the order # on the Stamps.com label / packing slip` });
+  const own = [...new Set((o.allocations || []).map(a => String(_psAllocTrackingNumber(a) || '').trim().toUpperCase()).filter(Boolean))].filter(t => t !== clean);
+  if (own.length && !b.confirm) return J({ ok: false, needConfirm: true, order: String(o.number || num),
+    message: `Order ${o.number || num} already has its own Veeqo label (tracking ${own.join(', ')}). Linking this Stamps.com label too means 2 labels for 1 order — link anyway?` });
+  let items = await veeqoExtractLineItems(env, o);
+  items = await shipMergeBinFromManifestCache(env, clean, items);
+  if (!items.length) return J({ ok: false, error: `Veeqo has no items on order ${o.number || num}` });
+  const date = shipTodayKey(), now = new Date().toISOString(), addr = veeqoExtractAddress(o), orderNum = String(o.number || num);
+  const channel = veeqoExtractChannel(o), customer = veeqoExtractCustomerName(o);
+  const who = String((session && (session.displayName || session.username)) || b.initials || '?').slice(0, 40);
+  const ex = await env.DB.prepare('SELECT id, order_num FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY id DESC LIMIT 1').bind(clean).first();
+  if (ex) await env.DB.prepare(`UPDATE ship_manifest_log SET order_num = ?, channel = ?, customer_name = ?, city = ?, zip = ?, address1 = ?, address2 = ?, ship_to_state = ?, line_items = ? WHERE id = ?`)
+    .bind(orderNum, channel, customer, addr.city, addr.zip, addr.address1, addr.address2, (o.deliver_to && o.deliver_to.state) || '', JSON.stringify(items), ex.id).run();
+  else await env.DB.prepare(`INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier, service, ship_to_state, uploaded_by, reconcile_status, customer_name, city, zip, line_items, address1, address2, weight_lb)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(date, clean, orderNum, channel, detectShipCarrier(clean), 'Stamps.com', (o.deliver_to && o.deliver_to.state) || '', 'stamps-link', 'Scanned',
+      customer, addr.city, addr.zip, JSON.stringify(items), addr.address1, addr.address2, null).run();
+  await env.DB.prepare(`UPDATE ship_scan_log SET order_num = ? WHERE tracking = ? AND date = ?`).bind(orderNum, clean, date).run().catch(() => {});
+  await env.DB.prepare(`UPDATE ship_pick_log SET order_num = ? WHERE tracking = ? AND date = ?`).bind(orderNum, clean, date).run().catch(() => {});
+  await env.DB.prepare('INSERT INTO ship_label_link (at, by_user, tracking, order_num, channel, customer, items, prev_order, note) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(now, who, clean, orderNum, channel, customer, items.length, ex && ex.order_num && ex.order_num !== orderNum ? ex.order_num : '', own.length ? 'order also has Veeqo label ' + own.join(', ') : '').run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'ship_link_order', { tracking: clean, order: orderNum, items: items.length }).catch(() => {});
+  return J({ ok: true, tracking: clean, orderNum, channel, customer, city: addr.city || '', state: (o.deliver_to && o.deliver_to.state) || '', lineItems: items, by: who, at: now });
 }
 // Veeqo look-up for a label (what shipScan/shipPick used to do inline):
 // finds the order by tracking #, saves it to ship_manifest_log and returns
