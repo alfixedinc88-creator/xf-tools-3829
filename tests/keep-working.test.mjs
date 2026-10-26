@@ -10228,5 +10228,52 @@ console.log('\n🔎 AWD one-label strip: a long grab plan goes onto more lines, 
     planRows.length >= 2 && planRows.every(d => d[1] >= Math.round(mx * 0.7)) && planRows.map(d => d[0]).join(' ').replace(/\s+/g, ' ') === plan && all <= 151 && drawn.slice(0, 3).every(d => d[1] === mx), drawn);
 }
 
+
+// Owner (2026-10-26): "the label we print in stamps.com not show up anything in our app" (store orders that are in Veeqo; the label
+// was bought in Stamps.com, so Veeqo never had its tracking #). Picking / Packing ask for the order # and link the label to it.
+console.log('\n🔗 Stamps.com label: scan finds no order → type / scan the order # → linked (items show on every later scan; kept who / when)');
+{
+  const realFetch = globalThis.fetch;
+  const stamps = '9400150206242052590303';
+  const orders = {
+    '113-5555-0001': { id: 901, number: '113-5555-0001', channel: { name: 'Amazon' }, deliver_to: { first_name: 'Ann', last_name: 'Lee', city: 'Denver', state: 'CO', zip_code: '80202', address1: '1 Main St' },
+      line_items: [{ id: 1, quantity: 2, sellable: { id: 11, sku_code: '27-2-2=10' } }, { id: 2, quantity: 1, sellable: { id: 12, sku_code: '28-6-4=1' } }], allocations: [{ id: 51, line_items: [] }] },
+    '113-5555-0002': { id: 902, number: '113-5555-0002', channel: { name: 'eBay' }, deliver_to: { first_name: 'Bo', last_name: 'Kim', city: 'Austin', state: 'TX' },
+      line_items: [{ id: 3, quantity: 1, sellable: { id: 13, sku_code: '5-2-1=1' } }], allocations: [{ id: 52, line_items: [], shipment: { id: 9, tracking_number: { tracking_number: '9400199999999999999999' } } }] } };
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('api.veeqo.com/orders')) { const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || ''); return new Response(JSON.stringify(orders[q] ? [orders[q]] : []), { headers: { 'Content-Type': 'application/json' } }); }
+    if (u.includes('api.veeqo.com')) return new Response('[]', { headers: { 'Content-Type': 'application/json' } });
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const sc = await post('/ship/scan', { tracking: '42080202' + stamps, initials: 'MG' });
+  const pk = await post('/ship/pick', { tracking: stamps, initials: 'MG' });
+  const none = await post('/ship/link-order', { tracking: stamps, order: '999-0000-0000', initials: 'MG' });
+  const ln = await post('/ship/link-order', { tracking: stamps, order: '#113-5555-0001', initials: 'MG' });
+  const it = await get('/ship/items?tracking=' + stamps);
+  const scanRow = sq.prepare('SELECT order_num FROM ship_scan_log WHERE tracking = ? ORDER BY id DESC LIMIT 1').get(stamps) || {};
+  const pickRow = sq.prepare('SELECT order_num FROM ship_pick_log WHERE tracking = ? ORDER BY id DESC LIMIT 1').get(stamps) || {};
+  const rec = sq.prepare('SELECT * FROM ship_label_link WHERE tracking = ? ORDER BY id DESC LIMIT 1').get(stamps) || {};
+  const skus = (ln.lineItems || []).map(i => (i.s || i.sku) + '×' + (i.q != null ? i.q : i.qty)).sort().join(',');
+  check('a Stamps.com USPS label (420 + ZIP + tracking) scans with no order; a wrong order # is refused ("not found in Veeqo"); order #113-5555-0001 → linked: its items (27-2-2=10 ×2, 28-6-4=1 ×1), ship to Ann Lee, Denver CO',
+    sc.ok && sc.tracking === stamps && !(sc.lineItems || []).length && !none.ok && /not found in Veeqo/.test(none.error || '') && ln.ok && ln.orderNum === '113-5555-0001'
+      && skus === '27-2-2=10×2,28-6-4=1×1' && /Ann/.test(ln.customer || '') && ln.city === 'Denver' && ln.state === 'CO', { sc, none, ln, skus });
+  check('…every later scan of that label finds the order (our saved copy); today\'s scan + pick rows get the order #; the link is kept (who, when, order, items)',
+    it.found && it.orderNum === '113-5555-0001' && (it.lineItems || []).length === 2 && scanRow.order_num === '113-5555-0001' && pickRow.order_num === '113-5555-0001'
+      && rec.order_num === '113-5555-0001' && rec.items === 2 && rec.by_user && rec.at, { it, scanRow, pickRow, rec });
+  const t2 = '9400150206242052590310';
+  const ask = await post('/ship/link-order', { tracking: t2, order: '113-5555-0002', initials: 'MG' });
+  const yes = await post('/ship/link-order', { tracking: t2, order: '113-5555-0002', initials: 'MG', confirm: true });
+  check('…an order that already has its own Veeqo label asks first ("2 labels for 1 order — link anyway?"); OK → linked, and the note is kept',
+    !ask.ok && ask.needConfirm && /already has its own Veeqo label \(tracking 9400199999999999999999\)/.test(ask.message || '') && yes.ok
+      && /Veeqo label 9400199999999999999999/.test((sq.prepare('SELECT note FROM ship_label_link WHERE tracking = ? ORDER BY id DESC LIMIT 1').get(t2) || {}).note || ''), { ask, yes });
+  const { readFileSync: rfL } = await import('node:fs');
+  const ph = rfL(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Picking AND Packing: a label with no order shows "No order linked … Printed in Stamps.com? … order #" + 🔗 Link (not "run Veeqo Sync"); the 2-second refocus leaves the order # box alone',
+    /itEl\.innerHTML = _psLinkBoxHtml\(tracking, 'pack'\);/.test(ph) && /itEl\.innerHTML = _psLinkBoxHtml\(tracking, 'pick'\);/.test(ph) && /Printed in <b>Stamps\.com<\/b>/.test(ph)
+      && /PS_WORKER \+ '\/ship\/link-order'/.test(ph) && /'ps-link-pack'\]/.test(ph) && !/No item data for this order — run Veeqo Sync/.test(ph), null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  sq.exec(`DELETE FROM ship_scan_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_pick_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_manifest_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_label_link`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
