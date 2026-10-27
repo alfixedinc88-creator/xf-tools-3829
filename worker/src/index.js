@@ -1470,7 +1470,20 @@ async function awdShipOpen(env, url) {
     if (!m || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
     grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num), cases: parseFloat(r.cases) || 0, ships: m[1].split('|').map(AWD_TAG_NAME).filter(Boolean), status: r.status || '' });
   });
-  return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days, claims: await awdClaimsOpen(env).catch(() => []) };
+  // 🔒 the locked plans of the open shipments (the phones grab exactly these), each spot with its SKU Mgr row (to put it on a Pull List)
+  const locks = {};
+  try { await awdLockTable(env); const openN = new Set(open.map(x => x.shipment));
+    const L = ((await env.DB.prepare("SELECT * FROM awd_lock WHERE status = 'locked'").all()).results || []).filter(r => openN.has(r.shipment));
+    const want = new Set(); L.forEach(r => { try { JSON.parse(r.lines || '[]').forEach(x => (x.grabs || []).forEach(g => want.add(U(g.part)))); } catch (_) {} });
+    const rows = {}; const wantL = [...want];
+    for (let i = 0; i < wantL.length; i += 90) { const c = wantL.slice(i, i + 90);
+      ((await env.DB.prepare(`SELECT id, part_num, location, cases, units_per_case, name, sku FROM master_list WHERE UPPER(TRIM(part_num)) IN (${c.map(() => '?').join(',')})`).bind(...c).all()).results || [])
+        .forEach(m => { rows[U(m.part_num) + '|' + spotKey(m.location)] = m; }); }
+    L.forEach(r => { let lines = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {}
+      lines.forEach(x => (x.grabs || []).forEach(g => { const m = rows[U(g.part) + '|' + spotKey(g.loc)]; if (m) g.row = { masterId: m.id, location: m.location, cases: +m.cases || 0, eachQty: +m.units_per_case || 0, name: m.name || '', sku: m.sku || '' }; }));
+      locks[r.shipment] = { at: r.at, by: r.by_user, lines }; });
+  } catch (e) { console.error('[awd locks]', e.message); }
+  return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days, claims: await awdClaimsOpen(env).catch(() => []), locks };
 }
 // 👤 Owner (2026-10-27, Current AWD shipment: "one of my guys already grabbed all of C1 — if my other scanner taps Put C1 on my Pull List,
 // will it show everything again? I want everyone to see it: if anyone grabs anything, every other scanner sees it, or we end up with
@@ -1480,6 +1493,70 @@ async function awdShipOpen(env, url) {
 // 📲 GET / POST /awd/plan-cache — owner (2026-10-27, a new scanner: "I still have to load it from 0 to 112"): the Current AWD shipment list
 // a phone worked out (where to grab every part #), kept for every phone. A phone with nothing saved takes it at once and only works out
 // what changed since. Only a newer one replaces it. It is just a saved answer — the phones still check every grab / shipment against it.
+// 🔒 GET / POST /awd/lock — owner (2026-10-27: "C4 has 7 labels but the app told our guy to grab 9 cases… C1, C2 don't match either. After
+// the labels, show how many cases to grab where, and a Lock it button: save everything that shipment wants us to grab, don't let any other
+// Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots — then everything matches, even over 2 weeks").
+// The AWD Planner's grab plan (per Amazon part #: spot · part # · cases · pieces · labels) is kept for the shipment. While the shipment is
+// open, what it still needs at each spot (locked − grabbed for it) is HELD: the lookup gives every other Stock Out that many cases fewer.
+async function awdLockTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked',
+    unlocked_at TEXT, unlocked_by TEXT)`).run();
+}
+let _awdHeldCache = null;
+// what the open locked shipments still need at each part # + spot → { 'PART|SPOT': { cases, ships: [...] } } (kept 20 s)
+async function awdHeldMap(env, fresh) {
+  if (!fresh && _awdHeldCache && Date.now() - _awdHeldCache.t < 20000) return _awdHeldCache.m;
+  const m = {}, U = x => String(x || '').trim().toUpperCase();
+  try {
+    await awdLockTable(env);
+    const locks = ((await env.DB.prepare("SELECT * FROM awd_lock WHERE status = 'locked'").all()).results || []);
+    if (locks.length) {
+      const done = {}; ((await env.DB.prepare('SELECT shipment, action, at FROM awd_ship_done ORDER BY id').all().catch(() => ({ results: [] }))).results || []).forEach(r => { done[r.shipment] = r; });
+      const since = locks.reduce((a, l) => !a || l.at < a ? l.at : a, '');
+      const got = {}; // TAG|PART|SPOT → cases grabbed for that shipment
+      ((await env.DB.prepare(`SELECT part_num, location, cases, notes FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND COALESCE(status, '') != 'Rejected' AND timestamp >= ?`).bind(since).all().catch(() => ({ results: [] }))).results || []).forEach(r => {
+        const t = /\[AWD:([^\]]*)\]/.exec(r.notes || ''); if (!t || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
+        t[1].split('|').map(AWD_TAG_NAME).filter(Boolean).forEach(n => { const k = n + '|' + U(r.part_num) + '|' + spotKey(r.location); got[k] = (got[k] || 0) + (parseFloat(r.cases) || 0); }); });
+      locks.forEach(l => { const d = done[l.shipment]; if (d && d.action === 'done' && String(d.at) >= String(l.at)) return; // ✅ Done → nothing held
+        let lines = []; try { lines = JSON.parse(l.lines || '[]'); } catch (_) {}
+        const tag = AWD_TAG_NAME(l.shipment), used = {};
+        lines.forEach(x => (x.grabs || []).forEach(g => { const k = U(g.part) + '|' + spotKey(g.loc), gk = tag + '|' + k;
+          const take = Math.min(g.n || 0, Math.max(0, (got[gk] || 0) - (used[gk] || 0))); used[gk] = (used[gk] || 0) + take;
+          const left = Math.round(((g.n || 0) - take) * 1000) / 1000; if (!(left > 0)) return;
+          const o = m[k] = m[k] || { cases: 0, ships: [] }; o.cases += left; if (!o.ships.includes(l.shipment)) o.ships.push(l.shipment); })); });
+    }
+  } catch (e) { console.error('[awd held]', e.message); }
+  _awdHeldCache = { t: Date.now(), m };
+  return m;
+}
+async function awdLock(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await awdLockTable(env);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), t = (x, n) => String(x == null ? '' : x).trim().slice(0, n);
+  const out = r => { let lines = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {} return { shipment: r.shipment, at: r.at, by: r.by_user, status: r.status, lines, unlockedAt: r.unlocked_at, unlockedBy: r.unlocked_by }; };
+  if (request.method === 'GET') {
+    const sh = t(url.searchParams.get('shipment'), 60);
+    if (sh) { const r = await env.DB.prepare("SELECT * FROM awd_lock WHERE shipment = ? AND status = 'locked'").bind(sh).first(); return J({ ok: true, lock: r ? out(r) : null }); }
+    return J({ ok: true, locks: ((await env.DB.prepare("SELECT * FROM awd_lock WHERE status = 'locked' ORDER BY at").all()).results || []).map(out) });
+  }
+  const b = await request.json().catch(() => ({}));
+  if (b.unlock) {
+    const roles = (session && session.roles) || [];
+    if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only — ask an admin to unlock it' }, 403);
+    const r = await env.DB.prepare("UPDATE awd_lock SET status = 'unlocked', unlocked_at = ?, unlocked_by = ? WHERE shipment = ? AND status = 'locked'").bind(new Date().toISOString(), who, t(b.unlock, 60)).run();
+    _awdHeldCache = null; return J({ ok: true, unlocked: (r.meta && r.meta.changes) || 0 });
+  }
+  const sh = t(b.shipment, 60), num = v => Math.max(0, Math.round((parseFloat(v) || 0) * 1000) / 1000);
+  if (!sh) return J({ ok: false, error: 'Which shipment? (the Amazon Shipment ID on the labels)' }, 400);
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 2000).map(x => ({ forPart: t(x.forPart, 60).toUpperCase(), sku: t(x.sku, 60), boxes: num(x.boxes),
+    grabs: (Array.isArray(x.grabs) ? x.grabs : []).slice(0, 200).map(g => ({ loc: t(g.loc, 60), part: t(g.part, 60).toUpperCase(), n: num(g.n), pcs: num(g.pcs), used: num(g.used), exact: !!g.exact, caseOf: t(g.caseOf, 60), labels: num(g.labels) }))
+      .filter(g => g.loc && g.part && g.n > 0) })).filter(x => x.forPart && x.grabs.length);
+  if (!lines.length) return J({ ok: false, error: 'Nothing to lock — no spot to grab from' }, 400);
+  await env.DB.prepare('INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status) VALUES (?,?,?,?,?)').bind(sh, new Date().toISOString(), who, JSON.stringify(lines), 'locked').run();
+  _awdHeldCache = null;
+  const spots = new Set(); let cases = 0; lines.forEach(x => x.grabs.forEach(g => { spots.add(g.part + '|' + g.loc); cases += g.n; }));
+  return J({ ok: true, shipment: sh, by: who, spots: spots.size, cases: Math.round(cases * 1000) / 1000 });
+}
 async function awdPlanCache(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_plan_cache (id INTEGER PRIMARY KEY CHECK (id = 1), at TEXT, sig TEXT, by_user TEXT, payload TEXT)').run();
@@ -1648,6 +1725,7 @@ async function awdShipSend(request, env, session, url) {
     if (rid) { const claim = await claimRequestId(env, rid, 'awd/ship-send'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run();
     await env.DB.prepare('INSERT INTO awd_ship_done (shipment, action, at, by_user) VALUES (?,?,?,?)').bind(name, action, now, by).run();
+    _awdHeldCache = null; // 🔒 ✅ Done → its spots are not held any more (↩ put back → held again)
     if (session && session.userId) await logUserActivity(env, session.userId, 'awd_ship_' + action, { shipment: name }).catch(() => {});
     const res = { ok: true, shipment: name, action, at: now, by };
     if (rid) await recordRequestResult(env, rid, res);
@@ -5136,11 +5214,15 @@ async function inventoryLookup(url, env) {
   const variants = Array.from(partNums).sort();
   const isMultiVariant = variants.length > 1 && partNum.toUpperCase() === baseSku;
 
+  const held = env.DB ? await awdHeldMap(env).catch(() => ({})) : {};
   for (const loc of locations) {
     const pk = (loc.partNum || '').toUpperCase() + '|' + (loc.location || '').toUpperCase();
     const pending = pendingMapLookup[pk] || 0;
     loc.pendingCases  = pending;
     loc.adjustedCases = Math.max(0, (parseFloat(loc.cases) || 0) - pending);
+    // 🔒 cases a locked AWD shipment still needs here are held: every other Stock Out sees that many fewer (owner 2026-10-27)
+    const h = held[(loc.partNum || '').toUpperCase() + '|' + spotKey(loc.location)];
+    if (h && h.cases > 0) { loc.heldCases = Math.min(loc.adjustedCases, h.cases); loc.heldFor = h.ships; loc.adjustedCases = Math.max(0, loc.adjustedCases - h.cases); }
   }
 
   // Our FBA listings' part #s for this item (cleaned, and through part #
@@ -10466,6 +10548,7 @@ const _app = {
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
+    if (url.pathname === '/awd/lock' && (method === 'GET' || method === 'POST')) return await awdLock(request, url, env, session);
     if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
@@ -10841,6 +10924,7 @@ const _app = {
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
       if (path === '/inventory/log'    && method === 'POST') { // 👤 a Stock Out of spots taken for an AWD shipment closes them for everyone
         const lb = await request.clone().json().catch(() => ({})), res = await inventoryLog(request, env);
+        if (/\[AWD:/.test(String(lb.notes || ''))) _awdHeldCache = null; // 🔒 grabbed for a locked shipment → less held
         if (res.status < 300 && Array.isArray(lb.awdClaims) && lb.awdClaims.length) await awdClaimClose(env, lb.awdClaims, lb.noneFound ? 'none found on the shelf' : 'grabbed', String(lb.initials || (session && (session.displayName || session.username)) || '?').slice(0, 40)).catch(e => console.error('[awd claim close]', e.message));
         return res;
       }
