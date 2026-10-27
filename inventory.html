@@ -2545,6 +2545,19 @@ window.invCredLogin = async function() {
         + '<div style="flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px">' + by[a].sort(function(p, q) { return String(p.x.loc).localeCompare(String(q.x.loc), undefined, { numeric: true }); }).map(cell).join('') + '</div></div>'; }).join('')
       + '</div>';
   }
+  // the Amazon box labels of the shipments on the list, by area of the spot on each label (PREVIOUS PACKED apart) — the AWD Planner's count
+  function invAwdLabelsByArea() {
+    var by = {}; ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels') return;
+      (sh.lines || []).forEach(function(b) { var a = b.prev ? 'PREVIOUS PACKED' : /not on our shelves/i.test(b.loc || '') ? '⚠ not on our shelves' : invAwdArea(b.loc); by[a] = (by[a] || 0) + 1; }); });
+    return by;
+  }
+  function invAwdLabelsLine(by) {
+    var K = Object.keys(by); if (!K.length) return '';
+    K.sort(function(a, b) { return (a === 'PREVIOUS PACKED' ? -1 : b === 'PREVIOUS PACKED' ? 1 : /^⚠/.test(a) ? 1 : /^⚠/.test(b) ? -1 : invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b)); });
+    var tot = K.reduce(function(s, a) { return s + by[a]; }, 0);
+    return '<div class="inv-awdship-labline" style="font-size:12px;color:#1D4ED8;margin:2px 0 6px">🏷 ' + tot + ' box labels by area: ' + K.map(function(a) { return '<b>' + ckE(a) + '</b> ' + by[a]; }).join(' · ')
+      + ' <span style="color:var(--text3)">(the buttons: what to grab off the shelf — one case can fill several boxes)</span></div>';
+  }
   function invAwdDoneHtml() {
     var L = AWDS.doneList || []; if (!L.length) return '';
     return '<details style="margin-top:8px;font-size:12px;color:var(--text2)"><summary style="cursor:pointer">✅ Done shipments (' + L.length + ')</summary>' + L.map(function(x) {
@@ -2584,6 +2597,7 @@ window.invCredLogin = async function() {
   window.invAwdShipRender = function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
+    var labBy = invAwdLabelsByArea(); // 🏷 box labels by area (where each label says to grab it)
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
     var tm = function(v) { return v ? new Date(v).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
     var h = '<div id="inv-awdship-st" style="font-size:11px;color:var(--text3);margin-bottom:4px">💾 Saved list · worked out ' + ckE(tm(AWDS.at)) + (AWDS.checkedAt && AWDS.checkedAt !== AWDS.at ? (AWDS.updatedN ? ' · 🔄 ' + AWDS.updatedN + ' part #' + (AWDS.updatedN === 1 ? '' : 's') + ' grabbed since, updated' : ' · ✓ no changes') + ' (checked ' + ckE(tm(AWDS.checkedAt)) + ')' : '') + ' · only a new / changed shipment or ↻ Refresh works it all out again</div>'
@@ -2598,13 +2612,19 @@ window.invCredLogin = async function() {
           + (invAwdIsAdmin() ? '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button>' : '') + '</div>'; }).join('')
       + ((AWDS.ships || []).length > 1 ? '<div style="font-size:12px;color:var(--text2);margin-top:3px">' + AWDS.ships.length + ' shipments together — a part # in more than one is grabbed once for all of them</div>' : '')
       + ((AWDS.allGot || []).length ? '<div style="font-size:12px;color:var(--green);margin-top:3px">✓ Already grabbed: ' + AWDS.allGot.map(ckE).join(', ') + '</div>' : '') + invAwdClaimsHtml() + '</div>'
+      // 🏷 Owner (2026-10-27): "why don't the numbers match the AWD Planner (C1 · 34)? if a case is split into different boxes, I still want it to
+      // show it was for 34 labels". The Planner counts BOX LABELS by the spot on each label; these buttons count what to grab off the shelf
+      // (one case can fill several Amazon boxes). Both now: the boxes by area, the same count as the Planner's print buttons.
+      + invAwdLabelsLine(labBy)
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
           var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
           // 🔢 Owner (2026-10-27): "2FL 1 spot · 9 cs … I also want how many Part #" — the different part #s grabbed in this area.
           var nPart = Object.keys(areas[a].reduce(function(m, i) { m[String(AWDS.takes[i].partNum || '').toUpperCase()] = 1; return m; }, {})).length;
           var nLab = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'label'; }).length, nExt = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'extra'; }).length;
+          var nBox = labBy[a] || 0; // 🏷 the Amazon box labels this area is for (= the AWD Planner's "Print just one area")
           return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
             + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs'
+            + (nBox ? '<br><span class="inv-awdship-boxes" style="color:#1D4ED8;font-weight:700">for ' + nBox + ' box label' + (nBox === 1 ? '' : 's') + '</span>' : '')
             + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab || nExt ? (nLab ? '🏷 ' + nLab + ' to label' : '') + (nExt ? (nLab ? ' · ' : '') + '✂ ' + nExt + ' extra step' : '') + (nLab + nExt < areas[a].length ? ' · ✓ ' + (areas[a].length - nLab - nExt) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
     if (AWDS.area && areas[AWDS.area]) {
       var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });

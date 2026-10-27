@@ -1445,10 +1445,10 @@ async function awdShipOpen(env, url) {
       lines: lines.map(x => ({ sku: x.sku, part: x.part, units: x.units, boxes: x.boxes || 0, name: x.name || '', prev: 0 })) };
   });
   const labs = {};
-  ((await env.DB.prepare('SELECT shipment, sku, part, units, prev, name, at, by_user FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY sku, seq').bind(since).all()).results || []).forEach(r => {
+  ((await env.DB.prepare('SELECT shipment, sku, part, units, prev, name, at, by_user, loc FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY sku, seq').bind(since).all()).results || []).forEach(r => {
     const o = labs[r.shipment] = labs[r.shipment] || { shipment: r.shipment, source: 'labels', at: '', by: r.by_user, boxes: 0, lines: [] };
     if (String(r.at || '') > o.at) { o.at = r.at; o.by = r.by_user; }
-    o.boxes++; o.lines.push({ sku: r.sku, part: r.part, units: r.units, boxes: 1, name: r.name || '', prev: r.prev ? 1 : 0 });
+    o.boxes++; o.lines.push({ sku: r.sku, part: r.part, units: r.units, boxes: 1, name: r.name || '', prev: r.prev ? 1 : 0, loc: r.loc || '' }); // loc: where the label says to grab it
   });
   const all = {};
   Object.values(sends).forEach(x => { all[x.shipment] = x; });
