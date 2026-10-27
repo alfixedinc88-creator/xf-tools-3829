@@ -9909,8 +9909,9 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   // page 1–4: 8-8-8=10- ×4 (10 bags × 10 pcs = 100 pcs a box); page 5: 9-9-9=5- (in BSMT); page 6: 7-7-7=2X- PREVIOUS PACKED
   const pdfPages = [1, 2, 3, 4].map(i => pageOf(i, '8-8-8=10-', 10, 'B0EIGHT888')).concat([pageOf(5, '9-9-9=5-', 4, 'B0NINE9999'), pageOf(6, '7-7-7=2X-', 5, 'X00SEVEN77')]);
   // 8-8-8=10: 30 bags a case = 300 pcs; one case in C2=5-1-1, one in C1=1-1-1 → C1 first (walking order), 400 pcs = 2 cases
-  globalThis.__awdWs = { '8-8-8=10-': { exactRows: [{ partNum: '8-8-8=10', location: 'C2=5-1-1', casesNum: 1 }, { partNum: '8-8-8=10', location: 'C1=1-1-1', casesNum: 1 }], bulkRows: [] },
-    '9-9-9=5-': { exactRows: [{ partNum: '9-9-9=5', location: 'BSMT=1-1-1', casesNum: 2 }], bulkRows: [] } };
+  // SKU Mgr Ea/Case (owner 2026-10-27: SKU Mgr only): 8-8-8=10 300 pcs a case (30 bags × 10), 9-9-9=5 20 pcs (4 bags × 5)
+  globalThis.__awdWs = { '8-8-8=10-': { exactRows: [{ partNum: '8-8-8=10', location: 'C2=5-1-1', casesNum: 1, eachPcs: 300 }, { partNum: '8-8-8=10', location: 'C1=1-1-1', casesNum: 1, eachPcs: 300 }], bulkRows: [] },
+    '9-9-9=5-': { exactRows: [{ partNum: '9-9-9=5', location: 'BSMT=1-1-1', casesNum: 2, eachPcs: 20 }], bulkRows: [] } };
   globalThis.__awdUpc = { '8-8-8=10': 30, '9-9-9=5': 4 };
   globalThis.__awdTpl = { '8-8-8=10-': { label: '10=ELBOW 1/2 PEX', upc: '850000008881' }, '9-9-9=5-': { label: '5=TEE 3/4', upc: '850000009991' }, '7-7-7=2X-': { label: '2X=CAP 1/2', upc: '850000007771' } };
   let printed = '';
@@ -10127,9 +10128,9 @@ console.log('\n📦 AWD grab plan wording: whole cases = "grab N cases (enough f
   const plan = (ws, upc) => new Function('checkWarehouseStock', 'getUnitsPerCase', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
     + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws, p => upc[p] || 0);
   // 23-5-2=50: 10 Amazon boxes × 4 bags × 50 pcs = 2,000 pcs; cases of 20 bags × 50 = 1,000 pcs, 2 in C3=2-2-2 → 2 whole cases
-  const a = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 20 })('23-5-2=50-', Array(10).fill(4));
+  const a = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2, eachPcs: 1000 }], bulkRows: [] }, {})('23-5-2=50-', Array(10).fill(4)); // SKU Mgr Ea/Case
   // 1,000 pcs needed from cases of 1,200 pcs → 1 case, take 1,000 pcs, rest stays
-  const b = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2 }], bulkRows: [] }, { '23-5-2=50': 24 })('23-5-2=50-', Array(5).fill(4));
+  const b = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'C3=2-2-2', casesNum: 2, eachPcs: 1200 }], bulkRows: [] }, {})('23-5-2=50-', Array(5).fill(4));
   check('whole cases → "GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases" (no "take … pcs"); part of a case → "grab 1 case — take 1000 pcs, rest stays"',
     a.summary === 'GRAB 2 cases (enough for our 10 boxes): C3=2-2-2: grab 2 cases' && b.summary === 'GRAB 1 case (enough for our 5 boxes): C3=2-2-2: grab 1 case — take 1000 pcs, rest stays', [a.summary, b.summary]);
 }
@@ -10377,9 +10378,10 @@ console.log('\n📦 AWD grab plan: pieces a case from SKU Mgr Ea/Case first (23-
   // SKU Mgr: BO=1-1-1-4 has 5 cases of 600 pcs (Ea/Case); AWD_Master says 60 packages a case (× 50 = 3,000 pcs) — SKU Mgr wins
   const p1 = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'BO=1-1-1-4', casesNum: 5, eachPcs: 600 }], bulkRows: [] }, { '23-5-2=50': 60 })('23-5-2=50-', [12, 12, 12, 12]);
   const p2 = plan({ exactRows: [{ partNum: '23-5-2=50', location: 'BO=1-1-1-4', casesNum: 5 }], bulkRows: [] }, { '23-5-2=50': 60 })('23-5-2=50-', [12, 12, 12, 12]);
-  check('4 Amazon boxes × 12 bags × 50 = 2,400 pcs, SKU Mgr 600 pcs a case → "GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases", each label its own case; no Ea/Case in SKU Mgr → the AWD_Master size (3,000) as before',
+  // Owner (2026-10-27) changed the rule: SKU Mgr only — no Ea/Case in SKU Mgr is said ("? pcs"), the AWD_Master size is not used any more
+  check('4 Amazon boxes × 12 bags × 50 = 2,400 pcs, SKU Mgr 600 pcs a case → "GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases", each label its own case; no Ea/Case in SKU Mgr → "? pcs a case — no Ea/Case in SKU Mgr" (the AWD_Master sheet is not used)',
     p1.summary === 'GRAB 4 cases (enough for our 4 boxes): BO=1-1-1-4: grab 4 cases' && p1.locOf.join() === 'BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4,BO=1-1-1-4'
-      && p2.summary === 'GRAB 1 case (enough for our 4 boxes): BO=1-1-1-4: grab 1 case — take 2400 pcs, rest stays', [p1.summary, p2.summary]);
+      && p2.summary === 'GRAB 1 case (enough for our 4 boxes): BO=1-1-1-4: grab 1 case (? pcs a case — no Ea/Case in SKU Mgr)', [p1.summary, p2.summary]);
 }
 
 // Owner (2026-10-25, an AWD label "SKU: 26-4- 2=1000 · Units: 1" that came out "⚠ not on our shelves · 26-4- · 1 bag × 26 pcs"): "this one we
@@ -10431,12 +10433,12 @@ console.log('\n📦 AWD box labels, sold as a case: only cases with exactly the 
   const ws = { '26-4-2=100': { bulkRows: [], exactRows: [{ partNum: '26-4-2=100', location: 'BO=1-1-1', casesNum: 1, eachPcs: 1000 }, { partNum: '26-4-2=100', location: 'C1=1-1-1', casesNum: 2, eachPcs: 800 },
     { partNum: '26-4-2=100', location: 'C2=1-1-1', casesNum: 1, eachPcs: 0 }, { partNum: '26-4-2=100', location: 'C3=1-1-1', casesNum: 2, eachPcs: 1000 }] } };
   const a = plan(ws, {})('26-4-2=1000', [1, 1, 1]), b = plan(ws, {})('26-4-2=1000', [1, 1, 1, 1]);
-  const c = plan(ws, { '26-4-2=100': 10 })('26-4-2=1000', [1]); // no SKU Mgr size at C2, but AWD_Master says 10 bags × 100 = 1,000 → OK there
+  const c = plan({ '26-4-2=100': { bulkRows: [], exactRows: [ws['26-4-2=100'].exactRows[2]] } }, { '26-4-2=100': 10 })('26-4-2=1000', [1]); // only C2: no SKU Mgr size (AWD_Master says 10 × 100) → not used (owner 2026-10-27)
   check('3 labels (3,000 pcs): BO 1 + C3 2 cases of 1,000 pcs → "GRAB 3 whole cases … (1000 pcs each …)"; C1 (800 pcs a case) and C2 (no Ea/Case) are named "don\'t grab", never counted',
     a.summary === 'GRAB 3 whole cases of 26-4-2=100 (1000 pcs each — sold as a case, ship it as is): BO=1-1-1: 1 · C3=1-1-1: 2 · ⚠ NOT 1000 pcs a case, don\'t grab: C1=1-1-1 (2 cases of 800 pcs), C2=1-1-1 (1 case of ? pcs — no Ea/Case in SKU Mgr)'
       && a.cases === 3 && a.locOf.join('|') === 'BO=1-1-1|C3=1-1-1|C3=1-1-1', a.summary);
-  check('…4 labels: only 3 matching cases → ⚠ SHORT 1 whole case (the 800-pc cases are not used to make it up); a spot with the AWD_Master size (10 bags × 100 = 1,000) counts',
-    b.cases === 3 && b.short === 1 && /⚠ SHORT 1 whole case/.test(b.summary) && b.locOf[3] === '⚠ not on our shelves' && c.cases === 1 && !/C2=1-1-1 \(/.test(c.summary), [b.summary, c.summary]);
+  check('…4 labels: only 3 matching cases → ⚠ SHORT 1 whole case (the 800-pc cases are not used to make it up); a spot with no Ea/Case in SKU Mgr is never counted, even if the old AWD_Master sheet has a size (owner 2026-10-27: SKU Mgr only)',
+    b.cases === 3 && b.short === 1 && /⚠ SHORT 1 whole case/.test(b.summary) && b.locOf[3] === '⚠ not on our shelves' && c.cases === 0 && /C2=1-1-1 \(1 case of \? pcs — no Ea\/Case in SKU Mgr\)/.test(c.summary), [b.summary, c.summary]);
 }
 
 // Owner (2026-10-25): "when we sell as a case make sure our quantities match — the quantities sometimes change — they must match to let
@@ -10846,6 +10848,47 @@ console.log('\n🔀 Stock Out Big Company and Stock Out Shelving: each tab shows
       && /if \(item\.submitError && !item\.submitted && invPullInTab\(item\)\) invSubmitOnePullItem\(i\);/.test(ih), pk && pk.ungrabbed);
   await call('/inventory/pull/mine', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [] }) });
   ['invClearPullList', 'invGrabScan', 'invLoadAllPulls', 'invAllPullDelete'].forEach(k => { delete globalThis[k]; }); if (!hadW) delete globalThis.window;
+}
+
+// 🏬 Owner (2026-10-27): "Stock Out Big Company — we get the inventory info from SKU Mgr, right? … the Shipment Builder's box labels use the
+// SKU Mgr locations too? Make sure we ONLY use the SKU Mgr info for any inventory quantities or boxes info".
+console.log('\n🏬 Stock everywhere = SKU Mgr: no old Google Sheet, cases waiting for approval taken off, Ea/Case from SKU Mgr only');
+{
+  const { readFileSync: rfK } = await import('node:fs');
+  const ah = rfK(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), ws = rfK(workerPath, 'utf8');
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case, vendor) VALUES ('981-1-1','981-1-1=10','Skumgr Tee','981-1-1=10','C1=9-9-1',5,300,'JQ'), ('981-1-1','981-1-1=10','Skumgr Tee','981-1-1=10','C2=9-9-1',2,300,'JQ')").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', '981-1-1=10', 'C1=9-9-1', 2, 'PK', '[BIG COMPANY for 981-1-1=10]', 'Pending')").run(new Date().toISOString());
+  const ml = await get('/inventory/master-list'), sh = await get('/?sheet=Master_List');
+  const row = v => (v.values || []).filter(r => r[6] === '981-1-1=10');
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const shPk = await (await call('/?sheet=Master_List', { headers: { 'X-Cred-Token': pkT } })).json();
+  check('the stock list every page reads (/inventory/master-list, and ?sheet=Master_List used by AWD Planner / Reorder / Sales) is SKU Mgr: C1 5 cases of 300 pcs, 2 of them taken by a Stock Out waiting for approval; C2 2 cases — never the old Google Sheet; the vendor stays hidden for a non-owner',
+    ml.source === 'd1' && sh.source === 'd1' && JSON.stringify(row(ml).map(r => [r[7], r[8], r[9], r[15]])) === '[["C1=9-9-1",5,300,2],["C2=9-9-1",2,300,0]]'
+      && JSON.stringify(row(sh)) === JSON.stringify(row(ml)) && row(shPk).length === 2 && row(shPk)[0][12] !== 'JQ', { ml: row(ml), pk: row(shPk) });
+  const look = await get('/inventory/lookup?code=982-2-2%3D10'), srch = await get('/inventory/search?name=skumgr%20tee');
+  const hit = (srch.results || srch.items || srch || []), one = Array.isArray(hit) ? hit.find(x => x.baseSku === '981-1-1') : null;
+  check('…a part # SKU Mgr has no row for → no spots (the lookup no longer falls back to the old sheet); 🔎 search by name reads SKU Mgr (Skumgr Tee: 7 cases, 2 spots); if SKU Mgr can\'t be read the screens say so (never the sheet)',
+    !(look.locations || []).some(l => parseFloat(l.cases) > 0) && one && one.totalCases === 7 && one.locCount === 2
+      && /if \(mlRows\.length <= 1 && !env\.DB\) \{/.test(ws) && /SKU Mgr could not be read just now — try again \(the old Google Sheet is not used: it is out of date\)/.test(ws)
+      && /if \(t === 'Master_List' && env\.DB\) return await inventoryMasterList\(env\);/.test(ws) && /const mlRaw  = env\.DB \? await skuMgrSheetValues\(env\)/.test(ws), { look: look.locations, srch: one });
+  // AWD Planner: the stock for the box labels / Shipment Builder
+  const fnA = n => { const a = ah.indexOf('function ' + n + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const WH = { stock: {}, loaded: false };
+  await new Function('wFetch', 'WH', 'S', 'async ' + fnA('loadWarehouseStock') + '; return loadWarehouseStock();')(async () => ({ json: async () => ml }), WH, {});
+  const w = (WH.stock['981-1-1=10'] || []).map(r => [r.location, r.casesNum, r.eachPcs]);
+  check('…AWD Planner: the stock for the box labels / Shipment Builder = SKU Mgr minus the cases a Stock Out already took (waiting for approval): C1 5 − 2 = 3 cases, C2 2 — the same free cases Stock Out Big Company sees; read again when the labels are made',
+    JSON.stringify(w) === '[["C1=9-9-1",3,300],["C2=9-9-1",2,300]]' && /if \(typeof loadWarehouseStock === 'function'\) \{ out\.innerHTML = '⏳ Reading SKU Mgr…'; await loadWarehouseStock\(\);/.test(ah), w);
+  // Shipment Builder: pre-labeled vs bulk boxes from SKU Mgr's Ea/Case (not the AWD_Master sheet)
+  const alloc = new Function('S', 'checkWarehouseStock', 'baseSKU_awd', 'getUnitsPerCase', fnA('awdPackOf') + fnA('calculateSharedBulkAllocation') + '; return calculateSharedBulkAllocation;')(
+    { cpackMap: { '981-1-1=10-': { unitsPerBox: 10 }, '981-1-1=5-': { unitsPerBox: 10 } } },
+    sku => sku === '981-1-1=10-' ? { status: 'split', exactRows: [{ partNum: '981-1-1=10', casesNum: 3, eachPcs: 300 }], bulkRows: [{ partNum: '981-1-1=5', casesNum: 1, eachPcs: 200 }] }
+      : { status: 'bulk', exactRows: [], bulkRows: [{ partNum: '981-1-1=5', casesNum: 1, eachPcs: 200 }] }, s => String(s).split('=')[0], () => 999);
+  const r = alloc([['981-1-1=10-', { qty: 100 }], ['981-1-1=5-', { qty: 40 }]]);
+  check('…Shipment Builder prelabel / bulk boxes count bags from SKU Mgr Ea/Case (AWD_Master not used): 981-1-1=10 3 cases × 300 pcs = 90 bags of 10 → 9 of its 10 boxes prelabeled; the 200 pcs of =5 bags (bulk) are shared in pieces: needs 100 + 200 pcs → split by share (=10 gets 66 pcs = 0 whole boxes, =5 gets 133 pcs = 2 boxes of 50), never more than the 200 pcs there',
+    r['981-1-1=10-'].preLabeledBoxes === 9 && r['981-1-1=10-'].desiredBulkBoxes === 1 && r['981-1-1=5-'].desiredBulkBoxes === 4 && r['981-1-1=10-'].allocatedBulkBoxes === 0 && r['981-1-1=10-'].capped === true
+      && r['981-1-1=5-'].allocatedBulkBoxes === 2 && r['981-1-1=5-'].capped === true && (0 * 100 + 2 * 50) <= 200
+      && !/getUnitsPerCase\(/.test(fnA('calculateSharedBulkAllocation') + fnA('awdGrabPlan')), r);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '981-1-1'; DELETE FROM inventory_log WHERE part_num = '981-1-1=10'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

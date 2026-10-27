@@ -2987,7 +2987,7 @@ async function vendorMaskResponse(request, env, res) {
   try {
     if (!res || !(res.headers.get('Content-Type') || '').includes('application/json')) return res;
     const text = await res.clone().text();
-    const path = new URL(request.url).pathname, sheetRows = path === '/inventory/master-list';
+    const U0 = new URL(request.url), path = U0.pathname, sheetRows = path === '/inventory/master-list' || U0.searchParams.get('sheet') === 'Master_List';
     if (!sheetRows && !/"(vendors?|lastVendor|vendor_?[nN]ame|vendorSrc)"\s*:/.test(text) && !/"detail"\s*:/.test(text)
       && !/\b(JQ|WU|EFF|YAO|CUTTER)/i.test(text)) return res;
     const tok = request.headers.get('X-Cred-Token');
@@ -5158,7 +5158,7 @@ async function inventoryLookup(url, env) {
       pendingMapLookup = pMap;
     } catch(e) { console.error('[D1] lookup ML fallback:',e.message); mlRows=[]; }
   }
-  if (mlRows.length <= 1) {
+  if (mlRows.length <= 1 && !env.DB) { // 🏬 only with no SKU Mgr at all: a part # SKU Mgr has no row for has no stock (never the old sheet's)
     const [mlData, pMap] = await Promise.all([
       invSheetGet(env, 'Master_List!A1:O15000').catch(()=>({values:[]})),
       buildPendingMap(env)
@@ -5312,11 +5312,11 @@ async function inventoryNameSearch(url, env) {
     return cors(new Response(JSON.stringify({ error: 'Query too short' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
 
-  // Fetch Master_List and Products in parallel
-  const [mlData, prodData] = await Promise.all([
-    invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] })),
-    invSheetGet(env, 'Products!B2:G5000').catch(() => ({ values: [] }))
-  ]);
+  // Fetch SKU Mgr (the stock) and Products in parallel — 🏬 SKU Mgr, not the old Master_List sheet (owner 2026-10-27)
+  let mlData;
+  try { mlData = env.DB ? { values: await skuMgrSheetValues(env) } : await invSheetGet(env, 'Master_List!A1:O15000'); }
+  catch (e) { return cors(new Response(JSON.stringify({ error: 'SKU Mgr could not be read just now — try again' }), { status: 503, headers: { 'Content-Type': 'application/json' } })); }
+  const prodData = await invSheetGet(env, 'Products!B2:G5000').catch(() => ({ values: [] }));
   const mlRows   = mlData.values   || [];
   const prodRows = prodData.values || [];
 
@@ -11310,6 +11310,7 @@ const _app = {
     // ── Existing GET/PUT sheet routes (unchanged) ──
     if (method === 'GET') {
       const t = url.searchParams.get('sheet');
+      if (t === 'Master_List' && env.DB) return await inventoryMasterList(env); // 🏬 stock = SKU Mgr, not the old sheet (owner 2026-10-27)
       if (!t || !ALLOWED_TABS.has(t)) {
         return cors(new Response(JSON.stringify({ error: `Tab "${t}" not allowed` }), {
           status: 400, headers: { 'Content-Type': 'application/json' }
@@ -16761,10 +16762,11 @@ async function inventorySkuSearch(url, env) {
       if (!isAll) await skuSearchAddPending(env, rows);
       return cors(new Response(JSON.stringify({ ok: true, results: rows, source: 'd1' }),
         { headers: { 'Content-Type': 'application/json' } }));
-    } catch(e) { console.error('[D1] sku-search:', e.message); }
+    } catch(e) { console.error('[D1] sku-search:', e.message);
+      return cors(new Response(JSON.stringify({ ok: false, error: 'SKU Mgr could not be read just now — try again' }), { status: 503, headers: { 'Content-Type': 'application/json' } })); }
   }
 
-  // Sheets fallback
+  // Sheets fallback (only with no SKU Mgr at all)
   const mlData = await invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] }));
   const mlRows = mlData.values || [];
   const results = [];
@@ -18263,6 +18265,20 @@ async function inventoryD1ToSheets(request, env) {
 // GET /inventory/master-list
 // Returns D1 master_list in same column format as Sheets Master_List
 // Cols match parseMasterListRows: r[3]=sku r[4]=name r[6]=partNum r[7]=location r[8]=cases r[9]=unitsPerCase r[12]=vendor r[13]=price
+// 🏬 Owner (2026-10-27): "make sure we only use the SKU Mgr info for any inventory quantities or boxes info". SKU Mgr (D1 master_list) in
+// the old Master_List sheet's column layout — the pages read it as before. r[15] = cases already taken by a Stock Out waiting for approval
+// (the same as Stock Out uses), so a page can take them off. Never the old Google Sheet while SKU Mgr is there: a read that fails says so.
+// A=0 B=1 C=2 D=3(sku) E=4(name) F=5 G=6(partNum) H=7(location) I=8(cases) J=9(unitsPerCase = Ea/Case pcs) K=10(prevNotes) L=11 M=12(vendor) N=13(price) O=14(total) P=15(pending)
+async function skuMgrSheetValues(env) {
+  const rows = (await env.DB.prepare(`SELECT sku,name,part_num,location,cases,units_per_case,vendor,price,prev_notes FROM master_list WHERE part_num != '' ORDER BY sheet_row`).all()).results || [];
+  const pend = await buildPendingMap(env).catch(() => ({}));
+  const values = [['','','','SKU','Name','','Part#','Location','Cases','Each Case Qty','Notes','','Vendor','Price','Total','Pending out']];
+  rows.forEach(r => {
+    values.push(['','','', r.sku||'', r.name||'', '', r.part_num||'', r.location||'', r.cases??0, r.units_per_case||0, r.prev_notes||'', '', r.vendor||'', r.price||0,
+      (r.cases||0)*(r.price||0), pend[String(r.part_num||'').toUpperCase() + '|' + String(r.location||'').toUpperCase()] || 0]);
+  });
+  return values;
+}
 async function inventoryMasterList(env) {
   if (!env.DB) {
     const data = await invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] }));
@@ -18270,37 +18286,13 @@ async function inventoryMasterList(env) {
       { headers: { 'Content-Type': 'application/json' } }));
   }
   try {
-    const rows = await d1All(env,
-      `SELECT sku,name,part_num,location,cases,units_per_case,vendor,price,prev_notes
-       FROM master_list WHERE part_num != '' ORDER BY sheet_row`
-    );
-    // Build array matching Sheets column structure expected by parseMasterListRows
-    // A=0 B=1 C=2 D=3(sku) E=4(name) F=5 G=6(partNum) H=7(location) I=8(cases) J=9(unitsPerCase) K=10(prevNotes) L=11 M=12(vendor) N=13(price)
-    const values = [['','','','SKU','Name','','Part#','Location','Cases','Each Case Qty','Notes','','Vendor','Price','Total']];
-    rows.forEach(r => {
-      values.push([
-        '','','',
-        r.sku||'',
-        r.name||'',
-        '',
-        r.part_num||'',
-        r.location||'',
-        r.cases??0,
-        r.units_per_case||0,
-        r.prev_notes||'',
-        '',
-        r.vendor||'',
-        r.price||0,
-        (r.cases||0)*(r.price||0)
-      ]);
-    });
-    return cors(new Response(JSON.stringify({ values, source:'d1', count:rows.length }),
+    const values = await skuMgrSheetValues(env);
+    return cors(new Response(JSON.stringify({ values, source:'d1', count: values.length - 1 }),
       { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     console.error('[D1] inventoryMasterList:', e.message);
-    const data = await invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] }));
-    return cors(new Response(JSON.stringify({ values: data.values||[], source:'sheets' }),
-      { headers: { 'Content-Type': 'application/json' } }));
+    return cors(new Response(JSON.stringify({ error: 'SKU Mgr could not be read just now — try again (the old Google Sheet is not used: it is out of date)' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }));
   }
 }
 
@@ -18972,9 +18964,8 @@ async function inventoryStockLevels(env) {
       { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     console.error('[D1] inventoryStockLevels:', e.message);
-    const data = await invSheetGet(env, 'Master_List!A1:O15000').catch(()=>({ values:[] }));
-    return cors(new Response(JSON.stringify({ values: data.values||[], source:'sheets' }),
-      { headers: { 'Content-Type': 'application/json' } }));
+    return cors(new Response(JSON.stringify({ error: 'SKU Mgr could not be read just now — try again' }), // 🏬 never the old sheet
+      { status: 503, headers: { 'Content-Type': 'application/json' } }));
   }
 }
 
@@ -20051,7 +20042,7 @@ async function salesComputeTabs(request, env) {
         return d.values || [];
       }
       const upcRaw = await readWarehouseTab('UPC');
-      const mlRaw  = await readWarehouseTab('Master_List');
+      const mlRaw  = env.DB ? await skuMgrSheetValues(env) : await readWarehouseTab('Master_List'); // 🏬 stock = SKU Mgr
 
       // UPC tab: col B (idx 1) = variant part# (e.g. 27-1-1=10XX)
       const upcParts = new Set();
@@ -22168,9 +22159,10 @@ async function invReadMasterList(env) {
       }).filter(r => r.partNumber);
     } catch(e) {
       console.error('[D1] invReadMasterList failed:', e.message);
+      throw new Error('SKU Mgr could not be read just now — try again'); // 🏬 never the old sheet
     }
   }
-  // Sheets fallback
+  // Sheets fallback (only with no SKU Mgr at all)
   const data = await invSheetGet(env, 'Master_List!A1:J5000');
   const rows = data.values || [];
   const result = [];
