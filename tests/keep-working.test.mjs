@@ -10122,10 +10122,39 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       && /class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c7.h) && sum(c7.A, 'PR') === 1, { d1, d2, nDone, h6: c6.h.slice(-400) });
   check('…a Stock Out from the card says which shipment(s) it was for in its notes ([AWD: name]) — that is how the card knows it was grabbed; the card opens by itself on Big Company',
     /if \(item\.awdShipment && \(item\.dest \|\| invStockOutDest\) === 'company'\) destTag \+= '\[AWD: ' \+ item\.awdShipment \+ '\] ';/.test(ih) && /it\.awdShipment = \(t\.ships \|\| \[\]\)\.join\(' \| '\)/.test(ih)
-      && /id="inv-awdship-card" open /.test(ih) && /if \(aws && aws\.open && !AWDS\.data\) window\.invAwdShipLoad\(\);/.test(ih), null);
+      && /id="inv-awdship-card" open /.test(ih) && /if \(aws && aws\.open\) window\.invAwdShipLoad\(\);/.test(ih), null);
   check('…📤 Send this shipment to Stock Out Big Company button in the Builder (asks first; says sent / not sent), 🧩 check mark; the card reads /awd/ship-send',
     /onclick="awdSendToStockOut\(\)">📤 Send this shipment to Stock Out Big Company<\/button>/.test(ah) && /if \(!confirm\('📤 Send "'/.test(ah) && /✗ Not sent: /.test(ah)
       && /sel: '#awd-send-so'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /wFetch\(W \+ '\/awd\/ship-send\?open=1'\)/.test(ih), null);
+  // 💾 Owner (2026-10-27): "every time we go there we have to wait for it to update — save it, we don't have to update every time, until a new one".
+  {
+    const store = {}, LS = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+    const visit = (pull0) => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = pull0 || [], cnt = { n: 0 };
+      const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => { cnt.n++; return get('/inventory/lookup?code=' + encodeURIComponent(c)); }, ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+        invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {}, localStorage: LS };
+      const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+        function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+        ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+        return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd };`)(...Object.values(env2), pull);
+      return { run, g, cnt, pull }; };
+    const settle = async v => { for (let i = 0; i < 80 && (v.run.AWDS.busy || !v.g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25)); return v.g('inv-awdship-out').innerHTML; };
+    const v1 = visit(); v1.run.load(); const h1 = await settle(v1);
+    const v2 = visit(); v2.run.load(); const at2 = v2.g('inv-awdship-out').innerHTML; const h2 = await settle(v2);
+    check('💾 the list worked out once is saved on the phone: next visit shows it AT ONCE (no "Reading…" wait), a quick check finds no changes → not worked out again (0 part # look-ups), same picks',
+      !!store.inv_awdship_cache_v1 && v1.cnt.n > 0 && /💾 Saved list/.test(at2) && /inv-awdship-area/.test(at2) && v2.cnt.n === 0 && /✓ no changes/.test(h2)
+        && JSON.stringify(v2.run.AWDS.takes.map(t => [t.loc.location, t.cases])) === JSON.stringify(v1.run.AWDS.takes.map(t => [t.loc.location, t.cases])) && v2.run.AWDS.takes[0].L.partNum,
+      { n1: v1.cnt.n, n2: v2.cnt.n, at2: at2.slice(0, 200), h2: h2.slice(0, 200) });
+    await post('/awd/ship-send', { shipment: 'STAR-SEND4', lines: lines.slice(1) });
+    const v3 = visit(); v3.run.load(); const at3 = v3.g('inv-awdship-out').innerHTML; const h3 = await settle(v3);
+    check('…a new shipment sent → the saved list still shows at once, then the list is worked out again behind it and STAR-SEND4 appears (saved again)',
+      /💾 Saved list/.test(at3) && !/STAR-SEND4/.test(at3) && v3.cnt.n > 0 && /data-s="STAR-SEND4"/.test(h3) && /STAR-SEND4/.test(store.inv_awdship_cache_v1), { n3: v3.cnt.n, h3: h3.slice(0, 300) });
+    const v4 = visit(); v4.run.load(true); await settle(v4);
+    const v5 = visit(); v5.run.load(); await settle(v5); v5.run.AWDS.area = 'PR'; v5.run.add('PR');
+    const v6 = visit(v5.pull); v6.run.load(); await settle(v6);
+    check('…↻ Refresh works it out again anyway; ➕ Put on my Pull List changes the list → next visit works it out again (what is on the Pull List comes off, nothing listed twice)',
+      v4.cnt.n > 0 && v5.cnt.n === 0 && v5.pull.length > 0 && v6.cnt.n > 0 && !v6.run.AWDS.takes.some(t => t.area === 'PR' && t.ships.includes('STAR-SEND4')),
+      { n4: v4.cnt.n, n5: v5.cnt.n, n6: v6.cnt.n, pull: v5.pull.map(x => [x.partNum, x.cases, x.awdShipment]), t6: v6.run.AWDS.takes.map(t => [t.area, t.cases, t.ships]) });
+  }
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send; DELETE FROM awd_ship_done; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SEND%'");
 }
 
@@ -10304,6 +10333,35 @@ console.log('\n🔗 Stamps.com label: scan finds no order → type / scan the or
       && /PS_WORKER \+ '\/ship\/link-order'/.test(ph) && /'ps-link-pack'\]/.test(ph) && !/No item data for this order — run Veeqo Sync/.test(ph), null);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   sq.exec(`DELETE FROM ship_scan_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_pick_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_manifest_log WHERE tracking IN ('${stamps}','${t2}'); DELETE FROM ship_label_link`);
+}
+
+// 💾 Owner (2026-10-27): "Add our template to Amazon box labels — save it, we don't have to do it again every time, until we upload a new one".
+console.log('\n💾 AWD Planner: the box labels made last time are kept on the computer (print an area again, no re-upload)');
+{
+  const { readFileSync: rfL } = await import('node:fs');
+  const ah = rfL(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA2 = n => { const m = ah.match(new RegExp('(?:async )?function ' + n + '\\([\\s\\S]*?\\n\\}')); return m ? m[0] : ''; };
+  // a tiny IndexedDB stand-in (one database, one store) — kept across "page opens"
+  const mem = new Map();
+  const fakeIdb = { open() { const q = {}; setTimeout(() => { const db = { transaction() { const tx = {}; const st = {
+      put(v, k) { mem.set(k, JSON.parse(JSON.stringify(v))); setTimeout(() => tx.oncomplete && tx.oncomplete(), 0); },
+      get(k) { const r = {}; setTimeout(() => { r.result = mem.has(k) ? JSON.parse(JSON.stringify(mem.get(k))) : undefined; r.onsuccess && r.onsuccess(); }, 0); return r; } };
+      tx.objectStore = () => st; return tx; }, createObjectStore() {} }; q.result = db; q.onupgradeneeded && q.onupgradeneeded(); q.onsuccess && q.onsuccess(); }, 0); return q; } };
+  const page = () => { const els = { 'awd-lbl-out': { innerHTML: '' } }, printed = [], win = {};
+    const api = new Function('indexedDB', 'ge', 'window', 'awdPrintPages', 'awd_planner_toast', 'awdAreaRank',
+      fnA2('awdAreaButtons') + fnA2('awdPrintArea') + fnA2('awdLblDb') + fnA2('awdLblSave') + fnA2('awdLblLoad') + fnA2('awdLblSavedHead') + fnA2('awdLblRestore')
+      + '; return { awdLblSave, awdLblRestore, awdPrintArea, awdLblSavedHead };')(fakeIdb, id => els[id], win, (pages, t) => { printed.push([t, pages.map(x => x.url)]); return true; }, () => {}, () => 0);
+    return { api, els, printed, win }; };
+  const groups = [{ area: 'C1', key: '1|06', pages: [{ url: 'data:c1a', w: 4, h: 6 }, { url: 'data:c1b', w: 4, h: 6 }] }, { area: 'BSMT', key: '1|03', pages: [{ url: 'data:bs', w: 4, h: 6 }] }];
+  const p1 = page(); const saved = await p1.api.awdLblSave({ at: '2026-10-27T15:00:00.000Z', shipment: 'STAR-LBL1', file: 'labels.pdf', groups, html: '✅ <b>3</b> labels' + 'AREA' });
+  const p2 = page(); await p2.api.awdLblRestore(); p2.api.awdPrintArea('C1');
+  const h2 = p2.els['awd-lbl-out'].innerHTML;
+  check('💾 the labels made last time come back when the AWD Planner opens again: "💾 Saved labels — STAR-LBL1 · 3 to print … kept until you upload new ones" + 🖨 C1 prints just its 2 labels, no re-upload',
+    saved === true && /💾 Saved labels — <b>STAR-LBL1<\/b> · 3 to print · made /.test(h2) && /kept until you upload new ones/.test(h2) && /✅ <b>3<\/b> labels/.test(h2)
+      && (p2.win.AWD_LBL_GROUPS || []).length === 2 && p2.printed.length === 1 && p2.printed[0][1].join() === 'data:c1a,data:c1b', { h2, printed: p2.printed });
+  check('…a new label PDF replaces the saved one (saved right after the labels are made); restored when the page opens',
+    /const rec = \{ at: new Date\(\)\.toISOString\(\), shipment: shipId, file: file\.name \|\| '', groups, html: out\.innerHTML \};\s*if \(await awdLblSave\(rec\)\)/.test(ah)
+      && /document\.addEventListener\('DOMContentLoaded', awdLblRestore\); else awdLblRestore\(\);/.test(ah), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

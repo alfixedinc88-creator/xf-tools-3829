@@ -656,7 +656,7 @@ window.invCredLogin = async function() {
        can start grabbing right now" — every shipment sent and not ✅ Done, open as soon as Big Company is picked. -->
   <details class="icard" id="inv-awdship-card" open style="display:none;border:2px solid #1D4ED8" ontoggle="if(this.open&&window.AWDS&&!AWDS.data&&this.style.display!=='none')invAwdShipLoad()">
     <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 AWD shipments ready — what to grab, by location</summary>
-    <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad();return false">↻ Refresh</a></div>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a></div>
     <div id="inv-awdship-out" style="font-size:13px">Loading…</div>
   </details>
   <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
@@ -2196,7 +2196,7 @@ window.invCredLogin = async function() {
     var stockoutReportsCard = g("inv-stockout-card");
     if (stockoutReportsCard) stockoutReportsCard.style.display = (mode === "out" && invStockOutDest === 'shelving') ? "block" : "none";
     var awdSh = g("inv-awdship-card"); if (awdSh) awdSh.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
-    if (awdSh && awdSh.open && mode === "out" && invStockOutDest === 'company' && window.AWDS && !window.AWDS.data && typeof window.invAwdShipLoad === 'function') window.invAwdShipLoad(); // ready to grab right away
+    if (awdSh && awdSh.open && mode === "out" && invStockOutDest === 'company' && window.AWDS && typeof window.invAwdShipLoad === 'function') window.invAwdShipLoad(); // ready to grab right away (saved list at once)
     var bxC = g("inv-boxcheck-card"); if (bxC) bxC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
@@ -2310,14 +2310,45 @@ window.invCredLogin = async function() {
   // shipments is worked out ONCE (the total), so the same box is never picked twice; what was already grabbed for a shipment (Stock Out
   // notes "[AWD: name]", and what is on this phone's Pull List not sent yet) comes off first, oldest shipment first.
   function invAwdTag(n) { return String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60); }
-  window.invAwdShipLoad = function() {
+  // 💾 Owner (2026-10-27): "every time we go there we have to wait for it to update — after one update, save it, we don't have to update every
+  // time, until there is a new one". The list worked out last time is kept on this phone and shows at once; a quick check (one call) runs
+  // behind it, and the list is worked out again only when something changed — a shipment sent / labelled / ✅ Done, or something grabbed
+  // for it — or it is over 30 min old, or ↻ Refresh. While it works, the saved list stays on screen (no waiting).
+  var AWDS_KEY = 'inv_awdship_cache_v1';
+  function invAwdSig(d) { return JSON.stringify([(d.shipments || []).map(function(x) { return [x.shipment, x.at, (x.lines || []).length]; }), (d.done || []).map(function(x) { return [x.shipment, x.at]; }),
+    (d.grabbed || []).map(function(x) { return [x.part, x.forPart, x.cases, x.ships]; }).sort()]); }
+  function invAwdSave() {
+    try { if (typeof localStorage === 'undefined') return; var Ls = {}, takes = AWDS.takes.map(function(t) { Ls[t.target] = t.L; var c = Object.assign({}, t); c.L = t.target; return c; });
+      localStorage.setItem(AWDS_KEY, JSON.stringify({ at: AWDS.at, sig: AWDS.sig, data: AWDS.data, ships: AWDS.ships, doneList: AWDS.doneList, takes: takes, Ls: Ls, prevN: AWDS.prevN, noSize: AWDS.noSize, short: AWDS.short, allGot: AWDS.allGot, mine: AWDS.mine }));
+    } catch (e) {}
+  }
+  function invAwdRestore() {
+    try { if (typeof localStorage === 'undefined') return false; var c = JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !Array.isArray(c.takes)) return false;
+      ['at', 'sig', 'data', 'ships', 'doneList', 'prevN', 'noSize', 'short', 'allGot', 'mine'].forEach(function(k) { AWDS[k] = c[k]; });
+      AWDS.takes = c.takes.map(function(t) { t.L = (c.Ls || {})[t.L] || {}; return t; }); AWDS.added = {}; return true;
+    } catch (e) { return false; }
+  }
+  function invAwdMine() { // this phone's Pull List items for the shipments, not sent yet (they change the list too)
+    return JSON.stringify((typeof invPullList !== 'undefined' ? invPullList : []).filter(function(x) { return x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound; })
+      .map(function(x) { return [x.partNum, x.forPart, x.cases, x.awdShipment]; }));
+  }
+  function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
+  window.invAwdShipLoad = function(force) {
     var out = g('inv-awdship-out'); if (!out) return;
-    out.innerHTML = '⏳ Reading the shipments…'; AWDS.takes = []; AWDS.area = ''; AWDS.added = {};
+    if (AWDS.busy) { AWDS.again = AWDS.again || !!force; return; }
+    var shown = !!AWDS.data && AWDS.takes && out.innerHTML.indexOf('inv-awdship-st') >= 0;
+    if (!AWDS.data && invAwdRestore()) { window.invAwdShipRender(); shown = true; }
+    AWDS.busy = true; var started = AWDS.addN || 0;
+    var fin = function() { AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
+    if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…';
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
-      var ships = d.shipments || [];
-      AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || [];
-      if (!ships.length) { out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return; }
+      var sig = invAwdSig(d), mine = invAwdMine(), fresh = AWDS.at && Date.now() - Date.parse(AWDS.at) < 30 * 60000;
+      if (!force && shown && sig === AWDS.sig && mine === AWDS.mine && fresh) { AWDS.checkedAt = new Date().toISOString(); window.invAwdShipRender(); return fin(); }
+      var ships = d.shipments || [], takes = [];
+      if (!ships.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.takes = []; AWDS.area = ''; AWDS.added = {}; AWDS.sig = sig; AWDS.mine = mine; AWDS.at = new Date().toISOString(); invAwdSave();
+        out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return fin(); }
+      var prog = function(t) { if (shown) invAwdStatus('⏳ ' + t + ' — the saved list stays until it is done'); else out.innerHTML = '⏳ ' + t; };
       var by = {}, prevN = 0, tagOf = {};
       ships.forEach(function(sh, si) { tagOf[invAwdTag(sh.shipment)] = si; sh.prevN = 0;
         (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
@@ -2329,8 +2360,11 @@ window.invCredLogin = async function() {
         got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean) }); });
       var parts = Object.keys(by), i = 0, keep = invPart, noSize = [], short = [], allGot = [];
       var next = function() {
-        if (i >= parts.length) { invPart = keep; AWDS.prevN = prevN; AWDS.noSize = noSize; AWDS.short = short; AWDS.allGot = allGot; window.invAwdShipRender(); return; }
-        var o = by[parts[i++]]; out.innerHTML = '⏳ Working out where to grab… ' + i + ' of ' + parts.length + ' part #s';
+        if (i >= parts.length) { invPart = keep; AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.takes = takes; AWDS.added = {};
+          if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
+          AWDS.prevN = prevN; AWDS.noSize = noSize; AWDS.short = short; AWDS.allGot = allGot; AWDS.sig = sig; AWDS.mine = mine; AWDS.at = AWDS.checkedAt = new Date().toISOString();
+          invAwdSave(); window.invAwdShipRender(); return fin(); }
+        var o = by[parts[i++]]; prog('Working out where to grab… ' + i + ' of ' + parts.length + ' part #s');
         _invFetchLookupRaw(o.part).then(function(L) {
           if (!L || !L.partNum) { short.push(o.part + ' (not found)'); return next(); }
           invPart = L;
@@ -2356,14 +2390,14 @@ window.invCredLogin = async function() {
           try { plan = caseTo ? invCaseOfPlan(L, o.part, caseTo, units) : invPlanCompanyPull(o.part, rest); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
           if (caseTo) { plan.takes.forEach(function(t) { if (!t.how) t.how = 'a whole case of ' + caseTo + ' (' + plan.want + ' pcs) = 1 × ' + o.part + ' — ship the case as it is'; });
             if (plan.off.length) short.push(o.part + ' = a case of ' + caseTo + ': ' + invCaseOffTxt(plan).replace(/^ · /, '')); }
-          plan.takes.forEach(function(t) { AWDS.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips }); });
+          plan.takes.forEach(function(t) { takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips }); });
           if (plan.short > 0.001) short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
           (plan.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
           next();
         }).catch(function() { short.push(o.part + ' (no WiFi?)'); next(); });
       };
       next();
-    }).catch(function() { out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
+    }).catch(function() { if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
   };
   function invAwdDoneHtml() {
     var L = AWDS.doneList || []; if (!L.length) return '';
@@ -2382,7 +2416,9 @@ window.invCredLogin = async function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
-    var h = '<div style="margin-bottom:6px">' + (AWDS.ships || []).map(function(sh) {
+    var tm = function(v) { return v ? new Date(v).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
+    var h = '<div id="inv-awdship-st" style="font-size:11px;color:var(--text3);margin-bottom:4px">💾 Saved list · worked out ' + ckE(tm(AWDS.at)) + (AWDS.checkedAt && AWDS.checkedAt !== AWDS.at ? ' · ✓ no changes (checked ' + ckE(tm(AWDS.checkedAt)) + ')' : '') + '</div>'
+      + '<div style="margin-bottom:6px">' + (AWDS.ships || []).map(function(sh) {
         var nSku = (sh.lines || []).filter(function(x) { return !x.prev; }).length, pct = sh.need > 0 ? Math.round((1 - (sh.left || 0) / sh.need) * 100) : 0;
         return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border)"><div><b>' + ckE(sh.shipment || 'Shipment') + '</b> · '
           + (sh.source === 'send' ? '📤 from the Shipment Builder · ' + nSku + ' SKU' + (nSku === 1 ? '' : 's') + (sh.boxes ? ' · ' + sh.boxes + ' Amazon boxes' : '') : (sh.lines || []).length + ' Amazon boxes')
@@ -2430,6 +2466,7 @@ window.invCredLogin = async function() {
       }
       AWDS.added[i] = true; n++;
     });
+    if (n) AWDS.addN = (AWDS.addN || 0) + 1; // a list being worked out right now starts again with these on the Pull List
     invPart = keep; invSavePullList(); invRenderPullList(); window.invAwdShipRender();
     invFlash(n ? '✓ ' + n + ' spot' + (n === 1 ? '' : 's') + ' in ' + area + ' on your Pull List — grab them, bring them to the garage, ✓ Grabbed' : 'Nothing new to add in ' + area, n ? 'success' : 'warn');
   };
@@ -2452,7 +2489,7 @@ window.invCredLogin = async function() {
       var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
-      if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); if (aws && aws.open && !AWDS.data) window.invAwdShipLoad(); } // 📦 the shipments ready, right away
+      if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); if (aws && aws.open) window.invAwdShipLoad(); } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
     }
     var nh = g('inv-need-help');
     if (nh) nh.textContent = dest === 'company'
