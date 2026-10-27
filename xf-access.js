@@ -64,6 +64,7 @@ document.addEventListener('input', function (e) {
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
         { key: 'boxlabelshist', label: '…🕘 Earlier box labels (Admin only)', sel: '#awd-lbl-hist' },
+        { key: 'bldhist', label: '🕘 History — everything done in the Shipment Builder (Admin only)', sel: '#awd-bld-hist' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
         { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
         { key: 'edittpl', label: '✏️ See / edit a SKU\'s template', sel: '#page-builder .awd-tpl-edit' },

@@ -10608,6 +10608,50 @@ console.log('\n🗺 AWD shipment history board: who grabbed what, when, how long
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('91-1-1','92-2-2'); DELETE FROM awd_claim; DELETE FROM product_photo WHERE base_sku = '91-1-1'"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-BOARD1]%'").run();
 }
 
+// 🕘 Owner (2026-10-27): "when anyone clicks to print an area it shows printed, with the history of who and when; every tab has a History
+// at the bottom recording everything done — whoever, when, what — only Admin and up can see it" (Shipment Builder first).
+console.log('\n🕘 Shipment Builder: every thing done is kept (who / when / what); 🖨 area prints marked; History (Admin only)');
+{
+  const { readFileSync: rfH } = await import('node:fs');
+  const ah = rfH(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, PK = { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' };
+  const act = (b, hd) => call('/awd/activity', { method: 'POST', headers: hd || H, body: JSON.stringify(b) }).then(r => r.json());
+  const p1 = await act({ action: 'label_print', detail: { shipment: 'STAR-HIST1', area: 'C1', labels: 34 }, _requestId: 'hist-1' });
+  const p1b = await act({ action: 'label_print', detail: { shipment: 'STAR-HIST1', area: 'C1', labels: 34 }, _requestId: 'hist-1' }); // the same click sent twice
+  const p2 = await act({ action: 'label_print', detail: { shipment: 'STAR-HIST1', area: 'BO', labels: 21 } }, PK);
+  const bad = await act({ action: 'drop_tables', detail: {} });
+  await act({ action: 'builder_qty', detail: { sku: '8-8-8=10-', from: 0, to: 120 } });
+  await post('/awd/ship-send', { shipment: 'STAR-HIST1', lines: [{ sku: '8-8-8=10-', units: 120, boxes: 12, unitsPerBox: 10 }] });
+  const pr = await (await call('/awd/activity?prints=STAR-HIST1', { headers: { 'X-Cred-Token': pkT } })).json();
+  const hist = await get('/awd/activity?tab=builder&days=1'), no = await call('/awd/activity?tab=builder&days=1', { headers: { 'X-Cred-Token': pkT } });
+  const anon = await call('/awd/activity?prints=STAR-HIST1');
+  check('🖨 a print of an area is kept (who / when / shipment / area / labels) — the same click sent twice kept once; anyone signed in can see who printed which area; an unknown action is refused; no sign-in → refused',
+    p1.ok && p1b.ok && p2.ok && bad.ok === false && pr.ok && pr.prints.length === 2 && pr.prints[0].detail.area === 'C1' && pr.prints[0].by === 'TS' && pr.prints[1].detail.area === 'BO' && !!pr.prints[1].by && pr.prints[1].by !== 'TS' && anon.status === 401,
+    { pr, bad });
+  check('🕘 History (Admin only — a picker gets 403): everything done in the Shipment Builder, newest first — the prints, the qty change 0 → 120, the 📤 send to Stock Out (kept by the server)',
+    hist.ok && no.status === 403 && hist.list.some(r => r.action === 'ship_send' && r.detail.shipment === 'STAR-HIST1') && hist.list.some(r => r.action === 'builder_qty' && r.detail.to === 120)
+      && hist.list.filter(r => r.action === 'label_print' && r.detail.shipment === 'STAR-HIST1').length === 2 && hist.list[0].at >= hist.list[hist.list.length - 1].at, { n: hist.list && hist.list.length, no: no.status });
+  // the page: the History view on that answer
+  const fnH = n => { const m = ah.match(new RegExp('(?:async )?function ' + n + '\\([\\s\\S]*?\\n\\}')); return m ? m[0] : ''; };
+  const els = { 'awd-bld-hist-out': { innerHTML: '' }, 'awd-bld-hist-days': { value: '1' } };
+  await new Function('ge', 'wFetch', 'W', fnH('awdActTxt') + fnH('awdBldHistLoad') + '; return awdBldHistLoad();')(id => els[id], async () => ({ json: async () => hist }), '');
+  const hv = els['awd-bld-hist-out'].innerHTML;
+  check('…the History shows a summary first (👤 each person: how many of each thing), then which areas of which shipment were printed (by who, when), then every single thing',
+    /Summary — last 1 day/.test(hv) && /👤 <b>TS<\/b> — /.test(hv) && /1 prints|2 prints/.test(hv) && /🖨 Box labels printed/.test(hv) && /<b>STAR-HIST1<\/b>: /.test(hv) && /C1 \(TS /.test(hv)
+      && /📤 Sent <b>STAR-HIST1<\/b> to Stock Out Big Company/.test(hv) && /✏️ Qty of <b>8-8-8=10-<\/b>: 0 → <b>120<\/b>/.test(hv), hv.slice(0, 600));
+  // the page: what each click sends
+  const hadWin = 'window' in globalThis; if (!hadWin) globalThis.window = globalThis; const realOpen = globalThis.open; globalThis.open = () => ({ document: { write() {}, close() {} } });
+  const sent = []; const W2 = new Function('wFetch', 'W', 'S', 'document', fnH('awdAct') + 'const _awdQtyLog = {};' + fnH('awdActQty') + fnH('awdPrintPages') + fnH('awdPrintArea') + fnH('awdPrintMarks')
+    + '; window.AWD_LBL_GROUPS = [{ area: "C1", pages: [{ url: "a", w: 4, h: 6 }, { url: "b", w: 4, h: 6 }] }]; window.AWD_LBL_SHIP = "STAR-HIST1"; return { awdActQty, awdPrintArea };')(
+    async (u, o) => { if (o) sent.push(JSON.parse(o.body)); return { json: async () => ({ ok: true, prints: [] }) }; }, '', {}, undefined);
+  W2.awdPrintArea('C1'); W2.awdActQty('9-9-9=5-', 0, 1); W2.awdActQty('9-9-9=5-', 1, 12); W2.awdActQty('9-9-9=5-', 12, 120);
+  await new Promise(r => setTimeout(r, 1700)); globalThis.open = realOpen; if (!hadWin) delete globalThis.window;
+  const q = sent.filter(x => x.action === 'builder_qty'), pa = sent.find(x => x.action === 'label_print');
+  check('…🖨 C1 sends "printed C1 of STAR-HIST1, 2 labels"; typing a qty 1 → 12 → 120 is kept as ONE change 0 → 120; every send has its own never-twice id; the History is in the 🧩 Pages & Tabs list',
+    pa && pa.detail.area === 'C1' && pa.detail.shipment === 'STAR-HIST1' && pa.detail.labels === 2 && q.length === 1 && q[0].detail.from === 0 && q[0].detail.to === 120 && sent.every(x => /^awdact-/.test(x._requestId))
+      && /sel: '#awd-bld-hist'/.test(rfH(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /id="awd-bld-hist" class="card" style="display:none/.test(ah), sent);
+  sq.exec("DELETE FROM awd_ship_send WHERE shipment = 'STAR-HIST1'");
+}
 
 // Owner (2026-10-27): "a lot of the boxes he grabbed for AWD were the wrong item, wrong quantities — instead of just clicking grab, they have
 // to scan the box they try to grab; if match, let them grab it, if not match they get the warning … if there's 5 cases, they have to scan
