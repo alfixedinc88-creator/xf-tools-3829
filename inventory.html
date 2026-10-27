@@ -2323,13 +2323,16 @@ window.invCredLogin = async function() {
   var AWDS_KEY = 'inv_awdship_cache_v2';
   function invAwdShipSig(d) { return JSON.stringify([(d.shipments || []).map(function(x) { return [x.shipment, x.at, (x.lines || []).length]; }), (d.done || []).map(function(x) { return [x.shipment, x.at]; })]); }
   function invAwdGot(d) { // already grabbed: on the server (sent Stock Outs) + this phone's Pull List not sent yet
-    var got = (d.grabbed || []).map(function(x) { return { part: x.part, forPart: x.forPart, cases: x.cases, ships: x.ships }; });
+    // 📊 kind (owner 2026-10-27: "how many not grabbed yet and how many we grab"): 'grabbed' = a Stock Out sent (any phone) or ✓ Grabbed on
+    // this phone; 'list' = on a Pull List (this phone's or another phone's), not grabbed yet — counted apart, never as grabbed.
+    var got = (d.grabbed || []).map(function(x) { return { part: x.part, forPart: x.forPart, cases: x.cases, ships: x.ships, kind: 'grabbed' }; });
     (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { if (x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound)
-      got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean) }); });
+      got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean), kind: x.grabbed ? 'grabbed' : 'list' }); });
     // 👤 …+ spots on ANOTHER phone's Pull List, not grabbed yet (owner 2026-10-27: "if anyone grabs anything, every other scanner sees it") —
     // this phone's own are counted from its Pull List above, never twice
     var mine = invAwdMyClaims();
-    (d.claims || []).forEach(function(c) { if (!mine[c.id]) got.push({ part: String(c.part).toUpperCase(), forPart: String(c.forPart || c.part).toUpperCase(), cases: c.cases || 0, ships: (c.ships || []).map(invAwdTag).filter(Boolean) }); });
+    (d.claims || []).forEach(function(c) { if (!mine[c.id]) got.push({ part: String(c.part).toUpperCase(), forPart: String(c.forPart || c.part).toUpperCase(), cases: c.cases || 0, ships: (c.ships || []).map(invAwdTag).filter(Boolean), kind: 'list' }); });
+    got.sort(function(x, y) { return (x.kind === 'list') - (y.kind === 'list'); }); // grabbed first, then what is only on a Pull List
     return got;
   }
   function invAwdMyClaims() { var m = {}; (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { (x.awdClaims || []).forEach(function(id) { m[id] = 1; }); }); return m; }
@@ -2346,7 +2349,7 @@ window.invCredLogin = async function() {
     invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ close: C.map(function(c) { return c.id; }), how: 'given back by hand' }) })
       .then(function() { invFlash('↩ ' + C.length + ' spot' + (C.length === 1 ? '' : 's') + ' given back', 'success'); window.invAwdShipLoad(); }).catch(function() {});
   };
-  function invAwdGotKey(got, P) { return JSON.stringify(got.filter(function(x) { return x.forPart === P; }).map(function(x) { return [x.part, x.cases, x.ships]; }).sort()); }
+  function invAwdGotKey(got, P) { return JSON.stringify(got.filter(function(x) { return x.forPart === P; }).map(function(x) { return [x.part, x.cases, x.ships, x.kind]; }).sort()); }
   function invAwdSave() {
     try { if (typeof localStorage === 'undefined') return; var Ls = {}, parts = {};
       Object.keys(AWDS.parts || {}).forEach(function(P) { var r = AWDS.parts[P]; parts[P] = Object.assign({}, r, { takes: r.takes.map(function(t) { Ls[t.target] = t.L; var c = Object.assign({}, t); c.L = t.target; return c; }) }); });
@@ -2362,18 +2365,21 @@ window.invCredLogin = async function() {
   }
   // the per-part # results → the list on screen (picks, short, no size, all grabbed, each shipment's % grabbed)
   function invAwdAssemble() {
-    var takes = [], short = [], noSize = [], allGot = [], need = {}, left = {};
+    var takes = [], short = [], noSize = [], allGot = [], need = {}, left = {}, gr = {}, ol = {}, T = { need: 0, grabbed: 0, list: 0, parts: 0, partsGrabbed: 0 };
     (AWDS.order || []).forEach(function(P) { var r = AWDS.parts[P]; if (!r) return;
+      var rn = 0, rg = 0, rl = 0; Object.keys(r.need || {}).forEach(function(n) { rn += r.need[n] || 0; rg += (r.grabbed || {})[n] || 0; rl += (r.onList || {})[n] || 0;
+        gr[n] = (gr[n] || 0) + ((r.grabbed || {})[n] || 0); ol[n] = (ol[n] || 0) + ((r.onList || {})[n] || 0); });
+      if (rn > 0) { T.need += rn; T.grabbed += rg; T.list += rl; T.parts++; if (rn - rg < 0.001) T.partsGrabbed++; }
       r.takes.forEach(function(t) { takes.push(t); }); (r.short || []).forEach(function(x) { short.push(x); }); (r.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
       if (r.allGot) allGot.push(P); Object.keys(r.need || {}).forEach(function(n) { need[n] = (need[n] || 0) + r.need[n]; left[n] = (left[n] || 0) + Math.max(0, r.left[n] || 0); }); });
-    (AWDS.ships || []).forEach(function(sh) { sh.need = need[sh.shipment] || 0; sh.left = left[sh.shipment] || 0; });
-    AWDS.takes = takes; AWDS.short = short; AWDS.noSize = noSize; AWDS.allGot = allGot;
+    (AWDS.ships || []).forEach(function(sh) { sh.need = need[sh.shipment] || 0; sh.left = left[sh.shipment] || 0; sh.grabbed = gr[sh.shipment] || 0; sh.onList = ol[sh.shipment] || 0; });
+    AWDS.tot = T; AWDS.takes = takes; AWDS.short = short; AWDS.noSize = noSize; AWDS.allGot = allGot;
     if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
   // one part #: what each shipment needs, minus what was grabbed for it (oldest shipment first), then the Big Company pick rules
   function invAwdPlanPart(o, ships, got) {
-    var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {} }, sname = function(si) { return ships[si].shipment; };
+    var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {} }, sname = function(si) { return ships[si].shipment; };
     return _invFetchLookupRaw(o.part).then(function(L) {
       if (!L || !L.partNum) { r.short.push(o.part + ' (not found)'); return r; }
       var keep = invPart; invPart = L;
@@ -2392,7 +2398,8 @@ window.invCredLogin = async function() {
         var left = {}; sis.forEach(function(si) { left[si] = need[si]; });
         got.forEach(function(x) { if (x.forPart !== o.part) return;
           var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === caseTo) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
-          x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u; }); });
+          x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u;
+            var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sname(si)] = (kk[sname(si)] || 0) + u; }); });
         var rest = 0, forShips = []; sis.forEach(function(si) { r.need[sname(si)] = need[si]; r.left[sname(si)] = Math.max(0, left[si]); if (left[si] > 0.001) { rest += left[si]; forShips.push(invAwdTag(sname(si))); } });
         if (!(rest > 0.001)) { r.allGot = true; return r; }
         rest = Math.round(rest * 1000) / 1000;
@@ -2498,12 +2505,12 @@ window.invCredLogin = async function() {
     var tm = function(v) { return v ? new Date(v).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
     var h = '<div id="inv-awdship-st" style="font-size:11px;color:var(--text3);margin-bottom:4px">💾 Saved list · worked out ' + ckE(tm(AWDS.at)) + (AWDS.checkedAt && AWDS.checkedAt !== AWDS.at ? (AWDS.updatedN ? ' · 🔄 ' + AWDS.updatedN + ' part #' + (AWDS.updatedN === 1 ? '' : 's') + ' grabbed since, updated' : ' · ✓ no changes') + ' (checked ' + ckE(tm(AWDS.checkedAt)) + ')' : '') + ' · only a new / changed shipment or ↻ Refresh works it all out again</div>'
       + '<div style="margin-bottom:6px">' + (AWDS.ships || []).map(function(sh) {
-        var nSku = (sh.lines || []).filter(function(x) { return !x.prev; }).length, pct = sh.need > 0 ? Math.round((1 - (sh.left || 0) / sh.need) * 100) : 0;
+        var nSku = (sh.lines || []).filter(function(x) { return !x.prev; }).length, pct = sh.need > 0 ? Math.min(100, Math.round((sh.grabbed || 0) / sh.need * 100)) : 0, pctL = sh.need > 0 ? Math.round((sh.onList || 0) / sh.need * 100) : 0;
         return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border)"><div><b>' + ckE(sh.shipment || 'Shipment') + '</b> · '
           + (sh.source === 'send' ? '📤 from the Shipment Builder · ' + nSku + ' SKU' + (nSku === 1 ? '' : 's') + (sh.boxes ? ' · ' + sh.boxes + ' Amazon boxes' : '') : (sh.lines || []).length + ' Amazon boxes')
           + (sh.prevN ? ' (' + sh.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + ' · ' + (sh.source === 'send' ? 'sent' : 'labels') + ' by ' + ckE(sh.by || '?') + (sh.at ? ' ' + ckE(xfrFmtT(sh.at)) : '')
           + (sh.replaces ? ' <span style="color:var(--text3)">(the labels of ' + ckE(sh.replaces.join(', ')) + ')</span>' : '')
-          + (sh.need > 0 ? ' · <b style="color:' + (pct >= 100 ? 'var(--green)' : '#1D4ED8') + '">' + (pct >= 100 ? '✓ all grabbed' : pct + '% grabbed') + '</b>' : '') + '</div>'
+          + (sh.need > 0 ? ' · <b style="color:' + (pct >= 100 ? 'var(--green)' : '#1D4ED8') + '">' + (pct >= 100 ? '✓ all grabbed' : pct + '% grabbed') + '</b>' + (pctL > 0 ? ' <span style="color:#b45309">+ ' + pctL + '% on a Pull List, not grabbed yet</span>' : '') : '') + '</div>'
           // 🔒 Admin / Owner only (owner 2026-10-27: "a lot of new guys here") — the server refuses anyone else too.
           + (invAwdIsAdmin() ? '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button>' : '') + '</div>'; }).join('')
       + ((AWDS.ships || []).length > 1 ? '<div style="font-size:12px;color:var(--text2);margin-top:3px">' + AWDS.ships.length + ' shipments together — a part # in more than one is grabbed once for all of them</div>' : '')
@@ -2532,7 +2539,17 @@ window.invCredLogin = async function() {
     }
     if ((AWDS.short || []).length) h += '<div style="color:var(--red);font-size:12px;margin-top:6px">⚠ Not enough on the shelves: ' + AWDS.short.map(ckE).join(' · ') + '</div>';
     if ((AWDS.noSize || []).length) h += '<div style="color:var(--orange);font-size:12px">⚠ Each/Case not on file (counted in cases): ' + AWDS.noSize.map(ckE).join(', ') + ' — set it in SKU Mgr</div>';
-    if (!AWDS.takes.length) h += '<div style="color:var(--green);font-weight:700;margin-top:6px">✓ Nothing left to grab</div>';
+    var T = AWDS.tot, r1 = function(v) { return Math.round((v || 0) * 10) / 10; };
+    if (T && T.need > 0) {
+      var notYet = Math.max(0, T.need - T.grabbed), toList = Math.max(0, notYet - T.list), all = notYet < 0.001;
+      h = h.replace('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">', (all
+        ? '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:10px 12px;border-radius:10px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;font-size:16px">✅ Everything grabbed — ' + r1(T.grabbed) + ' cases · ' + T.parts + ' part #' + (T.parts === 1 ? '' : 's') + '</div>'
+        : '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:8px 10px;border-radius:10px;border:1.5px solid #1D4ED8;font-size:13px;line-height:1.6">'
+          + '<b style="color:var(--green)">✅ Grabbed ' + r1(T.grabbed) + ' of ' + r1(T.need) + ' cases</b> (' + Math.round(T.grabbed / T.need * 100) + '%) · <b>' + T.partsGrabbed + ' of ' + T.parts + ' part #s</b> all grabbed'
+          + '<br><b style="color:var(--red)">⏳ Not grabbed yet: ' + r1(notYet) + ' cases</b>'
+          + (T.list > 0.001 ? ' — <span style="color:#b45309">📝 ' + r1(T.list) + ' on a Pull List</span>' : '') + (toList > 0.001 ? ' · ' + r1(toList) + ' not on a list yet' : '') + '</div>')
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">');
+    } else if (!AWDS.takes.length) h += '<div style="color:var(--green);font-weight:700;margin-top:6px">✓ Nothing left to grab</div>';
     out.innerHTML = h + invAwdDoneHtml();
   };
   // ➕ the area's spots onto the Pull List (Big Company, for that part #) — the same steps as a Big Company search.
