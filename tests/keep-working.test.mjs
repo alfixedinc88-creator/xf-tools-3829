@@ -10929,10 +10929,18 @@ console.log('\n📦 Box check → PALLET: whole case on a pallet, split / rebag 
     T.ok && T.boxes === 5 && T.prev === 1 && T.onPallets === 2 && T.pallets.length === 1 && T.pallets[0].pallet === 2 && T.pallets[0].boxes.length === 2 && T.pallets[0].boxes.every(b => b.by === 'TS' && b.at)
       && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 0 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
   // the tally on the card + 🖨 PALLET labels + offline-safe (one guard per entry) + 🧩 check marks
-  check('…the card shows the tally (📦 STAR-PAL1: 2 of 4 boxes on pallets, PALLET 2 — 2 boxes, 🏷 1 to rebag, ❌ 1 not a match); 🖨 Print PALLET labels (PALLET 1, 2, 3… with a barcode PALLET-n); 🧩',
-    /📦 STAR-PAL1: 2 of 4 boxes on pallets/.test(gP('inv-bc-pallets').innerHTML) && /<b>PALLET 2<\/b> — 2 boxes/.test(gP('inv-bc-pallets').innerHTML) && /🏷 1 in the packing room to rebag/.test(gP('inv-bc-pallets').innerHTML)
-      && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), gP('inv-bc-pallets').innerHTML.slice(0, 300));
-  sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'");
+  // 📷 Owner (2026-10-27): "keep a record of what is in which pallet — in photos like the boxes, easy to see"
+  await get('/inventory/lookup?code=71-1-1=10'); sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url) VALUES ('71-1-1', 'https://img.example/71.jpg')").run();
+  B.invBcPallets(); await wait(); await wait();
+  const pH = gP('inv-bc-pallets').innerHTML, pal2 = pH.slice(pH.indexOf('🟫 PALLET 2'), pH.indexOf('</details>', pH.indexOf('🟫 PALLET 2')));
+  check('…the card shows each PALLET as a panel of photos (🟫 PALLET 2 — 2 boxes · 2 part #s: 71-1-1=10 with its photo, 1 box (1-1), who / when; 72-2-2=10 📦 no photo), set aside / not a match the same way; 🖨 Print PALLET labels; 🧩',
+    /📦 STAR-PAL1: 2 of 4 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 boxes · 2 part #s/.test(pH) && /<img src="https:\/\/img\.example\/71\.jpg"/.test(pal2) && /71-1-1=10<\/b><div><b style="font-size:13px">1<\/b> box <span[^>]*>\(1-1\)/.test(pal2)
+      && /72-2-2=10/.test(pal2) && /TS · /.test(pal2) && (pal2.match(/class="inv-bc-ptile"/g) || []).length === 2 && /🏷 1 in the packing room to rebag/.test(pH) && /❌ 1 not a match/.test(pH)
+      && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), pal2.slice(0, 600));
+  const lt = await get('/awd/box-pallet?latest=1');
+  check('…opening Stock Out Big Company (nothing scanned yet) shows the pallets of the shipment scanned last (STAR-PAL1) at once',
+    lt.ok && lt.shipment === 'STAR-PAL1' && lt.onPallets === 2 && /invBoxCheckDay\(\); invBcPallets\(\);/.test(ihP) && /'latest=1'/.test(ihP), { s: lt.shipment });
+  sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'; DELETE FROM product_photo WHERE base_sku = '71-1-1'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

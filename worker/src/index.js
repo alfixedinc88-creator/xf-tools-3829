@@ -1513,15 +1513,19 @@ async function awdBoxPallet(request, url, env, session) {
   if (request.method === 'GET') {
     const ss = t(url.searchParams.get('sscc'), 20).replace(/\D/g, '').slice(-18);
     if (ss) { const x = await latest('sscc = ?', ss); return J({ ok: true, box: x.by[ss] || null, history: x.rows }); }
-    const sh = t(url.searchParams.get('shipment'), 60); if (!sh) return J({ ok: false, error: 'Which shipment?' }, 400);
+    let sh = t(url.searchParams.get('shipment'), 60);
+    if (!sh && url.searchParams.get('latest')) { const l = await env.DB.prepare('SELECT shipment FROM awd_box_scan ORDER BY id DESC LIMIT 1').first().catch(() => null); sh = l ? l.shipment : ''; if (!sh) return J({ ok: true, shipment: null }); }
+    if (!sh) return J({ ok: false, error: 'Which shipment?' }, 400);
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
-    const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
+    const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
     const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [] };
-    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, by: r.by_user, at: r.at, product: r.product_part };
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', by: r.by_user, at: r.at, product: r.product_part };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
-    return J({ ok: true, shipment: sh, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
+    // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"
+    let photos = {}; try { photos = await productPhotoMap(env, boxes.map(b => b.part)); } catch (_) {}
+    return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
       pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch,
       notYet: boxes.filter(b => !x.by[b.sscc] && !b.prev).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part })) });
   }
