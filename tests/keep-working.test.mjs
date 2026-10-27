@@ -9977,6 +9977,9 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   const c2 = A.takes.filter(t => t.area === 'C2').reduce((a, t) => a + t.cases, 0), bs = A.takes.filter(t => t.area === 'BSMT').reduce((a, t) => a + t.cases, 0);
   check('📦 Current AWD shipment: PREVIOUS PACKED box left out; 61-1-1=10 needs 3 boxes × 100 pcs = 300 pcs = 3 cases of 100 → C2=1-1-1 ×3; 62-2-2=5 needs 25 pcs = 1 case → BSMT; areas in walking order (BSMT before C2)',
     /1 PREVIOUS PACKED, on the pallet — not listed/.test(h) && c2 === 3 && bs === 1 && h.indexOf('data-a="BSMT"') > 0 && h.indexOf('data-a="BSMT"') < h.indexOf('data-a="C2"'), { takes: A.takes.map(t => [t.area, t.partNum, t.cases]), h: h.slice(0, 300) });
+  // Owner (2026-10-27): "2FL 1 spot · 9 cs — 9 cases, 1 spot to grab, but I also want how many Part #" → spots · part #s · cases.
+  check('…each area button says spots · part #s · cases (C2: 1 spot · 1 part # · 3 cs; BSMT: 1 spot · 1 part # · 1 cs)',
+    /data-a="C2"[^>]*>[^<]*C2 <span[^>]*>1 spot · 1 part # · 3 cs<\/span>/.test(h) && /data-a="BSMT"[^>]*>[^<]*BSMT <span[^>]*>1 spot · 1 part # · 1 cs<\/span>/.test(h), h.slice(h.indexOf('inv-awdship-area'), h.indexOf('inv-awdship-area') + 700));
   A.area = 'C2'; run.render(); const h2 = g('inv-awdship-out').innerHTML;
   run.add('C2'); run.add('C2');
   check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',

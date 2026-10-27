@@ -2394,8 +2394,10 @@ window.invCredLogin = async function() {
       + ((AWDS.allGot || []).length ? '<div style="font-size:12px;color:var(--green);margin-top:3px">✓ Already grabbed: ' + AWDS.allGot.map(ckE).join(', ') + '</div>' : '') + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
           var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
+          // 🔢 Owner (2026-10-27): "2FL 1 spot · 9 cs … I also want how many Part #" — the different part #s grabbed in this area.
+          var nPart = Object.keys(areas[a].reduce(function(m, i) { m[String(AWDS.takes[i].partNum || '').toUpperCase()] = 1; return m; }, {})).length;
           return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
-            + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs</span></button>'; }).join('') + '</div>';
+            + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs</span></button>'; }).join('') + '</div>';
     if (AWDS.area && areas[AWDS.area]) {
       var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });
       h += '<div style="border:1.5px solid #1D4ED8;border-radius:10px;padding:8px">' + L.map(function(i) { var t = AWDS.takes[i];
