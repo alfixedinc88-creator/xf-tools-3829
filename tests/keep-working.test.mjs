@@ -10066,7 +10066,7 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   }
   // Box check: the Amazon box label (SSCC) then the box grabbed
   check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
-    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(ok && lp && lp\.box\) setTimeout\(function\(\) \{ BXC\.label = null;/.test(ih) && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
+    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(lp && lp\.box && invBcSscc\(L\.code\)\) invBcDecide\(L, lp, ps\[1\] \|\| \(same \? lp : null\), ok, sameItem\);/.test(ih) /* owner 2026-10-27: a match → whole case → its pallet / split / rebag (was: straight on to the next label) */ && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
       && new Function((ih.match(/function invBcSscc\(code\) \{[^\n]*/) || [''])[0] + '; return invBcSscc("00201952611628557386") === "201952611628557386" && invBcSscc("850031110001") === "";')(), null);
   const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const sscc = new Function((ah.match(/function awdLabelSscc\(lines, y\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdLabelSscc;')();
@@ -10889,6 +10889,50 @@ console.log('\n🏬 Stock everywhere = SKU Mgr: no old Google Sheet, cases waiti
       && r['981-1-1=5-'].allocatedBulkBoxes === 2 && r['981-1-1=5-'].capped === true && (0 * 100 + 2 * 50) <= 200
       && !/getUnitsPerCase\(/.test(fnA('calculateSharedBulkAllocation') + fnA('awdGrabPlan')), r);
   sq.exec("DELETE FROM master_list WHERE base_sku = '981-1-1'; DELETE FROM inventory_log WHERE part_num = '981-1-1=10'");
+}
+
+// Owner (2026-10-27, the boxes are in the garage): "scan the Amazon label barcode, then the box. Match + whole case → scan the pallet number
+// (print PALLET 1, 2, 3 labels) — which box on which pallet, how many boxes a pallet; split into small boxes → put it on the side; same
+// parent but rebag → bring it inside to the packing room; not a match → double check. Main point: everything trackable, by when, by who."
+console.log('\n📦 Box check → PALLET: whole case on a pallet, split / rebag set aside, not a match; how many boxes on each pallet, who, when');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('71-1-1','pal a','71-1-1=10','GARAGE',5,100), ('72-2-2','pal b','72-2-2=10','GARAGE',5,300),
+    ('73-3-3','pal c','73-3-3=10','GARAGE',5,100), ('73-3-3','pal c','73-3-3=5','GARAGE',5,100), ('74-4-4','pal d','74-4-4=10','GARAGE',5,100), ('75-5-5','pal e','75-5-5=10','GARAGE',5,100)`).run();
+  const box = (ss, part, seq, prev) => ({ sscc: ss, sku: part + '-', part, seq, units: 10, loc: 'GARAGE', prev: !!prev });
+  await post('/awd/label-map', { shipment: 'STAR-PAL1', labels: [box('301952611628550001', '71-1-1=10', '1-1'), box('301952611628550002', '72-2-2=10', '1-1'), box('301952611628550003', '73-3-3=10', '1-1'),
+    box('301952611628550004', '75-5-5=10', '1-1'), box('301952611628550005', '71-1-1=10', '2-2', true)] });
+  const { readFileSync: rfP2 } = await import('node:fs');
+  const ihP = rfP2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihP.slice(ihP.indexOf('  var BXC = { label: null };'), ihP.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gP = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }), flashes = [];
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', code + '; return window;')(
+    gP, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, m => flashes.push(m), v => String(v || ''));
+  const wait = () => new Promise(r => setTimeout(r, 120));
+  const scan = async v => { B.invBoxCheckScan(v); await wait(); await wait(); };
+  await scan('00301952611628550001'); await scan('71-1-1=10'); const r1 = gP('inv-bc-res').innerHTML, s1 = gP('inv-bc-step').textContent;
+  await scan('C1=1-1-1'); const badPal = flashes.slice(-1)[0];
+  await scan('PALLET-2'); const r2 = gP('inv-bc-res').innerHTML;
+  check('1) box 71-1-1=10 (10 × 10 = 100 pcs) + the product 71-1-1=10 (a case of 100) → ✅ + "📦 WHOLE CASE — scan the PALLET label"; not a pallet label → said; PALLET-2 → "on PALLET 2 — PALLET 2 now has 1 box"',
+    /✅ RIGHT PRODUCT/.test(r1) && /📦 WHOLE CASE — scan the PALLET label/.test(r1) && /3️⃣ Scan the PALLET label/.test(s1) && /not a PALLET label/.test(badPal) && /on PALLET 2/.test(r2) && /PALLET 2 now has 1 box/.test(r2), { r1: r1.slice(-400), s1, badPal, r2 });
+  await scan('301952611628550002'); await scan('72-2-2=10'); const r3 = gP('inv-bc-res').innerHTML;
+  B.invBcDoneToPallet(); await scan('PALLET 2'); const r4 = gP('inv-bc-res').innerHTML;
+  check('2) box 72-2-2=10 (100 pcs) but a case has 300 → "✂ Put it on the SIDE — split it into the small box"; ✓ Already in the small box → PALLET 2 (now 2 boxes)',
+    /✂ Put it on the SIDE — split it into the small box/.test(r3) && /this box: 100 pcs \(10 × 10\) · the case has 300 pcs/.test(r3) && /PALLET 2 now has 2 boxes/.test(r4), { r3: r3.slice(-300), r4 });
+  await scan('301952611628550003'); await scan('73-3-3=5'); const r5 = gP('inv-bc-res').innerHTML;
+  await scan('301952611628550004'); await scan('74-4-4=10'); const r6 = gP('inv-bc-res').innerHTML;
+  check('3) box 73-3-3=10 + the product 73-3-3=5 (same item, other bag) → "🏷 Bring it INSIDE to the PACKING ROOM — rebag it as 73-3-3=10"; 4) box 75-5-5=10 + 74-4-4=10 → ❌ double check',
+    /🏷 Bring it INSIDE to the PACKING ROOM — rebag it as 73-3-3=10/.test(r5) && /❌ WRONG PRODUCT — don't pack it! Double check/.test(r6), { r5: r5.slice(-300), r6: r6.slice(-200) });
+  for (let i = 0; i < 20 && sq.prepare("SELECT COUNT(*) n FROM awd_box_scan WHERE shipment = 'STAR-PAL1'").get().n < 5; i++) await wait();
+  const T = await get('/awd/box-pallet?shipment=STAR-PAL1'), hB = await get('/awd/box-pallet?sscc=301952611628550002');
+  check('…STAR-PAL1 tally: 2 of 4 boxes on pallets (+1 PREVIOUS PACKED); PALLET 2 = 2 boxes (who / when); 1 in the packing room to rebag; 1 not a match; 0 not checked yet; box 72-2-2 history: set aside to split → PALLET 2 (by TS)',
+    T.ok && T.boxes === 5 && T.prev === 1 && T.onPallets === 2 && T.pallets.length === 1 && T.pallets[0].pallet === 2 && T.pallets[0].boxes.length === 2 && T.pallets[0].boxes.every(b => b.by === 'TS' && b.at)
+      && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 0 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
+  // the tally on the card + 🖨 PALLET labels + offline-safe (one guard per entry) + 🧩 check marks
+  check('…the card shows the tally (📦 STAR-PAL1: 2 of 4 boxes on pallets, PALLET 2 — 2 boxes, 🏷 1 to rebag, ❌ 1 not a match); 🖨 Print PALLET labels (PALLET 1, 2, 3… with a barcode PALLET-n); 🧩',
+    /📦 STAR-PAL1: 2 of 4 boxes on pallets/.test(gP('inv-bc-pallets').innerHTML) && /<b>PALLET 2<\/b> — 2 boxes/.test(gP('inv-bc-pallets').innerHTML) && /🏷 1 in the packing room to rebag/.test(gP('inv-bc-pallets').innerHTML)
+      && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), gP('inv-bc-pallets').innerHTML.slice(0, 300));
+  sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
