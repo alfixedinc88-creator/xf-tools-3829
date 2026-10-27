@@ -10753,5 +10753,61 @@ console.log('\n📷 Stock Out Big Company: ✓ Grabbed needs every box scanned �
   ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip'].forEach(k => { delete globalThis[k]; });
 }
 
+// 🔀 Owner (2026-10-27): "everything under Stock Out Big Company must be for Big Company — ungrabbed, grabbed info; Stock Out Shelving is for
+// Shelving — separate them, don't share the info".
+console.log('\n🔀 Stock Out Big Company and Stock Out Shelving: each tab shows / clears / scans / saves only its own Pull List items');
+{
+  const { readFileSync: rfT } = await import('node:fs');
+  const ih = rfT(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fnI = n => { const a = ih.indexOf('  function ' + n + '('); if (a < 0) return ''; const line = ih.slice(a, ih.indexOf('\n', a)); // a one-line function: that line only
+    return /\}\s*$/.test(line) && (line.match(/\{/g) || []).length === (line.match(/\}/g) || []).length ? line + '\n' : ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const win = n => { const a = ih.indexOf('  window.' + n + ' = function'); return a < 0 ? '' : ih.slice(a, ih.indexOf('\n  };\n', a) + 5); };
+  const hadW = 'window' in globalThis; if (!hadW) globalThis.window = globalThis;
+  const mk = () => [{ partNum: '8-8-8=10', location: 'C1=1-1-1', cases: '2', dest: 'shelving', key: 'A' }, { partNum: '9-9-9=5', location: 'BO=1-1-1', cases: '1', key: 'B' }, // made before "dest" = Shelving
+    { partNum: '8-8-8=10', location: 'C2=1-1-1', cases: '3', dest: 'company', forPart: '8-8-8=10', key: 'C' }, { partNum: '7-7-7=2', location: 'BARN=1-1-1', cases: '1', dest: 'company', key: 'D', grabbed: true }];
+  const run = (dest, extra, body) => new Function('dest', 'list', 'confirm', 'g', 'wFetch', 'W', 'invFlash', 'INV_CRED_USER', 'invMode', 'invFmtStamp',
+    `var invStockOutDest = dest, invPullList = list, _invAllPulls = [], seen = { saved: 0, drawn: 0, given: [] };
+     function invAwdClaimGiveBack(items) { seen.given = items.map(function(x) { return x.key; }); } function invSavePullList() { seen.saved++; } function invRenderPullList() { seen.drawn++; }
+     function invPullEsc(v) { return String(v == null ? '' : v); } function invLoadPullListFromServer() {}
+     ${fnI('invPullTab')}${fnI('invPullInTab')}${extra}; ${body}`);
+  // the tab rule + 🗑 Clear
+  const L1 = mk(), r1 = run('company', win('invClearPullList'), "window.invClearPullList(); return { list: invPullList, seen: seen, inCo: list.map(invPullInTab) };")('company', L1, () => true);
+  const L2 = mk(), r2 = run('shelving', win('invClearPullList'), "window.invClearPullList(); return { list: invPullList, seen: seen };")('shelving', L2, () => true);
+  check('each Pull List item belongs to ONE tab (Big Company, or Shelving — also the items made before the tab was kept); 🗑 Clear on Big Company clears only its 2, the Shelving 2 stay (and the other way round)',
+    JSON.stringify(r1.list.map(x => x.key)) === '["A","B"]' && JSON.stringify(r1.seen.given) === '["C","D"]' && JSON.stringify(r2.list.map(x => x.key)) === '["C","D"]', { r1: r1.list.map(x => x.key), r2: r2.list.map(x => x.key) });
+  // 📷 the scan-to-grab box: a Shelving item is not grabbed from the Big Company tab
+  const opened = [], warned = [];
+  const L3 = mk(), gs = new Function('dest', 'list', 'g', '_invFetchLookupRaw', 'invLocSort', 'invParent', 'invFlash', 'invPullScanOpen', 'invGrabWarn', 'setTimeout',
+    `var invStockOutDest = dest, invPullList = list; ${fnI('invPullTab')}${fnI('invPullInTab')}${win('invGrabScan')}; return window.invGrabScan;`)(
+    'company', L3, () => null, async () => ({ partNum: '8-8-8=10', baseSku: '8-8-8' }), () => 0, p => String(p).split('=')[0], () => {}, (i, c) => opened.push(i), (c, d, open) => warned.push(open), () => {});
+  gs('850000000017'); await new Promise(r => setTimeout(r, 20));
+  check('…📷 scan-to-grab on Big Company: 8-8-8=10 is on both lists → the Big Company one (C2) is grabbed, never the Shelving one (C1)', JSON.stringify(opened) === '[2]' && !warned.length, { opened, warned });
+  // 👥 Admin: everyone's un-grabbed — this tab's items only; 🗑 Delete all deletes only those (by id)
+  const els = { 'inv-allpull-card': { style: {}, setAttribute() {} }, 'inv-allpull-list': { innerHTML: '' } }, posts = [];
+  const people = { ok: true, people: [{ userId: 7, displayName: 'NB', updatedAt: '2026-10-27T18:15:00Z', ungrabbed: [
+    { id: 'S1', partNum: '8-8-8=10', location: 'C1=1-1-1', cases: 2, dest: 'shelving' }, { id: 'C1', partNum: '31-6-1=5XX', location: 'BARN=1-1-20', cases: 1, dest: 'company' }, { id: 'C2', partNum: '26-1-2=10X', location: 'BARN=1-1-22', cases: 3, dest: 'company' }] }] };
+  const ad = run('company', win('invLoadAllPulls') + win('invAllPullDelete'), "window.invLoadAllPulls(); return new Promise(function(r) { setTimeout(function() { var h = g('inv-allpull-list').innerHTML; window.invAllPullDelete(0, -1); setTimeout(function() { r(h); }, 10); }, 10); });")(
+    'company', [], () => true, id => els[id], async (u, o) => { if (o) posts.push(JSON.parse(o.body)); return { json: async () => (o ? { ok: true, deleted: 2 } : people) }; }, '', () => {}, { roles: ['admin'], userId: 1 }, 'out', v => v);
+  const adH = await ad;
+  check('…👥 Admin "everyone\'s un-grabbed" on Big Company: NB — 2 un-grabbed (the 2 BARN Big Company items, not his Shelving one); 🗑 Delete all deletes only those 2 (by id), never the Shelving one',
+    /NB — 2 un-grabbed/.test(adH) && /31-6-1=5XX/.test(adH) && !/8-8-8=10/.test(adH) && posts.length === 1 && JSON.stringify(posts[0]) === '{"userId":7,"ids":["C1","C2"]}', { adH: adH.slice(0, 200), posts });
+  // 💾 saved batches: each tab its own
+  const bt = new Function('dest', `var invStockOutDest = dest; ${fnI('invPullBatchInTab')}; return invPullBatchInTab;`);
+  const B = [{ items: [{ dest: 'company' }, { dest: 'company' }] }, { items: [{ dest: 'shelving' }] }, { items: [{}] }];
+  check('…💾 Saved For Later batches: Big Company sees its batch only, Shelving the other two (also the old ones made before the tab was kept)',
+    JSON.stringify(B.map(bt('company'))) === '[true,false,false]' && JSON.stringify(B.map(bt('shelving'))) === '[false,true,true]', null);
+  // server + the list on screen
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  await call('/inventory/pull/mine', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ items: mk() }) });
+  const all = await get('/inventory/pull/all'), pk = (all.people || []).find(p => p.ungrabbed.some(i => i.location === 'C2=1-1-1'));
+  check('…the server says which tab each un-grabbed item is for; the Pull List on screen (count "N of M grabbed", the 3 sections, the empty note) only uses this tab\'s items; switching tabs redraws the list, the Admin card and the saved count',
+    pk && JSON.stringify(pk.ungrabbed.map(i => i.dest)) === '["shelving","shelving","company"]'
+      && /var mine = invPullList\.filter\(invPullInTab\);/.test(ih) && /if \(!invPullInTab\(item\)\) return; \/\/ the other Stock Out tab's item/.test(ih) && />No " \+ \(invStockOutDest === 'company' \? 'Big Company' : 'Shelving'\) \+ " items yet/.test(ih)
+      && /invRenderPullList\(\); if \(typeof invLoadAllPulls === 'function'\) invLoadAllPulls\(\); if \(typeof invUpdateSavedBatchCount === 'function'\) invUpdateSavedBatchCount\(\); \/\/ 🔀/.test(ih)
+      && /if \(item\.submitError && !item\.submitted && invPullInTab\(item\)\) invSubmitOnePullItem\(i\);/.test(ih), pk && pk.ungrabbed);
+  await call('/inventory/pull/mine', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [] }) });
+  ['invClearPullList', 'invGrabScan', 'invLoadAllPulls', 'invAllPullDelete'].forEach(k => { delete globalThis[k]; }); if (!hadW) delete globalThis.window;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
