@@ -2326,8 +2326,26 @@ window.invCredLogin = async function() {
     var got = (d.grabbed || []).map(function(x) { return { part: x.part, forPart: x.forPart, cases: x.cases, ships: x.ships }; });
     (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { if (x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound)
       got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean) }); });
+    // 👤 …+ spots on ANOTHER phone's Pull List, not grabbed yet (owner 2026-10-27: "if anyone grabs anything, every other scanner sees it") —
+    // this phone's own are counted from its Pull List above, never twice
+    var mine = invAwdMyClaims();
+    (d.claims || []).forEach(function(c) { if (!mine[c.id]) got.push({ part: String(c.part).toUpperCase(), forPart: String(c.forPart || c.part).toUpperCase(), cases: c.cases || 0, ships: (c.ships || []).map(invAwdTag).filter(Boolean) }); });
     return got;
   }
+  function invAwdMyClaims() { var m = {}; (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { (x.awdClaims || []).forEach(function(id) { m[id] = 1; }); }); return m; }
+  // ✕ off the Pull List / cleared / an Admin deleted it → the spots go back to everyone
+  window.invAwdClaimGiveBack = function(items, how) {
+    var ids = []; (items || []).forEach(function(x) { if (x && !x.submitted && !x.grabbed) (x.awdClaims || []).forEach(function(id) { ids.push(id); }); });
+    if (!ids.length) return;
+    invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ close: ids, how: how || 'taken off the Pull List' }) }).catch(function() {});
+  };
+  // ↩ Give back someone's spots (a phone left with a list on it) — anyone can, it is kept who / when
+  window.invAwdGiveBack = function(by, area) {
+    var C = ((AWDS.data || {}).claims || []).filter(function(c) { return c.by === by && (c.area || '') === area; });
+    if (!C.length || !confirm('↩ Give back the ' + C.length + ' spot' + (C.length === 1 ? '' : 's') + ' ' + by + ' took' + (area ? ' in ' + area : '') + '?\n\nOnly if ' + by + ' is NOT grabbing them — then anyone can put them on a Pull List again.')) return;
+    invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ close: C.map(function(c) { return c.id; }), how: 'given back by hand' }) })
+      .then(function() { invFlash('↩ ' + C.length + ' spot' + (C.length === 1 ? '' : 's') + ' given back', 'success'); window.invAwdShipLoad(); }).catch(function() {});
+  };
   function invAwdGotKey(got, P) { return JSON.stringify(got.filter(function(x) { return x.forPart === P; }).map(function(x) { return [x.part, x.cases, x.ships]; }).sort()); }
   function invAwdSave() {
     try { if (typeof localStorage === 'undefined') return; var Ls = {}, parts = {};
@@ -2511,7 +2529,7 @@ window.invCredLogin = async function() {
           // 🔒 Admin / Owner only (owner 2026-10-27: "a lot of new guys here") — the server refuses anyone else too.
           + (invAwdIsAdmin() ? '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button>' : '') + '</div>'; }).join('')
       + ((AWDS.ships || []).length > 1 ? '<div style="font-size:12px;color:var(--text2);margin-top:3px">' + AWDS.ships.length + ' shipments together — a part # in more than one is grabbed once for all of them</div>' : '')
-      + ((AWDS.allGot || []).length ? '<div style="font-size:12px;color:var(--green);margin-top:3px">✓ Already grabbed: ' + AWDS.allGot.map(ckE).join(', ') + '</div>' : '') + '</div>'
+      + ((AWDS.allGot || []).length ? '<div style="font-size:12px;color:var(--green);margin-top:3px">✓ Already grabbed: ' + AWDS.allGot.map(ckE).join(', ') + '</div>' : '') + invAwdClaimsHtml() + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
           var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
           // 🔢 Owner (2026-10-27): "2FL 1 spot · 9 cs … I also want how many Part #" — the different part #s grabbed in this area.
@@ -2542,14 +2560,25 @@ window.invCredLogin = async function() {
     out.innerHTML = h + invAwdDoneHtml();
   };
   // ➕ the area's spots onto the Pull List (Big Company, for that part #) — the same steps as a Big Company search.
+  // 👤 who is grabbing what right now (on a Pull List, not ✓ Grabbed yet) — every phone sees it
+  function invAwdClaimsHtml() {
+    var mine = invAwdMyClaims(), g2 = {};
+    (((AWDS.data || {}).claims) || []).forEach(function(c) { var k = c.by + '|' + (c.area || ''); var o = g2[k] = g2[k] || { by: c.by, area: c.area || '', n: 0, at: c.at, me: false }; o.n++; if (c.at < o.at) o.at = c.at; if (mine[c.id]) o.me = true; });
+    var L = Object.keys(g2).map(function(k) { return g2[k]; }); if (!L.length) return '';
+    return '<div class="inv-awd-claims" style="font-size:12px;margin-top:4px;padding:6px 8px;border-radius:8px;background:#EFF6FF;color:#1E3A8A"><b>👤 Being grabbed now</b> (on a Pull List — not shown to anyone else):'
+      + L.map(function(o) { return '<div style="margin-top:2px">' + (o.me ? '<b>you</b>' : '<b>' + ckE(o.by) + '</b>') + ' — ' + ckE(o.area || '?') + ' · ' + o.n + ' spot' + (o.n === 1 ? '' : 's') + ' · since ' + ckE(xfrFmtT(o.at))
+        + (o.me ? '' : ' <a href="#" onclick="invAwdGiveBack(' + ckE(JSON.stringify(o.by)) + ',' + ckE(JSON.stringify(o.area)) + ');return false" style="color:#B91C1C">↩ Give back</a>') + '</div>'; }).join('') + '</div>';
+  }
   window.invAwdShipAdd = function(area) {
     if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
-    var keep = invPart, n = 0;
+    var keep = invPart, n = 0, claims = [];
     AWDS.takes.forEach(function(t, i) {
       if (t.area !== area || AWDS.added[i]) return;
+      var cid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // 👤 taken for everyone (made here: no WiFi is fine)
+      claims.push({ id: cid, part: t.partNum, forPart: t.target, cases: t.cases, ships: t.ships || [], loc: t.loc.location });
       var key = invPullItemKey(t.partNum, t.loc), ex = null;
       invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted && x.dest === 'company' && x.forPart === t.target) ex = x; });
-      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases;
+      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; ex.awdClaims = (ex.awdClaims || []).concat([cid]);
         var tg = String(ex.awdShipment || '').split('|').map(invAwdTag).filter(Boolean); (t.ships || []).forEach(function(x) { if (tg.indexOf(x) < 0) tg.push(x); }); ex.awdShipment = tg.join(' | '); }
       else {
         invPart = Object.assign({}, t.L, { partNum: t.partNum });
@@ -2559,11 +2588,12 @@ window.invCredLogin = async function() {
           isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString() });
         else { invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null; _invPendingStockoutSourceId = null; invAddToPullList(invPart, t.loc); invPullListPendingCases = null; }
         if (invPullList.length > before) { var it = invPullList[invPullList.length - 1]; if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
-          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdKind = invAwdKind(t); if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : ''); }
+          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdClaims = [cid]; it.awdKind = invAwdKind(t); if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : ''); }
       }
       AWDS.added[i] = true; n++;
     });
     if (n) AWDS.addN = (AWDS.addN || 0) + 1; // a list being worked out right now starts again with these on the Pull List
+    if (claims.length) invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, at: new Date().toISOString(), lines: claims }) }).catch(function() {});
     invPart = keep; invSavePullList(); invRenderPullList(); window.invAwdShipRender();
     invFlash(n ? '✓ ' + n + ' spot' + (n === 1 ? '' : 's') + ' in ' + area + ' on your Pull List — grab them, bring them to the garage, ✓ Grabbed' : 'Nothing new to add in ' + area, n ? 'success' : 'warn');
   };
@@ -5710,6 +5740,7 @@ window.invCredLogin = async function() {
         var gone = {}; d.removed.forEach(function(id) { gone[id] = 1; });
         var idOf = function(i) { return String(i.key || (i.partNum || '') + '|' + (i.location || '')).toUpperCase() + '|' + String(i.addedAt || ''); };
         var before = invPullList.length;
+        invAwdClaimGiveBack(invPullList.filter(function(i) { return !i.grabbed && !i.submitted && !i.noneFound && gone[idOf(i)]; }), 'deleted by an Admin');
         invPullList = invPullList.filter(function(i) { return !(!i.grabbed && !i.submitted && !i.noneFound && gone[idOf(i)]); });
         if (invPullList.length !== before) {
           try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
@@ -6957,6 +6988,7 @@ window.invCredLogin = async function() {
       invFlash('Already submitted — this stays as your record of what was done', 'warn');
       return;
     }
+    invAwdClaimGiveBack([invPullList[i]], 'taken off the Pull List');
     invPullList.splice(i, 1);
     invSavePullList();
     invRenderPullList();
@@ -7331,6 +7363,7 @@ window.invCredLogin = async function() {
   window.invClearPullList = function() {
     if (invPullList.length === 0) return;
     if (!confirm("Clear entire pull list?")) return;
+    invAwdClaimGiveBack(invPullList, 'Pull List cleared');
     invPullList = [];
     invSavePullList();
     invRenderPullList();
@@ -7374,7 +7407,8 @@ window.invCredLogin = async function() {
         clientTimestamp: entryTs,
         addedAt: item.addedAt || null,
         grabbedAt: item.grabbedAt || null,
-        noneFound: !!item.noneFound
+        noneFound: !!item.noneFound,
+        awdClaims: item.awdClaims || [] // 👤 the spots this phone took for an AWD shipment — closed for everyone with this Stock Out
       })
     }).then(function(r) { return r.json(); })
       .then(function(d) {
