@@ -1528,14 +1528,21 @@ async function awdShipHistoryAll(env) {
     L.boxes++; if (r.prev) L.prev++; else { const P = U(r.part || r.sku); L.parts[P] = (L.parts[P] || 0) + (parseFloat(r.units) || 0); }
     if (String(r.at) > L.at) { L.at = r.at; L.by = r.by_user; } if (String(r.at) > o.last) o.last = r.at; });
   (await all('SELECT shipment, action, at, by_user FROM awd_ship_done ORDER BY id')).forEach(r => { if (by[r.shipment]) by[r.shipment].doneLog.push({ action: r.action, at: r.at, by: r.by_user }); });
-  (await all(`SELECT part_num, location, cases, initials, timestamp, status, notes FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND timestamp >= ? ORDER BY timestamp`, since)).forEach(r => {
+  (await all(`SELECT part_num, location, cases, initials, timestamp, status, notes, added_at, grabbed_at FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND timestamp >= ? ORDER BY timestamp`, since)).forEach(r => {
     const m = /\[AWD:([^\]]*)\]/.exec(r.notes || ''), f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(r.notes || ''); if (!m) return;
     const none = /\[NONE FOUND ON SHELF\]/.test(r.notes || '');
     m[1].split('|').map(AWD_TAG_NAME).filter(Boolean).forEach(n => { const o = Object.values(by).find(x => AWD_TAG_NAME(x.shipment) === n); if (o) o.grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num),
-      loc: r.location, cases: parseFloat(r.cases) || 0, by: r.initials, at: r.timestamp, status: r.status || '', none }); }); });
+      loc: r.location, cases: parseFloat(r.cases) || 0, by: r.initials, at: r.timestamp, status: r.status || '', none,
+      // ⏱ owner (2026-10-27): "how long it took them" — put on the Pull List → ✓ Grabbed
+      addedAt: r.added_at || '', grabbedAt: r.grabbed_at || '', mins: r.added_at && r.grabbed_at ? Math.max(0, Math.round((Date.parse(r.grabbed_at) - Date.parse(r.added_at)) / 6000) / 10) : null }); }); });
+  // 👤 spots taken on a Pull List and not grabbed yet (or given back) — shown on the board too
+  (await all("SELECT * FROM awd_claim WHERE at >= ? AND status != 'done' ORDER BY at", since)).forEach(c => { String(c.ships || '').split('|').map(AWD_TAG_NAME).filter(Boolean).forEach(n => {
+    const o = Object.values(by).find(x => AWD_TAG_NAME(x.shipment) === n); if (o) (o.claims = o.claims || []).push({ part: U(c.part), forPart: U(c.for_part), loc: c.loc, cases: +c.cases || 0, by: c.by_user, at: c.at, status: c.status, how: c.how || '', closedAt: c.closed_at || '' }); }); });
+  // 📷 owner (same day): "most of the time a photo works better than words" — each item's photo on the board
+  let photos = {}; try { photos = await productPhotoMap(env, Object.values(by).flatMap(o => o.grabbed.map(x => x.part).concat((o.claims || []).map(x => x.part)))); } catch (_) {}
   const list = Object.values(by).map(o => { const d = o.doneLog[o.doneLog.length - 1]; o.done = d && d.action === 'done' && String(d.at) >= String(o.last) ? d : null; return o; })
     .sort((a, b) => String(b.last).localeCompare(String(a.last)));
-  return { ok: true, days: 90, list };
+  return { ok: true, days: 90, list, photos };
 }
 // 🏷 Owner (2026-10-27): "if I scan the outside barcode and it is the same item it shows match too — but write the outside box UPC code on the
 // label too, in case they want to check". GET /awd/box-upc?parts=A,B → each part #'s outside box UPC, as written: SKU Mgr → 🔢 UPC codes

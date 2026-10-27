@@ -10262,7 +10262,9 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
     const s1 = (hist.list || []).find(x => x.shipment === 'STAR-SEND1'), s2 = (hist.list || []).find(x => x.shipment === 'STAR-SEND2');
     // the card's history view, run on that answer
     const els = {}, gg = id => els[id] || (els[id] = { innerHTML: '', style: {} });
-    const src = ih.slice(ih.indexOf('  window.invAwdHistLoad = function() {'), ih.indexOf('  function invAwdDoneHtml() {'));
+    // (+ the area helpers the 🗺 board in each shipment uses — owner 2026-10-27)
+    const src = ih.match(/  var AWD_AREA_ORDER = [^\n]*\n/)[0] + ih.match(/  function invAwdArea\(loc\)[^\n]*\n/)[0] + ih.match(/  function invAwdAreaRank\(a\)[^\n]*\n/)[0]
+      + ih.slice(ih.indexOf('  window.invAwdHistLoad = function() {'), ih.indexOf('  function invAwdDoneHtml() {'));
     await new Function('g', 'W', 'wFetch', 'ckE', 'xfrFmtT', 'window', src + '; window.invAwdHistLoad(); return new Promise(r => setTimeout(r, 0));')(gg, '', async () => ({ json: async () => hist }), v => String(v == null ? '' : v), v => String(v || ''), {});
     await new Promise(r => setTimeout(r, 20));
     const hv = gg('inv-awdship-hist-out').innerHTML;
@@ -10575,6 +10577,35 @@ console.log('\n🏷 / ✓ / ✂ AWD shipment: need to label · prelabel full cas
       && /var coBadge = item\.dest === 'company' \? \(item\.awdKind \? invAwdKindBadge\(item\.awdKind\) : ''\)/.test(ih) && /kh\.textContent = kx \? kx\[0\] \+ ' — put these in their own spot' : 'Everything else';/.test(ih)
       && /destTag \+= '\[' \+ \(\{ label: 'NEED TO LABEL', full: 'PRELABEL FULL CASE', extra: 'PRELABEL EXTRA STEP' \}\[item\.awdKind\] \|\| ''\) \+ '\] ';/.test(ih), null);
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('97-1-1','97-2-2'); DELETE FROM awd_ship_send");
+}
+
+// Owner (2026-10-27, the Audit's By area boxes): "under Stock Out Big Company a history too (Admin and up): how long it took them, when, who
+// grabbed it — and design it like those boxes, most of the time a photo works better than words".
+console.log('\n🗺 AWD shipment history board: who grabbed what, when, how long — a box per spot with the item\'s photo');
+{
+  await post('/awd/ship-send', { shipment: 'STAR-BOARD1', lines: [{ sku: '91-1-1=10-', part: '91-1-1=10', units: 30, boxes: 3, name: 'board elbow' }, { sku: '92-2-2=5-', part: '92-2-2=5', units: 10, boxes: 1, name: 'board tee' }] });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('91-1-1','board elbow','91-1-1=10','C1=1-1-5',9,100), ('92-2-2','board tee','92-2-2=5','BSMT=2-2-2',4,50)").run();
+  await get('/inventory/lookup?code=91-1-1=10'); // photo table
+  sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url) VALUES ('91-1-1', 'https://img.example/91.jpg')").run();
+  const t0 = Date.now() - 3600e3, at = m => new Date(t0 + m * 60000).toISOString();
+  await post('/inventory/log', { type: 'OUT', partNum: '91-1-1=10', sku: '91-1-1', location: 'C1=1-1-5', cases: 3, initials: 'NB', notes: '[BIG COMPANY for 91-1-1=10] [AWD: STAR-BOARD1]', addedAt: at(0), grabbedAt: at(6), clientTimestamp: at(6) });
+  await post('/inventory/log', { type: 'OUT', partNum: '92-2-2=5', sku: '92-2-2', location: 'BSMT=2-2-2', cases: 0, initials: 'YM', notes: '[NONE FOUND ON SHELF] [BIG COMPANY for 92-2-2=5] [AWD: STAR-BOARD1]', noneFound: true, addedAt: at(1), grabbedAt: at(41), clientTimestamp: at(41) });
+  await post('/awd/claim', { area: 'BSMT', lines: [{ id: 'cboard-1', part: '92-2-2=5', forPart: '92-2-2=5', cases: 1, ships: ['STAR-BOARD1'], loc: 'BSMT=9-9-9' }] });
+  const hd = await get('/awd/ship-send?history=1'), o = (hd.list || []).find(x => x.shipment === 'STAR-BOARD1') || {};
+  const g1 = (o.grabbed || []).find(x => x.part === '91-1-1=10') || {}, g2 = (o.grabbed || []).find(x => x.part === '92-2-2=5') || {};
+  check('history (Admin): each grab has when it went on the Pull List → ✓ Grabbed and how long (NB 6 min, YM none found 40 min); spots on a Pull List now; the item photos',
+    g1.by === 'NB' && g1.mins === 6 && g2.none === true && g2.mins === 40 && (o.claims || []).some(c => c.by === 'TS' && c.status === 'open' && c.loc === 'BSMT=9-9-9') && hd.photos['91-1-1'] === 'https://img.example/91.jpg', { g1, g2, claims: o.claims, photos: hd.photos });
+  const { readFileSync: rfH } = await import('node:fs');
+  const ih = rfH(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), fnH = n => { const a = ih.indexOf('  function ' + n + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const board = new Function('ckE', 'xfrFmtT', ih.match(/  var AWD_AREA_ORDER = [^\n]*\n/)[0] + ih.match(/  function invAwdArea\(loc\)[^\n]*\n/)[0] + ih.match(/  function invAwdAreaRank\(a\)[^\n]*\n/)[0] + fnH('invAwdBoardHtml') + '; return invAwdBoardHtml;')(v => String(v == null ? '' : v), v => String(v || ''))(o, hd.photos);
+  const iB = board.indexOf('>BSMT<'), iC = board.indexOf('>C1<');
+  check('…the board: 👷 NB 1 spot · 3 cs (avg 6 min a spot), 👷 YM 1 none found; a box per spot in walking order (BSMT before C1) with the photo, spot, part #, cases, who, ⏱; over 30 min in red; 🟦 TS has BSMT=9-9-9 now; shown in 🕘 Shipment history',
+    /👷 NB<\/b> · 1 spot · 3 cs/.test(board) && /avg <b>6 min<\/b> a spot/.test(board) && /👷 YM<\/b> · 0 spots · 0 cs · 1 none found/.test(board) && iB > 0 && iC > iB
+      && /<img src="https:\/\/img\.example\/91\.jpg"/.test(board) && /1-1-5<\/b><div[^>]*>91-1-1=10 · <b>3 cs<\/b>/.test(board) && /✓ NB/.test(board) && /color:var\(--red\)">⏱ 40 min/.test(board) && /👤 TS has it/.test(board)
+      && (board.match(/class="inv-awd-tile"/g) || []).length === 3 && /\+ invAwdBoardHtml\(o, d\.photos \|\| \{\}\)/.test(ih) && /id="inv-awdship-hist" style="display:none/.test(ih), board.slice(0, 600));
+  const pkH = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  check('…Admin / Owner only (a picker gets 403)', (await call('/awd/ship-send?history=1', { headers: { 'X-Cred-Token': pkH } })).status === 403, null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('91-1-1','92-2-2'); DELETE FROM awd_claim; DELETE FROM product_photo WHERE base_sku = '91-1-1'"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-BOARD1]%'").run();
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
