@@ -10466,5 +10466,48 @@ console.log('\n🔍 Box check: the box\'s OUTSIDE UPC matches its Amazon box lab
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('723-5-4','724-1-1'); DELETE FROM upc WHERE base_sku IN ('723-5-4','724-1-1'); DELETE FROM upc_edit WHERE part = '724-1-1=10'; DELETE FROM awd_label_map WHERE shipment = 'STAR-OUTUPC'");
 }
 
+// Owner (2026-10-27): "for the one we 'need to label', after 'Put C1 on my pull list' it never shows 'need to label' — it must still show under
+// the Pull List so whoever grabs it knows it needs a label and puts it in a separate spot; also separate what doesn't need a label but isn't a
+// full case (cut it open, grab what we need, or 2 cases for our 10 boxes); a whole case = just put the Amazon label on the outside. Total 3:
+// need label · full box with prelabel · prelabel but an extra step (like wrong quantities)".
+console.log('\n🏷 / ✓ / ✂ AWD shipment: need to label · prelabel full case · prelabel extra step — on the card, the Pull List and the record');
+{
+  const { readFileSync: rfK3 } = await import('node:fs');
+  const ih = rfK3(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  sq.exec("DELETE FROM awd_ship_send; DELETE FROM awd_label_map");
+  // 97-1-1=10: Amazon box 10 bags × 10 = 100 pcs, our case 100 pcs (C1) → ✓ full · 97-2-2=50: Amazon box 4 × 50 = 200 pcs, our case 600 pcs (C1) → ✂ extra
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('97-1-1','Elbow','97-1-1=10','C1=1-1-1',5,100), ('97-2-2','Tee','97-2-2=50','C1=2-2-2',3,600)").run();
+  await post('/awd/ship-send', { shipment: 'STAR-KIND1', lines: [{ sku: '97-1-1=10-', units: 30, boxes: 3, unitsPerBox: 10 }, { sku: '97-2-2=50-', units: 12, boxes: 3, unitsPerBox: 4 }] });
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = [];
+  const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+    invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {}, invPost: (u, o) => call(u, Object.assign({ headers: H }, o)) };
+  const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+    function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+    ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${fn('invCaseOfPlan')}${fn('invCaseOffTxt')}${block}
+    return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd, render: window.invAwdShipRender, kind: invAwdKind, badge: window.invAwdKindBadge };`)(...Object.values(env2), pull);
+  run.load(); for (let i = 0; i < 60 && !/inv-awdship-area/.test(g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25));
+  const A = run.AWDS, tk = p => A.takes.filter(t => t.target === p);
+  // + one 🏷 need-to-label line: another bag of the same part (97-1-1=10XX for 97-1-1=10)
+  A.takes.push(Object.assign({}, tk('97-1-1=10')[0], { partNum: '97-1-1=10XX', cases: 1, how: 'same bag count, other letters — cover the label' }));
+  A.area = 'C1'; run.render(); const h = g('inv-awdship-out').innerHTML;
+  const iF = h.indexOf('✓ Prelabel — '), iX = h.indexOf('✂ Prelabel, extra step — '), iL = h.indexOf('🏷 Need to label — ');
+  check('card: 97-1-1=10 (our case 100 pcs = one Amazon box of 10 × 10) → ✓ Prelabel (full case — just the Amazon label outside); 97-2-2=50 (case 600 pcs, Amazon box 200) → ✂ Prelabel, extra step "open the case and split it into 3 Amazon boxes"; 97-1-1=10XX → 🏷 Need to label — 3 groups, area "🏷 1 to label · ✂ 1 extra step · ✓ 1 prelabel"',
+    run.kind(tk('97-1-1=10')[0]) === 'full' && run.kind(tk('97-2-2=50')[0]) === 'extra' && iF > 0 && iX > iF && iL > iX
+      && /✂ 600 pcs a case, 200 pcs an Amazon box — open the case and split it into 3 Amazon boxes/.test(h.slice(iX, iL)) && /data-pre="2"/.test(h.slice(iX, iL)) && /97-1-1=10XX/.test(h.slice(iL))
+      && /data-a="C1"[^]*?🏷 1 to label · ✂ 1 extra step · ✓ 1 prelabel/.test(h), h.slice(h.indexOf('inv-awdship-lab'), h.indexOf('inv-awdship-lab') + 400));
+  run.add('C1');
+  const byP = p => pull.find(x => x.partNum === p) || {};
+  check('…➕ Put C1 on my Pull List → each line keeps its kind: 97-1-1=10 ✓ full, 97-2-2=50 ✂ extra (how: open the case and split it), 97-1-1=10XX 🏷 need to label',
+    byP('97-1-1=10').awdKind === 'full' && byP('97-2-2=50').awdKind === 'extra' && /^✂ 600 pcs a case, 200 pcs an Amazon box — open the case and split it into 3 Amazon boxes/.test(byP('97-2-2=50').how) && byP('97-1-1=10XX').awdKind === 'label',
+    pull.map(x => [x.partNum, x.awdKind, x.how]));
+  check('…the Pull List shows the tag on every line (🏷 NEED TO LABEL / ✓ PRELABEL · FULL CASE / ✂ PRELABEL · EXTRA STEP), ✓ Grabbed puts the 3 kinds apart ("put these in their own spot"); the Stock Out record says which',
+    /🏷 NEED TO LABEL/.test(run.badge('label')) && /✓ PRELABEL · FULL CASE/.test(run.badge('full')) && /✂ PRELABEL · EXTRA STEP/.test(run.badge('extra')) && run.badge('') === ''
+      && /var coBadge = item\.dest === 'company' \? \(item\.awdKind \? invAwdKindBadge\(item\.awdKind\) : ''\)/.test(ih) && /kh\.textContent = kx \? kx\[0\] \+ ' — put these in their own spot' : 'Everything else';/.test(ih)
+      && /destTag \+= '\[' \+ \(\{ label: 'NEED TO LABEL', full: 'PRELABEL FULL CASE', extra: 'PRELABEL EXTRA STEP' \}\[item\.awdKind\] \|\| ''\) \+ '\] ';/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('97-1-1','97-2-2'); DELETE FROM awd_ship_send");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
