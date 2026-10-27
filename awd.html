@@ -1697,6 +1697,7 @@ function bldAddedTxt(iso) { if (!iso) return ''; try { return new Date(iso).toLo
 // Confirmed with the user: when the shared bulk pool can't cover
 // everyone's need, split it proportionally by how much each variant
 // is asking for, not first-come-first-served or urgency-based.
+function awdPackOf(x) { const m = String(x || '').split('=').pop().trim().match(/^(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) || 1 : 1; } // =10X → 10 pcs a bag
 function calculateSharedBulkAllocation(items) {
   const groups = {}; // base_sku -> array of per-item calc data
   items.forEach(([sku, item]) => {
@@ -1709,11 +1710,12 @@ function calculateSharedBulkAllocation(items) {
 
     // Exact-match labeled stock — no sharing conflict here, this stock
     // is already specific to this one SKU, same logic as before.
+    // 🏬 bags a case = SKU Mgr's Ea/Case (pcs) ÷ the pack (owner 2026-10-27: SKU Mgr only — not the AWD_Master sheet)
     let labeledPkgs = 0, exactUnknown = false;
     const exactRows = ws.exactRows || [];
     if (exactRows.length > 0) {
       exactRows.forEach(row => {
-        const upc = getUnitsPerCase(row.partNum);
+        const upc = row.eachPcs > 0 ? row.eachPcs / awdPackOf(row.partNum) : 0;
         if (upc > 0) labeledPkgs += row.casesNum * upc;
         else exactUnknown = true;
       });
@@ -1722,7 +1724,7 @@ function calculateSharedBulkAllocation(items) {
     const desiredBulkBoxes = boxes - preLabeledBoxes;
 
     if (!groups[base]) groups[base] = [];
-    groups[base].push({ sku, cp, boxes, preLabeledBoxes, desiredBulkBoxes, hasExact: exactRows.length > 0, wsStatus: ws.status, bulkRows: ws.bulkRows || [] });
+    groups[base].push({ sku, cp, boxes, preLabeledBoxes, desiredBulkBoxes, pack: awdPackOf(sku), hasExact: exactRows.length > 0, wsStatus: ws.status, bulkRows: ws.bulkRows || [] });
   });
 
   const result = {};
@@ -1733,14 +1735,14 @@ function calculateSharedBulkAllocation(items) {
     // group (all share the same base SKU) — calculate it ONCE per
     // group, not once per item, so it isn't double-counted.
     const bulkRows = groupItems[0].bulkRows;
+    // real pieces on both sides (SKU Mgr's Ea/Case = pcs a case; an Amazon unit = one bag of the SKU's pack) — =5 and =10 bags compare right
     let totalBulkPieces = 0, bulkUnknown = false;
     bulkRows.forEach(row => {
-      const upc = getUnitsPerCase(row.partNum);
-      if (upc > 0) totalBulkPieces += row.casesNum * upc;
-      else bulkUnknown = true; // can't reliably convert this row's cases to pieces
+      if (row.eachPcs > 0) totalBulkPieces += row.casesNum * row.eachPcs;
+      else bulkUnknown = true; // can't reliably convert this row's cases to pieces (no Ea/Case in SKU Mgr)
     });
 
-    const totalDesiredPieces = groupItems.reduce((sum, gi) => sum + gi.desiredBulkBoxes * gi.cp.unitsPerBox, 0);
+    const totalDesiredPieces = groupItems.reduce((sum, gi) => sum + gi.desiredBulkBoxes * gi.cp.unitsPerBox * gi.pack, 0);
 
     groupItems.forEach(gi => {
       let allocatedBulkBoxes, capped = false;
@@ -1751,10 +1753,10 @@ function calculateSharedBulkAllocation(items) {
       } else {
         // Not enough for everyone — proportional split by each item's
         // own share of total demand.
-        const desiredPieces = gi.desiredBulkBoxes * gi.cp.unitsPerBox;
+        const desiredPieces = gi.desiredBulkBoxes * gi.cp.unitsPerBox * gi.pack;
         const share = desiredPieces / totalDesiredPieces;
         const allocatedPieces = Math.floor(totalBulkPieces * share);
-        allocatedBulkBoxes = Math.min(gi.desiredBulkBoxes, Math.floor(allocatedPieces / gi.cp.unitsPerBox));
+        allocatedBulkBoxes = Math.min(gi.desiredBulkBoxes, Math.floor(allocatedPieces / (gi.cp.unitsPerBox * gi.pack)));
         capped = allocatedBulkBoxes < gi.desiredBulkBoxes;
       }
       result[gi.sku] = {
@@ -2216,7 +2218,7 @@ function awdGrabPlan(sku, unitsList) {
     const pk = x => { const m = String(x || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }, want = pk(sku);
     const sr = l => (l || []).slice().sort((a, b) => awdLocCompare(a.location, b.location)), spots = [], off = [];
     sr(checkWarehouseStock(co).exactRows).forEach(r => {
-      const u = getUnitsPerCase(r.partNum), pcs = (r.eachPcs > 0 ? r.eachPcs : 0) || (u > 0 ? u * pk(r.partNum) : 0), n = Math.floor(r.casesNum || 0);
+      const pcs = r.eachPcs > 0 ? r.eachPcs : 0, n = Math.floor(r.casesNum || 0); // 🏬 SKU Mgr's Ea/Case only (owner 2026-10-27)
       if (pcs === want) { for (let c = 0; c < n; c++) spots.push(r.location || '?'); }
       else if (n > 0) off.push((r.location || '?') + ' (' + n + ' case' + (n === 1 ? '' : 's') + ' of ' + (pcs ? pcs + ' pcs' : '? pcs — no Ea/Case in SKU Mgr') + ')');
     });
@@ -2240,7 +2242,9 @@ function awdGrabPlan(sku, unitsList) {
     // pcs a case: the AWD_Master sheet (bags a case × pack), else SKU Mgr's Ea/Case for that spot (owner 2026-10-25: "why the ?")
     // pieces a case: SKU Mgr's Ea/Case first (owner 2026-10-25, 23-5-2=50: "one case is 600 pcs = one Amazon box" — the AWD_Master
     // packages-per-case made it look like one case covered all 4 boxes); AWD_Master packages × the pack number only when SKU Mgr has none
-    const upc = getUnitsPerCase(x.r.partNum), pcs = (x.r.eachPcs > 0 ? x.r.eachPcs : 0) || (upc > 0 ? upc * packOf(x.r.partNum) : 0);
+    // 🏬 Owner (2026-10-27): "only the SKU Mgr info for any inventory quantities or boxes info" — SKU Mgr's Ea/Case only (the old AWD_Master
+    // packages-per-case is not used any more); none on record → "? pcs a case — no Ea/Case in SKU Mgr", set it there.
+    const pcs = x.r.eachPcs > 0 ? x.r.eachPcs : 0;
     for (let c = 0; c < Math.floor(x.r.casesNum || 0) && got < needPcs && cases.length < 500; c++) {
       cases.push({ loc: x.r.location || '?', part: x.r.partNum, pcs, exact: x.exact, used: 0 });
       got += pcs || needPcs; // a case with no Ea/Case on record: counted as enough (said so below)
@@ -2413,6 +2417,9 @@ async function awdLabelsDo(file) {
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
   out.innerHTML = '⏳ Reading the labels…';
   try {
+    // 🏬 Owner (2026-10-27): the spots / cases on the labels come from SKU Mgr as it is NOW (read again here, not the copy from when the page opened)
+    if (typeof loadWarehouseStock === 'function') { out.innerHTML = '⏳ Reading SKU Mgr…'; await loadWarehouseStock(); if (WH.error) throw new Error('SKU Mgr could not be read (' + WH.error + ') — try again'); }
+    out.innerHTML = '⏳ Reading the labels…';
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
     const groups = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0, oneLabel = 0;
     const amz = await awdAmzList(); _awdCaseOfP = null; await awdCaseOfLoad(); // fresh: a case just set in Reorder counts
@@ -2976,18 +2983,20 @@ async function loadWarehouseStock() {
       if (SKIP.has(partNum.toLowerCase())) continue;
       var casesRaw = r[8];
       var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+      // 🏬 minus the cases a Stock Out already took that is waiting for approval — the same free cases Stock Out Big Company sees
+      if (casesNum > 0 && parseFloat(r[15]) > 0) casesNum = Math.max(0, Math.round((casesNum - parseFloat(r[15])) * 1000) / 1000);
       if (!casesNum || casesNum <= 0) continue;  // only in-stock rows
       // Normalize key: strip spaces around '=' so "26-2-1 =2" matches "26-2-1=2"
       var key = partNum.toLowerCase().replace(/\s*=\s*/g, '=').replace(/-+$/, '');
       if (!WH.stock[key]) WH.stock[key] = [];
       WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum, eachPcs: parseFloat(r[9]) || 0 }); // SKU Mgr Ea/Case (pcs)
     }
-    WH.loaded = true;
+    WH.loaded = true; WH.error = ''; WH.at = Date.now();
     console.log('[XFITTING] WH stock loaded:', Object.keys(WH.stock).length, 'unique partNums');
     // Re-render now that WH stock is available so badges show
     if (S.loaded) { renderRecs(); renderDashboard(); renderBuilder(); }
   } catch(e) {
-    console.error('[XFITTING] WH stock load failed:', e);
+    console.error('[XFITTING] WH stock load failed:', e); WH.error = String(e && e.message || e); // 🏬 said on the labels — never a guess
   }
 }
 
