@@ -5057,7 +5057,7 @@ window.invCredLogin = async function() {
         try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
         invFlash('✗ ' + pn + ' is a different item — this one is ' + it.partNum + '. Put it back.', 'error'); return;
       }
-      if (pn === U(it.partNum)) { it.scanNote = (/^\[NONE FOUND AT/.test(it.scanNote || '') ? it.scanNote + ' ' : '') + '[BOX SCANNED]'; invTogglePullCheck(i); invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success'); return; }
+      if (pn === U(it.partNum)) { it.scanNote = (/^\[NONE FOUND AT/.test(it.scanNote || '') ? it.scanNote + ' ' : '') + '[BOX SCANNED]'; invPullScanOpen(i, code); if (it.grabbed) invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success'); return; }
       var at = locs.filter(function(l) { return U(l.partNum) === pn && U(l.location) === L; })[0]
         || locs.filter(function(l) { return U(l.partNum) === pn && (parseFloat(l.palletBoxes) || 0) > 0; })[0];
       if (!at) { invFlash(pn + ' is not on record at ' + it.location + ' — log it with Stock In / Found on Shelf first', 'error'); return; }
@@ -5069,8 +5069,8 @@ window.invCredLogin = async function() {
       it.rowIndex = at.rowIndex; it.masterRowIndex = at.rowIndex; it.masterId = at.masterId || null; it.isPlaceholder = false;
       it.scanNote = '[REPLACED: asked for ' + was + ' — grabbed ' + pn + ' @ ' + at.location + ' instead (easier to reach)]';
       invSavePullList();
-      invTogglePullCheck(i);
-      invFlash('🔁 Replaced ' + was + ' → ' + n + ' × ' + pn + ' @ ' + at.location + ' — grabbed', 'success');
+      invPullScanOpen(i, code); // 📷 the box scanned counts as box 1; more cases → scan the rest
+      invFlash('🔁 Replaced ' + was + ' → ' + n + ' × ' + pn + ' @ ' + at.location + (it.grabbed ? ' — grabbed' : ' — scan the other boxes'), 'success');
     }).catch(function() { if (inp) inp.disabled = false; invFlash('Lookup failed — try again', 'error'); });
   };
   (function() {
@@ -7003,8 +7003,9 @@ window.invCredLogin = async function() {
     var bx = invPullList[i];
     // 📷 Owner (2026-10-27): "a lot of the boxes he grabbed for AWD were the wrong item, wrong quantities — instead of just clicking Grabbed,
     // they have to scan the box they try to grab; match → let them grab it, not a match → a warning, check again and grab the right one; 5
-    // cases → scan all 5". Big Company (ships to Amazon) only — Stock Out Shelving (a locked design) is not touched.
-    if (!bx.grabbed && bx.dest === 'company' && !bx.scanVerified && !bx.noneFound) { invPullScanOpen(i); return; }
+    // cases → scan all 5". Owner (2026-10-27): "the same for Stock Out Shelving too — no more click on Grabbed, they have to scan it to double
+    // check they got the right stuff" (a change the owner asked for on the locked 🏬 Stock Out Shelving design). Both tabs now.
+    if (!bx.grabbed && !bx.scanVerified && !bx.noneFound) { invPullScanOpen(i); return; }
     // Two box sizes of this part # at this spot: one more step — confirm the box.
     if (!bx.grabbed && bx.otherPcs && bx.otherPcs.length && !bx.boxConfirmed) {
       if (!confirm(bx.partNum + ' @ ' + bx.location + ' comes in 2 box sizes here.\n\nIs the box you grabbed ' + bx.boxPcs + ' pcs?\n(The other boxes are ' + bx.otherPcs.join(' / ') + ' pcs.)\n\nOK = yes, ' + bx.boxPcs + ' pcs · Cancel = check again')) { invFlash('Check the box label — grab the box of ' + bx.boxPcs + ' pcs', 'warn'); return; }
@@ -7159,11 +7160,13 @@ window.invCredLogin = async function() {
   // 📷 Scan to grab (Big Company): every case scanned, each must be the exact part # on the Pull List line.
   var PSG = null;
   function invPsgNorm(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
-  window.invPullScanOpen = function(i) {
+  // first = a box already scanned and matched (the ▸ scan-to-grab box, 🔁 Replace): it counts as box 1 — never scanned twice.
+  window.invPullScanOpen = function(i, first) {
     var it = invPullList[i]; if (!it) return;
     var need = Math.max(1, Math.ceil((parseFloat(it.cases) || 0) - 1e-9));
     if (!(parseFloat(it.cases) > 0)) { invFlash('Enter cases before marking grabbed', 'error'); return; }
-    PSG = { item: it, need: need, ok: [], wrong: 0 };
+    if (first && need <= 1) { it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED 1/1 boxes ✓]'; invTogglePullCheck(invPullList.indexOf(it)); return; }
+    PSG = { item: it, need: need, ok: first ? [String(first)] : [], wrong: 0, first: first ? String(first).trim().toUpperCase() : '' };
     invModal('inv-psg-modal', '<div style="font-size:16px;font-weight:800">📷 Scan every box you grab</div>'
       + '<div style="font-size:14px;margin:6px 0"><b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(it.location) + '</b> — <b>' + invEsc(it.cases) + ' case' + (parseFloat(it.cases) === 1 ? '' : 's') + '</b>'
       + (it.forPart && it.forPart !== it.partNum ? ' <span style="color:#b45309">for ' + invEsc(it.forPart) + '</span>' : '') + (it.name ? '<div style="font-size:12px;color:var(--text3)">' + invEsc(it.name) + '</div>' : '') + '</div>'
@@ -7181,11 +7184,13 @@ window.invCredLogin = async function() {
     code = String(code || '').trim(); if (!code || !PSG) return;
     var S = PSG, it = S.item, want = invPsgNorm(it.partNum), res = g('inv-psg-res');
     if (res) res.innerHTML = '<span style="color:var(--text3)">⏳ checking ' + invEsc(code) + '…</span>';
-    // 📴 No WiFi: the barcode can't be looked up — never called "wrong", never counted; scan again when the WiFi is back (or an Admin's 🔓)
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) { if (res) res.innerHTML = '<div style="color:var(--orange);font-weight:800">📶 No WiFi — can\'t check this box. Scan it again when the WiFi is back.</div>'; return; }
+    // 📴 No WiFi (owner 2026-10-19: the app keeps working offline): the phone's stock copy answers the barcode (sw.js). Only a barcode that is
+    // not in that copy can't be checked — never called "wrong", never counted; scan again when the WiFi is back (or an Admin's 🔓).
+    var offline = typeof navigator !== 'undefined' && navigator.onLine === false;
     invBcPart(code).then(function(p) {
       if (PSG !== S) return;
-      var got = p ? invPsgNorm(p.part) : '', ok = got === want, sameItem = !ok && got && invParent(got) === invParent(want);
+      if (!p && offline) { if (res) res.innerHTML = '<div style="color:var(--orange);font-weight:800">📶 No WiFi — this barcode is not in the phone\'s copy, can\'t check it. Scan it again when the WiFi is back.</div>'; return; }
+      var got = p ? invPsgNorm(p.part) : '', ok = got === want || (!!S.first && code.toUpperCase() === S.first), sameItem = !ok && got && invParent(got) === invParent(want);
       // every scan is kept (who / when / right or wrong) — the same record as 🔍 Box check
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: it.partNum, product: code, labelPart: want, productPart: got, ok: ok,
         note: 'Grab scan ' + it.location + (it.awdShipment ? ' [AWD: ' + it.awdShipment + ']' : ''), _requestId: 'psg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) }).catch(function() {});
@@ -7395,8 +7400,8 @@ window.invCredLogin = async function() {
       if (exact.length) {
         var i = exact[0], it = invPullList[i];
         it.scanNote = (/^\[NONE FOUND AT/.test(it.scanNote || '') ? it.scanNote + ' ' : '') + '[BOX SCANNED]';
-        invTogglePullCheck(i);
-        invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success');
+        invPullScanOpen(i, code); // 📷 this box counts as box 1; more cases → scan the rest
+        if (it.grabbed) invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success');
         setTimeout(function() { var x = g('inv-grab-scan'); if (x) x.focus(); }, 50);
         return;
       }
@@ -7413,14 +7418,15 @@ window.invCredLogin = async function() {
       + '<div style="font-size:13px;margin:6px 0 10px">You scanned <b style="font-family:var(--mono)">' + invEsc(pn || code) + '</b>' + (d && d.name ? ' (' + invEsc(d.name) + ')' : '') + (pn ? '' : ' — not a part # we know')
       + ' — that is <b>not</b> on your Ungrabbed list. Put it back.</div>'
       + '<button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;width:100%;padding:12px;font-size:15px;margin-bottom:10px" onclick="invGrabWarnClose()">↩ Put it back — scan again</button>'
-      + (opts.length ? '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Sure it\'s the right box and only its label is wrong? Mark that item grabbed (recorded as a scan mismatch):</div>'
+      + (opts.length && invAwdIsAdmin() ? '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">🔓 Admin: sure it\'s the right box and only its label is wrong? Mark that item grabbed (recorded as a scan mismatch):</div>'
         + opts.map(function(i) { var it = invPullList[i]; return '<button style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--orange);background:var(--orange-bg);color:var(--text);cursor:pointer;font-size:13px" onclick="invGrabWarnUse(' + i + ',\'' + invEsc(pn || code).replace(/'/g, '') + '\')">It\'s really <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ ' + invEsc(it.location) + ' · ' + invEsc(it.cases) + ' cs</button>'; }).join('') : ''));
   }
   window.invGrabWarnClose = function() { invModalClose('inv-grab-modal'); var x = g('inv-grab-scan'); if (x) x.focus(); };
   window.invGrabWarnUse = function(i, scanned) {
     var it = invPullList[i]; if (!it) return;
+    if (!invAwdIsAdmin()) { invFlash('🔒 Only an Admin can grab a box whose label doesn\'t match', 'error'); return; } // owner 2026-10-27: scan to grab, both tabs
     if (!confirm('Mark ' + it.partNum + ' @ ' + it.location + ' as grabbed?\n\nThe box scanned as ' + scanned + ' — this is saved with the entry so it can be checked.')) return;
-    it.scanNote = '[SCAN MISMATCH: box scanned as ' + scanned + ' — picker confirmed ' + it.partNum + ']';
+    it.scanNote = '[SCAN MISMATCH: box scanned as ' + scanned + ' — Admin ' + invMe() + ' confirmed ' + it.partNum + ']'; it.scanVerified = true;
     invModalClose('inv-grab-modal');
     invTogglePullCheck(i);
     setTimeout(function() { var x = g('inv-grab-scan'); if (x) x.focus(); }, 50);

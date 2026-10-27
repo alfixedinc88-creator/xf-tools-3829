@@ -10705,8 +10705,9 @@ console.log('\n📷 Stock Out Big Company: ✓ Grabbed needs every box scanned �
   const list = [{ partNum: '61-1-1=10', location: 'C2=1-1-1', cases: '3', dest: 'company', forPart: '61-1-1=10', awdShipment: 'STAR-T' }, { partNum: '61-1-1=10', location: 'C2=1-1-2', cases: '2', dest: 'shelving' }];
   const W = new Function(...Object.keys(env), 'invPullList', code + '; return window;')(...Object.values(env), list);
   const tick = () => new Promise(r => setImmediate(r));
+  // Owner (2026-10-27) changed the rule: Stock Out Shelving scans every box too (was: Shelving ✓ Grabbed with no scan)
   W.invTogglePullCheck(1);
-  const shelfOk = list[1].grabbed === true && subs.length === 1 && !els['inv-psg-modal'];
+  const shelfOk = !!els['inv-psg-modal'] && !list[1].grabbed && subs.length === 0 && /0 of 2 boxes scanned/.test(els['inv-psg-count'].textContent); W.invPullScanClose();
   W.invTogglePullCheck(0);
   const opened = !!els['inv-psg-modal'] && !list[0].grabbed && /0 of 3 boxes scanned/.test(els['inv-psg-count'].textContent);
   W.invPullScanBox('820000000011'); await tick(); await tick();
@@ -10716,14 +10717,39 @@ console.log('\n📷 Stock Out Big Company: ✓ Grabbed needs every box scanned �
   W.invPullScanBox('810000000017'); await tick(); await tick(); W.invPullScanBox('810000000024'); await tick(); await tick();
   const two = /2 of 3 boxes scanned/.test(els['inv-psg-count'].textContent) && !list[0].grabbed;
   W.invPullScanBox('810000000017'); await tick(); await tick();
-  const done = list[0].grabbed === true && list[0].scanVerified && /\[SCANNED 3\/3 boxes ✓, 2 wrong scans put back\]/.test(list[0].scanNote || '') && subs.length === 2 && subs[1] === 0 && !els['inv-psg-modal'];
+  const done = list[0].grabbed === true && list[0].scanVerified && /\[SCANNED 3\/3 boxes ✓, 2 wrong scans put back\]/.test(list[0].scanNote || '') && subs.length === 1 && subs[0] === 0 && !els['inv-psg-modal'];
   const rec = posts.map(x => (x.ok ? '✓' : '✗') + x.productPart).join(' ');
-  check('Shelving ✓ Grabbed as before (no scan); Big Company 3 cases of 61-1-1=10 → the scan box opens (not grabbed); 77-7-7=5 → ❌ WRONG BOX; =100 → ❌ wrong bag size (not counted); 3 right scans → grabbed + sent, "[SCANNED 3/3 boxes ✓, 2 wrong scans put back]" in the Stock Out notes; every scan kept (✗77-7-7=5 ✗61-1-1=100 ✓ ✓ ✓)',
+  check('Shelving ✓ Grabbed → the scan box opens too (owner 2026-10-27; Cancel → not grabbed); Big Company 3 cases of 61-1-1=10 → the scan box opens (not grabbed); 77-7-7=5 → ❌ WRONG BOX; =100 → ❌ wrong bag size (not counted); 3 right scans → grabbed + sent, "[SCANNED 3/3 boxes ✓, 2 wrong scans put back]" in the Stock Out notes; every scan kept (✗77-7-7=5 ✗61-1-1=100 ✓ ✓ ✓)',
     shelfOk && opened && wrong1 && wrong2 && two && done && rec === '✗77-7-7=5 ✗61-1-1=100 ✓61-1-1=10 ✓61-1-1=10 ✓61-1-1=10' && posts.every(x => x.label === '61-1-1=10' && /Grab scan C2=1-1-1 \[AWD: STAR-T\]/.test(x.note) && x._requestId),
     { shelfOk, opened, wrong1, wrong2, two, done, rec, note: list[0].scanNote });
   list.push({ partNum: '61-1-1=10', location: 'C2=1-1-3', cases: '1', dest: 'company' }); W.invTogglePullCheck(2); W.invPullScanClose();
   check('…Cancel → not grabbed; only an Admin gets "🔓 box has no barcode — checked by eye" (kept on record)',
     !list[2].grabbed && /🔓 Admin: box has no barcode/.test(ih) && /\(invAwdIsAdmin\(\) \? '<button type="button" onclick="invPullScanSkip\(\)"/.test(ih) && /\[SCAN SKIPPED by ' \+ invMe\(\)/.test(ih), list[2]);
+  // 🏬 Stock Out Shelving (owner 2026-10-27: "the same for Stock Out Shelving — no more click on Grabbed, scan it to double check")
+  W.invTogglePullCheck(1); W.invPullScanBox('820000000011'); await tick(); await tick();
+  const sWrong = /WRONG BOX/.test(els['inv-psg-res'].innerHTML) && !list[1].grabbed;
+  W.invPullScanBox('810000000017'); await tick(); await tick(); const sOne = /1 of 2 boxes scanned/.test(els['inv-psg-count'].textContent) && !list[1].grabbed;
+  W.invPullScanBox('810000000024'); await tick(); await tick();
+  const sDone = list[1].grabbed === true && /\[SCANNED 2\/2 boxes ✓, 1 wrong scan put back\]/.test(list[1].scanNote || '') && subs.includes(1) && posts.some(x => x.label === '61-1-1=10' && /Grab scan C2=1-1-2$/.test(x.note));
+  // a box already scanned in the ▸ scan-to-grab box / 🔁 Replace counts as box 1: 1 case → grabbed at once; 2 cases → "1 of 2", scan one more
+  list.push({ partNum: '61-1-1=10', location: 'C3=1-1-1', cases: '1', dest: 'shelving' }, { partNum: '61-1-1=10', location: 'C3=1-1-2', cases: '2', dest: 'shelving' });
+  W.invPullScanOpen(3, '810000000017'); const f1 = list[3].grabbed === true && /\[SCANNED 1\/1 boxes ✓\]/.test(list[3].scanNote) && !els['inv-psg-modal'];
+  W.invPullScanOpen(4, '810000000017'); const f2 = !list[4].grabbed && /1 of 2 boxes scanned/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('810000000017'); await tick(); await tick(); const f3 = list[4].grabbed === true; // the same barcode as box 1 (identical boxes)
+  check('🏬 Stock Out Shelving: ✓ Grabbed needs every box scanned too — wrong item refused (kept), 2 cases = 2 right scans → grabbed + sent with "[SCANNED 2/2 boxes ✓, 1 wrong scan put back]"; a box already scanned in the scan-to-grab box / 🔁 Replace counts as box 1 (1 case → grabbed at once, 2 → scan 1 more)',
+    sWrong && sOne && sDone && f1 && f2 && f3, { sWrong, sOne, sDone, f1, f2, f3, note: list[1].scanNote });
+  // 📴 no WiFi: the phone's stock copy answers known barcodes (counted as usual); one not in it → "No WiFi", not called wrong, not counted
+  const navD = Object.getOwnPropertyDescriptor(globalThis, 'navigator'); Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true, writable: true });
+  list.push({ partNum: '61-1-1=10', location: 'C3=1-1-3', cases: '2', dest: 'shelving' }); W.invTogglePullCheck(5);
+  W.invPullScanBox('830000000000'); await tick(); await tick(); const o1 = /No WiFi — this barcode is not in the phone/.test(els['inv-psg-res'].innerHTML) && /0 of 2/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('810000000017'); await tick(); await tick(); const o2 = /1 of 2 boxes scanned/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('820000000011'); await tick(); await tick(); const o3 = /WRONG BOX/.test(els['inv-psg-res'].innerHTML); W.invPullScanClose();
+  if (navD) Object.defineProperty(globalThis, 'navigator', navD); else delete globalThis.navigator;
+  check('…📴 no WiFi: a box the phone\'s copy knows is checked as usual (right → counted, wrong item → ❌); a barcode not in the copy → "No WiFi", not called wrong, not counted',
+    o1 && o2 && o3 && !list[5].grabbed, { o1, o2, o3 });
+  check('…the scan-to-grab box and 🔁 Replace go through the box scan (box 1 counted); "It\'s really …" (a box whose label is wrong) is Admin only now, kept as a scan mismatch with the Admin\'s name',
+    /invPullScanOpen\(i, code\); \/\/ 📷 this box counts as box 1/.test(ih) && /invPullScanOpen\(i, code\); if \(it\.grabbed\)/.test(ih) && /invPullScanOpen\(i, code\); \/\/ 📷 the box scanned counts as box 1/.test(ih)
+      && /\(opts\.length && invAwdIsAdmin\(\) \?/.test(ih) && /if \(!invAwdIsAdmin\(\)\) \{ invFlash\('🔒 Only an Admin can grab a box whose label/.test(ih) && /if \(!bx\.grabbed && !bx\.scanVerified && !bx\.noneFound\) \{ invPullScanOpen\(i\); return; \}/.test(ih), null);
   ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip'].forEach(k => { delete globalThis[k]; });
 }
 
