@@ -10158,6 +10158,24 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       v4.cnt.n > 0 && v5.cnt.n === 0 && v5.pull.length > 0 && v6.cnt.n > 0 && !v6.run.AWDS.takes.some(t => t.area === 'PR' && t.ships.includes('STAR-SEND4')),
       { n4: v4.cnt.n, n5: v5.cnt.n, n6: v6.cnt.n, pull: v5.pull.map(x => [x.partNum, x.cases, x.awdShipment]), t6: v6.run.AWDS.takes.map(t => [t.area, t.cases, t.ships]) });
   }
+  // 🕘 Owner (2026-10-27): "a history to go back and check the previous shipments — only Admin can see it"
+  {
+    const hist = await (await call('/awd/ship-send?history=1', { headers: H })).json();
+    const pkH = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+    const no = await call('/awd/ship-send?history=1', { headers: { 'X-Cred-Token': pkH } });
+    const s1 = (hist.list || []).find(x => x.shipment === 'STAR-SEND1'), s2 = (hist.list || []).find(x => x.shipment === 'STAR-SEND2');
+    // the card's history view, run on that answer
+    const els = {}, gg = id => els[id] || (els[id] = { innerHTML: '', style: {} });
+    const src = ih.slice(ih.indexOf('  window.invAwdHistLoad = function() {'), ih.indexOf('  function invAwdDoneHtml() {'));
+    await new Function('g', 'W', 'wFetch', 'ckE', 'xfrFmtT', 'window', src + '; window.invAwdHistLoad(); return new Promise(r => setTimeout(r, 0));')(gg, '', async () => ({ json: async () => hist }), v => String(v == null ? '' : v), v => String(v || ''), {});
+    await new Promise(r => setTimeout(r, 20));
+    const hv = gg('inv-awdship-hist-out').innerHTML;
+    check('🕘 Shipment history (Admin only — a picker is refused by the server): every shipment of the last 90 days, newest first: STAR-SEND1 (🏷 labels; its send is from January, past 90 days) with the Stock Out grabbed for it (93-7-1=10, C3=1-1-1, 1 case, who, Pending); STAR-SEND2 ✅ Done / ↩ put back (who / when)',
+      hist.ok && no.status === 403 && s1 && s1.labels && s1.labels.boxes === 1 && s1.grabbed.length === 1 && s1.grabbed[0].loc === 'C3=1-1-1' && s1.grabbed[0].cases === 1 && s1.grabbed[0].status === 'Pending'
+        && s2 && s2.doneLog.length === 2 && !s2.done && /<b>STAR-SEND1<\/b>/.test(hv) && /Every Stock Out for it/.test(hv) && /C3=1-1-1/.test(hv) && /↩ put back · PK/.test(hv)
+        && /id="inv-awdship-hist" style="display:none/.test(ih) && /hs\.style\.display = invAwdIsAdmin\(\) \? '' : 'none'/.test(ih),
+      { status: no.status, s1, hv: hv.slice(0, 300) });
+  }
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send; DELETE FROM awd_ship_done; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SEND%'");
 }
 
@@ -10348,12 +10366,14 @@ console.log('\n💾 AWD Planner: the box labels made last time are kept on the c
   const mem = new Map();
   const fakeIdb = { open() { const q = {}; setTimeout(() => { const db = { transaction() { const tx = {}; const st = {
       put(v, k) { mem.set(k, JSON.parse(JSON.stringify(v))); setTimeout(() => tx.oncomplete && tx.oncomplete(), 0); },
+      delete(k) { mem.delete(k); setTimeout(() => tx.oncomplete && tx.oncomplete(), 0); },
       get(k) { const r = {}; setTimeout(() => { r.result = mem.has(k) ? JSON.parse(JSON.stringify(mem.get(k))) : undefined; r.onsuccess && r.onsuccess(); }, 0); return r; } };
       tx.objectStore = () => st; return tx; }, createObjectStore() {} }; q.result = db; q.onupgradeneeded && q.onupgradeneeded(); q.onsuccess && q.onsuccess(); }, 0); return q; } };
-  const page = () => { const els = { 'awd-lbl-out': { innerHTML: '' } }, printed = [], win = {};
-    const api = new Function('indexedDB', 'ge', 'window', 'awdPrintPages', 'awd_planner_toast', 'awdAreaRank',
-      fnA2('awdAreaButtons') + fnA2('awdPrintArea') + fnA2('awdLblDb') + fnA2('awdLblSave') + fnA2('awdLblLoad') + fnA2('awdLblSavedHead') + fnA2('awdLblRestore')
-      + '; return { awdLblSave, awdLblRestore, awdPrintArea, awdLblSavedHead };')(fakeIdb, id => els[id], win, (pages, t) => { printed.push([t, pages.map(x => x.url)]); return true; }, () => {}, () => 0);
+  const page = (user) => { const els = { 'awd-lbl-out': { innerHTML: '' }, 'awd-lbl-hist': { style: {} }, 'awd-lbl-hist-out': { innerHTML: '' } }, printed = [], win = {};
+    const api = new Function('indexedDB', 'ge', 'window', 'awdPrintPages', 'awd_planner_toast', 'awdAreaRank', 'AWD_CRED_USER',
+      'const AWD_LBL_KEEP = 10;' + fnA2('awdAreaButtons') + fnA2('awdPrintArea') + fnA2('awdLblDb') + fnA2('awdLblPut') + fnA2('awdLblGet') + fnA2('awdLblSave') + fnA2('awdLblLoad') + fnA2('awdLblSavedHead') + fnA2('awdLblRestore')
+      + fnA2('awdLblIsAdmin') + fnA2('awdLblHistShow') + fnA2('awdLblBringBack')
+      + '; return { awdLblSave, awdLblRestore, awdPrintArea, awdLblSavedHead, awdLblHistShow, awdLblBringBack };')(fakeIdb, id => els[id], win, (pages, t) => { printed.push([t, pages.map(x => x.url)]); return true; }, () => {}, () => 0, user || null);
     return { api, els, printed, win }; };
   const groups = [{ area: 'C1', key: '1|06', pages: [{ url: 'data:c1a', w: 4, h: 6 }, { url: 'data:c1b', w: 4, h: 6 }] }, { area: 'BSMT', key: '1|03', pages: [{ url: 'data:bs', w: 4, h: 6 }] }];
   const p1 = page(); const saved = await p1.api.awdLblSave({ at: '2026-10-27T15:00:00.000Z', shipment: 'STAR-LBL1', file: 'labels.pdf', groups, html: '✅ <b>3</b> labels' + 'AREA' });
@@ -10362,6 +10382,17 @@ console.log('\n💾 AWD Planner: the box labels made last time are kept on the c
   check('💾 the labels made last time come back when the AWD Planner opens again: "💾 Saved labels — STAR-LBL1 · 3 to print … kept until you upload new ones" + 🖨 C1 prints just its 2 labels, no re-upload',
     saved === true && /💾 Saved labels — <b>STAR-LBL1<\/b> · 3 to print · made /.test(h2) && /kept until you upload new ones/.test(h2) && /✅ <b>3<\/b> labels/.test(h2)
       && (p2.win.AWD_LBL_GROUPS || []).length === 2 && p2.printed.length === 1 && p2.printed[0][1].join() === 'data:c1a,data:c1b', { h2, printed: p2.printed });
+  // 🕘 Owner (2026-10-27): "a history, go back to the previous shipment — only Admin can see it": the last 10 label sets stay
+  const pa = page({ roles: ['ops', 'mgmt', 'admin'] });
+  for (let k = 2; k <= 12; k++) await pa.api.awdLblSave({ at: '2026-10-27T15:' + String(k).padStart(2, '0') + ':00.000Z', shipment: 'STAR-LBL' + k, file: '', groups: [{ area: 'C2', key: '', pages: [{ url: 'data:L' + k, w: 4, h: 6 }] }], html: 'SET' + k });
+  await pa.api.awdLblHistShow(); const hh = pa.els['awd-lbl-hist-out'].innerHTML;
+  await pa.api.awdLblBringBack('2026-10-27T15:05:00.000Z'); pa.api.awdPrintArea('C2');
+  const pw = page({ roles: ['ops', 'mgmt'] }); await pw.api.awdLblHistShow();
+  const pAfter = page(); await pAfter.api.awdLblRestore();
+  check('🕘 Earlier box labels (Admin): the last 10 label sets are kept (newest first, the 11th oldest dropped); ↩ Bring back STAR-LBL5 → its labels print again (C2) and stay the saved ones; a Pro / Worker does not see the list',
+    pa.els['awd-lbl-hist'].style.display === '' && (hh.match(/↩ Bring back/g) || []).length === 10 && hh.indexOf('STAR-LBL12') < hh.indexOf('STAR-LBL11') && !/STAR-LBL1</.test(hh) && !mem.has('h:2026-10-27T15:00:00.000Z') && !mem.has('h:2026-10-27T15:02:00.000Z') && mem.has('h:2026-10-27T15:03:00.000Z')
+      && pa.printed.length === 1 && pa.printed[0][1].join() === 'data:L5' && /STAR-LBL5/.test(pa.els['awd-lbl-out'].innerHTML) && /SET5/.test(pAfter.els['awd-lbl-out'].innerHTML)
+      && pw.els['awd-lbl-hist'].style.display === 'none' && !/Bring back/.test(pw.els['awd-lbl-hist-out'].innerHTML), { hh: hh.slice(0, 300), keys: [...mem.keys()] });
   check('…a new label PDF replaces the saved one (saved right after the labels are made); restored when the page opens',
     /const rec = \{ at: new Date\(\)\.toISOString\(\), shipment: shipId, file: file\.name \|\| '', groups, html: out\.innerHTML \};\s*if \(await awdLblSave\(rec\)\)/.test(ah)
       && /document\.addEventListener\('DOMContentLoaded', awdLblRestore\); else awdLblRestore\(\);/.test(ah), null);

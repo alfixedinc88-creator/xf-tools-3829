@@ -1472,10 +1472,37 @@ async function awdShipOpen(env, url) {
   });
   return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days };
 }
+// 🕘 Owner (2026-10-27): "a history, so we can go back and check the previous shipments — only Admin can see it". Every shipment of the
+// last 90 days: each 📤 send (who / when / lines), the Amazon box labels (boxes, PREVIOUS PACKED), ✅ Done / ↩ put back (who / when) and
+// every Stock Out grabbed for it ([AWD: name]: part #, spot, cases, who, when, status) — read only.
+async function awdShipHistoryAll(env) {
+  const since = new Date(Date.now() - 90 * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase(), all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const by = {}, get = n => by[n] = by[n] || { shipment: n, sends: [], labels: null, doneLog: [], grabbed: [], last: '' };
+  (await all('SELECT * FROM awd_ship_send WHERE at >= ? ORDER BY id', since)).forEach(r => { let lines = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {}
+    const o = get(r.shipment); o.sends.push({ at: r.at, by: r.by_user, units: r.units, boxes: r.boxes, lines }); if (String(r.at) > o.last) o.last = r.at; });
+  (await all('SELECT shipment, part, sku, units, prev, at, by_user FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?)', since)).forEach(r => {
+    const o = get(r.shipment), L = o.labels = o.labels || { boxes: 0, prev: 0, at: '', by: '', parts: {} };
+    L.boxes++; if (r.prev) L.prev++; else { const P = U(r.part || r.sku); L.parts[P] = (L.parts[P] || 0) + (parseFloat(r.units) || 0); }
+    if (String(r.at) > L.at) { L.at = r.at; L.by = r.by_user; } if (String(r.at) > o.last) o.last = r.at; });
+  (await all('SELECT shipment, action, at, by_user FROM awd_ship_done ORDER BY id')).forEach(r => { if (by[r.shipment]) by[r.shipment].doneLog.push({ action: r.action, at: r.at, by: r.by_user }); });
+  (await all(`SELECT part_num, location, cases, initials, timestamp, status, notes FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND timestamp >= ? ORDER BY timestamp`, since)).forEach(r => {
+    const m = /\[AWD:([^\]]*)\]/.exec(r.notes || ''), f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(r.notes || ''); if (!m) return;
+    const none = /\[NONE FOUND ON SHELF\]/.test(r.notes || '');
+    m[1].split('|').map(AWD_TAG_NAME).filter(Boolean).forEach(n => { const o = Object.values(by).find(x => AWD_TAG_NAME(x.shipment) === n); if (o) o.grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num),
+      loc: r.location, cases: parseFloat(r.cases) || 0, by: r.initials, at: r.timestamp, status: r.status || '', none }); }); });
+  const list = Object.values(by).map(o => { const d = o.doneLog[o.doneLog.length - 1]; o.done = d && d.action === 'done' && String(d.at) >= String(o.last) ? d : null; return o; })
+    .sort((a, b) => String(b.last).localeCompare(String(a.last)));
+  return { ok: true, days: 90, list };
+}
 async function awdShipSend(request, env, session, url) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_send (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, lines TEXT, units REAL, boxes REAL, at TEXT, by_user TEXT)').run();
   if (request.method === 'GET' && url && url.searchParams.get('open')) return J(await awdShipOpen(env, url));
+  if (request.method === 'GET' && url && url.searchParams.get('history')) { // 🕘 Admin / Owner only (owner 2026-10-27)
+    const roles = (session && session.roles) || [];
+    if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only' }, 403);
+    return J(await awdShipHistoryAll(env));
+  }
   if (request.method === 'GET') {
     const r = await env.DB.prepare('SELECT * FROM awd_ship_send ORDER BY id DESC LIMIT 1').first();
     if (!r) return J({ ok: true, send: null });

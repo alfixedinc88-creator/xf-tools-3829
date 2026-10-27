@@ -63,6 +63,7 @@ document.addEventListener('input', function (e) {
         { key: 'clearall', label: 'Clear All', sel: '#page-builder button[onclick="clearBuilder()"]' },
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
+        { key: 'boxlabelshist', label: '…🕘 Earlier box labels (Admin only)', sel: '#awd-lbl-hist' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
         { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
         { key: 'edittpl', label: '✏️ See / edit a SKU\'s template', sel: '#page-builder .awd-tpl-edit' },
@@ -94,6 +95,7 @@ document.addEventListener('input', function (e) {
       { key: 'stockoutco', label: '🏢 Stock Out Big Company', sel: '#inv-tab-stockoutco', parts: [
         { key: 'awdship', label: '📦 AWD shipments ready — what to grab, by location', sel: '#inv-awdship-card' },
         { key: 'awdshipdone', label: '…✅ Done button (takes a shipment off the list)', sel: '.inv-awdship-done' },
+        { key: 'awdshiphist', label: '…🕘 Shipment history (Admin only)', sel: '#inv-awdship-hist' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
