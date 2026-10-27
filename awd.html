@@ -3611,12 +3611,12 @@ async function awdSendToStockOut() {
   const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD shipment';
   const units = lines.reduce((a, x) => a + x.units, 0), boxes = lines.reduce((a, x) => a + x.boxes, 0), noBox = lines.filter(x => !x.boxes).length;
   if (!confirm('📤 Send "' + name + '" to Stock Out Big Company?\n\n' + lines.length + ' SKUs · ' + units + ' units' + (boxes ? ' · ' + boxes + ' boxes' : '') + (noBox ? '\n(' + noBox + ' SKU with no case pack — counted in units only)' : '')
-    + '\n\nThe floor sees what to grab, by location (📦 Current AWD shipment). It replaces the shipment they see now.')) return;
+    + '\n\nThe floor sees what to grab, by location (Stock Out Big Company → 📦 AWD shipments ready), together with the other shipments sent and not ✅ Done yet. Sending the same name again replaces that one.')) return;
   if (out) out.innerHTML = '⏳ Sending…';
   try {
     const d = await (await wFetch(W + '/awd/ship-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: name, lines }) })).json();
     if (!d || !d.ok) throw new Error((d && d.error) || 'not sent');
-    if (out) out.innerHTML = '<span style="color:#15803D">✅ Sent ' + d.skus + ' SKUs · ' + d.units + ' units' + (d.boxes ? ' · ' + d.boxes + ' boxes' : '') + ' — on Stock Out Big Company → 📦 Current AWD shipment (' + h(d.by || '') + ', ' + h(awdHistWhen(d.at)) + ')</span>';
+    if (out) out.innerHTML = '<span style="color:#15803D">✅ Sent ' + d.skus + ' SKUs · ' + d.units + ' units' + (d.boxes ? ' · ' + d.boxes + ' boxes' : '') + ' — on Stock Out Big Company → 📦 AWD shipments ready (' + h(d.by || '') + ', ' + h(awdHistWhen(d.at)) + ')</span>';
     awd_planner_toast('📤 Sent to Stock Out Big Company');
   } catch (e) { if (out) out.innerHTML = '<span style="color:#DC2626">✗ Not sent: ' + h(e.message) + ' — try again</span>'; }
 }
