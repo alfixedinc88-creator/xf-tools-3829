@@ -9967,7 +9967,8 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
   const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), flashes = [], pull = [];
   const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
-    invFlash: m => flashes.push(m), invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {} };
+    invFlash: m => flashes.push(m), invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {},
+    invPost: (u, o) => call(u, { method: 'POST', headers: H, body: o.body }) };
   const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
     function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
     ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
@@ -9993,6 +9994,37 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',
     /📍 C2=1-1-1<\/b> — <b>3 cases<\/b> of/.test(h2) && /➕ Put C2 on my Pull List/.test(h2) && pull.length === 1 && pull[0].partNum === '61-1-1=10' && pull[0].cases === '3' && pull[0].dest === 'company' && pull[0].forPart === '61-1-1=10' && pull[0].awdShipment === 'STAR-TEST1'
       && flashes.some(f => /3 spots|1 spot in C2 on your Pull List/.test(f)) && flashes.some(f => /Nothing new to add in C2/.test(f)), { pull, flashes });
+  // 👤 Owner (2026-10-27): "one of my guys already grabbed all of C1 — if my other scanner taps Put C1 on my Pull List, will it show
+  // everything again? I want everyone to see it… or we end up with double grab". Put on a Pull List = taken for every phone at once.
+  { for (let i = 0; i < 40 && !((await get('/awd/claim')).claims || []).length; i++) await new Promise(r => setTimeout(r, 25));
+    const cl = (await get('/awd/claim')).claims || [], mineIds = pull[0].awdClaims || [];
+    const els2 = {}, g2 = id => els2[id] || (els2[id] = { innerHTML: '', style: {} }), pull2 = [];
+    const phone2 = () => new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+      function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+      ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+      return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd, render: window.invAwdShipRender };`)(...Object.values({ ...env2, g: g2, window: {} }), pull2);
+    const loadP2 = async () => { const p2 = phone2(); p2.load(); for (let i = 0; i < 60 && (p2.AWDS.busy || !/inv-awdship-area|No shipment/.test(g2('inv-awdship-out').innerHTML)); i++) await new Promise(r => setTimeout(r, 25)); return p2; };
+    const c2Of = p2 => p2.AWDS.takes.filter(t => t.area === 'C2').reduce((a, t) => a + t.cases, 0);
+    let p2 = await loadP2(); const h3 = g2('inv-awdship-out').innerHTML;
+    check('👤 phone 1 put C2 on its Pull List → taken on the server for everyone (TS, C2, 61-1-1=10 × 3); phone 2 opens the list: C2 is NOT offered again (0 cases), and it says "👤 Being grabbed now: TS — C2 · 1 spot" with ↩ Give back',
+      cl.length === 1 && cl[0].by === 'TS' && cl[0].area === 'C2' && cl[0].part === '61-1-1=10' && cl[0].cases === 3 && mineIds.includes(cl[0].id) && c2Of(p2) === 0 && p2.AWDS.takes.some(t => t.area === 'BSMT')
+        && /👤 Being grabbed now/.test(h3) && /<b>TS<\/b> — C2 · 1 spot/.test(h3) && /↩ Give back/.test(h3)
+        && /sel: '\.inv-awd-claims'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), { cl, takes: p2.AWDS.takes.map(t => [t.area, t.cases]) });
+    // phone 1's own list: it is "you", and phone 1 is never told its own spots are someone else's
+    run.load(); for (let i = 0; i < 60 && (run.AWDS.busy || !(run.AWDS.data.claims || []).length); i++) await new Promise(r => setTimeout(r, 25)); const h4 = g('inv-awdship-out').innerHTML;
+    // ↩ given back (a phone left with a list) → C2 is offered again; then phone 1 ✓ Grabbed (its Stock Out closes it) → gone for everyone
+    await post('/awd/claim', { close: [cl[0].id], how: 'given back by hand' });
+    p2 = await loadP2(); const back = c2Of(p2);
+    const so = await post('/inventory/log', { type: 'OUT', partNum: '61-1-1=10', sku: '61-1-1', location: 'C2=1-1-1', cases: 3, initials: 'TS', notes: '[BIG COMPANY for 61-1-1=10] [AWD: STAR-TEST1]', awdClaims: mineIds });
+    await post('/awd/claim', { area: 'C2', lines: [{ id: 'ctest-two', part: '62-2-2=5', forPart: '62-2-2=5', cases: 1, ships: ['STAR-TEST1'], loc: 'BSMT=1-1-1' }] });
+    await post('/inventory/log', { type: 'OUT', partNum: '62-2-2=5', sku: '62-2-2', location: 'BSMT=1-1-1', cases: 0, initials: 'TS', notes: '[NONE FOUND ON SHELF] [BIG COMPANY for 62-2-2=5] [AWD: STAR-TEST1]', noneFound: true, awdClaims: ['ctest-two'] });
+    p2 = await loadP2();
+    const rows = sq.prepare("SELECT id, status, how, closed_by FROM awd_claim ORDER BY at").all();
+    check('…phone 1 sees "you — C2"; ↩ Give back → C2 offered again (3 cases); then phone 1 ✓ Grabbed (Stock Out) → closed for everyone and counted as grabbed (C2 not offered: 0); ✗ None found → given back, not counted; every change kept (how, who)',
+      /<b>you<\/b> — C2/.test(h4) && !/you<\/b> — C2[^<]*<a/.test(h4) && back === 3 && so.ok && c2Of(p2) === 0 && !((p2.AWDS.data || {}).claims || []).length
+        && rows.find(r => r.id === cl[0].id).how === 'given back by hand' && rows.find(r => r.id === 'ctest-two').status === 'given back' && /none found/.test(rows.find(r => r.id === 'ctest-two').how), { back, c2: c2Of(p2), rows });
+    sq.exec("DELETE FROM awd_claim"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-TEST1]%'").run();
+  }
   // Box check: the Amazon box label (SSCC) then the box grabbed
   check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
     /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(ok && lp && lp\.box\) setTimeout\(function\(\) \{ BXC\.label = null;/.test(ih) && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
@@ -10152,7 +10184,8 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
     const store = {}, LS = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     const visit = (pull0) => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = pull0 || [], cnt = { n: 0 };
       const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => { cnt.n++; return get('/inventory/lookup?code=' + encodeURIComponent(c)); }, ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
-        invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {}, localStorage: LS };
+        invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {}, localStorage: LS,
+        invPost: async () => ({ json: async () => ({ ok: true }) }) }; // 👤 "taken for everyone" not sent here (this check counts look-ups of the saved list)
       const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
         function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
         ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
