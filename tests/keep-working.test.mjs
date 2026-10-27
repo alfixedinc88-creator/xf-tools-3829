@@ -10398,5 +10398,42 @@ console.log('\n💾 AWD Planner: the box labels made last time are kept on the c
       && /document\.addEventListener\('DOMContentLoaded', awdLblRestore\); else awdLblRestore\(\);/.test(ah), null);
 }
 
+// 🏷 Owner (2026-10-27, AWD label of 23-5-4=100-: the scan barcode on it is the INSIDE bag UPC): "if I scan the outside barcode and it is the
+// same item it shows match too, so we don't put too many barcodes on the label — but write the outside box UPC code on the label too".
+console.log('\n🔍 Box check: the box\'s OUTSIDE UPC matches its Amazon box label too; the label has the outside box UPC written on it');
+{
+  const { readFileSync: rfO } = await import('node:fs');
+  const ih = rfO(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ah = rfO(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const now = new Date().toISOString();
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('723-5-4','PO PLUG','723-5-4=100','BO=1-1-1-3',2,2000), ('723-5-4','PO PLUG','723-5-4=10','C1=2-2-2',3,100), ('724-1-1','CAP','724-1-1=10','C2=1-1-1',1,100)").run();
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '723-5-4=100', '723-5-4', '840428944803', '10840428944800', ?), ('', '723-5-4=10', '723-5-4', '840428944810', '10840428944817', ?), ('', '724-1-1=10', '724-1-1', '840428900011', '10840428900018', ?)").run(now, now, now);
+  await post('/awd/label-map', { shipment: 'STAR-OUTUPC', labels: [{ sscc: '201952611628558832', sku: '723-5-4=100-', part: '723-5-4=100', seq: '1-1', units: 20, loc: 'BO=1-1-1-3' }] });
+  const code = ih.slice(ih.indexOf('  var BXC = { label: null };'), ih.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = { 'inv-bc-res': { innerHTML: '' }, 'inv-bc-step': { textContent: '' }, 'inv-bc-inp': { focus() {} }, 'inv-bc-lp': { innerHTML: '' } };
+  const env = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', code + '; return window;')(
+    id => els[id], u => call(u, { headers: H }), '', async () => ({ list: [] }), async () => ({ json: async () => ({ ok: true }) }), x => String(x == null ? '' : x), () => {}, {}, {});
+  const scan = async v => { env.invBoxCheckScan(v); for (let i = 0; i < 30 && /…<\/span>|^$/.test(els['inv-bc-res'].innerHTML); i++) await new Promise(r => setTimeout(r, 20)); await new Promise(r => setTimeout(r, 120)); };
+  const res = () => els['inv-bc-res'].innerHTML;
+  await scan('00201952611628558832'); await scan('10840428944800'); const a = res();                  // Amazon box label (SSCC) → the box's OUTSIDE UPC
+  env.invBoxCheckReset(); await scan('840428944803'); await scan('10840428944800'); const b = res();  // the label's scan barcode (inside bag UPC) → the OUTSIDE UPC
+  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('840428944803'); const c = res(); // inside bag UPC, as before
+  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428944817'); const d = res(); // the =10 box of the same item
+  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428900018'); const e = res(); // another item's box
+  check('the Amazon box label (SSCC) or its scan barcode (inside bag UPC 840428944803) + the box\'s OUTSIDE UPC 10840428944800 (same item, 723-5-4=100) → ✅ RIGHT PRODUCT; the inside bag UPC still ✅; the =10 box of the same item → ⚠ same item, different bag count; another item\'s box → ❌',
+    /✅ RIGHT PRODUCT/.test(a) && /✅ RIGHT PRODUCT/.test(b) && /✅ RIGHT PRODUCT/.test(c) && /same item, different bag count/.test(d) && /WRONG PRODUCT/.test(e),
+    { a: a.slice(0, 400), b: b.slice(0, 300), d: d.slice(0, 300), e: e.slice(0, 300) });
+  // the outside box UPC written on the label: SKU Mgr → 🔢 UPC codes (newest) first, then the UPC list
+  sq.prepare("CREATE TABLE IF NOT EXISTS upc_edit (part TEXT PRIMARY KEY, inside_upc TEXT, outside_upc TEXT, by_user TEXT, at TEXT)").run();
+  sq.prepare("INSERT INTO upc_edit (part, inside_upc, outside_upc, by_user, at) VALUES ('724-1-1=10', '840428900011', '10840428900025', 'TS', ?)").run(now);
+  const bu = await get('/awd/box-upc?parts=' + encodeURIComponent('723-5-4=100,724-1-1=10,999-9-9=1'));
+  const pkB = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, anon = await call('/awd/box-upc?parts=723-5-4=100');
+  check('…GET /awd/box-upc: each part #\'s outside box UPC as written (723-5-4=100 → 10840428944800; 724-1-1=10 → 10840428900025, the one saved in SKU Mgr wins over the list; unknown → none); not without a sign-in',
+    bu.ok && bu.upcs['723-5-4=100'] === '10840428944800' && bu.upcs['724-1-1=10'] === '10840428900025' && !bu.upcs['999-9-9=1'] && anon.status === 401 && !!pkB, { bu, anon: anon.status });
+  check('…every label gets "Outside box UPC: …" written (one label per box: along the right edge next to the scan barcode, the big lines stay as they were; other layouts: a line in our template) — "— not on file" when there is none',
+    /const ou = boxUpc\[partOf\(m\.sku\)\], outUpc = 'Outside box UPC: ' \+ \(ou \|\| '— not on file'\);/.test(ah) && /awdDrawSideBarcode\(x3, \{ x: col\.x, y: col\.y \+ ph, w: col\.w, h: col\.h - ph \}, o\.bc, o\.I\.outUpc\)/.test(ah)
+      && /awdDrawBlock\(ctx, rect, I\.lines\.concat\(\[I\.outUpc\]\)/.test(ah) && /o\.I\.lines\.concat\(\[o\.I\.outUpc\]\), o\.bc, o\.photo/.test(ah) && /const boxUpc = await awdBoxUpcs\(/.test(ah), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('723-5-4','724-1-1'); DELETE FROM upc WHERE base_sku IN ('723-5-4','724-1-1'); DELETE FROM upc_edit WHERE part = '724-1-1=10'; DELETE FROM awd_label_map WHERE shipment = 'STAR-OUTUPC'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

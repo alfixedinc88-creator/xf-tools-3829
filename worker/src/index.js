@@ -1494,6 +1494,26 @@ async function awdShipHistoryAll(env) {
     .sort((a, b) => String(b.last).localeCompare(String(a.last)));
   return { ok: true, days: 90, list };
 }
+// 🏷 Owner (2026-10-27): "if I scan the outside barcode and it is the same item it shows match too — but write the outside box UPC code on the
+// label too, in case they want to check". GET /awd/box-upc?parts=A,B → each part #'s outside box UPC, as written: SKU Mgr → 🔢 UPC codes
+// first (the newest), then the UPC list (newest row), Reorder fixes, the vendor sheets, the built-in list.
+async function awdBoxUpc(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const U = x => String(x || '').trim().toUpperCase(), ok = u => /^\d{8,14}$/.test(String(u || '').replace(/\s/g, ''));
+  const parts = [...new Set(String(url.searchParams.get('parts') || '').split(',').map(U).filter(Boolean))].slice(0, 400), out = {};
+  const ed = await upcEditMap(env);
+  parts.forEach(p => { const e = ed.byPart.get(p); if (e && ok(e.outside)) out[p] = String(e.outside).replace(/\s/g, ''); });
+  const rest = () => parts.filter(p => !out[p]);
+  for (const sql of ["SELECT UPPER(TRIM(sku)) AS p, outside_upc AS u FROM upc WHERE UPPER(TRIM(sku)) IN (#) ORDER BY COALESCE(updated_at, '') DESC, id DESC",
+    'SELECT UPPER(TRIM(part)) AS p, outside_upc AS u FROM reorder_fix WHERE UPPER(TRIM(part)) IN (#)',
+    'SELECT UPPER(TRIM(part)) AS p, outside_upc AS u FROM reorder_vendor_catalog WHERE UPPER(TRIM(part)) IN (#) ORDER BY COALESCE(updated_at, \'\') DESC']) {
+    const L = rest();
+    for (let i = 0; i < L.length; i += 90) { const ch = L.slice(i, i + 90);
+      (await d1All(env, sql.replace('#', ch.map(() => '?').join(',')), ch)).forEach(r => { if (!out[r.p] && ok(r.u)) out[r.p] = String(r.u).replace(/\s/g, ''); }); }
+  }
+  for (const [part, outU] of VENDOR_UPC) { const p = U(part); if (parts.includes(p) && !out[p] && ok(outU)) out[p] = String(outU); }
+  return J({ ok: true, upcs: out });
+}
 async function awdShipSend(request, env, session, url) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_send (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, lines TEXT, units REAL, boxes REAL, at TEXT, by_user TEXT)').run();
@@ -10333,6 +10353,7 @@ const _app = {
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
+    if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       try { return await amazonBarcodeLiveCheck(env); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } })); }

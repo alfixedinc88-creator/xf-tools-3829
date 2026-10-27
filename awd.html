@@ -2092,11 +2092,16 @@ function awdStripText(seq, lns, bc) {
   const rest = lns.filter(l => l !== need && !locs.includes(l) && !(bc && digits(l)));
   return ['Box ' + seq + (need ? ' · ' + need : ''), locs.slice(0, 2).join('  /  '), rest.join(' · ')].filter(Boolean);
 }
-function awdDrawSideBarcode(ctx, col, bc) { // the barcode turned 90°, as long as the column allows
-  const p = Math.max(3, Math.round(col.w * 0.08)), long = col.h - 2 * p, thick = col.w - 2 * p;
+function awdDrawSideBarcode(ctx, col, bc, note) { // the barcode turned 90°, as long as the column allows
+  // 🏷 note (owner 2026-10-27: the outside box UPC, written): a thin strip on the column's right, turned like the barcode — the big text stays as it is
+  const nW = note ? Math.round(col.w * 0.2) : 0, c = { x: col.x, y: col.y, w: col.w - nW, h: col.h };
+  const p = Math.max(3, Math.round(c.w * 0.08)), long = c.h - 2 * p, thick = c.w - 2 * p;
   const T = thick, L = Math.min(long, Math.round(thick * 5)); // stretched along its length: wider bars scan more easily
-  ctx.save(); ctx.translate(col.x + col.w / 2, col.y + col.h / 2); ctx.rotate(-Math.PI / 2); ctx.drawImage(bc, -L / 2, -T / 2, L, T); ctx.restore();
-  return true;
+  if (bc) { ctx.save(); ctx.translate(c.x + c.w / 2, c.y + c.h / 2); ctx.rotate(-Math.PI / 2); ctx.drawImage(bc, -L / 2, -T / 2, L, T); ctx.restore(); }
+  if (note) { let fs = Math.round(nW * 0.75); ctx.save(); ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
+    while (fs > 8 && ctx.measureText(note).width > c.h - 8) { fs--; ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; }
+    ctx.translate(col.x + col.w - nW / 2, c.y + c.h / 2); ctx.rotate(-Math.PI / 2); ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(note, 0, 0); ctx.restore(); }
+  return !!bc;
 }
 let _awdAmzP = null; const _awdPhotos = {};
 // 📦 "Sold as a whole case of" (Reorder → 🏷 Barcode / vendor for a part # → 📦): an Amazon unit of that SKU = ONE whole case of the
@@ -2322,6 +2327,12 @@ async function awdLblRestore() {
   window.AWD_LBL_GROUPS = rec.groups;
   out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
 }
+// 🏷 Owner (2026-10-27): the outside box UPC written on every label ("in case they want to check") — one call for all the part #s.
+async function awdBoxUpcs(parts) {
+  if (!parts.length) return {};
+  try { const d = await wFetch(W + '/awd/box-upc?parts=' + encodeURIComponent(parts.join(','))).then(r => r.json()); return (d && d.ok && d.upcs) || {}; }
+  catch (e) { return {}; }
+}
 async function awdLabelsDo(file) {
   const out = ge('awd-lbl-out'); if (!file) return;
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
@@ -2347,12 +2358,16 @@ async function awdLabelsDo(file) {
     Object.keys(bySku).forEach(K => { const l = bySku[K]; l.forEach((m, k) => { m.seq = l.length + '-' + (k + 1); });
       const pick = l.filter(m => !m.prevKey), plan = pick.length ? awdGrabPlan(l[0].sku, pick.map(m => m.units)) : null;
       pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.plan = k === 0 ? plan.summary : ''; }); });
+    const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+    const boxUpc = await awdBoxUpcs([...new Set(metas.map(m => partOf(m.sku)))]);
     const metaAt = (p, i) => metas.find(m => m.p === p && m.i === i);
     const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
     // The lines of a label: where (or PREVIOUS PACKED) · the label line (name) · bags × pcs = pieces · the grab plan on the SKU's 1st label.
     const info = m => { const tpl = awdTplInfo(m.sku), pi = awdPrevInfo(m.sku, m.units, amz), need = (S.tplPrefix || {})[m.sku.toUpperCase()] || '';
       const head = m.prevKey ? '✅ PREVIOUS PACKED · Box ' + m.seq + ' (on the pallet)' : 'Box ' + m.seq + ' · ' + (m.loc || '') + (need ? ' · ' + need : '');
-      return { tpl, lines: [head, tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? [m.plan] : []).filter(Boolean) }; };
+      // 🏷 the outside box UPC, written (not one more barcode — scanning the box's own barcode in 🔍 Box check matches too)
+      const ou = boxUpc[partOf(m.sku)], outUpc = 'Outside box UPC: ' + (ou || '— not on file');
+      return { tpl, outUpc, lines: [head, tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? [m.plan] : []).filter(Boolean) }; };
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
@@ -2374,7 +2389,7 @@ async function awdLabelsDo(file) {
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const rect = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         if (!rect) { own.push({ m, I, bc, photo, box: n > 1 ? '' : boxTxt }); done++; continue; }
-        const r = awdDrawBlock(ctx, rect, I.lines, bc, big ? photo : null, Math.round(band * 0.032));
+        const r = awdDrawBlock(ctx, rect, I.lines.concat([I.outUpc]), bc, big ? photo : null, Math.round(band * 0.032));
         done++; if (r.barcode) withBc++; if (r.photo) withPhoto++;
       }
       if (one && own.length) { // Amazon's label at 85%; photo + barcode (on its side) in the right column; big lines under it — one label
@@ -2386,7 +2401,7 @@ async function awdLabelsDo(file) {
         x3.strokeStyle = '#000'; x3.lineWidth = Math.max(2, Math.round(Wd * 0.004)); x3.strokeRect(strip.x, strip.y, strip.w, strip.h);
         let ph = 0;
         if (o.photo) { const k = Math.min((col.w - 8) / o.photo.width, (col.w - 8) / o.photo.height), w = o.photo.width * k, h = o.photo.height * k; x3.drawImage(o.photo, col.x + (col.w - w) / 2, col.y + 8, w, h); ph = h + 16; withPhoto++; }
-        if (o.bc && awdDrawSideBarcode(x3, { x: col.x, y: col.y + ph, w: col.w, h: col.h - ph }, o.bc)) withBc++;
+        if (awdDrawSideBarcode(x3, { x: col.x, y: col.y + ph, w: col.w, h: col.h - ph }, o.bc, o.I.outUpc)) withBc++;
         awdBigText(x3, strip, o.I.lines);
         grp.pages.push({ url: c3.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); oneLabel++;
       } else {
@@ -2397,7 +2412,7 @@ async function awdLabelsDo(file) {
           const H = c2.height, Wd = c2.width, m = Math.round(Wd * 0.05);
           x2.strokeStyle = '#000'; x2.lineWidth = Math.max(3, Math.round(Wd * 0.006)); x2.strokeRect(m / 2, m / 2, Wd - m, H - m);
           awdDrawTemplate(x2, { x: m, y: m, w: Wd - 2 * m, h: Math.round(H * 0.12) }, [o.m.sku + '  ·  Box ' + o.m.seq + (o.box ? '  (' + o.box + ')' : ''), 'goes WITH the Amazon label before it'], Math.round(H * 0.03));
-          const r = awdDrawBlock(x2, { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m }, o.I.lines, o.bc, o.photo, Math.round(H * 0.045));
+          const r = awdDrawBlock(x2, { x: m, y: Math.round(H * 0.17), w: Wd - 2 * m, h: H - Math.round(H * 0.17) - m }, o.I.lines.concat([o.I.outUpc]), o.bc, o.photo, Math.round(H * 0.045));
           if (r.barcode) withBc++; if (r.photo) withPhoto++;
           grp.pages.push({ url: c2.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); ownPages++;
         }
