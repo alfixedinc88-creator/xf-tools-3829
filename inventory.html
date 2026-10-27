@@ -2485,6 +2485,7 @@ window.invCredLogin = async function() {
         return '<details style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;margin-bottom:5px"><summary style="cursor:pointer"><b>' + ckE(o.shipment) + '</b> · '
           + (s ? '📤 sent by ' + ckE(s.by || '?') + ' ' + tm(s.at) + (o.sends.length > 1 ? ' (' + o.sends.length + ' sends)' : '') : '') + (L ? (s ? ' · ' : '') + '🏷 ' + L.boxes + ' box labels ' + tm(L.at) : '')
           + ' · ' + parts.length + ' part #s · grabbed ' + r1(gotN) + ' cs · ' + (o.done ? '<b style="color:var(--green)">✅ Done</b> by ' + ckE(o.done.by || '?') + ' ' + tm(o.done.at) : '<b style="color:#1D4ED8">open</b>') + '</summary>'
+          + invAwdBoardHtml(o, d.photos || {})
           + '<div style="margin-top:5px;font-weight:700">What it needed' + (useL ? ' (from the Amazon box labels' + (L.prev ? ', ' + L.prev + ' PREVIOUS PACKED left out' : '') + ')' : ' (📤 the newest send)') + ' → grabbed</div>'
           + '<table style="border-collapse:collapse;width:100%"><tr><th ' + td + '>Part #</th><th ' + td + '>Units</th><th ' + td + '>Boxes</th><th ' + td + '>Cases grabbed</th></tr>' + parts.map(function(p) { var n = need[p] || {};
             return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + ckE(p) + '</span></td><td ' + td + '>' + (n.units != null ? r1(n.units) : '—') + '</td><td ' + td + '>' + (n.boxes ? r1(n.boxes) : '') + '</td><td ' + td + '>' + (got[p] ? r1(got[p]) : '<span style="color:var(--text3)">0</span>') + '</td></tr>'; }).join('') + '</table>'
@@ -2495,6 +2496,40 @@ window.invCredLogin = async function() {
           + '</details>'; }).join('');
     }).catch(function() { out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
+  // 🗺 Owner (2026-10-27): "a history under Stock Out Big Company (Admin and up) — how long it took them, when, who grabbed it — and design it
+  // like those boxes (the Audit's By area): most of the time a photo works better than words". Per shipment: each person (spots, cases,
+  // first → last, the average time a spot waited on the Pull List until ✓ Grabbed), then every spot grabbed as a box by area (walking
+  // order): the item's photo, spot, part #, cases, who, when, ⏱ how long. 🟩 grabbed · 🟧 none found · 🟦 on a Pull List now · faded = rejected.
+  function invAwdBoardHtml(o, photos) {
+    var T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }, r1 = function(n) { return Math.round((parseFloat(n) || 0) * 100) / 100; };
+    var M = function(m) { return m == null ? '' : m < 60 ? (Math.round(m * 10) / 10) + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min'; };
+    var tiles = o.grabbed.map(function(x) { return { x: x, kind: x.status === 'Rejected' ? 'rej' : x.none ? 'none' : 'got', area: invAwdArea(x.loc), at: x.grabbedAt || x.at }; })
+      .concat((o.claims || []).filter(function(c) { return c.status === 'open'; }).map(function(c) { return { x: c, kind: 'open', area: invAwdArea(c.loc), at: c.at }; }));
+    if (!tiles.length) return '';
+    var ppl = {}; o.grabbed.forEach(function(x) { if (x.status === 'Rejected') return; var p = ppl[x.by || '?'] = ppl[x.by || '?'] || { by: x.by || '?', n: 0, cs: 0, none: 0, first: '', last: '', mins: 0, timed: 0 };
+      var t = x.grabbedAt || x.at; if (x.none) p.none++; else { p.n++; p.cs += x.cases; } if (!p.first || t < p.first) p.first = t; if (!p.last || t > p.last) p.last = t; if (x.mins != null) { p.mins += x.mins; p.timed++; } });
+    var col = { got: ['var(--green-bg,#e8f7ee)', 'var(--green)'], none: ['var(--orange-bg,#fff7ed)', 'var(--orange)'], open: ['#EFF6FF', '#1D4ED8'], rej: ['var(--bg3)', 'var(--border)'] };
+    var by = {}; tiles.forEach(function(t) { (by[t.area] = by[t.area] || []).push(t); });
+    var areas = Object.keys(by).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
+    var cell = function(t) { var x = t.x, c = col[t.kind], ph = photos[String(x.part || '').split('=')[0].toUpperCase()] || '';
+      return '<div class="inv-awd-tile" style="border:2px solid ' + c[1] + ';background:' + c[0] + ';border-radius:8px;padding:4px;display:flex;gap:5px;align-items:flex-start' + (t.kind === 'rej' ? ';opacity:.5' : '') + '">'
+        + (ph ? '<img src="' + ckE(ph) + '" alt="" loading="lazy" style="width:46px;height:46px;object-fit:contain;border-radius:6px;background:#fff;flex:0 0 46px">' : '<div style="width:46px;height:46px;flex:0 0 46px;border-radius:6px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:20px">📦</div>')
+        + '<div style="min-width:0;font-size:11px;line-height:1.3;color:var(--text)"><b style="font-family:var(--mono)">' + ckE(String(x.loc || '').split('=').slice(1).join('=') || x.loc || '?') + '</b>'
+        + '<div style="font-family:var(--mono);overflow-wrap:anywhere">' + ckE(x.part) + ' · <b>' + r1(x.cases) + ' cs</b></div>'
+        + (t.kind === 'open' ? '<div style="color:#1D4ED8">👤 ' + ckE(x.by || '?') + ' has it · since ' + T(x.at) + '</div>'
+          : '<div style="color:' + c[1] + '">' + (t.kind === 'none' ? '✗ none found' : t.kind === 'rej' ? 'rejected' : '✓') + ' ' + ckE(x.by || '') + ' · ' + T(t.at) + '</div>'
+            + (x.mins != null ? '<div style="font-weight:700;color:' + (x.mins > 30 ? 'var(--red)' : 'var(--text2)') + '">⏱ ' + M(x.mins) + '</div>' : ''))
+        + '</div></div>'; };
+    return '<div class="inv-awd-board" style="margin:6px 0 8px">'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">' + Object.keys(ppl).map(function(k) { var p = ppl[k], span = p.first && p.last ? (Date.parse(p.last) - Date.parse(p.first)) / 60000 : null;
+          return '<div style="border:1.5px solid var(--border);border-radius:9px;padding:5px 8px;background:var(--bg2);font-size:12px;color:var(--text)"><b>👷 ' + ckE(p.by) + '</b> · ' + p.n + ' spot' + (p.n === 1 ? '' : 's') + ' · ' + r1(p.cs) + ' cs'
+            + (p.none ? ' · ' + p.none + ' none found' : '') + '<div style="color:var(--text2)">' + T(p.first) + ' → ' + T(p.last) + (span != null ? ' (' + M(span) + ')' : '') + (p.timed ? ' · avg <b>' + M(p.mins / p.timed) + '</b> a spot' : '') + '</div></div>'; }).join('') + '</div>'
+      + '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">🟩 grabbed · 🟧 none found · 🟦 on a Pull List now · ⏱ = put on the Pull List → ✓ Grabbed (red over 30 min)</div>'
+      + areas.map(function(a) { return '<div style="display:flex;gap:6px;margin-bottom:6px"><div style="flex:0 0 52px;font-family:var(--mono);font-weight:800;font-size:13px;color:var(--text);padding-top:4px">' + ckE(a)
+        + '<div style="font-size:10px;font-weight:400;color:var(--text3)">' + by[a].filter(function(t) { return t.kind === 'got'; }).length + '/' + by[a].length + '</div></div>'
+        + '<div style="flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px">' + by[a].sort(function(p, q) { return String(p.x.loc).localeCompare(String(q.x.loc), undefined, { numeric: true }); }).map(cell).join('') + '</div></div>'; }).join('')
+      + '</div>';
+  }
   function invAwdDoneHtml() {
     var L = AWDS.doneList || []; if (!L.length) return '';
     return '<details style="margin-top:8px;font-size:12px;color:var(--text2)"><summary style="cursor:pointer">✅ Done shipments (' + L.length + ')</summary>' + L.map(function(x) {
