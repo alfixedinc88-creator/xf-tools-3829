@@ -1084,6 +1084,14 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
           </div>
         </div>
       </div>
+      <!-- 🕘 Owner (2026-10-27): "every tab has a History at the bottom, recording everything done — whoever, when, what they did — only
+           Admin and up can see it". Everything done in the Shipment Builder: SKUs in / out / qty, labels made / printed (which area), sent to
+           Stock Out, exported, Prep fixed. -->
+      <details id="awd-bld-hist" class="card" style="display:none;margin-top:14px;padding:10px 14px" ontoggle="if(this.open)awdBldHistLoad()">
+        <summary style="cursor:pointer;font-weight:700;font-size:14px">🕘 History — everything done in the Shipment Builder <span style="font-weight:400;color:var(--gray-400);font-size:12px">(Admin only)</span></summary>
+        <div style="margin:8px 0;font-size:12px">Show the last <select id="awd-bld-hist-days" onchange="awdBldHistLoad()" style="font-size:12px"><option value="1">1 day</option><option value="7" selected>7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></div>
+        <div id="awd-bld-hist-out" style="font-size:12px">Loading…</div>
+      </details>
     </div>
 
     <!-- 📭 Owner (2026-10-22): items we shipped to FBA / AWD that were never received (10+ days, the rest of the shipment in) -->
@@ -1583,8 +1591,18 @@ function visRecs(){
   }).sort((a,b)=>a.netDays-b.netDays);
 }
 
+// 🕘 Owner (2026-10-27): every thing done in the Shipment Builder is kept (who = this sign-in, when = now) → 🕘 History (Admin only).
+function awdAct(action, detail) {
+  try { wFetch(W + '/awd/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, detail: detail || {}, _requestId: 'awdact-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })
+    .then(r => r.json()).then(d => { if (action === 'label_print' && d && d.ok) awdPrintMarks(); }).catch(() => {}); } catch (e) {}
+}
+const _awdQtyLog = {};
+function awdActQty(sku, from, to) { // typing 1, 12, 120 → one record: 0 → 120
+  const k = String(sku); if (!_awdQtyLog[k]) _awdQtyLog[k] = { from }; _awdQtyLog[k].to = to; clearTimeout(_awdQtyLog[k].t);
+  _awdQtyLog[k].t = setTimeout(() => { const x = _awdQtyLog[k]; delete _awdQtyLog[k]; if (x.from !== x.to) awdAct('builder_qty', { sku: k, from: x.from, to: x.to }); }, 1500);
+}
 function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
-function toggleAllVis(c){visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});updateBadges();renderRecs();renderBuilder();}
+function toggleAllVis(c){const L=visRecs().filter(r=>c?!S.shipment[r.sku]:!!S.shipment[r.sku]).map(r=>r.sku);S._quiet=true;try{visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});}finally{S._quiet=false;}if(L.length&&typeof awdAct==='function')awdAct(c?'builder_add_all':'builder_remove_all',{n:L.length,skus:L.slice(0,60)});updateBadges();renderRecs();renderBuilder();}
 function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
 
 // ── BUILDER ──
@@ -1604,11 +1622,11 @@ function findRow(sku){
   var normalized = normalizeSkuForMatch(sku);
   return S.joined.find(function(r){ return normalizeSkuForMatch(r.sku) === normalized; });
 }
-function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0,addedAt:new Date().toISOString()};saveShipmentToSheet();} // 🕒 when it was put in (owner 2026-10-24)
+function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0,addedAt:new Date().toISOString()};if(!S._quiet&&typeof awdAct==='function')awdAct('builder_add',{sku:row.sku,qty:row.recSend||0});saveShipmentToSheet();} // 🕒 when it was put in (owner 2026-10-24)
 
-function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
-function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
-function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();var fw=ge('bld-fam-warn');if(fw)fw.innerHTML=awdFamWarnHtml();}
+function removeSku(sku){if(S.shipment[sku]&&typeof awdAct==='function')awdAct('builder_remove',{sku,qty:S.shipment[sku].qty});delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
+function clearBuilder(){if(!Object.keys(S.shipment).length)return;if(typeof awdAct==='function')awdAct('builder_clear',{n:Object.keys(S.shipment).length,skus:Object.keys(S.shipment).slice(0,60)});S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
+function updQty(sku,v){if(!S.shipment[sku])return;const q0=S.shipment[sku].qty;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);if(typeof awdActQty==='function')awdActQty(sku,q0,S.shipment[sku].qty);updateSummary();saveShipmentToSheet();var fw=ge('bld-fam-warn');if(fw)fw.innerHTML=awdFamWarnHtml();}
 
 // ── MANUAL ADD TO BUILDER ──
 function bldShowManualAdd(){
@@ -1641,7 +1659,7 @@ function bldManualAdd(){
   const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
   const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
   if(existing&&name)row.name=name;
-  S.shipment[sku]={row,qty,addedAt:new Date().toISOString()};
+  S.shipment[sku]={row,qty,addedAt:new Date().toISOString()};if(typeof awdAct==='function')awdAct('builder_add',{sku,qty,manual:true});
   updateBadges();renderRecs();renderInv();renderBuilder();saveShipmentToSheet();
   awd_planner_toast('Added: '+sku,'success');
   ge('bld-manual-sku').value='';ge('bld-manual-name').value='';ge('bld-manual-qty').value='0';
@@ -2271,7 +2289,21 @@ function awdAreaButtons(groups) {
 function awdPrintArea(area) {
   const G = window.AWD_LBL_GROUPS || [], pages = [].concat(...G.filter(g => !area || (g.area || '?') === area).map(g => g.pages));
   if (!pages.length) { awd_planner_toast('No labels for ' + (area || 'this shipment') + ' — make the labels again', 'error'); return; }
-  if (!awdPrintPages(pages, 'Box labels — ' + (area || 'all'))) awd_planner_toast('Allow pop-ups for this page, then try again', 'error');
+  if (!awdPrintPages(pages, 'Box labels — ' + (area || 'all'))) { awd_planner_toast('Allow pop-ups for this page, then try again', 'error'); return; }
+  (typeof awdAct === 'function') && awdAct('label_print', { shipment: window.AWD_LBL_SHIP || '', area: area || 'All', labels: pages.length }); // 🖨 kept: who / when / which area
+}
+// 🖨 Owner (2026-10-27): each area button says it was printed — by who, when, how many times (everyone sees it; the full History is Admin only)
+async function awdPrintMarks() {
+  const ship = window.AWD_LBL_SHIP; if (ship == null || typeof document === 'undefined') return;
+  let d; try { d = await wFetch(W + '/awd/activity?prints=' + encodeURIComponent(ship)).then(r => r.json()); } catch (e) { return; }
+  if (!d || !d.ok) return;
+  const by = {}; d.prints.forEach(p => { const a = String(p.detail.area || 'All'); (by[a] = by[a] || []).push(p); });
+  const tm = v => new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }), h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
+  document.querySelectorAll('.awd-area-print button').forEach(b => { const a = b.dataset.a || 'All', L = by[a] || [], old = b.querySelector('.awd-printed'); if (old) old.remove();
+    if (!L.length) return; const last = L[L.length - 1], sp = document.createElement('span'); sp.className = 'awd-printed';
+    const all = !b.dataset.a; if (!all) b.style.background = '#DCFCE7'; // a printed area: light green
+    sp.style.cssText = 'display:block;font-size:10px;font-weight:600;color:' + (all ? '#DCFCE7' : '#15803D'); sp.title = L.map(p => tm(p.at) + ' — ' + p.by).join('\n');
+    sp.innerHTML = '✓ printed ' + (L.length > 1 ? L.length + '× · last ' : '') + h(last.by) + ' ' + h(tm(last.at)); b.appendChild(sp); });
 }
 // 💾 Owner (2026-10-27): "Add our template to Amazon box labels — save it too, until we upload a new one". The labels made last time
 // (every page, by area) are kept on this computer (IndexedDB: the pages are too big for localStorage) and come back when the page opens:
@@ -2301,6 +2333,7 @@ async function awdLblLoad(key) {
 }
 function awdLblIsAdmin() { return !!(typeof AWD_CRED_USER !== 'undefined' && AWD_CRED_USER && (AWD_CRED_USER.roles || []).some(r => r === 'admin' || r === 'owner')); }
 async function awdLblHistShow() {
+  const bh = ge('awd-bld-hist'); if (bh) bh.style.display = awdLblIsAdmin() ? '' : 'none'; // 🕘 Shipment Builder History: Admin / Owner only
   const el = ge('awd-lbl-hist'), out = ge('awd-lbl-hist-out'); if (!el || !out) return;
   el.style.display = awdLblIsAdmin() ? '' : 'none'; if (!awdLblIsAdmin()) return;
   const idx = (await awdLblLoad('idx')) || [], h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
@@ -2309,11 +2342,53 @@ async function awdLblHistShow() {
       + ' <button type="button" class="btn btn-secondary" style="padding:2px 8px;font-size:11px" data-at="' + h(x.at) + '" onclick="awdLblBringBack(this.dataset.at)">↩ Bring back</button></div>').join('')
     : '<span style="color:var(--gray-400)">No labels made on this computer yet.</span>';
 }
+// 🕘 Shipment Builder → History (Admin / Owner; the server says no to anyone else): first a summary (who did what, how many; which areas of
+// which shipment were printed, by who, when), then every single thing, newest first.
+function awdActTxt(r) {
+  const d = r.detail || {}, h = v => String(v == null ? '' : v).replace(/[<&]/g, '&lt;'), L = x => (x || []).slice(0, 12).map(h).join(', ') + ((x || []).length > 12 ? '…' : '');
+  switch (r.action) {
+    case 'builder_add': return '➕ Added <b>' + h(d.sku) + '</b> (qty ' + h(d.qty) + ')' + (d.manual ? ' by hand' : '');
+    case 'builder_remove': return '✕ Removed <b>' + h(d.sku) + '</b> (qty ' + h(d.qty) + ')';
+    case 'builder_qty': return '✏️ Qty of <b>' + h(d.sku) + '</b>: ' + h(d.from) + ' → <b>' + h(d.to) + '</b>';
+    case 'builder_clear': return '🧹 Cleared the builder (' + h(d.n) + ' SKUs: ' + L(d.skus) + ')';
+    case 'builder_add_all': return '➕ Added all shown: ' + h(d.n) + ' SKUs (' + L(d.skus) + ')';
+    case 'builder_remove_all': return '✕ Removed all shown: ' + h(d.n) + ' SKUs (' + L(d.skus) + ')';
+    case 'make_template': return (d.on ? '☑' : '☐') + ' Make template for <b>' + h(d.sku) + '</b>';
+    case 'label_print': return '🖨 Printed <b>' + h(d.area) + '</b> of ' + h(d.shipment || 'the box labels') + ' — ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + (d.made ? ' (right after making them)' : '');
+    case 'labels_bring_back': return '↩ Brought back the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels)';
+    case 'label_map': return '🏷 Made the box labels of <b>' + h(d.shipment || '?') + '</b> (' + h(d.boxes) + ' boxes)';
+    case 'ship_send': return '📤 Sent <b>' + h(d.shipment) + '</b> to Stock Out Big Company (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';
+    case 'shipment_export': return '⬇ Exported <b>' + h(d.name || '(no name)') + '</b> for Amazon (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';
+    case 'prep_fix': return '🧰 Prep category set on Amazon for ' + h(d.set) + ' SKUs' + (d.errors ? ' (' + h(d.errors) + ' errors)' : '');
+    default: return h(r.action);
+  }
+}
+async function awdBldHistLoad() {
+  const out = ge('awd-bld-hist-out'); if (!out) return;
+  const days = (ge('awd-bld-hist-days') || {}).value || 7; out.innerHTML = '⏳ Loading…';
+  let d; try { d = await wFetch(W + '/awd/activity?tab=builder&days=' + days).then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok) { out.innerHTML = '<span style="color:#DC2626">' + String((d && d.error) || 'Could not load').replace(/</g, '&lt;') + '</span>'; return; }
+  const h = v => String(v == null ? '' : v).replace(/[<&]/g, '&lt;'), tm = v => new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  if (!d.list.length) { out.innerHTML = '<span style="color:var(--gray-400)">Nothing done in the last ' + d.days + ' day' + (d.days === 1 ? '' : 's') + '.</span>'; return; }
+  const NAMES = { builder_add: 'SKUs added', builder_add_all: '"add all"', builder_remove: 'SKUs removed', builder_remove_all: '"remove all"', builder_qty: 'qty changes', builder_clear: 'clears',
+    make_template: 'make-template ticks', label_map: 'label sets made', label_print: 'prints', labels_bring_back: 'labels brought back', ship_send: 'sent to Stock Out', shipment_export: 'exports', prep_fix: 'Prep fixes' };
+  const who = {}; d.list.forEach(r => { const o = who[r.by] = who[r.by] || { n: 0, a: {}, first: r.at, last: r.at }; o.n++; o.a[r.action] = (o.a[r.action] || 0) + 1; if (r.at < o.first) o.first = r.at; if (r.at > o.last) o.last = r.at; });
+  const prints = {}; d.list.filter(r => r.action === 'label_print').slice().reverse().forEach(r => { const s = r.detail.shipment || '?', a = r.detail.area || 'All'; ((prints[s] = prints[s] || {})[a] = prints[s][a] || []).push(r); });
+  const td = 'style="padding:3px 6px;border-bottom:1px solid var(--gray-200);text-align:left;vertical-align:top"';
+  out.innerHTML = '<div style="font-weight:700;margin-bottom:4px">Summary — last ' + d.days + ' day' + (d.days === 1 ? '' : 's') + ' (' + d.list.length + ' things done)</div>'
+    + Object.keys(who).sort((a, b) => who[b].n - who[a].n).map(n => { const o = who[n]; return '<div style="padding:2px 0">👤 <b>' + h(n) + '</b> — ' + Object.keys(o.a).sort((x, y) => o.a[y] - o.a[x]).map(k => o.a[k] + ' ' + (NAMES[k] || k)).join(' · ')
+      + ' <span style="color:var(--gray-400)">(' + h(tm(o.first)) + ' → ' + h(tm(o.last)) + ')</span></div>'; }).join('')
+    + (Object.keys(prints).length ? '<div style="font-weight:700;margin:8px 0 4px">🖨 Box labels printed</div>' + Object.keys(prints).map(s => '<div style="padding:2px 0"><b>' + h(s) + '</b>: ' + Object.keys(prints[s]).map(a => { const L = prints[s][a];
+        return '<span style="white-space:nowrap">' + h(a) + (L.length > 1 ? ' ×' + L.length : '') + ' (' + L.map(r => h(r.by) + ' ' + h(tm(r.at))).join(', ') + ')</span>'; }).join(' · ') + '</div>').join('') : '')
+    + '<div style="font-weight:700;margin:8px 0 4px">Everything, newest first</div><table style="border-collapse:collapse;width:100%"><tr><th ' + td + '>When</th><th ' + td + '>Who</th><th ' + td + '>What</th></tr>'
+    + d.list.map(r => '<tr><td ' + td + ' style="white-space:nowrap">' + h(tm(r.at)) + '</td><td ' + td + '>' + h(r.by) + '</td><td ' + td + '>' + awdActTxt(r) + '</td></tr>').join('') + '</table>';
+}
 async function awdLblBringBack(at) {
   const rec = await awdLblLoad('h:' + at), out = ge('awd-lbl-out');
   if (!rec || !out) { awd_planner_toast('Those labels are not on this computer anymore', 'error'); return; }
-  window.AWD_LBL_GROUPS = rec.groups; await awdLblSave(rec, true);
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
+  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; await awdLblSave(rec, true);
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks();
+  (typeof awdAct === 'function') && awdAct('labels_bring_back', { shipment: rec.shipment || '', made: rec.at, labels: (rec.groups || []).reduce((a, g) => a + g.pages.length, 0) });
   awd_planner_toast('↩ ' + (rec.shipment || 'Labels') + ' brought back — 🖨 print an area or All');
 }
 function awdLblSavedHead(rec) {
@@ -2324,8 +2399,8 @@ function awdLblSavedHead(rec) {
 async function awdLblRestore() {
   const out = ge('awd-lbl-out'); awdLblHistShow(); if (!out || window.AWD_LBL_GROUPS) return;
   const rec = await awdLblLoad(); if (!rec || !(rec.groups || []).length || window.AWD_LBL_GROUPS) return;
-  window.AWD_LBL_GROUPS = rec.groups;
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
+  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || '';
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks();
 }
 // 🏷 Owner (2026-10-27): the outside box UPC written on every label ("in case they want to check") — one call for all the part #s.
 async function awdBoxUpcs(parts) {
@@ -2434,6 +2509,7 @@ async function awdLabelsDo(file) {
     } catch (e) { mapNote = '<div style="color:#DC2626">⚠ Boxes not saved for the phones (no WiFi?) — upload the labels again</div>'; }
     window.AWD_LBL_GROUPS = groups; // 🖨 by area afterwards (awdPrintArea)
     if (!awdPrintPages(pages, 'Box labels with our template')) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
+    window.AWD_LBL_SHIP = shipId; (typeof awdAct === 'function') && awdAct('label_print', { shipment: shipId, area: 'All', labels: pages.length, made: true }); // 🖨 the first print, right after making them
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
       + mapNote
@@ -2449,10 +2525,11 @@ async function awdLabelsDo(file) {
       + (nt.length ? '<div style="color:#C2410C">⚠ No label line / UPC on record for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — printed with the Amazon name</div>' : '');
     const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML };
     if (await awdLblSave(rec)) out.innerHTML = awdLblSavedHead(rec) + rec.html; // 💾 kept for next time
+    (typeof awdPrintMarks === 'function') && awdPrintMarks();
     awdLblHistShow();
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }
 }
-function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; renderBuilder(); }
+function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; (typeof awdAct === 'function') && awdAct('make_template', { sku, on: !!on }); renderBuilder(); }
 function updateSummary(){
   const items=Object.entries(S.shipment);let tot=0;
   ge('sum-items').innerHTML=items.slice(0,16).map(([sku,i])=>{tot+=i.qty;return'<div class="sum-item"><span class="sum-sku">'+sku+'</span><span class="sum-qty">'+fn(i.qty)+'</span></div>';}).join('')

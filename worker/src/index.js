@@ -1583,6 +1583,45 @@ async function awdBoxUpc(url, env) {
   for (const [part, outU] of VENDOR_UPC) { const p = U(part); if (parts.includes(p) && !out[p] && ok(outU)) out[p] = String(outU); }
   return J({ ok: true, upcs: out });
 }
+// 🕘 Owner (2026-10-27): "when anyone clicks to print an area, show it was printed, and give me the history of who and when printed it —
+// every tab has a History at the bottom recording everything done: whoever, when, what they did — only Admin and up can see it".
+// POST /awd/activity { action, detail, _requestId } — one thing done in the Shipment Builder, kept (who = the sign-in, when = now).
+// GET ?prints=<shipment> — who printed which area of those box labels (everyone signed in: the 🖨 buttons say "printed").
+// GET ?tab=builder&days=N — everything done in the Shipment Builder (Admin / Owner only).
+const AWD_BUILDER_ACTS = ['builder_add', 'builder_remove', 'builder_qty', 'builder_clear', 'builder_add_all', 'builder_remove_all', 'make_template',
+  'label_print', 'labels_bring_back'];
+const AWD_BUILDER_LOGGED = AWD_BUILDER_ACTS.map(a => 'awd_' + a).concat(['awd_label_map', 'awd_ship_send', 'awd_shipment_export', 'awd_prep_fix']);
+async function awdActivity(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await ensureActivityLogTable(env);
+  if (request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const action = String(b.action || '');
+    if (!AWD_BUILDER_ACTS.includes(action)) return J({ ok: false, error: 'Unknown action' }, 400);
+    const rid = String(b._requestId || '').slice(0, 80);
+    if (rid) { const claim = await claimRequestId(env, rid, 'awd/activity'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+    let detail = b.detail && typeof b.detail === 'object' ? b.detail : {};
+    detail = JSON.parse(JSON.stringify(detail, (k, v) => typeof v === 'string' ? v.slice(0, 200) : v)); if (JSON.stringify(detail).length > 4000) detail = { note: 'too long — not kept' };
+    if (!(session && session.userId)) return J({ ok: false, error: 'Sign in' }, 401);
+    await logUserActivity(env, session.userId, 'awd_' + action, detail);
+    const res = { ok: true, at: new Date().toISOString(), by: (session.displayName || session.username || '?') };
+    if (rid) await recordRequestResult(env, rid, res);
+    return J(res);
+  }
+  const name = async rows => { const ids = [...new Set(rows.map(r => r.user_id))], m = {};
+    for (let i = 0; i < ids.length; i += 90) { const ch = ids.slice(i, i + 90); (await d1All(env, `SELECT id, display_name, username FROM cred_users WHERE id IN (${ch.map(() => '?').join(',')})`, ch)).forEach(u => { m[u.id] = u.display_name || u.username; }); }
+    return rows.map(r => { let d = {}; try { d = JSON.parse(r.metadata || '{}'); } catch (_) {} return { at: r.timestamp, by: m[r.user_id] || ('#' + r.user_id), action: String(r.action_type).replace(/^awd_/, ''), detail: d }; }); };
+  const ship = url.searchParams.get('prints');
+  if (ship != null) {
+    const rows = await d1All(env, `SELECT user_id, action_type, timestamp, metadata FROM user_activity_log WHERE action_type = 'awd_label_print' AND timestamp >= ? ORDER BY timestamp`, [new Date(Date.now() - 90 * 86400000).toISOString()]);
+    return J({ ok: true, prints: (await name(rows)).filter(r => String(r.detail.shipment || '') === String(ship)) });
+  }
+  const roles = (session && session.roles) || [];
+  if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only' }, 403);
+  const days = Math.min(365, Math.max(1, parseInt(url.searchParams.get('days'), 10) || 30)), since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = await d1All(env, `SELECT user_id, action_type, timestamp, metadata FROM user_activity_log WHERE action_type IN (${AWD_BUILDER_LOGGED.map(() => '?').join(',')}) AND timestamp >= ? ORDER BY timestamp DESC LIMIT 3000`, AWD_BUILDER_LOGGED.concat([since]));
+  return J({ ok: true, days, list: await name(rows) });
+}
 async function awdShipSend(request, env, session, url) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_send (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, lines TEXT, units REAL, boxes REAL, at TEXT, by_user TEXT)').run();
@@ -10427,6 +10466,7 @@ const _app = {
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
+    if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
