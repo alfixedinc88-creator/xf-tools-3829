@@ -9966,7 +9966,7 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
   const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
   const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), flashes = [], pull = [];
-  const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v),
+  const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
     invFlash: m => flashes.push(m), invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {} };
   const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
     function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
@@ -10090,15 +10090,43 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   sq.prepare("UPDATE awd_ship_send SET at = '2026-01-01T00:00:00.000Z'").run();
   await post('/awd/label-map', { shipment: 'STAR-SEND1', labels: [{ sscc: '201952611628557390', sku: '93-7-1=10-', part: '93-7-1=10', seq: '1-1', units: 10, loc: 'C3=1-1-1' }] });
   const c2 = await loadCard(), all = A => A.takes.reduce((x, t) => x + t.cases, 0);
+  check('…the Amazon box labels uploaded after the send are newer → the card follows the labels (1 box → 1 case in all)',
+    !/from the Shipment Builder/.test(c2.h) && /1 Amazon boxes/.test(c2.h) && all(c2.A) === 1, { h: c2.h.slice(0, 200) });
+  // 📦 Owner (2026-10-27) changed the rule "a newer send replaces the one they see": EVERY shipment sent and not ✅ Done is on the card.
   await post('/awd/ship-send', { shipment: 'STAR-SEND2', lines: lines.slice(1) });
   const c3 = await loadCard();
-  check('…the Amazon box labels uploaded after the send are newer → the card follows the labels (1 box → 1 case in all); a newer send wins again over older labels',
-    !/from the Shipment Builder/.test(c2.h) && /1 Amazon boxes/.test(c2.h) && all(c2.A) === 1 && /STAR-SEND2<\/b> · 📤 from the Shipment Builder · 1 SKU ·/.test(c3.h) && all(c3.A) === 1 && sum(c3.A, 'PR') === 1,
-    { h: c2.h.slice(0, 200), h3: c3.h.slice(0, 200) });
+  check('📦 all the shipments ready are listed together (owner 2026-10-27): STAR-SEND1 (its labels, 1 case of 93-7-1=10) AND STAR-SEND2 (sent later, 1 case of 94-7-4=5 → PR) — a newer send no longer hides the older one; each has ✅ Done',
+    /STAR-SEND1<\/b>/.test(c3.h) && /STAR-SEND2<\/b> · 📤 from the Shipment Builder · 1 SKU ·/.test(c3.h) && all(c3.A) === 2 && sum(c3.A, 'PR') === 1 && (c3.h.match(/class="inv-awdship-done"/g) || []).length === 2
+      && /2 shipments together/.test(c3.h), { takes: c3.A.takes.map(t => [t.area, t.partNum, t.cases, t.ships]), h: c3.h.slice(0, 400) });
+  // the same part # in two shipments → worked out once (the total), never the same box twice: 93-7-1=10 1 case (STAR-SEND1) + 1 case (STAR-SEND3)
+  await post('/awd/ship-send', { shipment: 'STAR-SEND3', lines: [{ sku: '93-7-1=10-', units: 10, boxes: 1, unitsPerBox: 10, name: 'Nipple' }] });
+  const c4 = await loadCard(), p93 = A => A.takes.filter(t => t.target === '93-7-1=10');
+  const spots = A => { const m = {}; p93(A).forEach(t => { m[t.loc.location] = (m[t.loc.location] || 0) + t.cases; }); return m; };
+  check('…93-7-1=10 in STAR-SEND1 (1 case) and STAR-SEND3 (1 case) → 2 cases worked out once from 3 on the shelves (C3 2 + BO 1): no spot asked for more than it has, tagged for both shipments',
+    p93(c4.A).reduce((x, t) => x + t.cases, 0) === 2 && Object.entries(spots(c4.A)).every(([l, c]) => c <= (l === 'C3=1-1-1' ? 2 : 1)) && p93(c4.A).every(t => t.ships.join() === 'STAR-SEND1,STAR-SEND3'),
+    { t: p93(c4.A).map(t => [t.loc.location, t.cases, t.ships]) });
+  // grabbed already: a Stock Out sent for STAR-SEND1 (1 case, pending) → STAR-SEND1 ✓ all grabbed, only STAR-SEND3's 1 case is left (shelf 3 − 1 pending = 2, take 1)
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', '93-7-1=10', 'C3=1-1-1', 1, 'PK', '[BIG COMPANY for 93-7-1=10] [AWD: STAR-SEND1]', 'Pending')").run(new Date().toISOString());
+  const c5 = await loadCard(), pend = sq.prepare("SELECT SUM(cases) c FROM inventory_log WHERE part_num = '93-7-1=10' AND type = 'OUT' AND status = 'Pending'").get().c;
+  check('…what was already grabbed for a shipment comes off (never listed to grab twice): STAR-SEND1 ✓ all grabbed, 93-7-1=10 left = 1 case for STAR-SEND3; shelf 3 − 1 grabbed = 2, 1 still there after this pick',
+    pend === 1 && p93(c5.A).reduce((x, t) => x + t.cases, 0) === 1 && p93(c5.A).every(t => t.ships.join() === 'STAR-SEND3') && /STAR-SEND1<\/b>[^✅]*✓ all grabbed/.test(c5.h),
+    { t: p93(c5.A).map(t => [t.loc.location, t.cases, t.ships]), h: c5.h.slice(0, 600) });
+  // ✅ Done from a picker's phone (sent twice by the outbox → kept once) → off the list; ↩ put back → on again
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const dn = b => call('/awd/ship-send', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json());
+  const d1 = await dn({ done: 'STAR-SEND2', _requestId: 'awd-done-1' }), d2 = await dn({ done: 'STAR-SEND2', _requestId: 'awd-done-1' });
+  const c6 = await loadCard(), nDone = sq.prepare("SELECT COUNT(*) n, MAX(by_user) b FROM awd_ship_done WHERE shipment = 'STAR-SEND2'").get();
+  await dn({ reopen: 'STAR-SEND2', _requestId: 'awd-re-1' }); const c7 = await loadCard();
+  check('…✅ Done (a picker can, kept once with who / when even if the phone sends it twice) → STAR-SEND2 off the list (PR spot gone, in ✅ Done shipments); ↩ put back → on the list again',
+    d1.ok && d2.ok && nDone.n === 1 && !!nDone.b && !/class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c6.h) && sum(c6.A, 'PR') === 0 && /✅ Done shipments \(1\)/.test(c6.h) && /STAR-SEND2/.test(c6.h)
+      && /class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c7.h) && sum(c7.A, 'PR') === 1, { d1, d2, nDone, h6: c6.h.slice(-400) });
+  check('…a Stock Out from the card says which shipment(s) it was for in its notes ([AWD: name]) — that is how the card knows it was grabbed; the card opens by itself on Big Company',
+    /if \(item\.awdShipment && \(item\.dest \|\| invStockOutDest\) === 'company'\) destTag \+= '\[AWD: ' \+ item\.awdShipment \+ '\] ';/.test(ih) && /it\.awdShipment = \(t\.ships \|\| \[\]\)\.join\(' \| '\)/.test(ih)
+      && /id="inv-awdship-card" open /.test(ih) && /if \(aws && aws\.open && !AWDS\.data\) window\.invAwdShipLoad\(\);/.test(ih), null);
   check('…📤 Send this shipment to Stock Out Big Company button in the Builder (asks first; says sent / not sent), 🧩 check mark; the card reads /awd/ship-send',
     /onclick="awdSendToStockOut\(\)">📤 Send this shipment to Stock Out Big Company<\/button>/.test(ah) && /if \(!confirm\('📤 Send "'/.test(ah) && /✗ Not sent: /.test(ah)
-      && /sel: '#awd-send-so'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /wFetch\(W \+ '\/awd\/ship-send'\)/.test(ih), null);
-  sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send");
+      && /sel: '#awd-send-so'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /wFetch\(W \+ '\/awd\/ship-send\?open=1'\)/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send; DELETE FROM awd_ship_done; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SEND%'");
 }
 
 // Owner (2026-10-25, a label "BO=1-1-1-3: grab 1 case (? pcs a case)" for 100=1/2X): "why we have the ?". The pieces a case came only from
@@ -10214,7 +10242,7 @@ console.log('\n📦 Stock Out Big Company, sold as a whole case: only cases with
     { t: p3.takes.map(t => [t.loc.location, t.cases]), txt: F.txt(p3) });
   check('…× 4 with only 3 matching cases: 3 picked, 1,000 pcs short (not made up from 800-pc cases)', took(p4) === 3 && p4.short === 1000 && p4.byPieces, { took: took(p4), short: p4.short });
   check('…the 📦 Current AWD shipment card does the same (each Amazon unit = 1 whole case, only matching cases)',
-    /var caseTo = L\.caseOf && L\.caseOf\[o\.part\]/.test(ih) && /plan = caseTo \? invCaseOfPlan\(L, o\.part, caseTo, o\.units\) : invPlanCompanyPull\(o\.part, need\)/.test(ih), null);
+    /var caseTo = L\.caseOf && L\.caseOf\[o\.part\]/.test(ih) && /var units = caseTo \? rest : 0/.test(ih) && /plan = caseTo \? invCaseOfPlan\(L, o\.part, caseTo, units\) : invPlanCompanyPull\(o\.part, rest\)/.test(ih), null);
 }
 
 // Owner (2026-10-25, label screenshot): "the words on the bottom are way too small, no one can read it — make it bigger".

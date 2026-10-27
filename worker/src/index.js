@@ -1428,9 +1428,54 @@ async function awdLabelMap(request, url, env, session) {
 // POST { shipment, lines:[{ sku, units, boxes, unitsPerBox, name }] } keeps one record per send (who / when / every line, never
 // overwritten); each Amazon SKU is read as our part # (✏️ mapped, as everywhere). GET = the newest send. Stock Out Big Company →
 // 📦 Current AWD shipment uses whichever is newer: this send or the Amazon box labels (those leave out PREVIOUS PACKED).
-async function awdShipSend(request, env, session) {
+// 📦 Owner (2026-10-27): "all the Shipment Builder shipments that are ready, anything we need to grab, put it on Stock Out Big Company
+// so they can start grabbing right now". GET ?open=1 → EVERY shipment not ✅ Done (sent in the last 14 days, or Amazon box labels made in
+// the last 14 days), not only the newest; a shipment's newest send / labels win; Amazon box labels made after a send for the same SKUs take
+// its place (they know the PREVIOUS PACKED boxes). + what was already grabbed for each (Stock Out notes "[AWD: name]", not Rejected), so
+// nothing is listed to grab twice. POST { done: name } / { reopen: name } → kept (who / when) in awd_ship_done.
+const AWD_TAG_NAME = n => String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60);
+async function awdShipOpen(env, url) {
+  const days = 14, since = new Date(Date.now() - days * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
+    prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  const sends = {};
+  ((await env.DB.prepare('SELECT * FROM awd_ship_send WHERE at >= ? ORDER BY id').bind(since).all()).results || []).forEach(r => {
+    let lines = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {}
+    sends[r.shipment] = { shipment: r.shipment, source: 'send', at: r.at, by: r.by_user, boxes: r.boxes || 0,
+      lines: lines.map(x => ({ sku: x.sku, part: x.part, units: x.units, boxes: x.boxes || 0, name: x.name || '', prev: 0 })) };
+  });
+  const labs = {};
+  ((await env.DB.prepare('SELECT shipment, sku, part, units, prev, name, at, by_user FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY sku, seq').bind(since).all()).results || []).forEach(r => {
+    const o = labs[r.shipment] = labs[r.shipment] || { shipment: r.shipment, source: 'labels', at: '', by: r.by_user, boxes: 0, lines: [] };
+    if (String(r.at || '') > o.at) { o.at = r.at; o.by = r.by_user; }
+    o.boxes++; o.lines.push({ sku: r.sku, part: r.part, units: r.units, boxes: 1, name: r.name || '', prev: r.prev ? 1 : 0 });
+  });
+  const all = {};
+  Object.values(sends).forEach(x => { all[x.shipment] = x; });
+  Object.values(labs).forEach(x => { const s = all[x.shipment]; if (!s || String(x.at) > String(s.at)) all[x.shipment] = x; });
+  // the labels of a send (Amazon gives the labels its own Shipment ID): newer labels sharing at least half of their SKUs replace the send
+  Object.values(labs).forEach(l => { const ls = new Set(l.lines.map(x => U(x.sku)));
+    Object.values(sends).forEach(s => { if (s.shipment === l.shipment || all[s.shipment] !== s || !(String(l.at) > String(s.at))) return;
+      const hit = s.lines.filter(x => ls.has(U(x.sku))).length; if (ls.size && hit * 2 >= ls.size) { delete all[s.shipment]; l.replaces = (l.replaces || []).concat(s.shipment); } }); });
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run();
+  const last = {}; ((await env.DB.prepare('SELECT shipment, action, at, by_user FROM awd_ship_done ORDER BY id').all()).results || []).forEach(r => { last[r.shipment] = r; });
+  const done = [], open = [];
+  Object.values(all).sort((a, b) => String(a.at).localeCompare(String(b.at))).forEach(x => {
+    const d = last[x.shipment]; // ✅ Done stays done unless the shipment is sent / labelled again afterwards
+    if (d && d.action === 'done' && String(d.at) >= String(x.at)) done.push({ shipment: x.shipment, at: d.at, by: d.by_user }); else open.push(x);
+  });
+  const grabbed = [];
+  ((await env.DB.prepare(`SELECT part_num, cases, notes, status FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND COALESCE(status, '') != 'Rejected' AND timestamp >= ?`).bind(since).all().catch(() => ({ results: [] }))).results || []).forEach(r => {
+    const m = /\[AWD:([^\]]*)\]/.exec(r.notes || ''), f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(r.notes || '');
+    if (!m || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
+    grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num), cases: parseFloat(r.cases) || 0, ships: m[1].split('|').map(AWD_TAG_NAME).filter(Boolean), status: r.status || '' });
+  });
+  return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days };
+}
+async function awdShipSend(request, env, session, url) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_send (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, lines TEXT, units REAL, boxes REAL, at TEXT, by_user TEXT)').run();
+  if (request.method === 'GET' && url && url.searchParams.get('open')) return J(await awdShipOpen(env, url));
   if (request.method === 'GET') {
     const r = await env.DB.prepare('SELECT * FROM awd_ship_send ORDER BY id DESC LIMIT 1').first();
     if (!r) return J({ ok: true, send: null });
@@ -1439,6 +1484,17 @@ async function awdShipSend(request, env, session) {
   }
   const b = await request.json().catch(() => ({}));
   const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), U = x => String(x || '').trim().toUpperCase();
+  if (b.done || b.reopen) { // ✅ Done / ↩ back on the list — who / when kept
+    const name = t(b.done || b.reopen, 60), action = b.done ? 'done' : 'reopen', now = new Date().toISOString(), by = t((session && (session.displayName || session.username)) || '?', 40);
+    const rid = String(b._requestId || '').slice(0, 80); // the phone's outbox may send it again — kept once
+    if (rid) { const claim = await claimRequestId(env, rid, 'awd/ship-send'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run();
+    await env.DB.prepare('INSERT INTO awd_ship_done (shipment, action, at, by_user) VALUES (?,?,?,?)').bind(name, action, now, by).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'awd_ship_' + action, { shipment: name }).catch(() => {});
+    const res = { ok: true, shipment: name, action, at: now, by };
+    if (rid) await recordRequestResult(env, rid, res);
+    return J(res);
+  }
   const alias = {};
   try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); }); } catch (_) {}
   const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
@@ -10249,7 +10305,7 @@ const _app = {
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
-    if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session);
+    if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       try { return await amazonBarcodeLiveCheck(env); } catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 502, headers: { 'Content-Type': 'application/json' } })); }
