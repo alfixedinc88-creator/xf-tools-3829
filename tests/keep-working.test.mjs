@@ -9979,7 +9979,15 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
     /1 PREVIOUS PACKED, on the pallet — not listed/.test(h) && c2 === 3 && bs === 1 && h.indexOf('data-a="BSMT"') > 0 && h.indexOf('data-a="BSMT"') < h.indexOf('data-a="C2"'), { takes: A.takes.map(t => [t.area, t.partNum, t.cases]), h: h.slice(0, 300) });
   // Owner (2026-10-27): "2FL 1 spot · 9 cs — 9 cases, 1 spot to grab, but I also want how many Part #" → spots · part #s · cases.
   check('…each area button says spots · part #s · cases (C2: 1 spot · 1 part # · 3 cs; BSMT: 1 spot · 1 part # · 1 cs)',
-    /data-a="C2"[^>]*>[^<]*C2 <span[^>]*>1 spot · 1 part # · 3 cs<\/span>/.test(h) && /data-a="BSMT"[^>]*>[^<]*BSMT <span[^>]*>1 spot · 1 part # · 1 cs<\/span>/.test(h), h.slice(h.indexOf('inv-awdship-area'), h.indexOf('inv-awdship-area') + 700));
+    /data-a="C2"[^>]*>[^<]*C2 <span[^>]*>1 spot · 1 part # · 3 cs<br>/.test(h) && /data-a="BSMT"[^>]*>[^<]*BSMT <span[^>]*>1 spot · 1 part # · 1 cs<br>/.test(h), h.slice(h.indexOf('inv-awdship-area'), h.indexOf('inv-awdship-area') + 700));
+  // Owner (2026-10-27): "separate it in prelabel or need to label — the bag already has the label on it, like 8-8-8=10 … we don't have to use
+  // =10XX or =5 to relabel it". The exact part # = ✓ Prelabel; another bag of the same parent = 🏷 Need to label (two groups, a tag per line).
+  A.takes.push(Object.assign({}, A.takes.filter(t => t.area === 'C2')[0], { partNum: '61-1-1=10XX', cases: 1, how: 'same bag count, other letters — cover the label' }));
+  A.area = 'C2'; run.render(); const hL = g('inv-awdship-out').innerHTML; A.takes.pop(); A.area = ''; run.render();
+  const grpP = hL.indexOf('✓ Prelabel — 1 spot · 3 cs'), grpL = hL.indexOf('🏷 Need to label — 1 spot · 1 cs');
+  check('…✓ Prelabel / 🏷 Need to label: C2=1-1-1 61-1-1=10 for 61-1-1=10 (the right part # — the bags already have the label) under ✓ Prelabel first; a =10XX bag for =10 under 🏷 Need to label with how; the area button says "🏷 1 to label · ✓ 1 prelabel"; BSMT "✓ all prelabel"',
+    grpP > 0 && grpL > grpP && /data-pre="1"[^>]*>[^]*?✓ PRELABEL[^]*?61-1-1=10<\/span>/.test(hL.slice(grpP, grpL)) && /data-pre="0"[^>]*>[^]*?🏷 NEED TO LABEL[^]*?61-1-1=10XX<\/span> <span[^>]*>for 61-1-1=10<\/span>[^]*?cover the label/.test(hL.slice(grpL))
+      && /data-a="C2"[^]*?🏷 1 to label · ✓ 1 prelabel/.test(hL) && /data-a="BSMT"[^]*?✓ all prelabel/.test(h), hL.slice(Math.max(0, hL.indexOf('inv-awdship-lab') - 50), hL.indexOf('inv-awdship-lab') + 2000));
   A.area = 'C2'; run.render(); const h2 = g('inv-awdship-out').innerHTML;
   run.add('C2'); run.add('C2');
   check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',
