@@ -2262,6 +2262,32 @@ function awdPrintArea(area) {
   if (!pages.length) { awd_planner_toast('No labels for ' + (area || 'this shipment') + ' — make the labels again', 'error'); return; }
   if (!awdPrintPages(pages, 'Box labels — ' + (area || 'all'))) awd_planner_toast('Allow pop-ups for this page, then try again', 'error');
 }
+// 💾 Owner (2026-10-27): "Add our template to Amazon box labels — save it too, until we upload a new one". The labels made last time
+// (every page, by area) are kept on this computer (IndexedDB: the pages are too big for localStorage) and come back when the page opens:
+// 🖨 print an area / All again with no re-upload and no waiting. A new PDF replaces them.
+function awdLblDb() {
+  return new Promise((res, rej) => { if (typeof indexedDB === 'undefined') return rej(new Error('no IndexedDB'));
+    const q = indexedDB.open('awd_lbl', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function awdLblSave(rec) {
+  try { const db = await awdLblDb(); await new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(rec, 'last'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); return true; }
+  catch (e) { return false; }
+}
+async function awdLblLoad() {
+  try { const db = await awdLblDb(); return await new Promise((res, rej) => { const q = db.transaction('kv', 'readonly').objectStore('kv').get('last'); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); }
+  catch (e) { return null; }
+}
+function awdLblSavedHead(rec) {
+  const n = (rec.groups || []).reduce((a, g) => a + g.pages.length, 0), h = v => String(v == null ? '' : v).replace(/[<&]/g, '');
+  return '<div style="color:#475569;margin-bottom:3px">💾 Saved labels' + (rec.shipment ? ' — <b>' + h(rec.shipment) + '</b>' : '') + ' · ' + n + ' to print · made ' + h(new Date(rec.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
+    + (rec.file ? ' from ' + h(rec.file) : '') + ' — kept until you upload new ones</div>';
+}
+async function awdLblRestore() {
+  const out = ge('awd-lbl-out'); if (!out || window.AWD_LBL_GROUPS) return;
+  const rec = await awdLblLoad(); if (!rec || !(rec.groups || []).length || window.AWD_LBL_GROUPS) return;
+  window.AWD_LBL_GROUPS = rec.groups;
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
+}
 async function awdLabelsDo(file) {
   const out = ge('awd-lbl-out'); if (!file) return;
   if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) { awd_planner_toast('Upload the label PDF Amazon gives you', 'error'); return; }
@@ -2372,6 +2398,8 @@ async function awdLabelsDo(file) {
       + (done > withBc ? '<div style="color:#C2410C">⚠ ' + (done - withBc) + ' with no scan barcode (no room on the label, or no UPC / FNSKU on record)</div>' : '')
       + (noSku.length ? '<div style="color:#C2410C">⚠ ' + noSku.length + ' page' + (noSku.length === 1 ? '' : 's') + ' with no single SKU (mixed box?) — left as they are: page ' + noSku.slice(0, 20).join(', ') + (noSku.length > 20 ? '…' : '') + '</div>' : '')
       + (nt.length ? '<div style="color:#C2410C">⚠ No label line / UPC on record for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — printed with the Amazon name</div>' : '');
+    const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML };
+    if (await awdLblSave(rec)) out.innerHTML = awdLblSavedHead(rec) + rec.html; // 💾 kept for next time
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }
 }
 function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; renderBuilder(); }
@@ -2622,6 +2650,7 @@ window.awdSaveAsinMapping = async function(asin) {
 
 // Check for pending velocity report on load
 (function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
+(function() { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', awdLblRestore); else awdLblRestore(); })(); // 💾 the labels made last time
 
 // ── 📭 NOT RECEIVED ──
 function awdNrHtml() {
