@@ -2697,6 +2697,7 @@ window.invCredLogin = async function() {
       var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
+      invRenderPullList(); if (typeof invLoadAllPulls === 'function') invLoadAllPulls(); if (typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount(); // 🔀 this tab's own list
       if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); if (aws && aws.open) window.invAwdShipLoad(); } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
     }
     var nh = g('inv-need-help');
@@ -5877,10 +5878,13 @@ window.invCredLogin = async function() {
     box.innerHTML = "<div class='iempty'>Loading…</div>";
     wFetch(W + '/inventory/pull/all').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
-      if (!d.people.length) { box.innerHTML = "<div class='iempty'>Nobody has un-grabbed items</div>"; return; }
-      _invAllPulls = d.people;
+      // 🔀 this Stock Out tab's items only
+      var people = d.people.map(function(p) { return Object.assign({}, p, { ungrabbed: p.ungrabbed.filter(function(i) { return invPullTab(i) === (invStockOutDest === 'company' ? 'company' : 'shelving'); }) }); })
+        .filter(function(p) { return p.ungrabbed.length; });
+      if (!people.length) { box.innerHTML = "<div class='iempty'>Nobody has un-grabbed " + (invStockOutDest === 'company' ? 'Big Company' : 'Shelving') + " items</div>"; return; }
+      _invAllPulls = people;
       var delBtn = "font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;white-space:nowrap";
-      box.innerHTML = d.people.map(function(p, pi) {
+      box.innerHTML = people.map(function(p, pi) {
         var rows = p.ungrabbed.map(function(i, ii) {
           return "<div style='display:flex;gap:8px;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px solid var(--border);font-size:12px'>" +
             "<div style='min-width:0'><b>" + invPullEsc(i.partNum) + "</b>" + (i.name ? " <span style='color:var(--text3)'>" + invPullEsc(i.name) + "</span>" : "") +
@@ -5909,7 +5913,7 @@ window.invCredLogin = async function() {
     var what = items.map(function(i) { return i.partNum + ' @ ' + (i.location || '') + (i.cases ? ' · ' + i.cases + ' cs' : ''); });
     if (!confirm('Delete from ' + name + "'s Un-grabbed list?\n\n" + what.slice(0, 15).join('\n') + (what.length > 15 ? '\n…and ' + (what.length - 15) + ' more' : '')
       + '\n\nNothing on the shelves changes. This is recorded (who, when, what).')) return;
-    var body = ii < 0 ? { userId: p.userId, all: true } : { userId: p.userId, ids: [items[0].id] };
+    var body = { userId: p.userId, ids: items.map(function(i) { return i.id; }) }; // 🔀 only this tab's items (never the other tab's)
     wFetch(W + '/inventory/pull/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash((d && d.error) || 'Delete failed', 'error'); return; }
@@ -6426,7 +6430,7 @@ window.invCredLogin = async function() {
       .then(function(d) {
         // Total items waiting across every saved batch, not the number of
         // batches — saving 4 items in one go should show "4", not "1".
-        var n = ((d && d.batches) || []).reduce(function(sum, b) { return sum + (b.item_count || 0); }, 0);
+        var n = ((d && d.batches) || []).filter(invPullBatchInTab).reduce(function(sum, b) { return sum + (b.item_count || 0); }, 0);
         var b = g('inv-pull-saved-badge');
         if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
       }).catch(function() {});
@@ -6484,12 +6488,15 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/pull-batch/list?status=' + mode)
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        _invPullBatchesData = (d && d.batches) || [];
+        _invPullBatchesData = ((d && d.batches) || []).filter(invPullBatchInTab); // 🔀 this Stock Out tab's batches only
         invRenderPullBatches();
       })
       .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load</div>'; });
   };
   var _invPullBatchIsHistory = false;
+  // a saved batch belongs to Big Company when all its items are Big Company ones (batches are saved from one tab)
+  function invPullBatchInTab(b) { var it = (b && b.items) || []; var co = it.length > 0 && it.every(function(x) { return x && x.dest === 'company'; });
+    return (co ? 'company' : 'shelving') === (invStockOutDest === 'company' ? 'company' : 'shelving'); }
 
   function invRenderPullBatches() {
     var body = g('inv-pull-batches-body');
@@ -6805,22 +6812,31 @@ window.invCredLogin = async function() {
     document.body.appendChild(ov);
   };
 
+  // 🔀 Owner (2026-10-27): "everything under Stock Out Big Company must be for Big Company — ungrabbed, grabbed info; Stock Out Shelving is for
+  // Shelving — those two need to be separated, don't share the info". Each Pull List item belongs to one tab (dest 'company' = Big Company,
+  // anything else = Shelving, as the items made before dest existed). Each tab shows / clears / retries / saves only its own. What a spot
+  // still has free keeps counting BOTH tabs' items (the same boxes on the same shelf — never taken twice).
+  function invPullTab(x) { return x && x.dest === 'company' ? 'company' : 'shelving'; }
+  function invPullInTab(x) { return invPullTab(x) === (invStockOutDest === 'company' ? 'company' : 'shelving'); }
+  window.invPullInTab = invPullInTab;
   function invRenderPullList() {
-    invPhotoLoadFor(invPullList);
+    var mine = invPullList.filter(invPullInTab);
+    invPhotoLoadFor(mine);
     var el = g("inv-pulllist-items");
     var prog = g("inv-pull-progress");
     if (!el) return;
-    if (invPullList.length === 0) {
-      el.innerHTML = "<div class='iempty'>No items yet — scan or search to add</div>";
+    invUpdatePullRetryBtn();
+    if (mine.length === 0) {
+      el.innerHTML = "<div class='iempty'>No " + (invStockOutDest === 'company' ? 'Big Company' : 'Shelving') + " items yet — scan or search to add</div>";
       if (prog) prog.style.display = "none";
       return;
     }
-    // Progress: checked count
-    var checkedCount = invPullList.filter(function(x) { return x.grabbed; }).length;
+    // Progress: checked count (this tab only)
+    var checkedCount = mine.filter(function(x) { return x.grabbed; }).length;
     if (prog) {
       prog.style.display = "block";
-      prog.textContent = checkedCount + " of " + invPullList.length + " grabbed";
-      prog.style.color = checkedCount === invPullList.length ? "var(--green)" : "var(--text3)";
+      prog.textContent = checkedCount + " of " + mine.length + " grabbed";
+      prog.style.color = checkedCount === mine.length ? "var(--green)" : "var(--text3)";
     }
     // For Shelving (not Big Company), always put "=OLD" variants first —
     // older/discontinued stock that should get grabbed and worked through
@@ -6842,6 +6858,7 @@ window.invCredLogin = async function() {
     // displayed in or how that section gets sorted.
     var grabbedIdx = [], noneFoundIdx = [], ungrabbedIdx = [];
     invPullList.forEach(function(item, i) {
+      if (!invPullInTab(item)) return; // the other Stock Out tab's item
       if (item.noneFound) noneFoundIdx.push(i);
       else if (item.grabbed) grabbedIdx.push(i);
       else ungrabbedIdx.push(i);
@@ -7387,7 +7404,7 @@ window.invCredLogin = async function() {
     _invFetchLookupRaw(code).then(function(d) {
       if (inp) { inp.disabled = false; }
       var open = [];
-      invPullList.forEach(function(x, i) { if (!x.grabbed && !x.noneFound && !x.submitted) open.push(i); });
+      invPullList.forEach(function(x, i) { if (!x.grabbed && !x.noneFound && !x.submitted && invPullInTab(x)) open.push(i); }); // this tab's items only
       open.sort(function(a, b) { return invLocSort(invPullList[a].location) - invLocSort(invPullList[b].location) || String(invPullList[a].location).localeCompare(String(invPullList[b].location)); });
       if (!d || !d.partNum) { invGrabWarn(code, null, open); return; }
       var pn = String(d.partNum).toUpperCase(), base = invParent(d.baseSku || pn);
@@ -7509,10 +7526,10 @@ window.invCredLogin = async function() {
   };
 
   window.invClearPullList = function() {
-    if (invPullList.length === 0) return;
-    if (!confirm("Clear entire pull list?")) return;
-    invAwdClaimGiveBack(invPullList, 'Pull List cleared');
-    invPullList = [];
+    var mine = invPullList.filter(invPullInTab); if (mine.length === 0) return;
+    if (!confirm("Clear the " + (invStockOutDest === 'company' ? 'Big Company' : 'Shelving') + " pull list? (" + mine.length + " item" + (mine.length === 1 ? '' : 's') + " — the other Stock Out tab's list stays)")) return;
+    invAwdClaimGiveBack(mine, 'Pull List cleared');
+    invPullList = invPullList.filter(function(x) { return !invPullInTab(x); });
     invSavePullList();
     invRenderPullList();
   };
@@ -7598,14 +7615,14 @@ window.invCredLogin = async function() {
 
   window.invRetryAllFailedPullItems = function() {
     invPullList.forEach(function(item, i) {
-      if (item.submitError && !item.submitted) invSubmitOnePullItem(i);
+      if (item.submitError && !item.submitted && invPullInTab(item)) invSubmitOnePullItem(i);
     });
   };
 
   function invUpdatePullRetryBtn() {
     var btn = g('inv-pull-retry-btn');
     if (!btn) return;
-    var failedCount = invPullList.filter(function(x) { return x.submitError && !x.submitted; }).length;
+    var failedCount = invPullList.filter(function(x) { return x.submitError && !x.submitted && invPullInTab(x); }).length;
     btn.style.display = failedCount > 0 ? 'block' : 'none';
     btn.textContent = '⚠ Retry ' + failedCount + ' Failed Submission' + (failedCount === 1 ? '' : 's');
   }

@@ -17997,7 +17997,7 @@ async function inventoryPullRoute(path, method, request, env) {
     const people = rows.map(r => {
       let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {}
       const ungrabbed = items.filter(i => i && !i.grabbed && !i.submitted && !i.noneFound)
-        .map(i => ({ id: pullId(i), partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null }));
+        .map(i => ({ id: pullId(i), partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null, dest: i.dest === 'company' ? 'company' : 'shelving' }));
       return { userId: r.user_id, username: r.username, displayName: r.display_name || r.username, updatedAt: r.updated_at, total: items.length, ungrabbed };
     }).filter(p => p.ungrabbed.length);
     return J({ ok: true, people });
