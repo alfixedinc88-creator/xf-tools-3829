@@ -9981,6 +9981,11 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   // Owner (2026-10-27): "2FL 1 spot · 9 cs — 9 cases, 1 spot to grab, but I also want how many Part #" → spots · part #s · cases.
   check('…each area button says spots · part #s · cases (C2: 1 spot · 1 part # · 3 cs; BSMT: 1 spot · 1 part # · 1 cs)',
     /data-a="C2"[^>]*>[^<]*C2 <span[^>]*>1 spot · 1 part # · 3 cs<br>/.test(h) && /data-a="BSMT"[^>]*>[^<]*BSMT <span[^>]*>1 spot · 1 part # · 1 cs<br>/.test(h), h.slice(h.indexOf('inv-awdship-area'), h.indexOf('inv-awdship-area') + 700));
+  // Owner (2026-10-27, AWD Planner "C1 · 34" vs the card "C1 12 spots · 18 cs": "I want it to match — if a box has to be split into different
+  // boxes, I still want it to show it was for 34 labels") → each area also says how many Amazon box labels it is for, like the Planner.
+  check('🏷 each area button also says the box labels it is for (C2: for 3 box labels; BSMT: for 1 box label), and one line counts them like the AWD Planner: 🏷 5 box labels by area: PREVIOUS PACKED 1 · BSMT 1 · C2 3',
+    /data-a="C2"[^]*?for 3 box labels<\/span>/.test(h) && /data-a="BSMT"[^]*?for 1 box label<\/span>/.test(h) && /🏷 5 box labels by area: <b>PREVIOUS PACKED<\/b> 1 · <b>BSMT<\/b> 1 · <b>C2<\/b> 3/.test(h),
+    h.slice(Math.max(0, h.indexOf('inv-awdship-labline') - 20), h.indexOf('inv-awdship-labline') + 300));
   // Owner (2026-10-27): "separate it in prelabel or need to label — the bag already has the label on it, like 8-8-8=10 … we don't have to use
   // =10XX or =5 to relabel it". The exact part # = ✓ Prelabel; another bag of the same parent = 🏷 Need to label (two groups, a tag per line).
   A.takes.push(Object.assign({}, A.takes.filter(t => t.area === 'C2')[0], { partNum: '61-1-1=10XX', cases: 1, how: 'same bag count, other letters — cover the label' }));
