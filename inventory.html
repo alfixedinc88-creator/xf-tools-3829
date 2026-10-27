@@ -658,6 +658,11 @@ window.invCredLogin = async function() {
     <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 AWD shipments ready — what to grab, by location</summary>
     <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a></div>
     <div id="inv-awdship-out" style="font-size:13px">Loading…</div>
+    <!-- 🕘 Owner (2026-10-27): "a history, so we can go back and check the previous shipments — only Admin can see it". -->
+    <details id="inv-awdship-hist" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:6px" ontoggle="if(this.open)invAwdHistLoad()">
+      <summary style="cursor:pointer;font-weight:700;font-size:13px">🕘 Shipment history <span style="font-weight:400;color:var(--text3)">(Admin only)</span></summary>
+      <div id="inv-awdship-hist-out" style="font-size:12px;margin-top:6px">Loading…</div>
+    </details>
   </details>
   <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2335,6 +2340,7 @@ window.invCredLogin = async function() {
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
   window.invAwdShipLoad = function(force) {
     var out = g('inv-awdship-out'); if (!out) return;
+    var hs = g('inv-awdship-hist'); if (hs) hs.style.display = invAwdIsAdmin() ? '' : 'none'; // 🕘 Admin / Owner only
     if (AWDS.busy) { AWDS.again = AWDS.again || !!force; return; }
     var shown = !!AWDS.data && AWDS.takes && out.innerHTML.indexOf('inv-awdship-st') >= 0;
     if (!AWDS.data && invAwdRestore()) { window.invAwdShipRender(); shown = true; }
@@ -2398,6 +2404,36 @@ window.invCredLogin = async function() {
       };
       next();
     }).catch(function() { if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
+  };
+  function invAwdIsAdmin() { return !!(typeof INV_CRED_USER !== 'undefined' && INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0)); }
+  // 🕘 Shipment history (Admin / Owner — the server says no to anyone else): every shipment of the last 90 days — what it needed (📤 sent /
+  // 🏷 labels), ✅ Done by who / when, and every Stock Out grabbed for it (part #, spot, cases, who, when, status). Read only.
+  window.invAwdHistLoad = function() {
+    var out = g('inv-awdship-hist-out'); if (!out) return;
+    out.innerHTML = '⏳ Loading the history…';
+    wFetch(W + '/awd/ship-send?history=1').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { out.innerHTML = '<span style="color:var(--red)">' + ckE((d && d.error) || 'Could not load') + '</span>'; return; }
+      var tm = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }, r1 = function(n) { return Math.round((parseFloat(n) || 0) * 100) / 100; };
+      if (!(d.list || []).length) { out.innerHTML = '<span style="color:var(--text3)">No shipment in the last ' + d.days + ' days.</span>'; return; }
+      var td = 'style="padding:2px 6px;border-bottom:1px solid var(--border);text-align:left"';
+      out.innerHTML = '<div style="color:var(--text3);margin-bottom:4px">Last ' + d.days + ' days, newest first — tap one to see it.</div>' + d.list.map(function(o) {
+        var s = o.sends[o.sends.length - 1], L = o.labels, useL = L && (!s || String(L.at) > String(s.at)), need = {};
+        if (useL) Object.keys(L.parts).forEach(function(p) { need[p] = { units: L.parts[p] }; });
+        else if (s) s.lines.forEach(function(x) { var p = String(x.part || x.sku).toUpperCase(); need[p] = { units: (need[p] ? need[p].units : 0) + (parseFloat(x.units) || 0), boxes: (need[p] ? need[p].boxes : 0) + (parseFloat(x.boxes) || 0) }; });
+        var got = {}, gotN = 0; o.grabbed.forEach(function(x) { if (x.none || x.status === 'Rejected') return; got[x.forPart] = (got[x.forPart] || 0) + x.cases; gotN += x.cases; });
+        var parts = Object.keys(need).concat(Object.keys(got).filter(function(p) { return !need[p]; })).sort();
+        return '<details style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;margin-bottom:5px"><summary style="cursor:pointer"><b>' + ckE(o.shipment) + '</b> · '
+          + (s ? '📤 sent by ' + ckE(s.by || '?') + ' ' + tm(s.at) + (o.sends.length > 1 ? ' (' + o.sends.length + ' sends)' : '') : '') + (L ? (s ? ' · ' : '') + '🏷 ' + L.boxes + ' box labels ' + tm(L.at) : '')
+          + ' · ' + parts.length + ' part #s · grabbed ' + r1(gotN) + ' cs · ' + (o.done ? '<b style="color:var(--green)">✅ Done</b> by ' + ckE(o.done.by || '?') + ' ' + tm(o.done.at) : '<b style="color:#1D4ED8">open</b>') + '</summary>'
+          + '<div style="margin-top:5px;font-weight:700">What it needed' + (useL ? ' (from the Amazon box labels' + (L.prev ? ', ' + L.prev + ' PREVIOUS PACKED left out' : '') + ')' : ' (📤 the newest send)') + ' → grabbed</div>'
+          + '<table style="border-collapse:collapse;width:100%"><tr><th ' + td + '>Part #</th><th ' + td + '>Units</th><th ' + td + '>Boxes</th><th ' + td + '>Cases grabbed</th></tr>' + parts.map(function(p) { var n = need[p] || {};
+            return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + ckE(p) + '</span></td><td ' + td + '>' + (n.units != null ? r1(n.units) : '—') + '</td><td ' + td + '>' + (n.boxes ? r1(n.boxes) : '') + '</td><td ' + td + '>' + (got[p] ? r1(got[p]) : '<span style="color:var(--text3)">0</span>') + '</td></tr>'; }).join('') + '</table>'
+          + (o.grabbed.length ? '<div style="margin-top:6px;font-weight:700">Every Stock Out for it</div><table style="border-collapse:collapse;width:100%"><tr><th ' + td + '>When</th><th ' + td + '>Who</th><th ' + td + '>Part #</th><th ' + td + '>Spot</th><th ' + td + '>Cases</th><th ' + td + '>Status</th></tr>'
+            + o.grabbed.map(function(x) { return '<tr' + (x.none || x.status === 'Rejected' ? ' style="opacity:.55"' : '') + '><td ' + td + '>' + tm(x.at) + '</td><td ' + td + '>' + ckE(x.by || '') + '</td><td ' + td + '><span style="font-family:var(--mono)">' + ckE(x.part) + '</span>' + (x.forPart !== x.part ? ' for ' + ckE(x.forPart) : '') + '</td><td ' + td + '>' + ckE(x.loc || '') + '</td><td ' + td + '>' + r1(x.cases) + '</td><td ' + td + '>' + (x.none ? 'none found' : ckE(x.status || '')) + '</td></tr>'; }).join('') + '</table>'
+            : '<div style="color:var(--text3);margin-top:4px">Nothing grabbed from the card for it (Stock Outs before 2026-10-27 were not marked with the shipment).</div>')
+          + (o.doneLog.length ? '<div style="margin-top:5px;color:var(--text2)">' + o.doneLog.map(function(x) { return (x.action === 'done' ? '✅ Done' : '↩ put back') + ' · ' + ckE(x.by || '?') + ' ' + tm(x.at); }).join('<br>') + '</div>' : '')
+          + '</details>'; }).join('');
+    }).catch(function() { out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
   function invAwdDoneHtml() {
     var L = AWDS.doneList || []; if (!L.length) return '';

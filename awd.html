@@ -1074,6 +1074,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                   <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.</div>
                 </div>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
+                <!-- 🕘 Owner (2026-10-27): the label sets made before (last 10 on this computer) — Admin / Owner only. -->
+                <details id="awd-lbl-hist" style="display:none;margin-top:6px;font-size:12px" ontoggle="if(this.open)awdLblHistShow()">
+                  <summary style="cursor:pointer;font-weight:700">🕘 Earlier box labels <span style="font-weight:400;color:var(--gray-400)">(Admin only · last 10 on this computer)</span></summary>
+                  <div id="awd-lbl-hist-out" style="margin-top:4px">Loading…</div>
+                </details>
               </div>
             </div></div>
           </div>
@@ -1222,6 +1227,7 @@ window.awdCredLogin = async function() {
     localStorage.setItem('xf_cred_user', JSON.stringify(AWD_CRED_USER));
     awdHideLoginGate();
     awdStandaloneInit();
+    try { awdLblHistShow(); } catch (e) {} // 🕘 Admin sees the earlier labels
   } catch(e) {
     err.textContent = 'Connection error — try again.';
   } finally {
@@ -2269,13 +2275,41 @@ function awdLblDb() {
   return new Promise((res, rej) => { if (typeof indexedDB === 'undefined') return rej(new Error('no IndexedDB'));
     const q = indexedDB.open('awd_lbl', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
 }
-async function awdLblSave(rec) {
-  try { const db = await awdLblDb(); await new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(rec, 'last'); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); return true; }
+// 🕘 Owner (2026-10-27): "a history, so we can go back to the previous shipment — only Admin can see it": the last AWD_LBL_KEEP label sets
+// stay too ('h:' + when made, plus a small list 'idx'); ↩ Bring back makes one the saved labels again (🖨 by area / All).
+const AWD_LBL_KEEP = 10;
+function awdLblPut(db, pairs) { return new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'), st = tx.objectStore('kv');
+  pairs.forEach(([k, v]) => { if (v === undefined) st.delete(k); else st.put(v, k); }); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+function awdLblGet(db, k) { return new Promise((res, rej) => { const q = db.transaction('kv', 'readonly').objectStore('kv').get(k); q.onsuccess = () => res(q.result === undefined ? null : q.result); q.onerror = () => rej(q.error); }); }
+async function awdLblSave(rec, onlyLast) {
+  try { const db = await awdLblDb(); if (onlyLast) { await awdLblPut(db, [['last', rec]]); return true; }
+    const idx = ((await awdLblGet(db, 'idx')) || []).filter(x => x.at !== rec.at);
+    idx.unshift({ at: rec.at, shipment: rec.shipment || '', file: rec.file || '', n: (rec.groups || []).reduce((a, g) => a + g.pages.length, 0) });
+    const drop = idx.splice(AWD_LBL_KEEP);
+    await awdLblPut(db, [['last', rec], ['h:' + rec.at, rec], ['idx', idx]].concat(drop.map(x => ['h:' + x.at, undefined])));
+    return true; }
   catch (e) { return false; }
 }
-async function awdLblLoad() {
-  try { const db = await awdLblDb(); return await new Promise((res, rej) => { const q = db.transaction('kv', 'readonly').objectStore('kv').get('last'); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); }
+async function awdLblLoad(key) {
+  try { const db = await awdLblDb(); return await awdLblGet(db, key || 'last'); }
   catch (e) { return null; }
+}
+function awdLblIsAdmin() { return !!(typeof AWD_CRED_USER !== 'undefined' && AWD_CRED_USER && (AWD_CRED_USER.roles || []).some(r => r === 'admin' || r === 'owner')); }
+async function awdLblHistShow() {
+  const el = ge('awd-lbl-hist'), out = ge('awd-lbl-hist-out'); if (!el || !out) return;
+  el.style.display = awdLblIsAdmin() ? '' : 'none'; if (!awdLblIsAdmin()) return;
+  const idx = (await awdLblLoad('idx')) || [], h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
+  out.innerHTML = idx.length ? idx.map(x => '<div style="padding:3px 0;border-bottom:1px solid var(--gray-200)">' + h(new Date(x.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
+      + ' · <b>' + h(x.shipment || '(no Shipment ID)') + '</b> · ' + x.n + ' labels' + (x.file ? ' · ' + h(x.file) : '')
+      + ' <button type="button" class="btn btn-secondary" style="padding:2px 8px;font-size:11px" data-at="' + h(x.at) + '" onclick="awdLblBringBack(this.dataset.at)">↩ Bring back</button></div>').join('')
+    : '<span style="color:var(--gray-400)">No labels made on this computer yet.</span>';
+}
+async function awdLblBringBack(at) {
+  const rec = await awdLblLoad('h:' + at), out = ge('awd-lbl-out');
+  if (!rec || !out) { awd_planner_toast('Those labels are not on this computer anymore', 'error'); return; }
+  window.AWD_LBL_GROUPS = rec.groups; await awdLblSave(rec, true);
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
+  awd_planner_toast('↩ ' + (rec.shipment || 'Labels') + ' brought back — 🖨 print an area or All');
 }
 function awdLblSavedHead(rec) {
   const n = (rec.groups || []).reduce((a, g) => a + g.pages.length, 0), h = v => String(v == null ? '' : v).replace(/[<&]/g, '');
@@ -2283,7 +2317,7 @@ function awdLblSavedHead(rec) {
     + (rec.file ? ' from ' + h(rec.file) : '') + ' — kept until you upload new ones</div>';
 }
 async function awdLblRestore() {
-  const out = ge('awd-lbl-out'); if (!out || window.AWD_LBL_GROUPS) return;
+  const out = ge('awd-lbl-out'); awdLblHistShow(); if (!out || window.AWD_LBL_GROUPS) return;
   const rec = await awdLblLoad(); if (!rec || !(rec.groups || []).length || window.AWD_LBL_GROUPS) return;
   window.AWD_LBL_GROUPS = rec.groups;
   out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups));
@@ -2400,6 +2434,7 @@ async function awdLabelsDo(file) {
       + (nt.length ? '<div style="color:#C2410C">⚠ No label line / UPC on record for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — printed with the Amazon name</div>' : '');
     const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML };
     if (await awdLblSave(rec)) out.innerHTML = awdLblSavedHead(rec) + rec.html; // 💾 kept for next time
+    awdLblHistShow();
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }
 }
 function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; renderBuilder(); }
