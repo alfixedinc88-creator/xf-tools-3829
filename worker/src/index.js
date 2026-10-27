@@ -1516,23 +1516,32 @@ async function awdBoxPallet(request, url, env, session) {
     let sh = t(url.searchParams.get('shipment'), 60);
     if (!sh && url.searchParams.get('latest')) { const l = await env.DB.prepare('SELECT shipment FROM awd_box_scan ORDER BY id DESC LIMIT 1').first().catch(() => null); sh = l ? l.shipment : ''; if (!sh) return J({ ok: true, shipment: null }); }
     if (!sh) return J({ ok: false, error: 'Which shipment?' }, 400);
+    // 📦 Owner (2026-10-27): one SKU's Amazon boxes (5 labels → 5 to scan), each with where it is now — the Box check works through them
+    const skuQ = t(url.searchParams.get('sku'), 80).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+    if (skuQ) {
+      const L = ((await env.DB.prepare("SELECT sscc, sku, part, seq, units, prev, name, loc FROM awd_label_map WHERE shipment = ? AND (UPPER(REPLACE(RTRIM(sku, '-'), ' ', '')) = ? OR UPPER(part) = ?)").bind(sh, skuQ, skuQ).all()).results || []);
+      const x = await latest('shipment = ?', sh), n = s => String(s || '').split('-').map(v => parseInt(v, 10) || 0);
+      L.sort((a, b) => { const A = n(a.seq), B = n(b.seq); return (A[1] || 0) - (B[1] || 0) || (A[0] || 0) - (B[0] || 0); });
+      return J({ ok: true, shipment: sh, sku: skuQ, boxes: L.map(b => { const r = x.by[b.sscc]; return { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, prev: !!b.prev, name: b.name || '', loc: b.loc || '',
+        kind: r ? r.kind : '', pallet: r ? r.pallet : null, by: r ? r.by_user : '', at: r ? r.at : '', note: r ? r.note : '' }; }) });
+    }
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
     const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
-    const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [] };
+    const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [], ok: [] };
     boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', by: r.by_user, at: r.at, product: r.product_part };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
     // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"
     let photos = {}; try { photos = await productPhotoMap(env, boxes.map(b => b.part)); } catch (_) {}
     return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
-      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch,
+      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, ready: kinds.ok,
       notYet: boxes.filter(b => !x.by[b.sscc] && !b.prev).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part })) });
   }
   const b = await request.json().catch(() => ({}));
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
   if (rid) { const c = await claimRequestId(env, rid, 'awd/box-pallet'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
-  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch'].includes(b.kind) ? b.kind : '';
+  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch', 'ok'].includes(b.kind) ? b.kind : ''; // ok = whole box, Amazon label on, waiting for a pallet
   if (!ss || !kind) return J({ ok: false, error: 'Which box (Amazon label) and what happened to it?' }, 400);
   const pallet = kind === 'pallet' ? parseInt(b.pallet, 10) || 0 : null;
   if (kind === 'pallet' && !(pallet > 0)) return J({ ok: false, error: 'Scan the PALLET label' }, 400);
