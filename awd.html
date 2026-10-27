@@ -2227,7 +2227,8 @@ function awdGrabPlan(sku, unitsList) {
     const grp = []; spots.slice(0, got).forEach(loc => { const g = grp.find(z => z.loc === loc); if (g) g.n++; else grp.push({ loc, n: 1 }); });
     const cs = n => n + ' whole case' + (n === 1 ? '' : 's'), offTxt = off.length ? ' · ⚠ NOT ' + want + ' pcs a case, don\'t grab: ' + off.join(', ') : '';
     return { summary: (got ? 'GRAB ' + cs(got) + ' of ' + co + ' (' + want + ' pcs each — sold as a case, ship it as is): ' + grp.map(g => g.loc + ': ' + g.n).join(' · ') + (short ? ' · ⚠ SHORT ' + cs(short) : '')
-      : '⚠ No case of ' + co + ' with ' + want + ' pcs on our shelves — ' + cs(need) + ' needed') + offTxt, locOf, cases: got, short, caseOf: co, off };
+      : '⚠ No case of ' + co + ' with ' + want + ' pcs on our shelves — ' + cs(need) + ' needed') + offTxt, locOf, cases: got, short, caseOf: co, off,
+      grabs: grp.map(g => ({ loc: g.loc, part: co, n: g.n, pcs: want, used: g.n * want, exact: true, caseOf: co })) }; // 🔒 for Lock it
   }
   const packOf = x => { const m = String(x || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; };
   const pack = packOf(sku), needPcs = unitsList.reduce((a, u) => a + (u || 0), 0) * pack;
@@ -2272,7 +2273,7 @@ function awdGrabPlan(sku, unitsList) {
   const boxes = unitsList.length;
   const summary = cases.length ? 'GRAB ' + cs(cases.length) + ' (enough for our ' + boxes + ' box' + (boxes === 1 ? '' : 'es') + '): ' + grp.map(how).join(' · ') + (short ? ' · ⚠ SHORT ' + short + ' pcs' : '')
     : '⚠ Not on our shelves — ' + needPcs + ' pcs needed';
-  return { summary, locOf, cases: cases.length, short };
+  return { summary, locOf, cases: cases.length, short, grabs: grp.map(g => ({ loc: g.loc, part: g.part, n: g.n, pcs: g.pcs || 0, used: g.used, exact: g.exact })) }; // 🔒 for Lock it
 }
 // 🖨 Owner (2026-10-25): "after the labels are done, I want to click a location like C1 and print just what is in C1".
 function awdPrintPages(pages, title) {
@@ -2390,8 +2391,8 @@ async function awdBldHistLoad() {
 async function awdLblBringBack(at) {
   const rec = await awdLblLoad('h:' + at), out = ge('awd-lbl-out');
   if (!rec || !out) { awd_planner_toast('Those labels are not on this computer anymore', 'error'); return; }
-  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; await awdLblSave(rec, true);
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks();
+  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; window.AWD_LOCK_DRAFT = rec.lock || null; await awdLblSave(rec, true);
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow();
   (typeof awdAct === 'function') && awdAct('labels_bring_back', { shipment: rec.shipment || '', made: rec.at, labels: (rec.groups || []).reduce((a, g) => a + g.pages.length, 0) });
   awd_planner_toast('↩ ' + (rec.shipment || 'Labels') + ' brought back — 🖨 print an area or All');
 }
@@ -2403,8 +2404,53 @@ function awdLblSavedHead(rec) {
 async function awdLblRestore() {
   const out = ge('awd-lbl-out'); awdLblHistShow(); if (!out || window.AWD_LBL_GROUPS) return;
   const rec = await awdLblLoad(); if (!rec || !(rec.groups || []).length || window.AWD_LBL_GROUPS) return;
-  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || '';
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks();
+  window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; window.AWD_LOCK_DRAFT = rec.lock || null;
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow();
+}
+// 🔒 Lock it: the grab plan by area (cases · labels), and the button. Locked → saved on the server for this shipment: Stock Out Big Company
+// grabs exactly these spots and cases, and they are HELD — no other Stock Out (Shelving or Big Company) is sent to take them — until it is
+// grabbed, ✅ Done or 🔓 unlocked (Admin). Everyone sees who locked it and when.
+function awdLockAreas(lines) {
+  const by = {}; (lines || []).forEach(x => (x.grabs || []).forEach(g => { const a = String(g.loc || '?').toUpperCase().split('=')[0].trim() || '?', o = by[a] = by[a] || { a, cases: 0, labels: 0, spots: {} };
+    o.cases += g.n || 0; o.labels += g.labels || 0; o.spots[g.loc] = 1; }));
+  return Object.values(by).sort((x, y) => awdAreaRank(x.a) - awdAreaRank(y.a) || x.a.localeCompare(y.a));
+}
+async function awdLockShow() { try { await awdLockShow1(); } catch (e) { console.error('[awd lock box]', e); } } // never stops the labels
+async function awdLockShow1() {
+  const out = ge('awd-lbl-out'); if (!out || typeof out.appendChild !== 'function') return;
+  let box = ge('awd-lock-box'); if (!box) { box = document.createElement('div'); box.id = 'awd-lock-box'; box.style.cssText = 'margin-top:8px;padding:8px;border:2px solid #7C3AED;border-radius:10px;background:#F5F3FF'; out.appendChild(box); }
+  const ship = window.AWD_LBL_SHIP || '', draft = window.AWD_LOCK_DRAFT, h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
+  if (!ship) { box.innerHTML = '<span style="color:#6B7280">🔒 Lock it: no Amazon Shipment ID was read from the labels.</span>'; return; }
+  let d = null; try { d = await wFetch(W + '/awd/lock?shipment=' + encodeURIComponent(ship)).then(r => r.json()); } catch (e) {}
+  const L = d && d.lock, areas = awdLockAreas(L ? L.lines : draft ? draft.lines : []);
+  const tbl = areas.length ? '<div style="display:flex;flex-wrap:wrap;gap:5px;margin:5px 0">' + areas.map(x => '<span style="padding:4px 8px;border-radius:7px;background:#fff;border:1.5px solid #C4B5FD;font-size:12px"><b>' + h(x.a) + '</b> '
+    + Object.keys(x.spots).length + ' spot' + (Object.keys(x.spots).length === 1 ? '' : 's') + ' · <b>' + Math.round(x.cases * 10) / 10 + ' cs</b> · ' + x.labels + ' label' + (x.labels === 1 ? '' : 's') + '</span>').join('') + '</div>' : '';
+  const isAdm = typeof AWD_CRED_USER !== 'undefined' && AWD_CRED_USER && (AWD_CRED_USER.roles || []).some(r => r === 'admin' || r === 'owner');
+  box.innerHTML = L
+    ? '<div style="font-weight:800;color:#5B21B6">🔒 ' + h(ship) + ' is LOCKED — by ' + h(L.by) + ' ' + h(new Date(L.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '</div>'
+      + '<div style="font-size:12px;color:#4C1D95">Stock Out Big Company grabs exactly these spots and cases; they are held — no other Stock Out is sent to take them.</div>' + tbl
+      + (draft && JSON.stringify(draft.lines) !== JSON.stringify(L.lines) ? '<button type="button" class="btn btn-sm btn-secondary" onclick="awdLock(true)">🔒 Lock again with these labels</button> ' : '')
+      + (isAdm ? '<button type="button" class="btn btn-sm btn-secondary" onclick="awdUnlock()">🔓 Unlock (Admin)</button>' : '')
+    : draft && draft.lines.length
+      ? '<div style="font-weight:800;color:#5B21B6">🗺 What to grab for ' + h(ship) + ', by area</div>' + tbl
+        + '<button type="button" id="awd-lock-btn" class="btn btn-primary" style="background:#7C3AED;border-color:#7C3AED" onclick="awdLock(false)">🔒 Lock it — hold these for ' + h(ship) + '</button>'
+        + '<div style="font-size:11px;color:#6B7280;margin-top:3px">Saves this plan; Stock Out Big Company grabs exactly these spots, and no other Stock Out is sent to take them.</div>'
+      : '<span style="color:#6B7280">🔒 Lock it: upload the box labels first.</span>';
+}
+async function awdLock(again) {
+  const draft = window.AWD_LOCK_DRAFT, ship = window.AWD_LBL_SHIP; if (!draft || !ship) return;
+  if (again && !confirm('🔒 Lock ' + ship + ' again with these labels? The held spots / cases are replaced by this plan.')) return;
+  try { const d = await wFetch(W + '/awd/lock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: ship, lines: draft.lines }) }).then(r => r.json());
+    if (!d || !d.ok) { awd_planner_toast((d && d.error) || 'Not locked', 'error'); return; }
+    awd_planner_toast('🔒 ' + ship + ' locked — ' + d.cases + ' cases at ' + d.spots + ' spots held', 'success'); (typeof awdAct === 'function') && awdAct('lock', { shipment: ship, cases: d.cases, spots: d.spots });
+  } catch (e) { awd_planner_toast('Not locked — check WiFi', 'error'); }
+  awdLockShow();
+}
+async function awdUnlock() {
+  const ship = window.AWD_LBL_SHIP; if (!ship || !confirm('🔓 Unlock ' + ship + '? Its spots are no longer held, and Stock Out Big Company works out where to grab again.')) return;
+  try { const d = await wFetch(W + '/awd/lock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unlock: ship }) }).then(r => r.json());
+    awd_planner_toast(d && d.ok ? '🔓 ' + ship + ' unlocked' : (d && d.error) || 'Not unlocked', d && d.ok ? 'success' : 'error'); } catch (e) { awd_planner_toast('Not unlocked — check WiFi', 'error'); }
+  awdLockShow();
 }
 // 🏷 Owner (2026-10-27): the outside box UPC written on every label ("in case they want to check") — one call for all the part #s.
 async function awdBoxUpcs(parts) {
@@ -2437,8 +2483,10 @@ async function awdLabelsDo(file) {
         const ph = awdPrevHit(prev, sku, amz); if (ph) m.prevKey = ph.key;
         metas.push(m); (bySku[K] = bySku[K] || []).push(m); });
     }
+    const plans = {}; // 🔒 each SKU's grab plan, for Lock it
     Object.keys(bySku).forEach(K => { const l = bySku[K]; l.forEach((m, k) => { m.seq = l.length + '-' + (k + 1); });
       const pick = l.filter(m => !m.prevKey), plan = pick.length ? awdGrabPlan(l[0].sku, pick.map(m => m.units)) : null;
+      if (plan) plans[K] = { plan, pick, sku: l[0].sku };
       pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.plan = k === 0 ? plan.summary : ''; }); });
     const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
     const boxUpc = await awdBoxUpcs([...new Set(metas.map(m => partOf(m.sku)))]);
@@ -2510,6 +2558,12 @@ async function awdLabelsDo(file) {
     // and Stock Out Big Company → 📦 Current AWD shipment lists what to grab by location.
     const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase(), seq: m.seq, units: m.units,
       loc: m.loc || '', prev: !!m.prevKey, fnsku: m.fnsku || '', upc: tpl.upc || '', name: tpl.label || '' }; });
+    // 🔒 Owner (2026-10-27): "after the labels: how many cases to grab where (C1, C2…), and a Lock it button — save everything this shipment
+    // wants us to grab, don't let any other Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots".
+    const lockDraft = { shipment: shipId, lines: Object.keys(plans).map(K => { const x = plans[K];
+      return { forPart: partOf(x.sku), sku: x.sku, boxes: x.pick.length, grabs: (x.plan.grabs || []).map(g => Object.assign({}, g, { labels: x.plan.locOf.filter(lo => String(lo).split(' + ').indexOf(g.loc) >= 0).length })) }; })
+      .filter(x => x.grabs.length) };
+    window.AWD_LOCK_DRAFT = lockDraft;
     let mapNote = '';
     if (mapRows.length) try { const d = await wFetch(W + '/awd/label-map', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: shipId, labels: mapRows }) }).then(r => r.json());
       mapNote = d && d.ok ? '<div style="color:#15803D">📱 ' + d.saved + ' boxes of ' + (d.shipment || 'this shipment') + ' saved — the phones can scan these labels (🔍 Box check) and see what to grab (Stock Out Big Company → 📦 Current AWD shipment)</div>' : '<div style="color:#DC2626">⚠ Boxes not saved for the phones: ' + ((d && d.error) || 'error') + '</div>';
@@ -2530,8 +2584,9 @@ async function awdLabelsDo(file) {
       + (done > withBc ? '<div style="color:#C2410C">⚠ ' + (done - withBc) + ' with no scan barcode (no room on the label, or no UPC / FNSKU on record)</div>' : '')
       + (noSku.length ? '<div style="color:#C2410C">⚠ ' + noSku.length + ' page' + (noSku.length === 1 ? '' : 's') + ' with no single SKU (mixed box?) — left as they are: page ' + noSku.slice(0, 20).join(', ') + (noSku.length > 20 ? '…' : '') + '</div>' : '')
       + (nt.length ? '<div style="color:#C2410C">⚠ No label line / UPC on record for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — printed with the Amazon name</div>' : '');
-    const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML };
+    const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML, lock: lockDraft };
     if (await awdLblSave(rec)) out.innerHTML = awdLblSavedHead(rec) + rec.html; // 💾 kept for next time
+    (typeof awdLockShow === 'function') && awdLockShow(); // 🔒 the grab plan + Lock it
     (typeof awdPrintMarks === 'function') && awdPrintMarks();
     awdLblHistShow();
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }

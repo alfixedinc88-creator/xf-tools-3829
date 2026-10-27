@@ -10031,6 +10031,39 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
         && rows.find(r => r.id === cl[0].id).how === 'given back by hand' && rows.find(r => r.id === 'ctest-two').status === 'given back' && /none found/.test(rows.find(r => r.id === 'ctest-two').how), { back, c2: c2Of(p2), rows });
     sq.exec("DELETE FROM awd_claim"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-TEST1]%'").run();
   }
+  // 🔒 Owner (2026-10-27): "C4 has 7 labels but the app told our guy to grab 9 cases… after the labels, a Lock it button: save what that shipment
+  // wants us to grab, don't let any other Stock Out go to that spot, and Stock Out Big Company grabs from the same spots — so everything matches".
+  { const lk = await post('/awd/lock', { shipment: 'STAR-TEST1', lines: [{ forPart: '61-1-1=10', sku: '61-1-1=10-', boxes: 3, grabs: [{ loc: 'C1=4-4-4', part: '61-1-1=10', n: 1, pcs: 100, used: 100, exact: true, labels: 1 }, { loc: 'C2=1-1-1', part: '61-1-1=10', n: 2, pcs: 100, used: 200, exact: true, labels: 2 }] }] });
+    const lu = await get('/inventory/lookup?code=61-1-1=10'), at = l => (lu.locations || []).find(x => x.location === l) || {};
+    check('🔒 Lock it (STAR-TEST1: 61-1-1=10 — 1 case at C1=4-4-4, 2 at C2=1-1-1, as its labels were made): saved by TS; those cases are HELD — every other Stock Out sees C1=4-4-4 0 of 1, C2=1-1-1 1 of 3',
+      lk.ok && lk.cases === 3 && lk.spots === 2 && at('C1=4-4-4').heldCases === 1 && at('C1=4-4-4').adjustedCases === 0 && at('C2=1-1-1').heldCases === 2 && at('C2=1-1-1').adjustedCases === 1 && (at('C2=1-1-1').heldFor || []).includes('STAR-TEST1'), { lk, c1: at('C1=4-4-4'), c2: at('C2=1-1-1') });
+    const ph3 = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+      function invAddToPullList(part, loc) { invPullList.push({ key: invPullItemKey(part.partNum, loc), partNum: part.partNum, location: loc.location, cases: String(invPullListPendingCases || '') }); }
+      ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+      return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd };`)(...Object.values({ ...env2, g: (() => { const e = {}; return id => e[id] || (e[id] = { innerHTML: '', style: {} }); })(), window: {} }), []);
+    ph3.load(); for (let i = 0; i < 80 && (ph3.AWDS.busy || !ph3.AWDS.takes || !ph3.AWDS.data); i++) await new Promise(r => setTimeout(r, 25));
+    const T61 = ph3.AWDS.takes.filter(t => t.target === '61-1-1=10').map(t => [t.loc.location, t.cases, /^🔒/.test(t.how)]).sort();
+    check('…Stock Out Big Company grabs EXACTLY the locked spots (C1=4-4-4 ×1, C2=1-1-1 ×2 — not the 3 at C2=1-1-1 it would work out itself), each marked 🔒, with its SKU Mgr row',
+      JSON.stringify(T61) === JSON.stringify([['C1=4-4-4', 1, true], ['C2=1-1-1', 2, true]]) && ph3.AWDS.takes.filter(t => t.target === '61-1-1=10').every(t => t.loc.masterId > 0), T61);
+    await post('/inventory/log', { type: 'OUT', partNum: '61-1-1=10', sku: '61-1-1', location: 'C2=1-1-1', cases: 1, initials: 'NB', notes: '[BIG COMPANY for 61-1-1=10] [AWD: STAR-TEST1]' });
+    const lu2 = await get('/inventory/lookup?code=61-1-1=10'), c2b = (lu2.locations || []).find(x => x.location === 'C2=1-1-1') || {};
+    const pkL = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+    const noUn = await call('/awd/lock', { method: 'POST', headers: { 'X-Cred-Token': pkL, 'Content-Type': 'application/json' }, body: JSON.stringify({ unlock: 'STAR-TEST1' }) });
+    await post('/awd/ship-send', { done: 'STAR-TEST1' });
+    const lu3 = await get('/inventory/lookup?code=61-1-1=10'), c2c = (lu3.locations || []).find(x => x.location === 'C2=1-1-1') || {};
+    const un = await post('/awd/lock', { unlock: 'STAR-TEST1' });
+    check('…1 case grabbed for it at C2=1-1-1 → 1 still held there (2 left, 1 free); a picker can\'t unlock (Admin only); ✅ Done → nothing held; 🔓 Unlock (Admin) kept who / when',
+      c2b.heldCases === 1 && c2b.adjustedCases === 1 && noUn.status === 403 && !c2c.heldCases && c2c.adjustedCases === 2 && un.ok && un.unlocked === 1
+        && sq.prepare("SELECT unlocked_by u FROM awd_lock WHERE shipment = 'STAR-TEST1'").get().u === 'TS', { c2b, c2c, un });
+    await post('/awd/ship-send', { reopen: 'STAR-TEST1' }); sq.exec("DELETE FROM awd_lock"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-TEST1]%'").run();
+    sq.prepare("UPDATE master_list SET cases = 3 WHERE part_num = '61-1-1=10' AND location = 'C2=1-1-1'").run();
+    // the AWD Planner: the plan as data for Lock it, the box after the labels
+    const ahL = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+    check('…AWD Planner: after the labels, "🗺 What to grab, by area" (spots · cases · labels) and 🔒 Lock it; locked → who / when, 🔓 Unlock (Admin); the plan kept with the labels',
+      /grabs: grp\.map\(g => \(\{ loc: g\.loc, part: g\.part, n: g\.n, pcs: g\.pcs \|\| 0, used: g\.used, exact: g\.exact \}\)\)/.test(ahL) && /🔒 Lock it — hold these for/.test(ahL) && /is LOCKED — by/.test(ahL)
+        && /🔓 Unlock \(Admin\)/.test(ahL) && /lock: lockDraft/.test(ahL) && /wFetch\(W \+ '\/awd\/lock'/.test(ahL)
+        && /sel: '#awd-lock-box'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /🔒 locked by ' \+ ckE\(AWDS\.locks\[sh\.shipment\]\.by/.test(ih), null);
+  }
   // Box check: the Amazon box label (SSCC) then the box grabbed
   check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
     /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(ok && lp && lp\.box\) setTimeout\(function\(\) \{ BXC\.label = null;/.test(ih) && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
@@ -10530,7 +10563,8 @@ console.log('\n💾 AWD Planner: the box labels made last time are kept on the c
       && pa.printed.length === 1 && pa.printed[0][1].join() === 'data:L5' && /STAR-LBL5/.test(pa.els['awd-lbl-out'].innerHTML) && /SET5/.test(pAfter.els['awd-lbl-out'].innerHTML)
       && pw.els['awd-lbl-hist'].style.display === 'none' && !/Bring back/.test(pw.els['awd-lbl-hist-out'].innerHTML), { hh: hh.slice(0, 300), keys: [...mem.keys()] });
   check('…a new label PDF replaces the saved one (saved right after the labels are made); restored when the page opens',
-    /const rec = \{ at: new Date\(\)\.toISOString\(\), shipment: shipId, file: file\.name \|\| '', groups, html: out\.innerHTML \};\s*if \(await awdLblSave\(rec\)\)/.test(ah)
+    // (+ the 🔒 grab plan, kept with the labels for Lock it — owner 2026-10-27)
+    /const rec = \{ at: new Date\(\)\.toISOString\(\), shipment: shipId, file: file\.name \|\| '', groups, html: out\.innerHTML, lock: lockDraft \};\s*if \(await awdLblSave\(rec\)\)/.test(ah)
       && /document\.addEventListener\('DOMContentLoaded', awdLblRestore\); else awdLblRestore\(\);/.test(ah), null);
 }
 
