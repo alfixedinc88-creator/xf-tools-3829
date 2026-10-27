@@ -1470,7 +1470,50 @@ async function awdShipOpen(env, url) {
     if (!m || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
     grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num), cases: parseFloat(r.cases) || 0, ships: m[1].split('|').map(AWD_TAG_NAME).filter(Boolean), status: r.status || '' });
   });
-  return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days };
+  return { ok: true, shipments: open, done: done.slice(-10).reverse(), grabbed, days, claims: await awdClaimsOpen(env).catch(() => []) };
+}
+// 👤 Owner (2026-10-27, Current AWD shipment: "one of my guys already grabbed all of C1 — if my other scanner taps Put C1 on my Pull List,
+// will it show everything again? I want everyone to see it: if anyone grabs anything, every other scanner sees it, or we end up with
+// double grab"). Putting spots on a Pull List takes them for everyone at once (kept here, an id made on the phone, so no WiFi is fine);
+// ✓ Grabbed / ✗ None found closes them (sent with the Stock Out), ✕ off the Pull List gives them back, ↩ Give back (anyone, kept who /
+// when) frees a phone's list that was left. Taken 24 hours and still not grabbed → given back by itself.
+async function awdClaimTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_claim (id TEXT PRIMARY KEY, at TEXT, by_user TEXT, area TEXT, part TEXT, for_part TEXT, cases REAL,
+    ships TEXT, loc TEXT, status TEXT DEFAULT 'open', closed_at TEXT, closed_by TEXT, how TEXT)`).run();
+}
+async function awdClaimsOpen(env) {
+  await awdClaimTable(env);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE awd_claim SET status = 'expired', closed_at = ?, how = 'not grabbed in 24 hours' WHERE status = 'open' AND at < ?").bind(now, new Date(Date.now() - 864e5).toISOString()).run().catch(() => {});
+  return ((await env.DB.prepare("SELECT * FROM awd_claim WHERE status = 'open' ORDER BY at").all()).results || []).map(r => ({ id: r.id, at: r.at, by: r.by_user, area: r.area,
+    part: r.part, forPart: r.for_part, cases: +r.cases || 0, ships: String(r.ships || '').split('|').filter(Boolean), loc: r.loc }));
+}
+async function awdClaimClose(env, ids, how, who) {
+  ids = (Array.isArray(ids) ? ids : []).map(x => String(x || '').slice(0, 40)).filter(Boolean).slice(0, 500); if (!ids.length) return 0;
+  await awdClaimTable(env); const now = new Date().toISOString(), st = how === 'grabbed' ? 'done' : 'given back';
+  let n = 0;
+  for (let i = 0; i < ids.length; i += 90) { const c = ids.slice(i, i + 90);
+    const r = await env.DB.prepare(`UPDATE awd_claim SET status = ?, closed_at = ?, closed_by = ?, how = ? WHERE status = 'open' AND id IN (${c.map(() => '?').join(',')})`).bind(st, now, who, how, ...c).run();
+    n += (r.meta && r.meta.changes) || 0; }
+  return n;
+}
+async function awdClaim(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await awdClaimTable(env);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40);
+  if (request.method === 'GET') return J({ ok: true, claims: await awdClaimsOpen(env) });
+  const b = await request.json().catch(() => ({})), t = (x, n) => String(x == null ? '' : x).trim().slice(0, n);
+  // sent through the phone outbox (no WiFi → sent later): the same request is only ever saved once
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const c = await claimRequestId(env, rid, 'awd/claim'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+  const done = async res => { if (rid) await recordRequestResult(env, rid, res); return J(res); };
+  if (b.close) return await done({ ok: true, closed: await awdClaimClose(env, b.close, t(b.how, 40) || 'taken off the Pull List', who) });
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 500), now = new Date().toISOString(); let n = 0;
+  for (const x of lines) { const id = t(x.id, 40); if (!id) continue;
+    const r = await env.DB.prepare('INSERT OR IGNORE INTO awd_claim (id, at, by_user, area, part, for_part, cases, ships, loc, status) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, t(b.at, 30) || now, who, t(b.area, 20), t(x.part, 60).toUpperCase(), t(x.forPart, 60).toUpperCase(), parseFloat(x.cases) || 0, (Array.isArray(x.ships) ? x.ships : []).map(y => t(y, 60)).join('|'), t(x.loc, 60), 'open').run();
+    n += (r.meta && r.meta.changes) || 0; }
+  return await done({ ok: true, taken: n, by: who });
 }
 // 🕘 Owner (2026-10-27): "a history, so we can go back and check the previous shipments — only Admin can see it". Every shipment of the
 // last 90 days: each 📤 send (who / when / lines), the Amazon box labels (boxes, PREVIOUS PACKED), ✅ Done / ↩ put back (who / when) and
@@ -10356,6 +10399,7 @@ const _app = {
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
+    if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
@@ -10728,7 +10772,11 @@ const _app = {
         return await productPhotoSyncVeeqo(request, env);
       }
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
-      if (path === '/inventory/log'    && method === 'POST') return await inventoryLog(request, env);
+      if (path === '/inventory/log'    && method === 'POST') { // 👤 a Stock Out of spots taken for an AWD shipment closes them for everyone
+        const lb = await request.clone().json().catch(() => ({})), res = await inventoryLog(request, env);
+        if (res.status < 300 && Array.isArray(lb.awdClaims) && lb.awdClaims.length) await awdClaimClose(env, lb.awdClaims, lb.noneFound ? 'none found on the shelf' : 'grabbed', String(lb.initials || (session && (session.displayName || session.username)) || '?').slice(0, 40)).catch(e => console.error('[awd claim close]', e.message));
+        return res;
+      }
       if (path === '/inventory/outbox/check' && method === 'POST') return await inventoryOutboxCheck(request, env);
       if (path.startsWith('/inventory/pull/')) return await inventoryPullRoute(path, method, request, env);
       if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);

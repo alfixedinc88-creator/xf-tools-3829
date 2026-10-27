@@ -96,6 +96,7 @@ document.addEventListener('input', function (e) {
         { key: 'awdship', label: '📦 AWD shipments ready — what to grab, by location', sel: '#inv-awdship-card' },
         { key: 'awdshipdone', label: '…✅ Done button (takes a shipment off the list)', sel: '.inv-awdship-done' },
         { key: 'awdshiphist', label: '…🕘 Shipment history (Admin only)', sel: '#inv-awdship-hist' },
+        { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
