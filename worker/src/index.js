@@ -1532,6 +1532,9 @@ async function awdShipSend(request, env, session, url) {
   const b = await request.json().catch(() => ({}));
   const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), U = x => String(x || '').trim().toUpperCase();
   if (b.done || b.reopen) { // ✅ Done / ↩ back on the list — who / when kept
+    // 🔒 Owner (2026-10-27): "since we have a lot of new guys here, make sure that Done can only be clicked by admin level".
+    const roles = (session && session.roles) || [];
+    if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only — ask an admin to mark it ✅ Done' }, 403);
     const name = t(b.done || b.reopen, 60), action = b.done ? 'done' : 'reopen', now = new Date().toISOString(), by = t((session && (session.displayName || session.username)) || '?', 40);
     const rid = String(b._requestId || '').slice(0, 80); // the phone's outbox may send it again — kept once
     if (rid) { const claim = await claimRequestId(env, rid, 'awd/ship-send'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }

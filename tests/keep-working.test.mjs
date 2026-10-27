@@ -10084,6 +10084,7 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
       return { AWDS, load: window.invAwdShipLoad };`)(...Object.values(env2), pull);
     return { run, g }; };
+  globalThis.INV_CRED_USER = { roles: ['ops', 'mgmt', 'admin'] }; // the office (admin) looking at the card; a picker's view is checked below
   const loadCard = async () => { const c = mk(); c.run.load(); for (let i = 0; i < 60 && !/inv-awdship-area|No shipment|Could not/.test(c.g('inv-awdship-out').innerHTML); i++) await new Promise(r => setTimeout(r, 25)); return { h: c.g('inv-awdship-out').innerHTML, A: c.run.AWDS }; };
   const c1 = await loadCard(), sum = (A, a) => A.takes.filter(t => t.area === a).reduce((x, t) => x + t.cases, 0);
   check('📦 Current AWD shipment shows the send: "📤 from the Shipment Builder · 2 SKUs · 3 Amazon boxes · sent by …"; 93-7-1=10: 30 units × 10 = 300 pcs = 3 cases → C3 ×2 + BO ×1 (no more on the shelves); 94-7-4=5: 10 × 5 = 50 pcs = 1 case → PR; areas in walking order',
@@ -10114,13 +10115,22 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   check('…what was already grabbed for a shipment comes off (never listed to grab twice): STAR-SEND1 ✓ all grabbed, 93-7-1=10 left = 1 case for STAR-SEND3; shelf 3 − 1 grabbed = 2, 1 still there after this pick',
     pend === 1 && p93(c5.A).reduce((x, t) => x + t.cases, 0) === 1 && p93(c5.A).every(t => t.ships.join() === 'STAR-SEND3') && /STAR-SEND1<\/b>[^✅]*✓ all grabbed/.test(c5.h),
     { t: p93(c5.A).map(t => [t.loc.location, t.cases, t.ships]), h: c5.h.slice(0, 600) });
-  // ✅ Done from a picker's phone (sent twice by the outbox → kept once) → off the list; ↩ put back → on again
+  // 🔒 Owner (2026-10-27): "since we have a lot of new guys here, make sure that Done can only be clicked by admin level" — a picker is
+  // refused by the server (nothing kept) and sees no ✅ Done / ↩ put back; an admin's ✅ Done (sent twice by the outbox → kept once) → off
+  // the list; ↩ put back → on again.
   const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
-  const dn = b => call('/awd/ship-send', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json());
+  const pkDn = await call('/awd/ship-send', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ done: 'STAR-SEND2', _requestId: 'awd-done-pk' }) });
+  const pkDnJ = await pkDn.json(), pkKept = sq.prepare("SELECT COUNT(*) n FROM awd_ship_done WHERE shipment = 'STAR-SEND2'").get().n;
+  globalThis.INV_CRED_USER = { roles: ['ops', 'mobile'] }; const cPk = await loadCard(); globalThis.INV_CRED_USER = { roles: ['ops', 'mgmt', 'admin'] };
+  check('🔒 ✅ Done is Admin / Owner only: a picker is refused by the server ("Admin only", nothing kept) and their card shows no ✅ Done button',
+    pkDn.status === 403 && /Admin only/.test(pkDnJ.error || '') && pkKept === 0 && /inv-awdship-area/.test(cPk.h) && !/class="inv-awdship-done"/.test(cPk.h)
+      && /if \(!invAwdIsAdmin\(\)\) \{ invFlash\('🔒 Only an admin can mark a shipment ✅ Done'/.test(ih) && /\(invAwdIsAdmin\(\) \? '<button type="button" class="inv-awdship-done"/.test(ih)
+      && /\(invAwdIsAdmin\(\) \? ' <a href="#" onclick="invAwdShipDone\(this\.dataset\.s, true\)/.test(ih), { status: pkDn.status, pkDnJ, pkKept });
+  const dn = b => call('/awd/ship-send', { method: 'POST', headers: H, body: JSON.stringify(b) }).then(r => r.json());
   const d1 = await dn({ done: 'STAR-SEND2', _requestId: 'awd-done-1' }), d2 = await dn({ done: 'STAR-SEND2', _requestId: 'awd-done-1' });
   const c6 = await loadCard(), nDone = sq.prepare("SELECT COUNT(*) n, MAX(by_user) b FROM awd_ship_done WHERE shipment = 'STAR-SEND2'").get();
   await dn({ reopen: 'STAR-SEND2', _requestId: 'awd-re-1' }); const c7 = await loadCard();
-  check('…✅ Done (a picker can, kept once with who / when even if the phone sends it twice) → STAR-SEND2 off the list (PR spot gone, in ✅ Done shipments); ↩ put back → on the list again',
+  check('…✅ Done by an admin (kept once with who / when even if the phone sends it twice) → STAR-SEND2 off the list (PR spot gone, in ✅ Done shipments); ↩ put back → on the list again',
     d1.ok && d2.ok && nDone.n === 1 && !!nDone.b && !/class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c6.h) && sum(c6.A, 'PR') === 0 && /✅ Done shipments \(1\)/.test(c6.h) && /STAR-SEND2/.test(c6.h)
       && /class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c7.h) && sum(c7.A, 'PR') === 1, { d1, d2, nDone, h6: c6.h.slice(-400) });
   check('…a Stock Out from the card says which shipment(s) it was for in its notes ([AWD: name]) — that is how the card knows it was grabbed; the card opens by itself on Big Company',
@@ -10172,11 +10182,12 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
     const hv = gg('inv-awdship-hist-out').innerHTML;
     check('🕘 Shipment history (Admin only — a picker is refused by the server): every shipment of the last 90 days, newest first: STAR-SEND1 (🏷 labels; its send is from January, past 90 days) with the Stock Out grabbed for it (93-7-1=10, C3=1-1-1, 1 case, who, Pending); STAR-SEND2 ✅ Done / ↩ put back (who / when)',
       hist.ok && no.status === 403 && s1 && s1.labels && s1.labels.boxes === 1 && s1.grabbed.length === 1 && s1.grabbed[0].loc === 'C3=1-1-1' && s1.grabbed[0].cases === 1 && s1.grabbed[0].status === 'Pending'
-        && s2 && s2.doneLog.length === 2 && !s2.done && /<b>STAR-SEND1<\/b>/.test(hv) && /Every Stock Out for it/.test(hv) && /C3=1-1-1/.test(hv) && /↩ put back · PK/.test(hv)
+        && s2 && s2.doneLog.length === 2 && !s2.done && /<b>STAR-SEND1<\/b>/.test(hv) && /Every Stock Out for it/.test(hv) && /C3=1-1-1/.test(hv) && /↩ put back · TS/.test(hv)
         && /id="inv-awdship-hist" style="display:none/.test(ih) && /hs\.style\.display = invAwdIsAdmin\(\) \? '' : 'none'/.test(ih),
       { status: no.status, s1, hv: hv.slice(0, 300) });
   }
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('93-7-1','94-7-4'); DELETE FROM awd_label_map; DELETE FROM awd_ship_send; DELETE FROM awd_ship_done; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SEND%'");
+  delete globalThis.INV_CRED_USER;
 }
 
 // Owner (2026-10-25, a label "BO=1-1-1-3: grab 1 case (? pcs a case)" for 100=1/2X): "why we have the ?". The pieces a case came only from

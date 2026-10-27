@@ -2438,10 +2438,11 @@ window.invCredLogin = async function() {
   function invAwdDoneHtml() {
     var L = AWDS.doneList || []; if (!L.length) return '';
     return '<details style="margin-top:8px;font-size:12px;color:var(--text2)"><summary style="cursor:pointer">✅ Done shipments (' + L.length + ')</summary>' + L.map(function(x) {
-      return '<div style="padding:3px 0">✅ <b>' + ckE(x.shipment) + '</b> · ' + ckE(x.by || '?') + ' ' + ckE(xfrFmtT(x.at)) + ' <a href="#" onclick="invAwdShipDone(this.dataset.s, true);return false" data-s="' + ckE(x.shipment) + '">↩ put back on the list</a></div>'; }).join('') + '</details>';
+      return '<div style="padding:3px 0">✅ <b>' + ckE(x.shipment) + '</b> · ' + ckE(x.by || '?') + ' ' + ckE(xfrFmtT(x.at)) + (invAwdIsAdmin() ? ' <a href="#" onclick="invAwdShipDone(this.dataset.s, true);return false" data-s="' + ckE(x.shipment) + '">↩ put back on the list</a>' : '') + '</div>'; }).join('') + '</details>';
   }
   // ✅ Done (or ↩ put back) — kept on the server: who / when
   window.invAwdShipDone = function(name, reopen) {
+    if (!invAwdIsAdmin()) { invFlash('🔒 Only an admin can mark a shipment ✅ Done', 'error'); return; }
     if (!reopen && !confirm('✅ "' + name + '" is done — everything grabbed?\n\nIt comes off this list (kept in History: who / when; ↩ put back any time).')) return;
     invPost(W + '/awd/ship-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reopen ? { reopen: name } : { done: name }) })
       .then(function(r) { return r.json(); }).then(function(d) { if (!d || !d.ok) throw new Error((d && d.error) || 'not saved');
@@ -2461,7 +2462,8 @@ window.invCredLogin = async function() {
           + (sh.prevN ? ' (' + sh.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + ' · ' + (sh.source === 'send' ? 'sent' : 'labels') + ' by ' + ckE(sh.by || '?') + (sh.at ? ' ' + ckE(xfrFmtT(sh.at)) : '')
           + (sh.replaces ? ' <span style="color:var(--text3)">(the labels of ' + ckE(sh.replaces.join(', ')) + ')</span>' : '')
           + (sh.need > 0 ? ' · <b style="color:' + (pct >= 100 ? 'var(--green)' : '#1D4ED8') + '">' + (pct >= 100 ? '✓ all grabbed' : pct + '% grabbed') + '</b>' : '') + '</div>'
-          + '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button></div>'; }).join('')
+          // 🔒 Admin / Owner only (owner 2026-10-27: "a lot of new guys here") — the server refuses anyone else too.
+          + (invAwdIsAdmin() ? '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button>' : '') + '</div>'; }).join('')
       + ((AWDS.ships || []).length > 1 ? '<div style="font-size:12px;color:var(--text2);margin-top:3px">' + AWDS.ships.length + ' shipments together — a part # in more than one is grabbed once for all of them</div>' : '')
       + ((AWDS.allGot || []).length ? '<div style="font-size:12px;color:var(--green);margin-top:3px">✓ Already grabbed: ' + AWDS.allGot.map(ckE).join(', ') + '</div>' : '') + '</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
