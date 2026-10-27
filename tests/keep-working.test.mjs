@@ -10066,7 +10066,7 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   }
   // Box check: the Amazon box label (SSCC) then the box grabbed
   check('🔍 Box check reads an Amazon box label\'s SSCC (→ the box the office printed: part #, Box N-k, from where); a match goes straight on to the next label; same item / other bag count → orange "double check"; wrong → ❌',
-    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(lp && lp\.box && invBcSscc\(L\.code\)\) invBcDecide\(L, lp, ps\[1\] \|\| \(same \? lp : null\), ok, sameItem\);/.test(ih) /* owner 2026-10-27: a match → whole case → its pallet / split / rebag (was: straight on to the next label) */ && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
+    /function invBcSscc\(code\)/.test(ih) && /wFetch\(W \+ '\/awd\/label-map\?code=' \+ ss\)/.test(ih) && /if \(invBcSscc\(v\)\) \{ BXC\.label = null; return window\.invBxsStart\(v\); \}/.test(ih) /* owner 2026-10-27: an Amazon label → that SKU's boxes, one row each, then the pallet */ && /NOT A MATCH — same item, different bag count/.test(ih) && /WRONG PRODUCT — don\\'t pack it! Double check/.test(ih)
       && new Function((ih.match(/function invBcSscc\(code\) \{[^\n]*/) || [''])[0] + '; return invBcSscc("00201952611628557386") === "201952611628557386" && invBcSscc("850031110001") === "";')(), null);
   const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const sscc = new Function((ah.match(/function awdLabelSscc\(lines, y\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdLabelSscc;')();
@@ -10584,15 +10584,16 @@ console.log('\n🔍 Box check: the box\'s OUTSIDE UPC matches its Amazon box lab
     id => els[id], u => call(u, { headers: H }), '', async () => ({ list: [] }), async () => ({ json: async () => ({ ok: true }) }), x => String(x == null ? '' : x), () => {}, {}, {});
   const scan = async v => { env.invBoxCheckScan(v); for (let i = 0; i < 30 && /…<\/span>|^$/.test(els['inv-bc-res'].innerHTML); i++) await new Promise(r => setTimeout(r, 20)); await new Promise(r => setTimeout(r, 120)); };
   const res = () => els['inv-bc-res'].innerHTML;
+  // the server keeps each Amazon box's state (owner 2026-10-27 flow): start each case from "not scanned yet"
+  const fresh = async () => { await new Promise(r => setTimeout(r, 150)); sq.prepare("DELETE FROM awd_box_scan WHERE sscc = '201952611628558832'").run(); env.invBoxCheckReset(); };
   await scan('00201952611628558832'); await scan('10840428944800'); const a = res();                  // Amazon box label (SSCC) → the box's OUTSIDE UPC
-  await new Promise(r => setTimeout(r, 1000)); // a match on an Amazon box label moves on to the next label by itself after 0.9 s
-  env.invBoxCheckReset(); await scan('840428944803'); await scan('10840428944800'); const b = res();  // the label's scan barcode (inside bag UPC) → the OUTSIDE UPC
-  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('840428944803'); const c = res(); // inside bag UPC, as before
-  await new Promise(r => setTimeout(r, 1000));
-  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428944817'); const d = res(); // the =10 box of the same item
-  env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428900018'); const e = res(); // another item's box
-  check('the Amazon box label (SSCC) or its scan barcode (inside bag UPC 840428944803) + the box\'s OUTSIDE UPC 10840428944800 (same item, 723-5-4=100) → ✅ RIGHT PRODUCT; the inside bag UPC still ✅; the =10 box of the same item → ⚠ same item, different bag count; another item\'s box → ❌',
-    /✅ RIGHT PRODUCT/.test(a) && /✅ RIGHT PRODUCT/.test(b) && /✅ RIGHT PRODUCT/.test(c) && /same item, different bag count/.test(d) && /WRONG PRODUCT/.test(e),
+  await fresh(); await scan('840428944803'); await scan('10840428944800'); const b = res();  // the label's scan barcode (inside bag UPC) → the OUTSIDE UPC
+  await fresh(); await scan('00201952611628558832'); await scan('840428944803'); const c = res(); // inside bag UPC, as before
+  await fresh(); await scan('00201952611628558832'); await scan('10840428944817'); const d = res(); // the =10 box of the same item
+  await fresh(); await scan('00201952611628558832'); await scan('10840428900018'); const e = res(); // another item's box
+  await fresh();
+  check('the Amazon box label (SSCC) or its scan barcode (inside bag UPC 840428944803) + the box\'s OUTSIDE UPC 10840428944800 (same item, 723-5-4=100) → ✅ (Amazon label: "WHOLE BOX — put the Amazon label on it"); the inside bag UPC still ✅; the =10 box of the same item → packing room to rebag + label; another item\'s box → ❌',
+    /✅ WHOLE BOX — put the Amazon label on it/.test(a) && /✅ RIGHT PRODUCT/.test(b) && /✅ WHOLE BOX/.test(c) && /PACKING ROOM — rebag and label it as 723-5-4=100/.test(d) && /WRONG PRODUCT/.test(e),
     { a: a.slice(0, 400), b: b.slice(0, 300), d: d.slice(0, 300), e: e.slice(0, 300) });
   // the outside box UPC written on the label: SKU Mgr → 🔢 UPC codes (newest) first, then the UPC list
   sq.prepare("CREATE TABLE IF NOT EXISTS upc_edit (part TEXT PRIMARY KEY, inside_upc TEXT, outside_upc TEXT, by_user TEXT, at TEXT)").run();
@@ -10896,51 +10897,69 @@ console.log('\n🏬 Stock everywhere = SKU Mgr: no old Google Sheet, cases waiti
 // parent but rebag → bring it inside to the packing room; not a match → double check. Main point: everything trackable, by when, by who."
 console.log('\n📦 Box check → PALLET: whole case on a pallet, split / rebag set aside, not a match; how many boxes on each pallet, who, when');
 {
+  // Owner (2026-10-27) changed the flow: an Amazon label → ALL that SKU's Amazon boxes (5 labels → 5 rows), each box scanned → whole box: put the label
+  // on / rebag + label: packing room / not our box quantity: recount or separate; ⏸ "still working on it" saves the rest; then the PALLET; ✕ on every step.
   sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('71-1-1','pal a','71-1-1=10','GARAGE',5,100), ('72-2-2','pal b','72-2-2=10','GARAGE',5,300),
-    ('73-3-3','pal c','73-3-3=10','GARAGE',5,100), ('73-3-3','pal c','73-3-3=5','GARAGE',5,100), ('74-4-4','pal d','74-4-4=10','GARAGE',5,100), ('75-5-5','pal e','75-5-5=10','GARAGE',5,100)`).run();
-  const box = (ss, part, seq, prev) => ({ sscc: ss, sku: part + '-', part, seq, units: 10, loc: 'GARAGE', prev: !!prev });
+    ('73-3-3','pal c','73-3-3=10','GARAGE',5,100), ('73-3-3','pal c','73-3-3=5','GARAGE',5,100), ('74-4-4','pal d','74-4-4=10','GARAGE',5,100), ('75-5-5','pal e','75-5-5=10','GARAGE',5,100),
+    ('76-6-6','pal f','76-6-6=10','C1=1-1-1',2,100), ('77-7-7','pal g','77-7-7=10','GARAGE',5,100)`).run();
+  const box = (ss, part, seq, prev, units) => ({ sscc: ss, sku: part + '-', part, seq, units: units || 10, loc: 'GARAGE', prev: !!prev });
   await post('/awd/label-map', { shipment: 'STAR-PAL1', labels: [box('301952611628550001', '71-1-1=10', '1-1'), box('301952611628550002', '72-2-2=10', '1-1'), box('301952611628550003', '73-3-3=10', '1-1'),
-    box('301952611628550004', '75-5-5=10', '1-1'), box('301952611628550005', '71-1-1=10', '2-2', true)] });
+    box('301952611628550004', '75-5-5=10', '1-1'), box('301952611628550005', '71-1-1=10', '2-2', true),
+    box('301952611628550061', '76-6-6=10', '3-1'), box('301952611628550062', '76-6-6=10', '3-2'), box('301952611628550063', '76-6-6=10', '3-3'), box('301952611628550071', '77-7-7=10', '1-1', false, 30)] });
   const { readFileSync: rfP2 } = await import('node:fs');
   const ihP = rfP2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   const code = ihP.slice(ihP.indexOf('  var BXC = { label: null };'), ihP.indexOf('  window.invBoxCheckDay = function() {'));
   const els = {}, gP = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }), flashes = [];
   const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
-  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', code + '; return window;')(
-    gP, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, m => flashes.push(m), v => String(v || ''));
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gP, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, m => flashes.push(m), v => String(v || ''), () => 'TS');
   const wait = () => new Promise(r => setTimeout(r, 120));
   const scan = async v => { B.invBoxCheckScan(v); await wait(); await wait(); };
-  await scan('00301952611628550001'); await scan('71-1-1=10'); const r1 = gP('inv-bc-res').innerHTML, s1 = gP('inv-bc-step').textContent;
-  await scan('C1=1-1-1'); const badPal = flashes.slice(-1)[0];
-  await scan('PALLET-2'); const r2 = gP('inv-bc-res').innerHTML;
-  check('1) box 71-1-1=10 (10 × 10 = 100 pcs) + the product 71-1-1=10 (a case of 100) → ✅ + "📦 WHOLE CASE — scan the PALLET label"; not a pallet label → said; PALLET-2 → "on PALLET 2 — PALLET 2 now has 1 box"',
-    /✅ RIGHT PRODUCT/.test(r1) && /📦 WHOLE CASE — scan the PALLET label/.test(r1) && /3️⃣ Scan the PALLET label/.test(s1) && /not a PALLET label/.test(badPal) && /on PALLET 2/.test(r2) && /PALLET 2 now has 1 box/.test(r2), { r1: r1.slice(-400), s1, badPal, r2 });
-  await scan('301952611628550002'); await scan('72-2-2=10'); const r3 = gP('inv-bc-res').innerHTML;
-  B.invBcDoneToPallet(); await scan('PALLET 2'); const r4 = gP('inv-bc-res').innerHTML;
-  check('2) box 72-2-2=10 (100 pcs) but a case has 300 → "✂ Put it on the SIDE — split it into the small box"; ✓ Already in the small box → PALLET 2 (now 2 boxes)',
-    /✂ Put it on the SIDE — split it into the small box/.test(r3) && /this box: 100 pcs \(10 × 10\) · the case has 300 pcs/.test(r3) && /PALLET 2 now has 2 boxes/.test(r4), { r3: r3.slice(-300), r4 });
-  await scan('301952611628550003'); await scan('73-3-3=5'); const r5 = gP('inv-bc-res').innerHTML;
-  await scan('301952611628550004'); await scan('74-4-4=10'); const r6 = gP('inv-bc-res').innerHTML;
-  check('3) box 73-3-3=10 + the product 73-3-3=5 (same item, other bag) → "🏷 Bring it INSIDE to the PACKING ROOM — rebag it as 73-3-3=10"; 4) box 75-5-5=10 + 74-4-4=10 → ❌ double check',
-    /🏷 Bring it INSIDE to the PACKING ROOM — rebag it as 73-3-3=10/.test(r5) && /❌ WRONG PRODUCT — don't pack it! Double check/.test(r6), { r5: r5.slice(-300), r6: r6.slice(-200) });
-  for (let i = 0; i < 20 && sq.prepare("SELECT COUNT(*) n FROM awd_box_scan WHERE shipment = 'STAR-PAL1'").get().n < 5; i++) await wait();
+  const res = () => gP('inv-bc-res').innerHTML, step = () => gP('inv-bc-step').textContent, rows = () => (res().match(/class="inv-bxs-row" data-k="[a-z]+"/g) || []).map(x => x.split('"')[3]).join(',');
+  // A) one Amazon label of 76-6-6=10- (Box 3-2) → its 3 boxes, one row each, 👉 Box 3-2
+  await scan('00301952611628550062'); const a1 = res(), s1 = step();
+  await scan('76-6-6=10'); const a2 = res();
+  check('1) one Amazon label of 76-6-6=10- → ALL its 3 Amazon boxes, one row each to scan (3 labels = 3 scans), 👉 the one scanned (Box 3-2), a ✕ to close; the box 76-6-6=10 (10 × 10 = 100 pcs = a case) → "✅ WHOLE BOX — put the Amazon label on it", 👉 moves on',
+    /📦 76-6-6=10- — 3 Amazon boxes/.test(a1) && (a1.match(/class="inv-bxs-row"/g) || []).length === 3 && /👉<\/div><div style="flex:1;min-width:0"><b>Box 3-2<\/b>/.test(a1) && /Scan the BOX for Amazon box 3-2 \(3 of 3 still to scan\)/.test(s1)
+      && /class="inv-bxs-x"/.test(a1) && /✅ WHOLE BOX — put the Amazon label on it/.test(a2) && rows() === 'wait,ok,wait' && /👉<\/div><div style="flex:1;min-width:0"><b>Box 3-3<\/b>/.test(a2), { s1, a1: a1.slice(0, 300), rows: rows() });
+  // B) ⏸ still working on it (the other 2 are in another spot) → the PALLET for the 1 labeled, then closed; the other 2 wait
+  B.invBxsLater(); const p1 = res(), ps1 = step(); await scan('C1=1-1-1'); const badPal = flashes.slice(-1)[0];
+  await scan('PALLET-2'); const p2 = res();
+  check('2) ⏸ Still working on it → the 2 not scanned are saved for later, the 1 labeled → "Scan the PALLET label for 1 box" (✕ not now); not a pallet label → said; PALLET-2 → "1 box of 76-6-6=10- on PALLET 2 · PALLET 2 now has 1 box · 2 more saved for later"',
+    /saved for later/.test(flashes.find(f => /⏸ 2 boxes of 76-6-6=10- saved for later/.test(f)) || '') && /🟫 Scan the PALLET label for 1 box/.test(p1) && /2️⃣ Scan the PALLET label/.test(ps1) && /✕ Not now/.test(p1)
+      && /not a PALLET label/.test(badPal) && /✅ 1 box of 76-6-6=10- on PALLET 2/.test(p2) && /PALLET 2 now has 1 box/.test(p2) && /⏸ 2 more of 76-6-6=10- saved for later/.test(p2), { p1: p1.slice(0, 300), p2, badPal });
+  // C) later, another of its labels → the rows again: 3-2 on PALLET 2, the other 2 to scan; both scanned → straight to the PALLET; ✕ → they stay labeled
+  await scan('301952611628550061'); const c1 = rows(); await scan('76-6-6=10'); await scan('76-6-6=10'); const c2 = res(), cs2 = step();
+  B.invBxsClose(); const c3 = res();
+  check('3) later: any of its labels opens the same rows (3-2 on PALLET 2, 3-1 and 3-3 to scan); both scanned → every box done → 2️⃣ the PALLET at once; ✕ closes, the 2 stay "labeled, waiting for a pallet"',
+    c1 === 'wait,pallet,wait' && /🟫 Scan the PALLET label for 2 boxes/.test(c2) && /Box 3-1 · Box 3-3/.test(c2) && /2️⃣ Scan the PALLET label/.test(cs2) && c3 === '', { c1, cs2 });
+  // D) quantities / rebag / wrong
+  await scan('301952611628550002'); await scan('72-2-2=10'); const d1 = res(), d1r = rows();
+  B.invBxsFixed(0); const d2 = res(); await scan('PALLET 2'); const d3 = res();
+  await scan('301952611628550071'); await scan('77-7-7=10'); const d4 = res(); B.invBxsClose();
+  await scan('301952611628550003'); await scan('73-3-3=5'); const d5 = res(); B.invBxsClose();
+  await scan('301952611628550004'); await scan('74-4-4=10'); const d6 = res(), d6r = rows(); B.invBxsClose();
+  check('4) not our box quantity, no new label: 72-2-2=10 box 100 pcs, our case 300 → "✂ Not a whole box — RECOUNT, or SEPARATE the box: take 100 pcs out"; ✓ Fixed → PALLET 2 (2 boxes); 77-7-7=10 box 300 pcs, case 100 → "this Amazon box = 3 of our cases: RECOUNT, or put them together"; 73-3-3=10 + 73-3-3=5 → "🏷 Bring it to the PACKING ROOM — rebag and label it as 73-3-3=10"; 75-5-5 + 74-4-4 → ❌ (row stays to scan)',
+    /✂ Not a whole box — RECOUNT, or SEPARATE the box: take 100 pcs out for this Amazon box/.test(d1) && /Amazon box 100 pcs · our case 300 pcs/.test(d1) && d1r === 'split' && /🟫 Scan the PALLET label for 1 box/.test(d2) && /PALLET 2 now has 2 boxes/.test(d3)
+      && /this Amazon box = 3 of our cases: RECOUNT, or put them together in one box/.test(d4) && /🏷 Bring it to the PACKING ROOM — rebag and label it as 73-3-3=10/.test(d5) && /❌ WRONG PRODUCT — don't pack it!/.test(d6) && d6r === 'mismatch', { d1: d1.slice(-400), d4: d4.slice(-300), d6r });
+  for (let i = 0; i < 20 && sq.prepare("SELECT COUNT(*) n FROM awd_box_scan WHERE shipment = 'STAR-PAL1'").get().n < 9; i++) await wait();
   const T = await get('/awd/box-pallet?shipment=STAR-PAL1'), hB = await get('/awd/box-pallet?sscc=301952611628550002');
-  check('…STAR-PAL1 tally: 2 of 4 boxes on pallets (+1 PREVIOUS PACKED); PALLET 2 = 2 boxes (who / when); 1 in the packing room to rebag; 1 not a match; 0 not checked yet; box 72-2-2 history: set aside to split → PALLET 2 (by TS)',
-    T.ok && T.boxes === 5 && T.prev === 1 && T.onPallets === 2 && T.pallets.length === 1 && T.pallets[0].pallet === 2 && T.pallets[0].boxes.length === 2 && T.pallets[0].boxes.every(b => b.by === 'TS' && b.at)
-      && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 0 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
+  check('…STAR-PAL1 tally: 2 of 8 boxes on PALLET 2 (+1 PREVIOUS PACKED) with who / when; 2 labeled, waiting for a pallet (76 3-1, 3-3); 1 to recount / separate (77); 1 in the packing room; 1 not a match; 1 not checked yet (71); box 72-2-2 history: split → ok (fixed) → PALLET 2',
+    T.ok && T.boxes === 9 && T.prev === 1 && T.onPallets === 2 && T.pallets.length === 1 && T.pallets[0].pallet === 2 && T.pallets[0].boxes.every(b => b.by === 'TS' && b.at) && T.ready.length === 2
+      && T.split.length === 1 && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 1 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,ok,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
   // the tally on the card + 🖨 PALLET labels + offline-safe (one guard per entry) + 🧩 check marks
   // 📷 Owner (2026-10-27): "keep a record of what is in which pallet — in photos like the boxes, easy to see"
-  await get('/inventory/lookup?code=71-1-1=10'); sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url) VALUES ('71-1-1', 'https://img.example/71.jpg')").run();
+  await get('/inventory/lookup?code=76-6-6=10'); sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url) VALUES ('76-6-6', 'https://img.example/76.jpg')").run();
   B.invBcPallets(); await wait(); await wait();
   const pH = gP('inv-bc-pallets').innerHTML, pal2 = pH.slice(pH.indexOf('🟫 PALLET 2'), pH.indexOf('</details>', pH.indexOf('🟫 PALLET 2')));
-  check('…the card shows each PALLET as a panel of photos (🟫 PALLET 2 — 2 boxes · 2 part #s: 71-1-1=10 with its photo, 1 box (1-1), who / when; 72-2-2=10 📦 no photo), set aside / not a match the same way; 🖨 Print PALLET labels; 🧩',
-    /📦 STAR-PAL1: 2 of 4 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 boxes · 2 part #s/.test(pH) && /<img src="https:\/\/img\.example\/71\.jpg"/.test(pal2) && /71-1-1=10<\/b><div><b style="font-size:13px">1<\/b> box <span[^>]*>\(1-1\)/.test(pal2)
-      && /72-2-2=10/.test(pal2) && /TS · /.test(pal2) && (pal2.match(/class="inv-bc-ptile"/g) || []).length === 2 && /🏷 1 in the packing room to rebag/.test(pH) && /❌ 1 not a match/.test(pH)
+  check('…the card shows each PALLET as a panel of photos (🟫 PALLET 2 — 2 boxes · 2 part #s: 76-6-6=10 with its photo, 1 box (3-2), who / when; 72-2-2=10 📦 no photo), labeled-waiting / recount / packing room / not a match the same way; 🖨 Print PALLET labels; 🧩',
+    /📦 STAR-PAL1: 2 of 8 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 boxes · 2 part #s/.test(pH) && /<img src="https:\/\/img\.example\/76\.jpg"/.test(pal2) && /76-6-6=10<\/b><div><b style="font-size:13px">1<\/b> box <span[^>]*>\(3-2\)/.test(pal2)
+      && /72-2-2=10/.test(pal2) && /TS · /.test(pal2) && (pal2.match(/class="inv-bc-ptile"/g) || []).length === 2 && /✅ 2 labeled, waiting for a pallet/.test(pH) && /✂ 1 to recount \/ separate/.test(pH) && /🏷 1 in the packing room to rebag/.test(pH) && /❌ 1 not a match/.test(pH)
       && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), pal2.slice(0, 600));
   const lt = await get('/awd/box-pallet?latest=1');
   check('…opening Stock Out Big Company (nothing scanned yet) shows the pallets of the shipment scanned last (STAR-PAL1) at once',
     lt.ok && lt.shipment === 'STAR-PAL1' && lt.onPallets === 2 && /invBoxCheckDay\(\); invBcPallets\(\);/.test(ihP) && /'latest=1'/.test(ihP), { s: lt.shipment });
-  sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'; DELETE FROM product_photo WHERE base_sku = '71-1-1'");
+  sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'; DELETE FROM product_photo WHERE base_sku IN ('71-1-1', '76-6-6')");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
