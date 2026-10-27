@@ -2350,7 +2350,11 @@ window.invCredLogin = async function() {
   function invAwdSave() {
     try { if (typeof localStorage === 'undefined') return; var Ls = {}, parts = {};
       Object.keys(AWDS.parts || {}).forEach(function(P) { var r = AWDS.parts[P]; parts[P] = Object.assign({}, r, { takes: r.takes.map(function(t) { Ls[t.target] = t.L; var c = Object.assign({}, t); c.L = t.target; return c; }) }); });
-      localStorage.setItem(AWDS_KEY, JSON.stringify({ at: AWDS.at, shipSig: AWDS.shipSig, data: AWDS.data, ships: AWDS.ships, doneList: AWDS.doneList, parts: parts, order: AWDS.order, Ls: Ls, prevN: AWDS.prevN }));
+      var rec = { at: AWDS.at, shipSig: AWDS.shipSig, data: AWDS.data, ships: AWDS.ships, doneList: AWDS.doneList, parts: parts, order: AWDS.order, Ls: Ls, prevN: AWDS.prevN };
+      try { localStorage.setItem(AWDS_KEY, JSON.stringify(rec)); }
+      catch (e1) { // the phone's storage is full → keep only what ➕ Put on my Pull List needs of each part # (never silently not saved)
+        var slim = {}; Object.keys(Ls).forEach(function(k) { var L = Ls[k] || {}; slim[k] = { partNum: L.partNum, sku: L.sku, name: L.name, caseOf: L.caseOf }; });
+        rec.Ls = slim; localStorage.setItem(AWDS_KEY, JSON.stringify(rec)); }
     } catch (e) {}
   }
   function invAwdRestore() {
@@ -2426,21 +2430,28 @@ window.invCredLogin = async function() {
         (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
           var o = by[P] = by[P] || { part: P, name: b.name || '', per: {} }, q = o.per[si] = o.per[si] || { units: 0, boxes: 0 };
           q.units += parseFloat(b.units) || 0; q.boxes += sh.source === 'send' ? (parseFloat(b.boxes) || 0) : 1; }); });
-      var order = Object.keys(by), full = !!force || !shown || shipSig !== AWDS.shipSig || !AWDS.parts;
-      // the part #s to work out: all (new / re-sent / Done shipment, ↻ Refresh) — or only those grabbed since last time
-      var todo = full ? order : order.filter(function(P) { var r = AWDS.parts[P]; return !r || r.err || r.gotKey !== invAwdGotKey(got, P); });
-      if (!todo.length) { AWDS.data = d; AWDS.doneList = d.done || []; AWDS.checkedAt = new Date().toISOString(); AWDS.updatedN = 0; window.invAwdShipRender(); return fin(); }
-      var parts = full ? {} : Object.assign({}, AWDS.parts), i = 0;
-      var prog = function() { var t = (full ? 'Working out where to grab… ' : '🔄 ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' grabbed since — updating ') + i + ' of ' + todo.length + (full ? ' part #s' : '');
-        if (shown) invAwdStatus('⏳ ' + t + ' — the saved list stays until it is done'); else out.innerHTML = '⏳ ' + t; };
-      var next = function() {
-        if (i >= todo.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig; AWDS.added = {};
-          AWDS.checkedAt = new Date().toISOString(); if (full) AWDS.at = AWDS.checkedAt; AWDS.updatedN = full ? 0 : todo.length;
-          invAwdAssemble(); invAwdSave(); window.invAwdShipRender(); return fin(); }
-        var P = todo[i++]; prog();
-        invAwdPlanPart(by[P], ships, got).then(function(r) { r.gotKey = invAwdGotKey(got, P); parts[P] = r; next(); });
+      // Owner (2026-10-27, "still recalculating"): a part # is worked out again only when ITS need changed (a shipment with it sent / re-sent /
+      // labelled / ✅ Done) or something was grabbed for it — or ↻ Refresh. A new shipment = only its part #s. 4 at a time; saved every few
+      // part #s, so leaving the page half way keeps what was done (the next visit goes on from there), and the list shows while it works.
+      var order = Object.keys(by), all = !!force || !AWDS.parts;
+      var needKey = function(P) { var o = by[P]; return JSON.stringify(Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }).map(function(si) { return [ships[si].shipment, o.per[si].units, o.per[si].boxes]; })); };
+      var todo = all ? order : order.filter(function(P) { var r = AWDS.parts[P]; return !r || r.err || r.gotKey !== invAwdGotKey(got, P) || r.needKey !== needKey(P); });
+      var parts = {}; if (!all) order.forEach(function(P) { if (AWDS.parts[P]) parts[P] = AWDS.parts[P]; });
+      var commit = function(final) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig;
+        AWDS.checkedAt = new Date().toISOString(); if (final && (all || todo.length === order.length)) AWDS.at = AWDS.checkedAt; if (!AWDS.at) AWDS.at = AWDS.checkedAt;
+        AWDS.updatedN = final && !(all || todo.length === order.length) ? todo.length : 0; invAwdAssemble(); invAwdSave(); };
+      if (!todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
+      var i = 0, doneN = 0, running = 0, many = todo.length === order.length;
+      var prog = function() { var t = (many ? 'Working out where to grab… ' : '🔄 updating ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' (grabbed or changed since) — ') + doneN + ' of ' + todo.length + (many ? ' part #s' : '');
+        if (shown) invAwdStatus('⏳ ' + t + (many ? ' — what is done so far is listed; the rest is coming' : ' — the rest of the list stays as saved')); else out.innerHTML = '⏳ ' + t; };
+      var pump = function() {
+        if (doneN >= todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
+        while (running < 4 && i < todo.length) { (function(P) { running++;
+          invAwdPlanPart(by[P], ships, got).then(function(r) { r.gotKey = invAwdGotKey(got, P); r.needKey = needKey(P); parts[P] = r; running--; doneN++;
+            if (doneN < todo.length && doneN % 8 === 0) { commit(false); window.invAwdShipRender(); shown = true; } // 💾 saved so far, and on screen
+            prog(); pump(); }); })(todo[i++]); }
       };
-      next();
+      prog(); pump();
     }).catch(function() { if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
   };
   function invAwdIsAdmin() { return !!(typeof INV_CRED_USER !== 'undefined' && INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0)); }

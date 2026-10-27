@@ -10182,8 +10182,9 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   // 💾 Owner (2026-10-27): "every time we go there we have to wait for it to update — save it, we don't have to update every time, until a new one".
   {
     const store = {}, LS = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
-    const visit = (pull0) => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = pull0 || [], cnt = { n: 0 };
-      const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => { cnt.n++; return get('/inventory/lookup?code=' + encodeURIComponent(c)); }, ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+    const visit = (pull0, slow) => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pull = pull0 || [], cnt = { n: 0, now: 0, max: 0, codes: [] };
+      const env2 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: async c => { cnt.n++; cnt.codes.push(c); cnt.now++; cnt.max = Math.max(cnt.max, cnt.now);
+          try { if (slow && slow(c)) await new Promise(r => setTimeout(r, slow(c))); return await get('/inventory/lookup?code=' + encodeURIComponent(c)); } finally { cnt.now--; } }, ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
         invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {}, localStorage: LS,
         invPost: async () => ({ json: async () => ({ ok: true }) }) }; // 👤 "taken for everyone" not sent here (this check counts look-ups of the saved list)
       const run = new Function(...Object.keys(env2), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
@@ -10214,6 +10215,25 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       vOld.cnt.n === 0 && /✓ no changes/.test(hOld) && /💾 Saved list/.test(at93) && vG.cnt.n === 1 && p93 === 0 && /🔄 1 part # grabbed since, updated/.test(hG)
         && JSON.stringify(vG.run.AWDS.takes.filter(t => t.target !== '93-7-1=10').map(t => [t.loc.location, t.cases, t.ships])) === keepOther,
       { nOld: vOld.cnt.n, nG: vG.cnt.n, p93, hG: hG.slice(0, 300) });
+    // Owner (2026-10-27, "still recalculating"): a NEW shipment → only ITS part #s are worked out (not the whole list); 4 look-ups at a time;
+    // leaving the page half way keeps what was done (saved every 8 part #s) and the next visit goes on from there
+    const R = Array.from({ length: 11 }, (_, k) => 'R9' + k + '-1-1=10');
+    sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES " + R.map((p, k) => "('" + p.split('=')[0] + "','Tee','" + p + "','C4=" + (k + 1) + "-1-1',2,100)").join(',')).run();
+    await post('/awd/ship-send', { shipment: 'STAR-SEND5', lines: R.map(p => ({ sku: p + '-', units: 10, boxes: 1, unitsPerBox: 10, name: 'Tee' })) });
+    const snap = {}; let snapped = false;
+    const vA = visit(null, c => (c === R[9] || c === R[10] ? 1500 : 0)); vA.run.load();
+    for (let k = 0; k < 120 && !snapped; k++) { await new Promise(r => setTimeout(r, 25)); const c = store.inv_awdship_cache_v2 && JSON.parse(store.inv_awdship_cache_v2);
+      if (c && R.filter(p => c.parts[p]).length >= 8) { Object.assign(snap, { v: store.inv_awdship_cache_v2 }); snapped = true; } }
+    const hA = vA.g('inv-awdship-out').innerHTML + vA.g('inv-awdship-st').innerHTML, savedR = snapped ? R.filter(p => JSON.parse(snap.v).parts[p]).length : 0;
+    check('…a new shipment (STAR-SEND5, 11 new part #s) → only those 11 are worked out (the part #s of the other shipments stay as saved), 4 look-ups at a time (not 1 by 1); saved after 8 and already listed on screen while the last ones are still working',
+      snapped && savedR >= 8 && savedR < 11 && vA.cnt.codes.every(c => R.includes(c)) && vA.cnt.max === 4 && /C4/.test(hA) && /updating 11 part #s/.test(hA), { saved: savedR, codes: vA.cnt.codes, max: vA.cnt.max, hA: hA.slice(0, 300) });
+    await settle(vA);
+    // left the page half way (only the snapshot was saved) → the next visit only does the part #s still missing
+    const full = store.inv_awdship_cache_v2; store.inv_awdship_cache_v2 = snap.v;
+    const vB = visit(); vB.run.load(); await settle(vB);
+    check('…left the page half way → the next visit goes on from there: only the ' + (11 - savedR) + ' part #s still missing are worked out, then the whole list is there (STAR-SEND5 C4 spots for all 11)',
+      vB.cnt.n === 11 - savedR && vB.cnt.codes.every(c => R.includes(c)) && R.every(p => vB.run.AWDS.takes.some(t => t.target === p)) && !!full, { nB: vB.cnt.n, codes: vB.cnt.codes });
+    await dn({ done: 'STAR-SEND5' }); sq.exec("DELETE FROM master_list WHERE base_sku LIKE 'R9_-1-1' OR base_sku LIKE 'R9__-1-1'");
     const v4 = visit(); v4.run.load(true); await settle(v4);
     const v5 = visit(); v5.run.load(); await settle(v5); v5.run.AWDS.area = 'PR'; v5.run.add('PR');
     const v6 = visit(v5.pull); v6.run.load(); await settle(v6);
@@ -10479,8 +10499,10 @@ console.log('\n🔍 Box check: the box\'s OUTSIDE UPC matches its Amazon box lab
   const scan = async v => { env.invBoxCheckScan(v); for (let i = 0; i < 30 && /…<\/span>|^$/.test(els['inv-bc-res'].innerHTML); i++) await new Promise(r => setTimeout(r, 20)); await new Promise(r => setTimeout(r, 120)); };
   const res = () => els['inv-bc-res'].innerHTML;
   await scan('00201952611628558832'); await scan('10840428944800'); const a = res();                  // Amazon box label (SSCC) → the box's OUTSIDE UPC
+  await new Promise(r => setTimeout(r, 1000)); // a match on an Amazon box label moves on to the next label by itself after 0.9 s
   env.invBoxCheckReset(); await scan('840428944803'); await scan('10840428944800'); const b = res();  // the label's scan barcode (inside bag UPC) → the OUTSIDE UPC
   env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('840428944803'); const c = res(); // inside bag UPC, as before
+  await new Promise(r => setTimeout(r, 1000));
   env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428944817'); const d = res(); // the =10 box of the same item
   env.invBoxCheckReset(); await scan('00201952611628558832'); await scan('10840428900018'); const e = res(); // another item's box
   check('the Amazon box label (SSCC) or its scan barcode (inside bag UPC 840428944803) + the box\'s OUTSIDE UPC 10840428944800 (same item, 723-5-4=100) → ✅ RIGHT PRODUCT; the inside bag UPC still ✅; the =10 box of the same item → ⚠ same item, different bag count; another item\'s box → ❌',
