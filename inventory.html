@@ -2391,7 +2391,46 @@ window.invCredLogin = async function() {
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
   // one part #: what each shipment needs, minus what was grabbed for it (oldest shipment first), then the Big Company pick rules
+  // 🔒 Owner (2026-10-27, "C4 has 7 labels but the app told our guy to grab 9 cases"): a shipment LOCKED in the AWD Planner is grabbed from
+  // exactly its locked spots and cases (what its labels were made from) — never worked out again here. A part # also in a shipment that is
+  // not locked: that part is worked out as before, on what is not held.
   function invAwdPlanPart(o, ships, got) {
+    var LK = AWDS.locks || {}, sis = Object.keys(o.per).map(Number), locked = sis.filter(function(si) { return LK[ships[si].shipment]; }), rest = sis.filter(function(si) { return !LK[ships[si].shipment]; });
+    if (!locked.length) return invAwdPlanPartCalc(o, ships, got);
+    var lr = invAwdFromLock(o, ships, got, locked);
+    if (!rest.length) return Promise.resolve(lr);
+    var o2 = { part: o.part, name: o.name, per: {} }; rest.forEach(function(si) { o2.per[si] = o.per[si]; });
+    return invAwdPlanPartCalc(o2, ships, got).then(function(r2) {
+      ['takes', 'short', 'noSize'].forEach(function(k) { lr[k] = lr[k].concat(r2[k] || []); });
+      ['need', 'left', 'grabbed', 'onList'].forEach(function(k) { Object.keys(r2[k] || {}).forEach(function(n) { lr[k][n] = (lr[k][n] || 0) + r2[k][n]; }); });
+      lr.allGot = lr.allGot && r2.allGot; if (r2.err) lr.err = true; return lr; });
+  }
+  function invAwdFromLock(o, ships, got, sis) {
+    var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {}, locked: true }, LK = AWDS.locks || {};
+    var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, uS = 0, bS = 0;
+    sis.forEach(function(si) { uS += o.per[si].units || 0; bS += o.per[si].boxes || 0; });
+    var boxPcs = bS > 0 ? Math.round(uS / bS * pack * 1000) / 1000 : 0;
+    sis.forEach(function(si) { var sh = ships[si].shipment, tag = invAwdTag(sh), lines = ((LK[sh] || {}).lines || []).filter(function(x) { return x.forPart === o.part; });
+      var G = []; lines.forEach(function(x) { (x.grabs || []).forEach(function(g) { G.push({ g: g, left: g.n || 0 }); }); });
+      var need = G.reduce(function(a, x) { return a + x.left; }, 0); r.need[sh] = need;
+      if (!G.length) { r.short.push(o.part + ' (🔒 locked plan has no spot for it)'); return; }
+      // grabbed / on a Pull List / taken by another phone for THIS shipment → off its locked spots (the same part # first)
+      got.forEach(function(x) { if (x.forPart !== o.part || (x.ships || []).indexOf(tag) < 0) return; var c = x.cases || 0;
+        G.forEach(function(y) { if (!(c > 0) || !(y.left > 0) || String(y.g.part).toUpperCase() !== x.part) return; var u = Math.min(y.left, c); y.left -= u; c -= u;
+          var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sh] = (kk[sh] || 0) + u; }); });
+      var left = 0;
+      G.forEach(function(y) { if (!(y.left > 0.001)) return; left += y.left; var g = y.g, row = g.row || {}, part = String(g.part).toUpperCase();
+        var how = g.caseOf ? 'a whole case of ' + g.caseOf + ' — ship the case as it is' : !g.exact ? 'of ' + part + ' — rebag' : g.pcs > 0 && g.used < g.n * g.pcs - 0.001 ? 'take ' + g.used + ' pcs, rest stays' : '';
+        r.takes.push({ target: o.part, name: o.name || row.name || '', pcs: g.pcs ? y.left * g.pcs : 0, partNum: part, cases: Math.round(y.left * 1000) / 1000, how: '🔒 ' + (how || 'locked plan'), area: invAwdArea(g.loc),
+          loc: { location: row.location || g.loc, masterId: row.masterId || null, rowIndex: 0, cases: row.cases != null ? row.cases : y.left, adjustedCases: row.cases != null ? row.cases : y.left, eachQty: row.eachQty || g.pcs || 0 },
+          L: { partNum: part, sku: row.sku || part, name: row.name || o.name || '', caseOf: g.caseOf ? (function() { var m = {}; m[o.part] = g.caseOf; return m; })() : {} },
+          ships: [tag], boxPcs: boxPcs, caseOf: g.caseOf || '', locked: true, labels: g.labels || 0 });
+        if (!row.masterId) r.short.push(part + ' @ ' + g.loc + ' (🔒 locked spot not in SKU Mgr now)'); });
+      r.left[sh] = left; });
+    r.allGot = !r.takes.length && !r.short.length;
+    return r;
+  }
+  function invAwdPlanPartCalc(o, ships, got) {
     var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {} }, sname = function(si) { return ships[si].shipment; };
     return _invFetchLookupRaw(o.part).then(function(L) {
       if (!L || !L.partNum) { r.short.push(o.part + ' (not found)'); return r; }
@@ -2448,7 +2487,7 @@ window.invCredLogin = async function() {
     if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…';
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
-      var shipSig = invAwdShipSig(d), ships = d.shipments || [], got = invAwdGot(d);
+      var shipSig = invAwdShipSig(d), ships = d.shipments || [], got = invAwdGot(d); AWDS.locks = d.locks || {}; // 🔒 locked plans
       if (!ships.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = {}; AWDS.order = []; AWDS.area = ''; AWDS.added = {}; AWDS.shipSig = shipSig; AWDS.at = new Date().toISOString(); invAwdAssemble(); invAwdSave();
         out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return fin(); }
       var by = {}, prevN = 0;
@@ -2460,7 +2499,7 @@ window.invCredLogin = async function() {
       // labelled / ✅ Done) or something was grabbed for it — or ↻ Refresh. A new shipment = only its part #s. 4 at a time; saved every few
       // part #s, so leaving the page half way keeps what was done (the next visit goes on from there), and the list shows while it works.
       var order = Object.keys(by), all = !!force || !AWDS.parts;
-      var needKey = function(P) { var o = by[P]; return JSON.stringify(Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }).map(function(si) { return [ships[si].shipment, o.per[si].units, o.per[si].boxes]; })); };
+      var needKey = function(P) { var o = by[P]; return JSON.stringify(Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }).map(function(si) { return [ships[si].shipment, o.per[si].units, o.per[si].boxes, (AWDS.locks[ships[si].shipment] || {}).at || '']; })); }; // 🔒 locked / unlocked → worked out again
       var todo = all ? order : order.filter(function(P) { var r = AWDS.parts[P]; return !r || r.err || r.gotKey !== invAwdGotKey(got, P) || r.needKey !== needKey(P); });
       var parts = {}; if (!all) order.forEach(function(P) { if (AWDS.parts[P]) parts[P] = AWDS.parts[P]; });
       var commit = function(final) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig;
@@ -2607,6 +2646,7 @@ window.invCredLogin = async function() {
           + (sh.source === 'send' ? '📤 from the Shipment Builder · ' + nSku + ' SKU' + (nSku === 1 ? '' : 's') + (sh.boxes ? ' · ' + sh.boxes + ' Amazon boxes' : '') : (sh.lines || []).length + ' Amazon boxes')
           + (sh.prevN ? ' (' + sh.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + ' · ' + (sh.source === 'send' ? 'sent' : 'labels') + ' by ' + ckE(sh.by || '?') + (sh.at ? ' ' + ckE(xfrFmtT(sh.at)) : '')
           + (sh.replaces ? ' <span style="color:var(--text3)">(the labels of ' + ckE(sh.replaces.join(', ')) + ')</span>' : '')
+          + ((AWDS.locks || {})[sh.shipment] ? ' · <b class="inv-awdship-locked" style="color:#7C3AED">🔒 locked by ' + ckE(AWDS.locks[sh.shipment].by || '?') + ' — grab exactly these spots</b>' : '')
           + (sh.need > 0 ? ' · <b style="color:' + (pct >= 100 ? 'var(--green)' : '#1D4ED8') + '">' + (pct >= 100 ? '✓ all grabbed' : pct + '% grabbed') + '</b>' + (pctL > 0 ? ' <span style="color:#b45309">+ ' + pctL + '% on a Pull List, not grabbed yet</span>' : '') : '') + '</div>'
           // 🔒 Admin / Owner only (owner 2026-10-27: "a lot of new guys here") — the server refuses anyone else too.
           + (invAwdIsAdmin() ? '<button type="button" class="inv-awdship-done" onclick="invAwdShipDone(this.dataset.s)" data-s="' + ckE(sh.shipment) + '" style="padding:4px 9px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap">✅ Done</button>' : '') + '</div>'; }).join('')
