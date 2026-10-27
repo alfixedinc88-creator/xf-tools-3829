@@ -674,6 +674,9 @@ window.invCredLogin = async function() {
       style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;background:var(--bg);color:var(--text)">
     <div id="inv-bc-res" style="margin-top:8px"></div>
     <div id="inv-bc-day" style="margin-top:6px;font-size:12px;color:var(--text2)"></div>
+    <!-- 📦 Owner (2026-10-27): every Amazon box checked → which pallet it is on (PALLET 1, 2, 3…), how many boxes a pallet has, by who / when -->
+    <div id="inv-bc-pallets" style="margin-top:8px;font-size:12px"></div>
+    <button type="button" id="inv-bc-plabels" onclick="invPalletLabels()" style="margin-top:6px;padding:6px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">🖨 Print PALLET labels (PALLET 1, 2, 3…)</button>
   </div>
   <div class="icard" id="inv-stockout-card">
     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="invToggleStockoutList()">
@@ -2264,14 +2267,16 @@ window.invCredLogin = async function() {
         .then(function(x) { return x && x.partNum ? { part: String(x.partNum).toUpperCase(), name: x.name || '' } : null; }).catch(function() { return null; });
     });
   }
-  window.invBoxCheckReset = function() { BXC.label = null; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the barcode on the BOX LABEL'; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var i = g('inv-bc-inp'); if (i) i.focus(); };
+  window.invBoxCheckReset = function() { BXC.label = null; BXC.pending = null; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the barcode on the BOX LABEL'; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var i = g('inv-bc-inp'); if (i) i.focus(); };
   window.invBoxCheckScan = function(v) {
     v = String(v || '').trim(); if (!v) return;
     var res = g('inv-bc-res'), st = g('inv-bc-step');
+    if (BXC.pending) return invBcPalletScan(v); // 3️⃣ the pallet this box goes on
     if (!BXC.label) {
       BXC.label = { code: v, info: null };
       if (st) st.textContent = '2️⃣ Now scan the PRODUCT going in this box';
       if (res) res.innerHTML = '<div style="font-size:13px">📦 Box label: <b style="font-family:var(--mono)">' + ckE(v) + '</b> <span id="inv-bc-lp" style="color:var(--text3)">…</span></div>';
+      if (invBcSscc(v)) invBcBoxStatus(invBcSscc(v)); // 📦 where this box is now (on a pallet / set aside)
       invBcPart(v).then(function(p) { BXC.label.info = p; var e = g('inv-bc-lp'); if (!e) return;
         e.innerHTML = p ? '= <b>' + ckE(p.part) + '</b> ' + ckE(p.name) + (p.box ? '<div style="font-size:15px;font-weight:800;color:var(--text);margin-top:3px">Amazon box ' + ckE(p.box.seq) + (p.box.prev ? ' · ✅ PREVIOUS PACKED (on the pallet)' : p.box.loc ? ' · from ' + ckE(p.box.loc) : '') + '</div>' : '')
           : invBcSscc(v) ? '<span style="color:var(--red)">⚠ This Amazon box label is not in the boxes saved by the office — upload the labels in the AWD Planner first</span>' : '<span style="color:var(--orange)">(not a part # we know — it is checked by the code itself)</span>'; });
@@ -2289,11 +2294,102 @@ window.invCredLogin = async function() {
         + '<div style="font-size:13px;margin-top:6px">Product scanned: <b style="font-family:var(--mono)">' + ckE(v) + '</b>' + (ps[1] ? ' = <b>' + ckE(ps[1].part) + '</b> ' + ckE(ps[1].name) : '') + '</div>';
       if (!ok && navigator.vibrate) navigator.vibrate([300, 100, 300]);
       if (st) st.textContent = '2️⃣ Scan the next product for this box — or 📦 Next box';
-      // An Amazon box label (SSCC) that matched → straight on to the next label
-      if (ok && lp && lp.box) setTimeout(function() { BXC.label = null; if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; var i = g('inv-bc-inp'); if (i) i.focus(); }, 900);
+      // 📦 An Amazon box label (SSCC): what to do with this box now — whole case → its pallet; split / rebag → set aside; not a match → double check
+      if (lp && lp.box && invBcSscc(L.code)) invBcDecide(L, lp, ps[1] || (same ? lp : null), ok, sameItem);
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: L.code, product: v, labelPart: lp ? lp.part : '', productPart: ps[1] ? ps[1].part : (same && lp ? lp.part : ''), ok: ok, at: new Date().toISOString() }) })
         .then(function(r) { return r.json(); }).then(function() { invBoxCheckDay(); }).catch(function() {});
     });
+  };
+  // 📦 Owner (2026-10-27): "scan the Amazon label, then the box. Match → whole case: scan the pallet number (print PALLET 1, 2, 3 labels);
+  // to split into small boxes: put it on the side; same parent but rebag: bring it inside to the packing room. Not a match: double check.
+  // Main point: how many boxes we ship, which box on which pallet, by when, by who — everything trackable." Kept on the server (/awd/box-pallet).
+  function invBcPack(p) { var m = String(p || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
+  function invBcKeep(sscc, box, kind, extra) {
+    var body = Object.assign({ sscc: sscc, shipment: box.shipment || '', seq: box.seq || '', part: box.part || '', kind: kind, at: new Date().toISOString() }, extra || {});
+    return invPost(W + '/awd/box-pallet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function(r) { return r.json(); }).catch(function() { return null; });
+  }
+  function invBcAdd(el, h) { if (!el) return; if (el.insertAdjacentHTML) el.insertAdjacentHTML('beforeend', h); else el.innerHTML += h; }
+  function invBcBig(color, html) { return '<div class="inv-bc-next" style="margin-top:8px;padding:14px;border-radius:12px;font-size:19px;font-weight:900;text-align:center;color:#fff;background:' + color + '">' + html + '</div>'; }
+  function invBcDecide(L, lp, pp, ok, sameItem) {
+    var res = g('inv-bc-res'), st = g('inv-bc-step'), box = lp.box, sscc = invBcSscc(L.code); BXC.ship = box.shipment || BXC.ship;
+    var add = function(h) { invBcAdd(res, h); };
+    if (!ok && !sameItem) { invBcKeep(sscc, box, 'mismatch', { productPart: pp ? pp.part : '' }).then(function() { invBcPallets(); }); return; } // red above: double check
+    if (sameItem) { // the same item, another part # → rebag / relabel inside
+      add(invBcBig('#ea580c', '🏷 Bring it INSIDE to the PACKING ROOM — rebag it as ' + ckE(lp.part) + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + ckE(pp ? pp.part : '') + ' → ' + ckE(lp.part) + ' · when it is done: scan this label again</div></div>')
+        + '<button type="button" onclick="invBcDoneToPallet()" style="margin-top:6px;width:100%;padding:10px;border-radius:9px;border:2px solid var(--green);background:var(--bg);color:var(--green);font-weight:800;cursor:pointer">✓ Rebagged already — put it on a pallet</button>');
+      BXC.done = { sscc: sscc, box: box, part: lp.part }; invBcKeep(sscc, box, 'rebag', { productPart: pp ? pp.part : '' }).then(function() { invBcPallets(); });
+      BXC.label = null; if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; return;
+    }
+    // the right part #: a whole case = this box → its pallet; a bigger case → split into the small box
+    var P = pp ? pp.part : lp.part, boxPcs = (parseFloat(box.units) || 0) * invBcPack(lp.part);
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(P)).then(function(r) { return r.json(); }).catch(function() { return null; }).then(function(x) {
+      var each = 0; ((x && x.locations) || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === P) each = Math.max(each, parseFloat(l.eachQty) || 0); });
+      if (each > 0 && boxPcs > 0 && each > boxPcs + 0.001) {
+        add(invBcBig('#ca8a04', '✂ Put it on the SIDE — split it into the small box<div style="font-size:14px;font-weight:700;margin-top:4px">this box: ' + boxPcs + ' pcs (' + ckE(box.units) + ' × ' + invBcPack(lp.part) + ') · the case has ' + each + ' pcs</div>')
+          + '<button type="button" onclick="invBcDoneToPallet()" style="margin-top:6px;width:100%;padding:10px;border-radius:9px;border:2px solid var(--green);background:var(--bg);color:var(--green);font-weight:800;cursor:pointer">✓ Already in the small box — put it on a pallet</button>');
+        BXC.done = { sscc: sscc, box: box, part: P }; invBcKeep(sscc, box, 'split', { productPart: P, note: boxPcs + ' of ' + each + ' pcs' }).then(function() { invBcPallets(); });
+        BXC.label = null; if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; return;
+      }
+      if (each > 0 && boxPcs > 0 && each < boxPcs - 0.001) {
+        add(invBcBig('#ea580c', '🏷 Bring it INSIDE to the PACKING ROOM — this box needs ' + boxPcs + ' pcs, a case has ' + each + '<div style="font-size:13px;font-weight:600;margin-top:4px">put them together in one box · when it is done: scan this label again</div>')
+          + '<button type="button" onclick="invBcDoneToPallet()" style="margin-top:6px;width:100%;padding:10px;border-radius:9px;border:2px solid var(--green);background:var(--bg);color:var(--green);font-weight:800;cursor:pointer">✓ Done already — put it on a pallet</button>');
+        BXC.done = { sscc: sscc, box: box, part: P }; invBcKeep(sscc, box, 'rebag', { productPart: P, note: 'needs ' + boxPcs + ' pcs, a case has ' + each }).then(function() { invBcPallets(); });
+        BXC.label = null; if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; return;
+      }
+      BXC.pending = { sscc: sscc, box: box, part: P }; BXC.label = null;
+      add(invBcBig('var(--green)', '📦 WHOLE CASE — scan the PALLET label' + (each ? '' : '<div style="font-size:12px;font-weight:600">(no Ea/Case in SKU Mgr — check it is one box)</div>')));
+      if (st) st.textContent = '3️⃣ Scan the PALLET label (PALLET 1, 2, 3…)'; var i = g('inv-bc-inp'); if (i) i.focus();
+    });
+  }
+  window.invBcDoneToPallet = function() { if (!BXC.done) return; BXC.pending = BXC.done; BXC.done = null; BXC.label = null; var st = g('inv-bc-step'); if (st) st.textContent = '3️⃣ Scan the PALLET label (PALLET 1, 2, 3…)';
+    var r = g('inv-bc-res'); invBcAdd(r, invBcBig('var(--green)', '📦 Box ' + ckE(BXC.pending.box.seq || '') + ' — scan the PALLET label')); var i = g('inv-bc-inp'); if (i) i.focus(); };
+  function invBcPalletNo(v) { var m = /^(?:PALLET|PLT)[\s\-#:]*(\d{1,3})$/i.exec(String(v || '').trim()); return m ? parseInt(m[1], 10) : 0; }
+  function invBcPalletScan(v) {
+    var n = invBcPalletNo(v), res = g('inv-bc-res'), st = g('inv-bc-step'), P = BXC.pending;
+    if (!n) { invFlash('That is not a PALLET label — scan PALLET 1, 2, 3… (or 📦 Next box)', 'error'); if (navigator.vibrate) navigator.vibrate([200, 80, 200]); return; }
+    BXC.pending = null;
+    invBcKeep(P.sscc, P.box, 'pallet', { pallet: n, productPart: P.part }).then(function(d) {
+      if (res) res.innerHTML = invBcBig('var(--green)', '✅ Box ' + ckE(P.box.seq || '') + ' (' + ckE(P.box.part || '') + ') on PALLET ' + n + (d && d.onPallet ? '<div style="font-size:14px;font-weight:700">PALLET ' + n + ' now has ' + d.onPallet + ' box' + (d.onPallet === 1 ? '' : 'es') + '</div>' : (d && d.queued ? '<div style="font-size:13px">📶 saved on the phone — sends when WiFi is back</div>' : '')));
+      invBcPallets();
+    });
+    if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; var i = g('inv-bc-inp'); if (i) i.focus();
+  }
+  // a box scanned again: where it is now (on PALLET n / set aside to split / to rebag)
+  function invBcBoxStatus(ss) {
+    wFetch(W + '/awd/box-pallet?sscc=' + ss).then(function(r) { return r.json(); }).then(function(d) {
+      var b = d && d.box, e = g('inv-bc-res'); if (!b || !e) return;
+      var txt = b.kind === 'pallet' ? '📦 Already on <b>PALLET ' + b.pallet + '</b>' : b.kind === 'split' ? '✂ Set aside to split into the small box' : b.kind === 'rebag' ? '🏷 Sent to the packing room to rebag' : '❌ Last time: not a match';
+      invBcAdd(e, '<div class="inv-bc-was" style="font-size:12px;color:var(--text2);margin-top:3px">' + txt + ' — by ' + ckE(b.by_user) + ' ' + ckE(xfrFmtT(b.at)) + ' · scan the box to check it again</div>');
+    }).catch(function() {});
+  }
+  // the shipment's tally: boxes checked, each PALLET (how many boxes, tap for the list), set aside, not a match, not checked yet
+  function invBcPallets() {
+    var el = g('inv-bc-pallets'), sh = BXC.ship; if (!el || !sh) return;
+    wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(sh)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return;
+      var L = function(a) { return a.map(function(x) { return ckE(x.seq) + ' ' + ckE(x.part) + ' <span style="color:var(--text3)">' + ckE(x.by) + ' ' + ckE(xfrFmtT(x.at)) + '</span>'; }).join('<br>'); };
+      el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + (d.boxes - d.prev) + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(+ ' + d.prev + ' PREVIOUS PACKED)</span>' : '') + '</div>'
+        + d.pallets.map(function(p) { return '<details><summary style="cursor:pointer"><b>PALLET ' + p.pallet + '</b> — ' + p.boxes.length + ' box' + (p.boxes.length === 1 ? '' : 'es') + '</summary><div style="padding-left:12px">' + L(p.boxes) + '</div></details>'; }).join('')
+        + (d.split.length ? '<details><summary style="cursor:pointer;color:#ca8a04">✂ ' + d.split.length + ' set aside to split</summary><div style="padding-left:12px">' + L(d.split) + '</div></details>' : '')
+        + (d.rebag.length ? '<details><summary style="cursor:pointer;color:#ea580c">🏷 ' + d.rebag.length + ' in the packing room to rebag</summary><div style="padding-left:12px">' + L(d.rebag) + '</div></details>' : '')
+        + (d.mismatch.length ? '<details><summary style="cursor:pointer;color:var(--red)">❌ ' + d.mismatch.length + ' not a match — double check</summary><div style="padding-left:12px">' + L(d.mismatch) + '</div></details>' : '')
+        + (d.notYet.length ? '<details><summary style="cursor:pointer;color:var(--text2)">⬜ ' + d.notYet.length + ' not checked yet</summary><div style="padding-left:12px">' + d.notYet.map(function(x) { return ckE(x.seq) + ' ' + ckE(x.part); }).join('<br>') + '</div></details>' : '');
+    }).catch(function() {});
+  }
+  window.invBcPallets = invBcPallets;
+  // 🖨 PALLET labels: big "PALLET 1" + its barcode, one per 4 × 6 label
+  window.invPalletLabels = function() {
+    var a = prompt('Print PALLET labels — from which number to which? (e.g. 1-10)', '1-10'); if (!a) return;
+    var m = /^\s*(\d{1,3})\s*(?:-\s*(\d{1,3}))?\s*$/.exec(a); if (!m) { invFlash('Type like 1-10', 'error'); return; }
+    var from = parseInt(m[1], 10), to = m[2] ? parseInt(m[2], 10) : from; if (to < from || to - from > 99) { invFlash('Up to 100 labels at once', 'error'); return; }
+    var go = function() { var svgs = [];
+      for (var n = from; n <= to; n++) { var sv = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); try { JsBarcode(sv, 'PALLET-' + n, { format: 'CODE128', displayValue: false, height: 120, width: 4, margin: 0 }); } catch (e) {} svgs.push([n, sv.outerHTML]); }
+      var w = window.open('', '_blank'); if (!w) { invFlash('Allow pop-ups to print', 'error'); return; }
+      w.document.write('<!doctype html><html><head><title>PALLET labels</title><style>@page{size:4in 6in;margin:0}body{margin:0;font-family:Arial}.p{width:4in;height:6in;display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-after:always}'
+        + '.n{font-size:150px;font-weight:900;line-height:1}.t{font-size:48px;font-weight:900}svg{width:3.6in;height:1.3in;margin-top:.25in}</style></head><body>'
+        + svgs.map(function(x) { return '<div class="p"><div class="t">PALLET</div><div class="n">' + x[0] + '</div>' + x[1] + '<div style="font-size:18px;margin-top:6px">PALLET-' + x[0] + '</div></div>'; }).join('')
+        + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>'); w.document.close(); };
+    if (typeof JsBarcode !== 'undefined') go(); else if (typeof bdLoadLib === 'function') bdLoadLib(go); else invFlash('Could not load the barcode maker', 'error');
   };
   window.invBoxCheckDay = function() {
     var el = g('inv-bc-day'); if (!el) return;

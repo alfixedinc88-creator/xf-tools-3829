@@ -1498,6 +1498,50 @@ async function awdShipOpen(env, url) {
 // Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots — then everything matches, even over 2 weeks").
 // The AWD Planner's grab plan (per Amazon part #: spot · part # · cases · pieces · labels) is kept for the shipment. While the shipment is
 // open, what it still needs at each spot (locked − grabbed for it) is HELD: the lookup gives every other Stock Out that many cases fewer.
+// 📦 GET / POST /awd/box-pallet — owner (2026-10-27, the boxes brought to the garage): "scan the Amazon label barcode, then the box. Match +
+// whole case → scan the pallet number (PALLET 1, 2, 3 — print them), so we know which box is on which pallet and how many boxes a pallet
+// has; split into small boxes → put it on the side; same parent but rebag → bring it inside to the packing room; not a match → double
+// check. Main point: how many boxes we ship, which box on which pallet, when, by who — everything trackable". Every scan of a box is
+// kept (SSCC, shipment, box N-k, part #, what was scanned, what was decided, the pallet, who, when); its latest one is where it is now.
+async function awdBoxPallet(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_box_scan (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, sscc TEXT, shipment TEXT, seq TEXT, part TEXT,
+    product_part TEXT, kind TEXT, pallet INTEGER, note TEXT)`).run();
+  const t = (x, n) => String(x == null ? '' : x).trim().slice(0, n), who = t((session && (session.displayName || session.username)) || '?', 40);
+  const latest = async (where, ...b) => { const rows = ((await env.DB.prepare(`SELECT * FROM awd_box_scan WHERE ${where} ORDER BY id`).bind(...b).all()).results || []), by = {};
+    rows.forEach(r => { by[r.sscc] = r; }); return { rows, by }; };
+  if (request.method === 'GET') {
+    const ss = t(url.searchParams.get('sscc'), 20).replace(/\D/g, '').slice(-18);
+    if (ss) { const x = await latest('sscc = ?', ss); return J({ ok: true, box: x.by[ss] || null, history: x.rows }); }
+    const sh = t(url.searchParams.get('shipment'), 60); if (!sh) return J({ ok: false, error: 'Which shipment?' }, 400);
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
+      prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+    const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
+    const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [] };
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, by: r.by_user, at: r.at, product: r.product_part };
+      if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
+    const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
+    return J({ ok: true, shipment: sh, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
+      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch,
+      notYet: boxes.filter(b => !x.by[b.sscc] && !b.prev).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part })) });
+  }
+  const b = await request.json().catch(() => ({}));
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const c = await claimRequestId(env, rid, 'awd/box-pallet'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch'].includes(b.kind) ? b.kind : '';
+  if (!ss || !kind) return J({ ok: false, error: 'Which box (Amazon label) and what happened to it?' }, 400);
+  const pallet = kind === 'pallet' ? parseInt(b.pallet, 10) || 0 : null;
+  if (kind === 'pallet' && !(pallet > 0)) return J({ ok: false, error: 'Scan the PALLET label' }, 400);
+  const lm = await env.DB.prepare('SELECT shipment, seq, part FROM awd_label_map WHERE sscc = ?').bind(ss).first().catch(() => null);
+  const at = t(b.at, 30) || new Date().toISOString();
+  await env.DB.prepare('INSERT INTO awd_box_scan (at, by_user, sscc, shipment, seq, part, product_part, kind, pallet, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(at, who, ss, (lm && lm.shipment) || t(b.shipment, 60), (lm && lm.seq) || t(b.seq, 20), (lm && lm.part) || t(b.part, 60).toUpperCase(), t(b.productPart, 60).toUpperCase(), kind, pallet, t(b.note, 200)).run();
+  let onPallet = null;
+  if (kind === 'pallet') { const x = await latest('shipment = ?', (lm && lm.shipment) || t(b.shipment, 60)); onPallet = Object.values(x.by).filter(r => r.kind === 'pallet' && r.pallet === pallet).length; }
+  const res = { ok: true, sscc: ss, kind, pallet, onPallet, by: who, at };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
 async function awdLockTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked',
     unlocked_at TEXT, unlocked_by TEXT)`).run();
@@ -10549,6 +10593,7 @@ const _app = {
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
     if (url.pathname === '/awd/lock' && (method === 'GET' || method === 'POST')) return await awdLock(request, url, env, session);
+    if (url.pathname === '/awd/box-pallet' && (method === 'GET' || method === 'POST')) return await awdBoxPallet(request, url, env, session);
     if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
