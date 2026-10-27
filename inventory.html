@@ -6982,8 +6982,12 @@ window.invCredLogin = async function() {
       invFlash('Already submitted — use the system count link to correct a mistake', 'warn');
       return;
     }
-    // Two box sizes of this part # at this spot: one more step — confirm the box.
     var bx = invPullList[i];
+    // 📷 Owner (2026-10-27): "a lot of the boxes he grabbed for AWD were the wrong item, wrong quantities — instead of just clicking Grabbed,
+    // they have to scan the box they try to grab; match → let them grab it, not a match → a warning, check again and grab the right one; 5
+    // cases → scan all 5". Big Company (ships to Amazon) only — Stock Out Shelving (a locked design) is not touched.
+    if (!bx.grabbed && bx.dest === 'company' && !bx.scanVerified && !bx.noneFound) { invPullScanOpen(i); return; }
+    // Two box sizes of this part # at this spot: one more step — confirm the box.
     if (!bx.grabbed && bx.otherPcs && bx.otherPcs.length && !bx.boxConfirmed) {
       if (!confirm(bx.partNum + ' @ ' + bx.location + ' comes in 2 box sizes here.\n\nIs the box you grabbed ' + bx.boxPcs + ' pcs?\n(The other boxes are ' + bx.otherPcs.join(' / ') + ' pcs.)\n\nOK = yes, ' + bx.boxPcs + ' pcs · Cancel = check again')) { invFlash('Check the box label — grab the box of ' + bx.boxPcs + ' pcs', 'warn'); return; }
       bx.boxConfirmed = true;
@@ -7134,6 +7138,63 @@ window.invCredLogin = async function() {
   };
 
   // Small modal used by the three helpers below.
+  // 📷 Scan to grab (Big Company): every case scanned, each must be the exact part # on the Pull List line.
+  var PSG = null;
+  function invPsgNorm(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
+  window.invPullScanOpen = function(i) {
+    var it = invPullList[i]; if (!it) return;
+    var need = Math.max(1, Math.ceil((parseFloat(it.cases) || 0) - 1e-9));
+    if (!(parseFloat(it.cases) > 0)) { invFlash('Enter cases before marking grabbed', 'error'); return; }
+    PSG = { item: it, need: need, ok: [], wrong: 0 };
+    invModal('inv-psg-modal', '<div style="font-size:16px;font-weight:800">📷 Scan every box you grab</div>'
+      + '<div style="font-size:14px;margin:6px 0"><b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(it.location) + '</b> — <b>' + invEsc(it.cases) + ' case' + (parseFloat(it.cases) === 1 ? '' : 's') + '</b>'
+      + (it.forPart && it.forPart !== it.partNum ? ' <span style="color:#b45309">for ' + invEsc(it.forPart) + '</span>' : '') + (it.name ? '<div style="font-size:12px;color:var(--text3)">' + invEsc(it.name) + '</div>' : '') + '</div>'
+      + '<div id="inv-psg-count" style="font-size:22px;font-weight:800;margin:6px 0;color:#1D4ED8"></div>'
+      + '<input id="inv-psg-inp" placeholder="Scan the box barcode" autocomplete="off" inputmode="none" onkeydown="if(event.key===\'Enter\'){event.preventDefault();invPullScanBox(this.value);this.value=\'\';}" '
+      + 'style="width:100%;box-sizing:border-box;padding:12px;border:2px solid #1D4ED8;border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+      + '<div id="inv-psg-res" style="margin-top:8px;min-height:24px"></div>'
+      + '<button type="button" onclick="invPullScanClose()" style="width:100%;margin-top:10px;padding:11px;border:1px solid var(--border);border-radius:10px;background:var(--bg3);color:var(--text2);font-size:14px;cursor:pointer">Cancel — not grabbed</button>'
+      + (invAwdIsAdmin() ? '<button type="button" onclick="invPullScanSkip()" style="width:100%;margin-top:6px;padding:9px;border:1px dashed var(--orange);border-radius:10px;background:var(--bg);color:var(--orange);font-size:12px;cursor:pointer">🔓 Admin: box has no barcode — checked by eye (kept on record)</button>' : ''));
+    invPullScanCount(); setTimeout(function() { var x = g('inv-psg-inp'); if (x) x.focus(); }, 50);
+  };
+  function invPullScanCount() { var c = g('inv-psg-count'); if (c && PSG) c.textContent = PSG.ok.length + ' of ' + PSG.need + ' box' + (PSG.need === 1 ? '' : 'es') + ' scanned ✓'; }
+  window.invPullScanClose = function() { PSG = null; invModalClose('inv-psg-modal'); };
+  window.invPullScanBox = function(code) {
+    code = String(code || '').trim(); if (!code || !PSG) return;
+    var S = PSG, it = S.item, want = invPsgNorm(it.partNum), res = g('inv-psg-res');
+    if (res) res.innerHTML = '<span style="color:var(--text3)">⏳ checking ' + invEsc(code) + '…</span>';
+    // 📴 No WiFi: the barcode can't be looked up — never called "wrong", never counted; scan again when the WiFi is back (or an Admin's 🔓)
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { if (res) res.innerHTML = '<div style="color:var(--orange);font-weight:800">📶 No WiFi — can\'t check this box. Scan it again when the WiFi is back.</div>'; return; }
+    invBcPart(code).then(function(p) {
+      if (PSG !== S) return;
+      var got = p ? invPsgNorm(p.part) : '', ok = got === want, sameItem = !ok && got && invParent(got) === invParent(want);
+      // every scan is kept (who / when / right or wrong) — the same record as 🔍 Box check
+      invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: it.partNum, product: code, labelPart: want, productPart: got, ok: ok,
+        note: 'Grab scan ' + it.location + (it.awdShipment ? ' [AWD: ' + it.awdShipment + ']' : ''), _requestId: 'psg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) }).catch(function() {});
+      if (ok) {
+        S.ok.push(code); invPullScanCount();
+        if (res) res.innerHTML = '<div style="color:var(--green);font-weight:800">✓ Right box — ' + invEsc(it.partNum) + (S.ok.length < S.need ? ' · scan the next one' : '') + '</div>';
+        if (S.ok.length >= S.need) {
+          it.scanVerified = true;
+          it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED ' + S.ok.length + '/' + S.need + ' boxes ✓' + (S.wrong ? ', ' + S.wrong + ' wrong scan' + (S.wrong === 1 ? '' : 's') + ' put back' : '') + ']';
+          invPullScanClose(); invFlash('✓ All ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' scanned — ' + it.partNum + ' grabbed', 'success');
+          invTogglePullCheck(invPullList.indexOf(it));
+        }
+        return;
+      }
+      S.wrong++;
+      if (typeof invBeep === 'function') try { invBeep('error'); } catch (e) {}
+      if (res) res.innerHTML = '<div style="padding:10px;border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800;font-size:15px">❌ WRONG BOX — don\'t grab it!'
+        + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'This box is <b style="font-family:var(--mono)">' + invEsc(got) + '</b>' + (sameItem ? ' (same item, <b>wrong bag size</b>)' : '') : 'This barcode is not a part # we know') + ' — you need <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> at ' + invEsc(it.location) + '. Put it back, check the label and scan the right box.</div></div>';
+    });
+  };
+  window.invPullScanSkip = function() {
+    var S = PSG; if (!S || !invAwdIsAdmin()) return;
+    var why = prompt('🔓 Admin: why can\'t the boxes be scanned? (kept on record)', 'no barcode on the box'); if (why == null) return;
+    var it = S.item; it.scanVerified = true;
+    it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCAN SKIPPED by ' + invMe() + ': ' + String(why).slice(0, 80) + ' — ' + S.ok.length + '/' + S.need + ' scanned]';
+    invPullScanClose(); invTogglePullCheck(invPullList.indexOf(it));
+  };
   function invModal(id, html) {
     var m = g(id);
     if (!m) { m = document.createElement('div'); m.id = id; document.body.appendChild(m); }
