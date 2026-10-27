@@ -2317,27 +2317,78 @@ window.invCredLogin = async function() {
   function invAwdTag(n) { return String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60); }
   // 💾 Owner (2026-10-27): "every time we go there we have to wait for it to update — after one update, save it, we don't have to update every
   // time, until there is a new one". The list worked out last time is kept on this phone and shows at once; a quick check (one call) runs
-  // behind it, and the list is worked out again only when something changed — a shipment sent / labelled / ✅ Done, or something grabbed
-  // for it — or it is over 30 min old, or ↻ Refresh. While it works, the saved list stays on screen (no waiting).
-  var AWDS_KEY = 'inv_awdship_cache_v1';
-  function invAwdSig(d) { return JSON.stringify([(d.shipments || []).map(function(x) { return [x.shipment, x.at, (x.lines || []).length]; }), (d.done || []).map(function(x) { return [x.shipment, x.at]; }),
-    (d.grabbed || []).map(function(x) { return [x.part, x.forPart, x.cases, x.ships]; }).sort()]); }
+  // behind it. Owner (same day, "it still worked from 1 to 112 part #s — only a new shipment or a replacement"): the WHOLE list is worked out
+  // again only when a shipment is sent / re-sent / labelled / ✅ Done, or ↻ Refresh. Something grabbed for it (a Stock Out, or this phone's
+  // Pull List) → only THOSE part #s are worked out again (seconds), the rest stays as saved. No time limit. The saved list stays on screen.
+  var AWDS_KEY = 'inv_awdship_cache_v2';
+  function invAwdShipSig(d) { return JSON.stringify([(d.shipments || []).map(function(x) { return [x.shipment, x.at, (x.lines || []).length]; }), (d.done || []).map(function(x) { return [x.shipment, x.at]; })]); }
+  function invAwdGot(d) { // already grabbed: on the server (sent Stock Outs) + this phone's Pull List not sent yet
+    var got = (d.grabbed || []).map(function(x) { return { part: x.part, forPart: x.forPart, cases: x.cases, ships: x.ships }; });
+    (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { if (x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound)
+      got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean) }); });
+    return got;
+  }
+  function invAwdGotKey(got, P) { return JSON.stringify(got.filter(function(x) { return x.forPart === P; }).map(function(x) { return [x.part, x.cases, x.ships]; }).sort()); }
   function invAwdSave() {
-    try { if (typeof localStorage === 'undefined') return; var Ls = {}, takes = AWDS.takes.map(function(t) { Ls[t.target] = t.L; var c = Object.assign({}, t); c.L = t.target; return c; });
-      localStorage.setItem(AWDS_KEY, JSON.stringify({ at: AWDS.at, sig: AWDS.sig, data: AWDS.data, ships: AWDS.ships, doneList: AWDS.doneList, takes: takes, Ls: Ls, prevN: AWDS.prevN, noSize: AWDS.noSize, short: AWDS.short, allGot: AWDS.allGot, mine: AWDS.mine }));
+    try { if (typeof localStorage === 'undefined') return; var Ls = {}, parts = {};
+      Object.keys(AWDS.parts || {}).forEach(function(P) { var r = AWDS.parts[P]; parts[P] = Object.assign({}, r, { takes: r.takes.map(function(t) { Ls[t.target] = t.L; var c = Object.assign({}, t); c.L = t.target; return c; }) }); });
+      localStorage.setItem(AWDS_KEY, JSON.stringify({ at: AWDS.at, shipSig: AWDS.shipSig, data: AWDS.data, ships: AWDS.ships, doneList: AWDS.doneList, parts: parts, order: AWDS.order, Ls: Ls, prevN: AWDS.prevN }));
     } catch (e) {}
   }
   function invAwdRestore() {
-    try { if (typeof localStorage === 'undefined') return false; var c = JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !Array.isArray(c.takes)) return false;
-      ['at', 'sig', 'data', 'ships', 'doneList', 'prevN', 'noSize', 'short', 'allGot', 'mine'].forEach(function(k) { AWDS[k] = c[k]; });
-      AWDS.takes = c.takes.map(function(t) { t.L = (c.Ls || {})[t.L] || {}; return t; }); AWDS.added = {}; return true;
+    try { if (typeof localStorage === 'undefined') return false; var c = JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !c.parts) return false;
+      ['at', 'shipSig', 'data', 'ships', 'doneList', 'order', 'prevN'].forEach(function(k) { AWDS[k] = c[k]; });
+      AWDS.parts = {}; Object.keys(c.parts).forEach(function(P) { var r = c.parts[P]; r.takes = r.takes.map(function(t) { t.L = (c.Ls || {})[t.L] || {}; return t; }); AWDS.parts[P] = r; });
+      invAwdAssemble(); AWDS.added = {}; return true;
     } catch (e) { return false; }
   }
-  function invAwdMine() { // this phone's Pull List items for the shipments, not sent yet (they change the list too)
-    return JSON.stringify((typeof invPullList !== 'undefined' ? invPullList : []).filter(function(x) { return x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound; })
-      .map(function(x) { return [x.partNum, x.forPart, x.cases, x.awdShipment]; }));
+  // the per-part # results → the list on screen (picks, short, no size, all grabbed, each shipment's % grabbed)
+  function invAwdAssemble() {
+    var takes = [], short = [], noSize = [], allGot = [], need = {}, left = {};
+    (AWDS.order || []).forEach(function(P) { var r = AWDS.parts[P]; if (!r) return;
+      r.takes.forEach(function(t) { takes.push(t); }); (r.short || []).forEach(function(x) { short.push(x); }); (r.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
+      if (r.allGot) allGot.push(P); Object.keys(r.need || {}).forEach(function(n) { need[n] = (need[n] || 0) + r.need[n]; left[n] = (left[n] || 0) + Math.max(0, r.left[n] || 0); }); });
+    (AWDS.ships || []).forEach(function(sh) { sh.need = need[sh.shipment] || 0; sh.left = left[sh.shipment] || 0; });
+    AWDS.takes = takes; AWDS.short = short; AWDS.noSize = noSize; AWDS.allGot = allGot;
+    if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
+  // one part #: what each shipment needs, minus what was grabbed for it (oldest shipment first), then the Big Company pick rules
+  function invAwdPlanPart(o, ships, got) {
+    var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {} }, sname = function(si) { return ships[si].shipment; };
+    return _invFetchLookupRaw(o.part).then(function(L) {
+      if (!L || !L.partNum) { r.short.push(o.part + ' (not found)'); return r; }
+      var keep = invPart; invPart = L;
+      try {
+        var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1;
+        var eachOf = function(pn) { var e = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === pn) e = Math.max(e, parseFloat(l.eachQty) || 0); }); return e; };
+        var each = eachOf(o.part), plan;
+        // 📦 sold as a whole case of another part # (Reorder 📦): each Amazon unit = 1 whole case, only cases with the right pieces
+        var caseTo = L.caseOf && L.caseOf[o.part] ? String(L.caseOf[o.part]).toUpperCase() : null;
+        // what each shipment needs, in cases of this part # (whole cases of caseTo: 1 a unit)
+        var sis = Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }), need = {}, tot = 0, bad = false, tagOf = {};
+        ships.forEach(function(sh, si) { tagOf[invAwdTag(sh.shipment)] = si; });
+        sis.forEach(function(si) { var q = o.per[si], n = caseTo ? q.units : each > 0 ? q.units * pack / each : q.boxes; if (!(n > 0)) bad = true; need[si] = n || 0; tot += need[si]; });
+        if (bad && !(tot > 0)) { r.short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return r; }
+        // grabbed already → off the oldest shipment first (only the shipments the grab was for)
+        var left = {}; sis.forEach(function(si) { left[si] = need[si]; });
+        got.forEach(function(x) { if (x.forPart !== o.part) return;
+          var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === caseTo) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
+          x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u; }); });
+        var rest = 0, forShips = []; sis.forEach(function(si) { r.need[sname(si)] = need[si]; r.left[sname(si)] = Math.max(0, left[si]); if (left[si] > 0.001) { rest += left[si]; forShips.push(invAwdTag(sname(si))); } });
+        if (!(rest > 0.001)) { r.allGot = true; return r; }
+        rest = Math.round(rest * 1000) / 1000;
+        var units = caseTo ? rest : 0, pcs = caseTo ? 0 : each > 0 ? rest * each : 0;
+        try { plan = caseTo ? invCaseOfPlan(L, o.part, caseTo, units) : invPlanCompanyPull(o.part, rest); } catch (e) { r.short.push(o.part + ' (' + e.message + ')'); return r; }
+        if (caseTo) { plan.takes.forEach(function(t) { if (!t.how) t.how = 'a whole case of ' + caseTo + ' (' + plan.want + ' pcs) = 1 × ' + o.part + ' — ship the case as it is'; });
+          if (plan.off.length) r.short.push(o.part + ' = a case of ' + caseTo + ': ' + invCaseOffTxt(plan).replace(/^ · /, '')); }
+        plan.takes.forEach(function(t) { r.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips }); });
+        if (plan.short > 0.001) r.short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
+        r.noSize = (plan.noSize || []).slice();
+        return r;
+      } finally { invPart = keep; }
+    }).catch(function() { r.short.push(o.part + ' (no WiFi?)'); r.err = true; return r; });
+  }
   window.invAwdShipLoad = function(force) {
     var out = g('inv-awdship-out'); if (!out) return;
     var hs = g('inv-awdship-hist'); if (hs) hs.style.display = invAwdIsAdmin() ? '' : 'none'; // 🕘 Admin / Owner only
@@ -2349,58 +2400,27 @@ window.invCredLogin = async function() {
     if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…';
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
-      var sig = invAwdSig(d), mine = invAwdMine(), fresh = AWDS.at && Date.now() - Date.parse(AWDS.at) < 30 * 60000;
-      if (!force && shown && sig === AWDS.sig && mine === AWDS.mine && fresh) { AWDS.checkedAt = new Date().toISOString(); window.invAwdShipRender(); return fin(); }
-      var ships = d.shipments || [], takes = [];
-      if (!ships.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.takes = []; AWDS.area = ''; AWDS.added = {}; AWDS.sig = sig; AWDS.mine = mine; AWDS.at = new Date().toISOString(); invAwdSave();
+      var shipSig = invAwdShipSig(d), ships = d.shipments || [], got = invAwdGot(d);
+      if (!ships.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = {}; AWDS.order = []; AWDS.area = ''; AWDS.added = {}; AWDS.shipSig = shipSig; AWDS.at = new Date().toISOString(); invAwdAssemble(); invAwdSave();
         out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return fin(); }
-      var prog = function(t) { if (shown) invAwdStatus('⏳ ' + t + ' — the saved list stays until it is done'); else out.innerHTML = '⏳ ' + t; };
-      var by = {}, prevN = 0, tagOf = {};
-      ships.forEach(function(sh, si) { tagOf[invAwdTag(sh.shipment)] = si; sh.prevN = 0;
+      var by = {}, prevN = 0;
+      ships.forEach(function(sh, si) { sh.prevN = 0;
         (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
           var o = by[P] = by[P] || { part: P, name: b.name || '', per: {} }, q = o.per[si] = o.per[si] || { units: 0, boxes: 0 };
           q.units += parseFloat(b.units) || 0; q.boxes += sh.source === 'send' ? (parseFloat(b.boxes) || 0) : 1; }); });
-      // already grabbed: on the server (sent Stock Outs) + this phone's Pull List not sent yet
-      var got = (d.grabbed || []).slice();
-      (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { if (x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound)
-        got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean) }); });
-      var parts = Object.keys(by), i = 0, keep = invPart, noSize = [], short = [], allGot = [];
+      var order = Object.keys(by), full = !!force || !shown || shipSig !== AWDS.shipSig || !AWDS.parts;
+      // the part #s to work out: all (new / re-sent / Done shipment, ↻ Refresh) — or only those grabbed since last time
+      var todo = full ? order : order.filter(function(P) { var r = AWDS.parts[P]; return !r || r.err || r.gotKey !== invAwdGotKey(got, P); });
+      if (!todo.length) { AWDS.data = d; AWDS.doneList = d.done || []; AWDS.checkedAt = new Date().toISOString(); AWDS.updatedN = 0; window.invAwdShipRender(); return fin(); }
+      var parts = full ? {} : Object.assign({}, AWDS.parts), i = 0;
+      var prog = function() { var t = (full ? 'Working out where to grab… ' : '🔄 ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' grabbed since — updating ') + i + ' of ' + todo.length + (full ? ' part #s' : '');
+        if (shown) invAwdStatus('⏳ ' + t + ' — the saved list stays until it is done'); else out.innerHTML = '⏳ ' + t; };
       var next = function() {
-        if (i >= parts.length) { invPart = keep; AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.takes = takes; AWDS.added = {};
-          if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
-          AWDS.prevN = prevN; AWDS.noSize = noSize; AWDS.short = short; AWDS.allGot = allGot; AWDS.sig = sig; AWDS.mine = mine; AWDS.at = AWDS.checkedAt = new Date().toISOString();
-          invAwdSave(); window.invAwdShipRender(); return fin(); }
-        var o = by[parts[i++]]; prog('Working out where to grab… ' + i + ' of ' + parts.length + ' part #s');
-        _invFetchLookupRaw(o.part).then(function(L) {
-          if (!L || !L.partNum) { short.push(o.part + ' (not found)'); return next(); }
-          invPart = L;
-          var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1;
-          var eachOf = function(pn) { var e = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === pn) e = Math.max(e, parseFloat(l.eachQty) || 0); }); return e; };
-          var each = eachOf(o.part), plan;
-          // 📦 sold as a whole case of another part # (Reorder 📦): each Amazon unit = 1 whole case, only cases with the right pieces
-          var caseTo = L.caseOf && L.caseOf[o.part] ? String(L.caseOf[o.part]).toUpperCase() : null;
-          // what each shipment needs, in cases of this part # (whole cases of caseTo: 1 a unit)
-          var sis = Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }), need = {}, tot = 0, bad = false;
-          sis.forEach(function(si) { var q = o.per[si], n = caseTo ? q.units : each > 0 ? q.units * pack / each : q.boxes; if (!(n > 0)) bad = true; need[si] = n || 0; tot += need[si]; });
-          if (bad && !(tot > 0)) { short.push(o.part + ' (no Each/Case in SKU Mgr and no box count — not worked out)'); return next(); }
-          // grabbed already → off the oldest shipment first (only the shipments the grab was for)
-          var left = {}; sis.forEach(function(si) { left[si] = need[si]; });
-          got.forEach(function(x) { if (x.forPart !== o.part) return;
-            var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === caseTo) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
-            x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u; }); });
-          var rest = 0, forShips = []; sis.forEach(function(si) { if (left[si] > 0.001) { rest += left[si]; forShips.push(invAwdTag(ships[si].shipment)); } });
-          sis.forEach(function(si) { var sh = ships[si]; sh.need = (sh.need || 0) + need[si]; sh.left = (sh.left || 0) + Math.max(0, left[si]); });
-          if (!(rest > 0.001)) { allGot.push(o.part); return next(); }
-          rest = Math.round(rest * 1000) / 1000;
-          var units = caseTo ? rest : 0, pcs = caseTo ? 0 : each > 0 ? rest * each : 0;
-          try { plan = caseTo ? invCaseOfPlan(L, o.part, caseTo, units) : invPlanCompanyPull(o.part, rest); } catch (e) { short.push(o.part + ' (' + e.message + ')'); return next(); }
-          if (caseTo) { plan.takes.forEach(function(t) { if (!t.how) t.how = 'a whole case of ' + caseTo + ' (' + plan.want + ' pcs) = 1 × ' + o.part + ' — ship the case as it is'; });
-            if (plan.off.length) short.push(o.part + ' = a case of ' + caseTo + ': ' + invCaseOffTxt(plan).replace(/^ · /, '')); }
-          plan.takes.forEach(function(t) { takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips }); });
-          if (plan.short > 0.001) short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
-          (plan.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
-          next();
-        }).catch(function() { short.push(o.part + ' (no WiFi?)'); next(); });
+        if (i >= todo.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig; AWDS.added = {};
+          AWDS.checkedAt = new Date().toISOString(); if (full) AWDS.at = AWDS.checkedAt; AWDS.updatedN = full ? 0 : todo.length;
+          invAwdAssemble(); invAwdSave(); window.invAwdShipRender(); return fin(); }
+        var P = todo[i++]; prog();
+        invAwdPlanPart(by[P], ships, got).then(function(r) { r.gotKey = invAwdGotKey(got, P); parts[P] = r; next(); });
       };
       next();
     }).catch(function() { if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
@@ -2458,7 +2478,7 @@ window.invCredLogin = async function() {
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
     var tm = function(v) { return v ? new Date(v).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
-    var h = '<div id="inv-awdship-st" style="font-size:11px;color:var(--text3);margin-bottom:4px">💾 Saved list · worked out ' + ckE(tm(AWDS.at)) + (AWDS.checkedAt && AWDS.checkedAt !== AWDS.at ? ' · ✓ no changes (checked ' + ckE(tm(AWDS.checkedAt)) + ')' : '') + '</div>'
+    var h = '<div id="inv-awdship-st" style="font-size:11px;color:var(--text3);margin-bottom:4px">💾 Saved list · worked out ' + ckE(tm(AWDS.at)) + (AWDS.checkedAt && AWDS.checkedAt !== AWDS.at ? (AWDS.updatedN ? ' · 🔄 ' + AWDS.updatedN + ' part #' + (AWDS.updatedN === 1 ? '' : 's') + ' grabbed since, updated' : ' · ✓ no changes') + ' (checked ' + ckE(tm(AWDS.checkedAt)) + ')' : '') + ' · only a new / changed shipment or ↻ Refresh works it all out again</div>'
       + '<div style="margin-bottom:6px">' + (AWDS.ships || []).map(function(sh) {
         var nSku = (sh.lines || []).filter(function(x) { return !x.prev; }).length, pct = sh.need > 0 ? Math.round((1 - (sh.left || 0) / sh.need) * 100) : 0;
         return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border)"><div><b>' + ckE(sh.shipment || 'Shipment') + '</b> · '

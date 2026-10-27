@@ -10162,13 +10162,25 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
     const v1 = visit(); v1.run.load(); const h1 = await settle(v1);
     const v2 = visit(); v2.run.load(); const at2 = v2.g('inv-awdship-out').innerHTML; const h2 = await settle(v2);
     check('💾 the list worked out once is saved on the phone: next visit shows it AT ONCE (no "Reading…" wait), a quick check finds no changes → not worked out again (0 part # look-ups), same picks',
-      !!store.inv_awdship_cache_v1 && v1.cnt.n > 0 && /💾 Saved list/.test(at2) && /inv-awdship-area/.test(at2) && v2.cnt.n === 0 && /✓ no changes/.test(h2)
+      !!store.inv_awdship_cache_v2 && v1.cnt.n > 0 && /💾 Saved list/.test(at2) && /inv-awdship-area/.test(at2) && v2.cnt.n === 0 && /✓ no changes/.test(h2)
         && JSON.stringify(v2.run.AWDS.takes.map(t => [t.loc.location, t.cases])) === JSON.stringify(v1.run.AWDS.takes.map(t => [t.loc.location, t.cases])) && v2.run.AWDS.takes[0].L.partNum,
       { n1: v1.cnt.n, n2: v2.cnt.n, at2: at2.slice(0, 200), h2: h2.slice(0, 200) });
     await post('/awd/ship-send', { shipment: 'STAR-SEND4', lines: lines.slice(1) });
     const v3 = visit(); v3.run.load(); const at3 = v3.g('inv-awdship-out').innerHTML; const h3 = await settle(v3);
     check('…a new shipment sent → the saved list still shows at once, then the list is worked out again behind it and STAR-SEND4 appears (saved again)',
-      /💾 Saved list/.test(at3) && !/STAR-SEND4/.test(at3) && v3.cnt.n > 0 && /data-s="STAR-SEND4"/.test(h3) && /STAR-SEND4/.test(store.inv_awdship_cache_v1), { n3: v3.cnt.n, h3: h3.slice(0, 300) });
+      /💾 Saved list/.test(at3) && !/STAR-SEND4/.test(at3) && v3.cnt.n > 0 && /data-s="STAR-SEND4"/.test(h3) && /STAR-SEND4/.test(store.inv_awdship_cache_v2), { n3: v3.cnt.n, h3: h3.slice(0, 300) });
+    // Owner (2026-10-27, "it still worked from 1 to 112 part #s"): no time limit — an old saved list is not worked out again by itself;
+    // something grabbed for ONE part # → only that part # is worked out again, the others stay as saved
+    { const c = JSON.parse(store.inv_awdship_cache_v2); c.at = '2026-01-01T00:00:00.000Z'; store.inv_awdship_cache_v2 = JSON.stringify(c); }
+    const vOld = visit(); vOld.run.load(); const hOld = await settle(vOld);
+    const keepOther = JSON.stringify(vOld.run.AWDS.takes.filter(t => t.target !== '93-7-1=10').map(t => [t.loc.location, t.cases, t.ships]));
+    sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', '93-7-1=10', 'C3=1-1-1', 1, 'PK', '[BIG COMPANY for 93-7-1=10] [AWD: STAR-SEND3]', 'Pending')").run(new Date().toISOString());
+    const vG = visit(); vG.run.load(); const at93 = vG.g('inv-awdship-out').innerHTML; const hG = await settle(vG);
+    const p93 = vG.run.AWDS.takes.filter(t => t.target === '93-7-1=10').reduce((a, t) => a + t.cases, 0);
+    check('…a saved list from long ago is NOT worked out again by itself (0 look-ups); a Stock Out for ONE part # (93-7-1=10) → only that part # worked out again (1 look-up, not all), its picks go down, every other part # stays as saved; "🔄 1 part # grabbed since, updated"',
+      vOld.cnt.n === 0 && /✓ no changes/.test(hOld) && /💾 Saved list/.test(at93) && vG.cnt.n === 1 && p93 === 0 && /🔄 1 part # grabbed since, updated/.test(hG)
+        && JSON.stringify(vG.run.AWDS.takes.filter(t => t.target !== '93-7-1=10').map(t => [t.loc.location, t.cases, t.ships])) === keepOther,
+      { nOld: vOld.cnt.n, nG: vG.cnt.n, p93, hG: hG.slice(0, 300) });
     const v4 = visit(); v4.run.load(true); await settle(v4);
     const v5 = visit(); v5.run.load(); await settle(v5); v5.run.AWDS.area = 'PR'; v5.run.add('PR');
     const v6 = visit(v5.pull); v6.run.load(); await settle(v6);
