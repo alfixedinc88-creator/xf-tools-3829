@@ -2362,6 +2362,7 @@ window.invCredLogin = async function() {
   }
   function invAwdRestore() {
     try { if (typeof localStorage === 'undefined') return false; var c = JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !c.parts) return false;
+      if (Object.keys(c.parts).some(function(P) { return (c.parts[P].takes || []).some(function(t) { return t.boxPcs === undefined; }); })) return false; // saved before ✓ / ✂ / 🏷 (2026-10-27)
       ['at', 'shipSig', 'data', 'ships', 'doneList', 'order', 'prevN'].forEach(function(k) { AWDS[k] = c[k]; });
       AWDS.parts = {}; Object.keys(c.parts).forEach(function(P) { var r = c.parts[P]; r.takes = r.takes.map(function(t) { t.L = (c.Ls || {})[t.L] || {}; return t; }); AWDS.parts[P] = r; });
       invAwdAssemble(); AWDS.added = {}; return true;
@@ -2411,7 +2412,10 @@ window.invCredLogin = async function() {
         try { plan = caseTo ? invCaseOfPlan(L, o.part, caseTo, units) : invPlanCompanyPull(o.part, rest); } catch (e) { r.short.push(o.part + ' (' + e.message + ')'); return r; }
         if (caseTo) { plan.takes.forEach(function(t) { if (!t.how) t.how = 'a whole case of ' + caseTo + ' (' + plan.want + ' pcs) = 1 × ' + o.part + ' — ship the case as it is'; });
           if (plan.off.length) r.short.push(o.part + ' = a case of ' + caseTo + ': ' + invCaseOffTxt(plan).replace(/^ · /, '')); }
-        plan.takes.forEach(function(t) { r.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips }); });
+        // pieces in ONE Amazon box of this part # (units ÷ boxes × pack; 0 = not known) — for ✓ full case / ✂ extra step
+        var uS = 0, bS = 0; sis.forEach(function(si) { uS += o.per[si].units || 0; bS += o.per[si].boxes || 0; });
+        var boxPcs = bS > 0 ? Math.round(uS / bS * pack * 1000) / 1000 : 0;
+        plan.takes.forEach(function(t) { r.takes.push({ target: o.part, name: o.name, pcs: pcs, partNum: t.partNum, loc: t.loc, cases: t.cases, how: t.how || '', area: invAwdArea(t.loc.location), L: L, ships: forShips, boxPcs: boxPcs, caseOf: caseTo || '' }); });
         if (plan.short > 0.001) r.short.push(o.part + ' ' + (Math.round(plan.short * 10) / 10) + (plan.byPieces ? ' pcs' : ' cases') + ' short');
         r.noSize = (plan.noSize || []).slice();
         return r;
@@ -2509,6 +2513,24 @@ window.invCredLogin = async function() {
   // in our warehouse it already has the label, we don't have to use =10XX or =5 and relabel it". ✓ Prelabel = the spot holds the exact
   // part # the shipment needs (ship the bags as they are); 🏷 need to label = another bag of the same parent (cover the label / rebag).
   function invAwdPre(t) { return String(t.partNum || '').toUpperCase() === String(t.target || '').toUpperCase(); }
+  // 🏷 / ✓ / ✂ Owner (2026-10-27): "total 3 — one need label, one full box that has the prelabel (just put the Amazon label on the outside of
+  // the box), one has the prelabel but needs an extra step (cut it open and grab what we need, 2 cases for our 10 boxes, wrong quantities)".
+  //   label = another bag of the same part (cover the label / rebag) · full = the right part #, ONE of our cases = ONE Amazon box (same pieces),
+  //   or a part # sold as a whole case (Reorder 📦) · extra = the right part # but the case is not one Amazon box (open / split / count).
+  function invAwdKind(t) {
+    if (t.caseOf) return 'full';
+    if (!invAwdPre(t)) return 'label';
+    var c = parseFloat(t.loc && t.loc.eachQty) || 0, b = parseFloat(t.boxPcs) || 0;
+    return c > 0 && b > 0 && Math.abs(c - b) < 0.001 && Math.abs(t.cases - Math.round(t.cases)) < 0.001 ? 'full' : 'extra';
+  }
+  function invAwdExtraHow(t) {
+    var c = parseFloat(t.loc && t.loc.eachQty) || 0, b = parseFloat(t.boxPcs) || 0;
+    if (!c) return '✂ case size (Ea/Case) not on file — open it and count' + (b ? ': ' + b + ' pcs an Amazon box' : '');
+    if (!b) return '✂ Amazon box size not known — open the case: ' + c + ' pcs a case';
+    return '✂ ' + c + ' pcs a case, ' + b + ' pcs an Amazon box — open the case' + (c > b ? ' and split it' + (Math.abs(c / b - Math.round(c / b)) < 0.001 ? ' into ' + Math.round(c / b) + ' Amazon boxes' : ' (take what we need, the rest stays)') : ' and add to it (a case is less than a box)');
+  }
+  var INV_AWD_KINDS = { label: ['🏷 NEED TO LABEL', '#b45309', '#fef3c7'], full: ['✓ PRELABEL · FULL CASE', 'var(--green)', 'var(--green-bg,#dcfce7)'], extra: ['✂ PRELABEL · EXTRA STEP', '#c2410c', '#ffedd5'] };
+  window.invAwdKindBadge = function(k) { var x = INV_AWD_KINDS[k]; return x ? " <span class='inv-awd-kind' data-k='" + k + "' style='background:" + x[2] + ";color:" + x[1] + ";font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;border:1px solid " + x[1] + ";font-family:var(--sans)'>" + x[0] + "</span>" : ''; };
   window.invAwdShipRender = function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
@@ -2530,22 +2552,24 @@ window.invCredLogin = async function() {
           var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
           // 🔢 Owner (2026-10-27): "2FL 1 spot · 9 cs … I also want how many Part #" — the different part #s grabbed in this area.
           var nPart = Object.keys(areas[a].reduce(function(m, i) { m[String(AWDS.takes[i].partNum || '').toUpperCase()] = 1; return m; }, {})).length;
-          var nLab = areas[a].filter(function(i) { return !invAwdPre(AWDS.takes[i]); }).length;
+          var nLab = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'label'; }).length, nExt = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'extra'; }).length;
           return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
             + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs'
-            + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab ? '🏷 ' + nLab + ' to label' + (nLab < areas[a].length ? ' · ✓ ' + (areas[a].length - nLab) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
+            + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab || nExt ? (nLab ? '🏷 ' + nLab + ' to label' : '') + (nExt ? (nLab ? ' · ' : '') + '✂ ' + nExt + ' extra step' : '') + (nLab + nExt < areas[a].length ? ' · ✓ ' + (areas[a].length - nLab - nExt) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
     if (AWDS.area && areas[AWDS.area]) {
       var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });
-      var spotHtml = function(i) { var t = AWDS.takes[i], pre = invAwdPre(t);
-          return '<div class="inv-awdship-spot" data-pre="' + (pre ? 1 : 0) + '" style="padding:6px 0;border-bottom:1px solid var(--border)' + (AWDS.added[i] ? ';opacity:.5' : '') + '">'
-            + (pre ? '<span style="font-size:11px;font-weight:800;color:var(--green)">✓ PRELABEL</span> ' : '<span style="font-size:11px;font-weight:800;color:#b45309">🏷 NEED TO LABEL</span> ') + '<b style="font-family:var(--mono)">📍 ' + ckE(t.loc.location) + '</b> — <b>' + ckE(String(Math.round(t.cases * 100) / 100)) + ' case' + (t.cases === 1 ? '' : 's') + '</b> of <span style="font-family:var(--mono);font-weight:700">' + ckE(t.partNum) + '</span>'
+      var spotHtml = function(i) { var t = AWDS.takes[i], k = invAwdKind(t), pre = k !== 'label';
+          return '<div class="inv-awdship-spot" data-pre="' + (k === 'full' ? 1 : k === 'extra' ? 2 : 0) + '" style="padding:6px 0;border-bottom:1px solid var(--border)' + (AWDS.added[i] ? ';opacity:.5' : '') + '">'
+            + (k === 'full' ? '<span style="font-size:11px;font-weight:800;color:var(--green)">✓ PRELABEL</span> ' : k === 'extra' ? '<span style="font-size:11px;font-weight:800;color:#c2410c">✂ PRELABEL · EXTRA STEP</span> ' : '<span style="font-size:11px;font-weight:800;color:#b45309">🏷 NEED TO LABEL</span> ')
+            + (k === 'extra' ? '<div style="font-size:11px;font-weight:700;color:#c2410c">' + ckE(invAwdExtraHow(t)) + '</div>' : '') + '<b style="font-family:var(--mono)">📍 ' + ckE(t.loc.location) + '</b> — <b>' + ckE(String(Math.round(t.cases * 100) / 100)) + ' case' + (t.cases === 1 ? '' : 's') + '</b> of <span style="font-family:var(--mono);font-weight:700">' + ckE(t.partNum) + '</span>'
             + (t.partNum !== t.target ? ' <span style="color:#b45309">for ' + ckE(t.target) + '</span>' : '') + (t.how ? '<div style="font-size:11px;color:var(--text2)">' + ckE(t.how) + '</div>' : '') + (t.name ? '<div style="font-size:11px;color:var(--text3)">' + ckE(t.name) + '</div>' : '') + (AWDS.added[i] ? ' <span style="color:var(--green)">✓ on the Pull List</span>' : '') + '</div>'; };
-      var Lp = L.filter(function(i) { return invAwdPre(AWDS.takes[i]); }), Ll = L.filter(function(i) { return !invAwdPre(AWDS.takes[i]); });
+      var Lp = L.filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'full'; }), Lx = L.filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'extra'; }), Ll = L.filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'label'; });
       var grp = function(title, col, M, note) { return M.length ? '<div style="margin:2px 0 4px;padding:4px 8px;border-radius:7px;background:' + col[0] + ';color:' + col[1] + ';font-weight:800;font-size:13px">' + title + ' — ' + M.length + ' spot' + (M.length === 1 ? '' : 's')
           + ' · ' + (Math.round(M.reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0) * 10) / 10) + ' cs <span style="font-weight:400;font-size:11px">' + note + '</span></div>' + M.map(spotHtml).join('') : ''; };
       h += '<div style="border:1.5px solid #1D4ED8;border-radius:10px;padding:8px">'
-        + grp('✓ Prelabel', ['var(--green-bg,#dcfce7)', 'var(--green)'], Lp, 'the right part # — the bags already have the label, ship them as they are')
-        + grp('🏷 Need to label', ['#fef3c7', '#b45309'], Ll, 'another bag of the same part — cover the label / rebag / relabel (how on each line)')
+        + grp('✓ Prelabel', ['var(--green-bg,#dcfce7)', 'var(--green)'], Lp, 'full case = one Amazon box — the bags already have the label, just put the Amazon label on the outside of the box')
+        + grp('✂ Prelabel, extra step', ['#ffedd5', '#c2410c'], Lx, 'the right part #, but the case is not one Amazon box — open it, split / take what we need (how on each line) — keep them in their own spot')
+        + grp('🏷 Need to label', ['#fef3c7', '#b45309'], Ll, 'another bag of the same part — cover the label / rebag / relabel (how on each line) — keep them in their own spot')
         + '<button type="button" id="inv-awdship-add" onclick="invAwdShipAdd(AWDS.area)" style="width:100%;margin-top:8px;padding:13px;border:none;border-radius:10px;background:#1D4ED8;color:#fff;font-size:16px;font-weight:800;cursor:pointer">➕ Put ' + ckE(AWDS.area) + ' on my Pull List</button></div>';
     }
     if ((AWDS.short || []).length) h += '<div style="color:var(--red);font-size:12px;margin-top:6px">⚠ Not enough on the shelves: ' + AWDS.short.map(ckE).join(' · ') + '</div>';
@@ -2592,7 +2616,7 @@ window.invCredLogin = async function() {
           isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString() });
         else { invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null; _invPendingStockoutSourceId = null; invAddToPullList(invPart, t.loc); invPullListPendingCases = null; }
         if (invPullList.length > before) { var it = invPullList[invPullList.length - 1]; if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
-          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdClaims = [cid]; }
+          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdClaims = [cid]; it.awdKind = invAwdKind(t); if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : ''); }
       }
       AWDS.added[i] = true; n++;
     });
@@ -6208,7 +6232,7 @@ window.invCredLogin = async function() {
     // Found (see invTogglePullCheck / invMarkNoneFound), so this badge is
     // the visible reminder of that connection while it's still sitting
     // here ungrabbed.
-    var coBadge = item.dest === 'company' ? " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + (item.caseOf ? ' (📦 whole case)' : '') + "</span>"
+    var coBadge = item.dest === 'company' ? (item.awdKind ? invAwdKindBadge(item.awdKind) : '') + " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + (item.caseOf ? ' (📦 whole case)' : '') + "</span>"
       + (item.how ? "<div style='font-size:11px;font-weight:600;color:var(--purple,var(--accent));font-family:var(--sans);margin-top:2px'>" + item.how + "</div>" : "") : "";
     var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "";
     var sysCasesHtml = item.systemCases !== undefined
@@ -6852,8 +6876,16 @@ window.invCredLogin = async function() {
       if (indices.length === 0) {
         body.innerHTML = "<div style='padding:8px 4px;color:var(--text3);font-size:12px'>None</div>";
       } else {
-        var lastZone = null, stop = 0;
+        var lastZone = null, stop = 0, lastKind = null;
+        // ✓ Grabbed: AWD boxes in the 3 kinds apart (owner 2026-10-27) — each kind goes to its own spot.
+        var kRank = { label: 0, extra: 1, full: 2 };
+        if (key === 'grabbed' && indices.some(function(i) { return invPullList[i].awdKind; }))
+          indices = indices.slice().sort(function(a, b) { var x = invPullList[a].awdKind, y = invPullList[b].awdKind; return (x ? kRank[x] : 3) - (y ? kRank[y] : 3); });
         indices.forEach(function(i) {
+          var k = key === 'grabbed' ? invPullList[i].awdKind || '' : null;
+          if (key === 'grabbed' && k !== lastKind && (k || lastKind)) { lastKind = k; var kh = document.createElement('div'), kx = INV_AWD_KINDS[k];
+            kh.className = 'inv-pull-kindhdr'; kh.style.cssText = 'margin:8px 0 2px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:800;' + (kx ? 'color:' + kx[1] + ';background:' + kx[2] : 'color:var(--text3)');
+            kh.textContent = kx ? kx[0] + ' — put these in their own spot' : 'Everything else'; body.appendChild(kh); }
           if (key === 'ungrabbed') {
             // Area headers + stop numbers: work straight down = one walk.
             var z = invPullZoneOf(invPullList[i].location);
@@ -7386,6 +7418,7 @@ window.invCredLogin = async function() {
         ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
     var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + (item.caseOf ? ' = whole case of ' + item.caseOf : '') + '] ' : '[SHELVING] ';
+    if (item.awdKind && (item.dest || invStockOutDest) === 'company') destTag += '[' + ({ label: 'NEED TO LABEL', full: 'PRELABEL FULL CASE', extra: 'PRELABEL EXTRA STEP' }[item.awdKind] || '') + '] ';
     if (item.awdShipment && (item.dest || invStockOutDest) === 'company') destTag += '[AWD: ' + item.awdShipment + '] '; // 📦 which shipment(s) it was grabbed for (so it isn't listed to grab again)
     itemNotes = (destTag + itemNotes + (item.scanNote ? ' ' + item.scanNote : '')).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
