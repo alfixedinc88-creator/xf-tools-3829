@@ -10653,5 +10653,49 @@ console.log('\n🕘 Shipment Builder: every thing done is kept (who / when / wha
   sq.exec("DELETE FROM awd_ship_send WHERE shipment = 'STAR-HIST1'");
 }
 
+// Owner (2026-10-27): "a lot of the boxes he grabbed for AWD were the wrong item, wrong quantities — instead of just clicking grab, they have
+// to scan the box they try to grab; if match, let them grab it, if not match they get the warning … if there's 5 cases, they have to scan
+// all 5". Big Company only (Stock Out Shelving is a locked design — not touched).
+console.log('\n📷 Stock Out Big Company: ✓ Grabbed needs every box scanned — the wrong item / bag size is refused (kept), 5 cases = 5 scans');
+{
+  const { readFileSync: rfG } = await import('node:fs');
+  const ih = rfG(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const cut = (a, b) => ih.slice(ih.indexOf(a), ih.indexOf(b, ih.indexOf(a)));
+  const code = cut('  window.invTogglePullCheck = function(i) {', '\n  };\n') + '\n  };\n' + cut('  var PSG = null;', '  function invModal(id, html) {');
+  const els = {}, posts = [], flashes = [], subs = [];
+  const mkEl = id => els[id] || (els[id] = { id, innerHTML: '', textContent: '', value: '', focus() {} });
+  const env = {
+    g: id => els[id] || null, invModal: (id, html) => { const m = mkEl(id); m.innerHTML = html; mkEl('inv-psg-count'); mkEl('inv-psg-res'); mkEl('inv-psg-inp'); return m; },
+    invModalClose: id => { delete els[id]; delete els['inv-psg-count']; delete els['inv-psg-res']; delete els['inv-psg-inp']; },
+    invEsc: v => String(v == null ? '' : v), invFlash: (m, t) => flashes.push(t + ': ' + m), invMe: () => 'MG', invParent: p => String(p).split('=')[0].toUpperCase(),
+    invAwdIsAdmin: () => false, W: '', invPost: async (u, o) => { posts.push(JSON.parse(o.body)); return { json: async () => ({ ok: true }) }; },
+    invBcPart: async c => ({ '810000000017': { part: '61-1-1=10' }, '810000000024': { part: '61-1-1=10' }, '810000000099': { part: '61-1-1=100' }, '820000000011': { part: '77-7-7=5' } })[c] || null,
+    invAutoResolveStockoutIfNeeded() {}, invSavePullList() {}, invRenderPullList() {}, invSubmitOnePullItem: i => subs.push(i), setTimeout: f => f(), confirm: () => true, prompt: () => 'no barcode', window: globalThis // as in a browser: window.x is a global
+  };
+  const list = [{ partNum: '61-1-1=10', location: 'C2=1-1-1', cases: '3', dest: 'company', forPart: '61-1-1=10', awdShipment: 'STAR-T' }, { partNum: '61-1-1=10', location: 'C2=1-1-2', cases: '2', dest: 'shelving' }];
+  const W = new Function(...Object.keys(env), 'invPullList', code + '; return window;')(...Object.values(env), list);
+  const tick = () => new Promise(r => setImmediate(r));
+  W.invTogglePullCheck(1);
+  const shelfOk = list[1].grabbed === true && subs.length === 1 && !els['inv-psg-modal'];
+  W.invTogglePullCheck(0);
+  const opened = !!els['inv-psg-modal'] && !list[0].grabbed && /0 of 3 boxes scanned/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('820000000011'); await tick(); await tick();
+  const wrong1 = /WRONG BOX/.test(els['inv-psg-res'].innerHTML) && /77-7-7=5/.test(els['inv-psg-res'].innerHTML) && !list[0].grabbed;
+  W.invPullScanBox('810000000099'); await tick(); await tick();
+  const wrong2 = /wrong bag size/.test(els['inv-psg-res'].innerHTML) && /0 of 3/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('810000000017'); await tick(); await tick(); W.invPullScanBox('810000000024'); await tick(); await tick();
+  const two = /2 of 3 boxes scanned/.test(els['inv-psg-count'].textContent) && !list[0].grabbed;
+  W.invPullScanBox('810000000017'); await tick(); await tick();
+  const done = list[0].grabbed === true && list[0].scanVerified && /\[SCANNED 3\/3 boxes ✓, 2 wrong scans put back\]/.test(list[0].scanNote || '') && subs.length === 2 && subs[1] === 0 && !els['inv-psg-modal'];
+  const rec = posts.map(x => (x.ok ? '✓' : '✗') + x.productPart).join(' ');
+  check('Shelving ✓ Grabbed as before (no scan); Big Company 3 cases of 61-1-1=10 → the scan box opens (not grabbed); 77-7-7=5 → ❌ WRONG BOX; =100 → ❌ wrong bag size (not counted); 3 right scans → grabbed + sent, "[SCANNED 3/3 boxes ✓, 2 wrong scans put back]" in the Stock Out notes; every scan kept (✗77-7-7=5 ✗61-1-1=100 ✓ ✓ ✓)',
+    shelfOk && opened && wrong1 && wrong2 && two && done && rec === '✗77-7-7=5 ✗61-1-1=100 ✓61-1-1=10 ✓61-1-1=10 ✓61-1-1=10' && posts.every(x => x.label === '61-1-1=10' && /Grab scan C2=1-1-1 \[AWD: STAR-T\]/.test(x.note) && x._requestId),
+    { shelfOk, opened, wrong1, wrong2, two, done, rec, note: list[0].scanNote });
+  list.push({ partNum: '61-1-1=10', location: 'C2=1-1-3', cases: '1', dest: 'company' }); W.invTogglePullCheck(2); W.invPullScanClose();
+  check('…Cancel → not grabbed; only an Admin gets "🔓 box has no barcode — checked by eye" (kept on record)',
+    !list[2].grabbed && /🔓 Admin: box has no barcode/.test(ih) && /\(invAwdIsAdmin\(\) \? '<button type="button" onclick="invPullScanSkip\(\)"/.test(ih) && /\[SCAN SKIPPED by ' \+ invMe\(\)/.test(ih), list[2]);
+  ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip'].forEach(k => { delete globalThis[k]; });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
