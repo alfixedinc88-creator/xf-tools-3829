@@ -10155,6 +10155,15 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   check('…what was already grabbed for a shipment comes off (never listed to grab twice): STAR-SEND1 ✓ all grabbed, 93-7-1=10 left = 1 case for STAR-SEND3; shelf 3 − 1 grabbed = 2, 1 still there after this pick',
     pend === 1 && p93(c5.A).reduce((x, t) => x + t.cases, 0) === 1 && p93(c5.A).every(t => t.ships.join() === 'STAR-SEND3') && /STAR-SEND1<\/b>[^✅]*✓ all grabbed/.test(c5.h),
     { t: p93(c5.A).map(t => [t.loc.location, t.cases, t.ships]), h: c5.h.slice(0, 600) });
+  // 📊 Owner (2026-10-27): "when we finish grabbing everything it shows already grabbed — how many not grabbed yet and how many we grab".
+  const txt = h => ((h.match(/inv-awdship-tot[^]*?<\/div>/) || [''])[0]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  check('📊 the card says how many are grabbed and how many not yet: 3 cases needed (STAR-SEND1/2/3) → ✅ Grabbed 1 of 3 cases (33%) · ⏳ Not grabbed yet: 2 cases (2 not on a list yet)',
+    /✅ Grabbed 1 of 3 cases \(33%\) · 0 of 2 part #s all grabbed/.test(txt(c5.h)) && /⏳ Not grabbed yet: 2 cases · 2 not on a list yet/.test(txt(c5.h)) && c5.A.tot.need === 3 && c5.A.tot.grabbed === 1, { tot: c5.A.tot, t: txt(c5.h) });
+  const allIds = [['94-7-4=5', 'PR=1-1-1', 'STAR-SEND2'], ['93-7-1=10', 'C3=1-1-1', 'STAR-SEND3']].map(([p, l, sh]) => sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', ?, ?, 1, 'PK', ?, 'Pending')").run(new Date().toISOString(), p, l, '[BIG COMPANY for ' + p + '] [AWD: ' + sh + ']').lastInsertRowid);
+  const cAll = await loadCard();
+  check('…every case sent as a Stock Out → "✅ Everything grabbed — 3 cases · 2 part #s" (nothing left to grab)',
+    /✅ Everything grabbed — 3 cases · 2 part #s/.test(txt(cAll.h)) && !cAll.A.takes.length, { tot: cAll.A.tot, t: txt(cAll.h) });
+  allIds.forEach(id => sq.prepare('DELETE FROM inventory_log WHERE id = ?').run(id));
   // 🔒 Owner (2026-10-27): "since we have a lot of new guys here, make sure that Done can only be clicked by admin level" — a picker is
   // refused by the server (nothing kept) and sees no ✅ Done / ↩ put back; an admin's ✅ Done (sent twice by the outbox → kept once) → off
   // the list; ↩ put back → on again.
@@ -10237,6 +10246,10 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
     const v4 = visit(); v4.run.load(true); await settle(v4);
     const v5 = visit(); v5.run.load(); await settle(v5); v5.run.AWDS.area = 'PR'; v5.run.add('PR');
     const v6 = visit(v5.pull); v6.run.load(); await settle(v6);
+    const t6 = ((v6.g('inv-awdship-out').innerHTML.match(/inv-awdship-tot[^]*?<\/div>/) || [''])[0]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), T6 = v6.run.AWDS.tot;
+    check('📊 …put on a Pull List but not ✓ Grabbed yet is NOT counted as grabbed: it shows as "📝 on a Pull List"; grabbed + on a Pull List + not on a list = needed; the shipment line says "+ % on a Pull List, not grabbed yet"',
+      T6 && T6.list > 0 && /📝 [\d.]+ on a Pull List/.test(t6) && new RegExp('✅ Grabbed ' + T6.grabbed + ' of ' + T6.need + ' cases').test(t6) && /on a Pull List, not grabbed yet/.test(v6.g('inv-awdship-out').innerHTML)
+        && Math.abs(T6.grabbed + T6.list + Math.max(0, T6.need - T6.grabbed - T6.list) - T6.need) < 1e-9, { T6, t6 });
     check('…↻ Refresh works it out again anyway; ➕ Put on my Pull List changes the list → next visit works it out again (what is on the Pull List comes off, nothing listed twice)',
       v4.cnt.n > 0 && v5.cnt.n === 0 && v5.pull.length > 0 && v6.cnt.n > 0 && !v6.run.AWDS.takes.some(t => t.area === 'PR' && t.ships.includes('STAR-SEND4')),
       { n4: v4.cnt.n, n5: v5.cnt.n, n6: v6.cnt.n, pull: v5.pull.map(x => [x.partNum, x.cases, x.awdShipment]), t6: v6.run.AWDS.takes.map(t => [t.area, t.cases, t.ships]) });
