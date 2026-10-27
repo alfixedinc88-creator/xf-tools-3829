@@ -1477,6 +1477,25 @@ async function awdShipOpen(env, url) {
 // double grab"). Putting spots on a Pull List takes them for everyone at once (kept here, an id made on the phone, so no WiFi is fine);
 // ✓ Grabbed / ✗ None found closes them (sent with the Stock Out), ✕ off the Pull List gives them back, ↩ Give back (anyone, kept who /
 // when) frees a phone's list that was left. Taken 24 hours and still not grabbed → given back by itself.
+// 📲 GET / POST /awd/plan-cache — owner (2026-10-27, a new scanner: "I still have to load it from 0 to 112"): the Current AWD shipment list
+// a phone worked out (where to grab every part #), kept for every phone. A phone with nothing saved takes it at once and only works out
+// what changed since. Only a newer one replaces it. It is just a saved answer — the phones still check every grab / shipment against it.
+async function awdPlanCache(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_plan_cache (id INTEGER PRIMARY KEY CHECK (id = 1), at TEXT, sig TEXT, by_user TEXT, payload TEXT)').run();
+  if (request.method === 'GET') {
+    const r = await env.DB.prepare('SELECT at, sig, by_user, payload FROM awd_plan_cache WHERE id = 1').first().catch(() => null);
+    return J(r ? { ok: true, at: r.at, sig: r.sig, by: r.by_user, payload: r.payload } : { ok: true, payload: null });
+  }
+  const b = await request.json().catch(() => ({})), payload = typeof b.payload === 'string' ? b.payload : '';
+  if (!payload || payload.length > 1900000) return J({ ok: false, error: payload ? 'too big to keep' : 'nothing to keep' }, 400);
+  try { const x = JSON.parse(payload); if (!x || !x.parts || !x.data) throw new Error('x'); } catch (_) { return J({ ok: false, error: 'not a worked-out list' }, 400); }
+  const at = String(b.at || new Date().toISOString()).slice(0, 30), who = String((session && (session.displayName || session.username)) || '?').slice(0, 40);
+  const cur = await env.DB.prepare('SELECT at FROM awd_plan_cache WHERE id = 1').first().catch(() => null);
+  if (cur && String(cur.at) > at) return J({ ok: true, kept: false, why: 'a newer one is kept' });
+  await env.DB.prepare('INSERT OR REPLACE INTO awd_plan_cache (id, at, sig, by_user, payload) VALUES (1, ?, ?, ?, ?)').bind(at, String(b.sig || '').slice(0, 4000), who, payload).run();
+  return J({ ok: true, kept: true, at, by: who });
+}
 async function awdClaimTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_claim (id TEXT PRIMARY KEY, at TEXT, by_user TEXT, area TEXT, part TEXT, for_part TEXT, cases REAL,
     ships TEXT, loc TEXT, status TEXT DEFAULT 'open', closed_at TEXT, closed_by TEXT, how TEXT)`).run();
@@ -10446,6 +10465,7 @@ const _app = {
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
+    if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
     if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {

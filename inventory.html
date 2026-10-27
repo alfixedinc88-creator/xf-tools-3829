@@ -2360,8 +2360,16 @@ window.invCredLogin = async function() {
         rec.Ls = slim; localStorage.setItem(AWDS_KEY, JSON.stringify(rec)); }
     } catch (e) {}
   }
-  function invAwdRestore() {
-    try { if (typeof localStorage === 'undefined') return false; var c = JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !c.parts) return false;
+  // 📲 Owner (2026-10-27, a new scanner signed in: "I still have to load it from 0 to 112 — can you fix that?"): the list a phone worked out
+  // is also kept on the server; a phone with nothing saved (new, signed in again, cleared) takes that one at once and then only works out
+  // what changed since (grabbed, taken, a new shipment) — never all 112 again.
+  function invAwdShare() {
+    try { var c = typeof localStorage !== 'undefined' && localStorage.getItem(AWDS_KEY); if (!c || c.length > 1800000) return;
+      wFetch(W + '/awd/plan-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ at: AWDS.checkedAt || AWDS.at, sig: AWDS.shipSig, payload: c }) }).catch(function() {});
+    } catch (e) {}
+  }
+  function invAwdRestore(from) {
+    try { if (!from && typeof localStorage === 'undefined') return false; var c = from || JSON.parse(localStorage.getItem(AWDS_KEY) || 'null'); if (!c || !c.data || !c.parts) return false;
       if (Object.keys(c.parts).some(function(P) { return (c.parts[P].takes || []).some(function(t) { return t.boxPcs === undefined; }); })) return false; // saved before ✓ / ✂ / 🏷 (2026-10-27)
       ['at', 'shipSig', 'data', 'ships', 'doneList', 'order', 'prevN'].forEach(function(k) { AWDS[k] = c[k]; });
       AWDS.parts = {}; Object.keys(c.parts).forEach(function(P) { var r = c.parts[P]; r.takes = r.takes.map(function(t) { t.L = (c.Ls || {})[t.L] || {}; return t; }); AWDS.parts[P] = r; });
@@ -2428,6 +2436,13 @@ window.invCredLogin = async function() {
     if (AWDS.busy) { AWDS.again = AWDS.again || !!force; return; }
     var shown = !!AWDS.data && AWDS.takes && out.innerHTML.indexOf('inv-awdship-st') >= 0;
     if (!AWDS.data && invAwdRestore()) { window.invAwdShipRender(); shown = true; }
+    if (!AWDS.data && !AWDS.sharedTried) { // 📲 nothing saved on this phone → the list another phone already worked out
+      AWDS.sharedTried = true; AWDS.busy = true; out.innerHTML = '⏳ Getting the list another phone already worked out…';
+      wFetch(W + '/awd/plan-cache').then(function(r) { return r.json(); }).then(function(c) {
+        if (c && c.ok && c.payload) { var x = null; try { x = JSON.parse(c.payload); } catch (e) {} if (x && invAwdRestore(x)) { invAwdSave(); AWDS.fromShared = c.by || '?'; } }
+      }).catch(function() {}).then(function() { AWDS.busy = false; window.invAwdShipLoad(force); });
+      return;
+    }
     AWDS.busy = true; var started = AWDS.addN || 0;
     var fin = function() { AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
     if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…';
@@ -2450,7 +2465,7 @@ window.invCredLogin = async function() {
       var parts = {}; if (!all) order.forEach(function(P) { if (AWDS.parts[P]) parts[P] = AWDS.parts[P]; });
       var commit = function(final) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig;
         AWDS.checkedAt = new Date().toISOString(); if (final && (all || todo.length === order.length)) AWDS.at = AWDS.checkedAt; if (!AWDS.at) AWDS.at = AWDS.checkedAt;
-        AWDS.updatedN = final && !(all || todo.length === order.length) ? todo.length : 0; invAwdAssemble(); invAwdSave(); };
+        AWDS.updatedN = final && !(all || todo.length === order.length) ? todo.length : 0; invAwdAssemble(); invAwdSave(); if (final && todo.length) invAwdShare(); }; // 📲 shared only when something was worked out
       if (!todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
       var i = 0, doneN = 0, running = 0, many = todo.length === order.length;
       var prog = function() { var t = (many ? 'Working out where to grab… ' : '🔄 updating ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' (grabbed or changed since) — ') + doneN + ' of ' + todo.length + (many ? ' part #s' : '');
@@ -2634,7 +2649,7 @@ window.invCredLogin = async function() {
   }
   window.invAwdShipAdd = function(area) {
     if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
-    var keep = invPart, n = 0, claims = [];
+    var keep = invPart, n = 0, claims = [], sorted = false;
     AWDS.takes.forEach(function(t, i) {
       if (t.area !== area || AWDS.added[i]) return;
       var cid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // 👤 taken for everyone (made here: no WiFi is fine)
@@ -2644,19 +2659,22 @@ window.invCredLogin = async function() {
       if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; ex.awdClaims = (ex.awdClaims || []).concat([cid]);
         var tg = String(ex.awdShipment || '').split('|').map(invAwdTag).filter(Boolean); (t.ships || []).forEach(function(x) { if (tg.indexOf(x) < 0) tg.push(x); }); ex.awdShipment = tg.join(' | '); }
       else {
-        invPart = Object.assign({}, t.L, { partNum: t.partNum });
-        var before = invPullList.length, any = invPullList.some(function(x) { return x.key === key; });
-        if (any) invPullList.push({ key: key, partNum: t.partNum, sku: t.L.sku || t.partNum, name: t.L.name || '', location: t.loc.location, cases: String(t.cases),
+        // ⚡ Owner (2026-10-27: "Put ## on my Pull List takes a while"): every spot of the area is put on the list here, then the list is
+        // sorted, saved and drawn ONCE (it was all of that for every spot) — and the item just made is the one tagged (after a sort the
+        // last item is not always the new one).
+        var it = { key: key, partNum: t.partNum, sku: t.L.sku || t.partNum, name: t.L.name || '', location: t.loc.location, cases: String(t.cases),
           systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
-          isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString() });
-        else { invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null; _invPendingStockoutSourceId = null; invAddToPullList(invPart, t.loc); invPullListPendingCases = null; }
-        if (invPullList.length > before) { var it = invPullList[invPullList.length - 1]; if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
-          it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdClaims = [cid]; it.awdKind = invAwdKind(t); if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : ''); }
+          isPlaceholder: !!t.loc.isPlaceholder, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: null };
+        invPullList.push(it); if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
+        it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = (t.ships || []).join(' | '); it.awdClaims = [cid]; it.awdKind = invAwdKind(t); if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : '');
+        sorted = true;
       }
       AWDS.added[i] = true; n++;
     });
     if (n) AWDS.addN = (AWDS.addN || 0) + 1; // a list being worked out right now starts again with these on the Pull List
     if (claims.length) invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, at: new Date().toISOString(), lines: claims }) }).catch(function() {});
+    var ls = function(l) { var m = String(l || '').match(/(\d+)/); return m ? parseInt(m[1]) : 9999; }; // = invLocSort
+    if (sorted) invPullList.sort(function(a, b) { return ls(a.location) - ls(b.location) || a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum); }); // the same order as one by one
     invPart = keep; invSavePullList(); invRenderPullList(); window.invAwdShipRender();
     invFlash(n ? '✓ ' + n + ' spot' + (n === 1 ? '' : 's') + ' in ' + area + ' on your Pull List — grab them, bring them to the garage, ✓ Grabbed' : 'Nothing new to add in ' + area, n ? 'success' : 'warn');
   };

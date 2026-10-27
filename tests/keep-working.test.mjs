@@ -10224,6 +10224,36 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       vOld.cnt.n === 0 && /✓ no changes/.test(hOld) && /💾 Saved list/.test(at93) && vG.cnt.n === 1 && p93 === 0 && /🔄 1 part # grabbed since, updated/.test(hG)
         && JSON.stringify(vG.run.AWDS.takes.filter(t => t.target !== '93-7-1=10').map(t => [t.loc.location, t.cases, t.ships])) === keepOther,
       { nOld: vOld.cnt.n, nG: vG.cnt.n, p93, hG: hG.slice(0, 300) });
+    // 📲 Owner (2026-10-27, a new scanner signed in: "I still have to load it from 0 to 112 — fix that? and Put ## on my Pull List takes a
+    // while — make it faster"): the list a phone worked out is kept on the server for every phone; adding an area is one sort / save / draw.
+    {
+      const phone = () => { const st = {}, LSx = { getItem: k => (k in st ? st[k] : null), setItem: (k, v) => { st[k] = String(v); } };
+        const els = {}, gx = id => els[id] || (els[id] = { innerHTML: '', style: {} }), pullx = [], cnt = { n: 0, save: 0, draw: 0 };
+        const envx = { g: gx, W: '', wFetch: (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H }),
+          _invFetchLookupRaw: c => { cnt.n++; return get('/inventory/lookup?code=' + encodeURIComponent(c)); }, ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+          invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() { cnt.save++; }, invRenderPullList() { cnt.draw++; }, invTagBoxSize() {}, window: {}, localStorage: LSx,
+          invPost: (u, o) => call(u, { method: 'POST', headers: H, body: o.body }) };
+        const r = new Function(...Object.keys(envx), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+          function invAddToPullList() { throw new Error('one at a time'); }
+          ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+          return { AWDS, load: window.invAwdShipLoad, add: window.invAwdShipAdd };`)(...Object.values(envx), pullx);
+        return { run: r, g: gx, cnt, pull: pullx, st }; };
+      sq.exec('DELETE FROM awd_plan_cache');
+      const A = phone(); A.run.load(); await settle(A);
+      for (let i = 0; i < 40 && !sq.prepare('SELECT COUNT(*) n FROM awd_plan_cache').get().n; i++) await new Promise(r => setTimeout(r, 25));
+      const B = phone(); B.run.load(); await settle(B);
+      const picks = v => JSON.stringify(v.run.AWDS.takes.map(t => [t.target, t.loc.location, t.cases]));
+      check('📲 a NEW phone (nothing saved on it) takes the list another phone worked out (' + A.cnt.n + ' part # look-ups there) from the server: 0 look-ups, the same picks, saved on it too',
+        A.cnt.n > 0 && !!sq.prepare('SELECT payload FROM awd_plan_cache WHERE id = 1').get() && B.cnt.n === 0 && picks(B) === picks(A) && !!B.st.inv_awdship_cache_v2, { a: A.cnt.n, b: B.cnt.n });
+      const area = B.run.AWDS.takes.reduce((m, t) => { m[t.area] = (m[t.area] || 0) + 1; return m; }, {}), big = Object.keys(area).sort((x, y) => area[y] - area[x])[0], want = B.run.AWDS.takes.filter(t => t.area === big);
+      B.cnt.save = 0; B.cnt.draw = 0; B.run.add(big);
+      const ok = want.every(t => B.pull.some(x => x.partNum === t.partNum && x.location === t.loc.location && x.forPart === t.target && x.dest === 'company' && (x.awdClaims || []).length === 1 && x.awdShipment));
+      const sorted = B.pull.every((x, i) => !i || (parseInt((B.pull[i - 1].location.match(/(\d+)/) || [0, 9999])[1]) <= parseInt((x.location.match(/(\d+)/) || [0, 9999])[1])));
+      check('⚡ ➕ Put ' + big + ' on my Pull List (' + want.length + ' spots): all put on the list at once — saved once, drawn once (was each spot); EVERY new item tagged right (Big Company, for its part #, its shipment, 👤 taken); in walking order',
+        want.length >= 1 && B.pull.length === want.length && B.cnt.save === 1 && B.cnt.draw === 1 && ok && sorted, { want: want.length, pull: B.pull.map(x => [x.partNum, x.location, x.forPart, x.dest]), save: B.cnt.save, draw: B.cnt.draw });
+      for (let i = 0; i < 40 && !sq.prepare('SELECT COUNT(*) n FROM awd_claim').get().n; i++) await new Promise(r => setTimeout(r, 25)); // its 👤 taken spots have arrived
+      sq.exec('DELETE FROM awd_claim');
+    }
     // Owner (2026-10-27, "still recalculating"): a NEW shipment → only ITS part #s are worked out (not the whole list); 4 look-ups at a time;
     // leaving the page half way keeps what was done (saved every 8 part #s) and the next visit goes on from there
     const R = Array.from({ length: 11 }, (_, k) => 'R9' + k + '-1-1=10');
