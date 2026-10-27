@@ -1529,7 +1529,12 @@ async function awdBoxPallet(request, url, env, session) {
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
     const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
     const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [], ok: [] };
-    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', by: r.by_user, at: r.at, product: r.product_part };
+    // 🟫 Owner (2026-10-27: "pallet 1 has 14 cases, the record shows 7"): a pallet counts AMAZON boxes — and now our CASES too (one Amazon box
+    // can be 2 of our cases put together): cases = the box's pieces (units × pack) ÷ SKU Mgr's pieces a case of that part #
+    const eachOf = {}; { const P = [...new Set(boxes.map(b => String(b.part || '').toUpperCase()).filter(Boolean))];
+      for (let i = 0; i < P.length; i += 90) { const c = P.slice(i, i + 90); ((await env.DB.prepare(`SELECT UPPER(TRIM(part_num)) p, MAX(units_per_case) e FROM master_list WHERE UPPER(TRIM(part_num)) IN (${c.map(() => '?').join(',')}) GROUP BY UPPER(TRIM(part_num))`).bind(...c).all().catch(() => ({ results: [] }))).results || []).forEach(r => { eachOf[r.p] = +r.e || 0; }); } }
+    const casesOf = b => { const P = String(b.part || '').toUpperCase(), m = P.split('=').pop().match(/^(\d+)/), pcs = (+b.units || 0) * (m ? +m[1] || 1 : 1), e = eachOf[P]; return e > 0 && pcs > 0 ? Math.round(pcs / e * 100) / 100 : null; };
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b) };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
     // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"

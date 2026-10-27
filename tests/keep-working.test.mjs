@@ -10953,13 +10953,30 @@ console.log('\n📦 Box check → PALLET: whole case on a pallet, split / rebag 
   B.invBcPallets(); await wait(); await wait();
   const pH = gP('inv-bc-pallets').innerHTML, pal2 = pH.slice(pH.indexOf('🟫 PALLET 2'), pH.indexOf('</details>', pH.indexOf('🟫 PALLET 2')));
   check('…the card shows each PALLET as a panel of photos (🟫 PALLET 2 — 2 boxes · 2 part #s: 76-6-6=10 with its photo, 1 box (3-2), who / when; 72-2-2=10 📦 no photo), labeled-waiting / recount / packing room / not a match the same way; 🖨 Print PALLET labels; 🧩',
-    /📦 STAR-PAL1: 2 of 8 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 boxes · 2 part #s/.test(pH) && /<img src="https:\/\/img\.example\/76\.jpg"/.test(pal2) && /76-6-6=10<\/b><div><b style="font-size:13px">1<\/b> box <span[^>]*>\(3-2\)/.test(pal2)
+    /📦 STAR-PAL1: 2 of 8 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 Amazon boxes · <b>[\d.]+<\/b> of our cases? · 2 part #s/.test(pH) /* owner 2026-10-27: Amazon boxes AND our cases */ && /<img src="https:\/\/img\.example\/76\.jpg"/.test(pal2) && /76-6-6=10<\/b><div><b style="font-size:13px">1<\/b> Amazon box( = <b>[\d.]+<\/b> cs)? <span[^>]*>\(3-2\)/.test(pal2)
       && /72-2-2=10/.test(pal2) && /TS · /.test(pal2) && (pal2.match(/class="inv-bc-ptile"/g) || []).length === 2 && /✅ 2 labeled, waiting for a pallet/.test(pH) && /✂ 1 to recount \/ separate/.test(pH) && /🏷 1 in the packing room to rebag/.test(pH) && /❌ 1 not a match/.test(pH)
       && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), pal2.slice(0, 600));
   const lt = await get('/awd/box-pallet?latest=1');
   check('…opening Stock Out Big Company (nothing scanned yet) shows the pallets of the shipment scanned last (STAR-PAL1) at once',
     lt.ok && lt.shipment === 'STAR-PAL1' && lt.onPallets === 2 && /invBoxCheckDay\(\); invBcPallets\(\);/.test(ihP) && /'latest=1'/.test(ihP), { s: lt.shipment });
   sq.exec("DELETE FROM master_list WHERE name LIKE 'pal %'; DELETE FROM awd_box_scan; DELETE FROM awd_label_map WHERE shipment = 'STAR-PAL1'; DELETE FROM product_photo WHERE base_sku IN ('71-1-1', '76-6-6')");
+}
+
+// Owner (2026-10-27): "pallet 1 already has 14 cases, why does the record show only 7?" — a pallet counted AMAZON boxes; one Amazon box can be
+// 2 of our cases put together. Now both: "PALLET 1 — 7 Amazon boxes · 14 of our cases".
+console.log('\n🟫 A pallet shows Amazon boxes AND our cases (one Amazon box = 2 of our cases → 7 boxes · 14 cases)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('79-9-9','pal z','79-9-9=10','GARAGE',20,50)").run();
+  const L = []; for (let i = 1; i <= 7; i++) L.push({ sscc: '30195261162855' + String(1000 + i), sku: '79-9-9=10-', part: '79-9-9=10', seq: '7-' + i, units: 10, loc: 'GARAGE' });
+  await post('/awd/label-map', { shipment: 'STAR-PALZ', labels: L });
+  for (const b of L) await post('/awd/box-pallet', { sscc: b.sscc, kind: 'pallet', pallet: 1, productPart: '79-9-9=10' });
+  const T = await get('/awd/box-pallet?shipment=STAR-PALZ'), p1 = (T.pallets || [])[0] || {};
+  const { readFileSync: rfZ } = await import('node:fs');
+  const ihZ = rfZ(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('7 Amazon boxes of 79-9-9=10 (10 × 10 = 100 pcs each, our case = 50 pcs) on PALLET 1 → each box = 2 of our cases, 14 in all; the panel says "7 Amazon boxes · 14 of our cases"; box scans on this phone not sent yet are said',
+    p1.pallet === 1 && p1.boxes.length === 7 && p1.boxes.every(b => b.cases === 2) && p1.boxes.reduce((a, b) => a + b.cases, 0) === 14
+      && /' Amazon box' \+ \(p\.boxes\.length === 1 \? '' : 'es'\) \+ csTxt\(p\.boxes\)/.test(ihZ) && /of our case' \+ \(x\.c === 1/.test(ihZ) && /on THIS phone not sent yet/.test(ihZ), p1);
+  sq.exec("DELETE FROM master_list WHERE name = 'pal z'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALZ'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALZ'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
