@@ -2277,6 +2277,7 @@ function awdGrabPlan(sku, unitsList) {
     const cs = n => n + ' whole case' + (n === 1 ? '' : 's'), offTxt = off.length ? ' · ⚠ NOT ' + want + ' pcs a case, don\'t grab: ' + off.join(', ') : '';
     return { summary: (got ? 'GRAB ' + cs(got) + ' of ' + co + ' (' + want + ' pcs each — sold as a case, ship it as is): ' + grp.map(g => g.loc + ': ' + g.n).join(' · ') + (short ? ' · ⚠ SHORT ' + cs(short) : '')
       : '⚠ No case of ' + co + ' with ' + want + ' pcs on our shelves — ' + cs(need) + ' needed') + offTxt, locOf, cases: got, short, caseOf: co, off,
+      kindOf: locOf.map(l => /not on our shelves/.test(l) ? 'none' : 'full'), // a whole case shipped as is = just the label
       grabs: grp.map(g => ({ loc: g.loc, part: co, n: g.n, pcs: want, used: g.n * want, exact: true, caseOf: co })) }; // 🔒 for Lock it
   }
   const packOf = x => { const m = String(x || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; };
@@ -2303,15 +2304,20 @@ function awdGrabPlan(sku, unitsList) {
     if (got >= needPcs) break;
   }
   // each label (box) takes its pieces from the cases in order → the spot(s) on that label
-  const locOf = []; let ci = 0, left = cases[0] ? (cases[0].pcs || Infinity) : 0;
+  // 🗂 Owner (2026-10-28): each label is one of 3 kinds — ✅ FULL CASE (the exact part #, one of our cases = this Amazon box: just put the label on),
+  // 🏷 NEED LABELING (another part # / bag: rebag, relabel or cover the label), ✂ RECOUNT (the exact part # but not one whole case: take pieces out,
+  // put cases together, or no Ea/Case in SKU Mgr) — so the full cases are grabbed first and go on the bottom of the pallet.
+  const locOf = [], kindOf = []; let ci = 0, left = cases[0] ? (cases[0].pcs || Infinity) : 0;
   unitsList.forEach(u => {
-    let need = (u || 0) * pack; const locs = [];
+    const boxP = (u || 0) * pack; let need = boxP; const locs = [], took = [];
     while (need > 0 && ci < cases.length) {
       if (!locs.includes(cases[ci].loc)) locs.push(cases[ci].loc);
-      const t = Math.min(left, need); left -= t; need -= t; cases[ci].used += t;
+      const fresh = left === (cases[ci].pcs || Infinity), t = Math.min(left, need); left -= t; need -= t; cases[ci].used += t; took.push({ c: cases[ci], t, fresh });
       if (left <= 0) { ci++; left = cases[ci] ? (cases[ci].pcs || Infinity) : 0; }
     }
     locOf.push(locs.length ? locs.join(' + ') : '⚠ not on our shelves');
+    kindOf.push(!took.length || need > 0 ? (took.length ? 'recount' : 'none') : took.some(x => !x.c.exact) ? 'label'
+      : took.length === 1 && took[0].fresh && took[0].c.pcs > 0 && took[0].c.pcs === boxP ? 'full' : 'recount');
   });
   const grp = []; cases.forEach(c => { const g = grp.find(z => z.loc === c.loc && z.part === c.part); if (g) { g.n++; g.used += c.used; } else grp.push({ loc: c.loc, part: c.part, n: 1, pcs: c.pcs, exact: c.exact, used: c.used, how: c.how, why: c.why }); });
   const boxPcs = (unitsList[0] || 0) * pack, short = Math.max(0, needPcs - got);
@@ -2326,7 +2332,7 @@ function awdGrabPlan(sku, unitsList) {
   // 📋 the other bags of this item NOT used, and why (owner 2026-10-28: "a record of what the system told our guy to get, and why")
   const usedP = {}; cases.forEach(c => { usedP[String(c.part).toUpperCase()] = 1; }), others = {};
   rows.forEach(x => { const pn = String(x.r.partNum || '').toUpperCase(); if (usedP[pn] || !(x.r.casesNum > 0)) return; const o = others[pn] || (others[pn] = { part: pn, cases: 0, why: x.why || '' }); o.cases += x.r.casesNum; });
-  return { summary, locOf, cases: cases.length, short, grabs: grp.map(g => ({ loc: g.loc, part: g.part, n: g.n, pcs: g.pcs || 0, used: g.used, exact: g.exact, how: g.how || '', why: g.why || '' })), // 🔒 for Lock it
+  return { summary, locOf, kindOf, cases: cases.length, short, grabs: grp.map(g => ({ loc: g.loc, part: g.part, n: g.n, pcs: g.pcs || 0, used: g.used, exact: g.exact, how: g.how || '', why: g.why || '' })), // 🔒 for Lock it
     others: Object.values(others).slice(0, 8) };
 }
 // 🖨 Owner (2026-10-25): "after the labels are done, I want to click a location like C1 and print just what is in C1".
@@ -2339,12 +2345,34 @@ function awdPrintPages(pages, title) {
   w.document.close();
   return true;
 }
+// 🗂 Owner (2026-10-28): the labels in 3 groups first — 1️⃣ FULL CASE (just put the label on — grab these first, bottom of the pallet), 2️⃣ NEED
+// LABELING, 3️⃣ RECOUNT the quantities — then by area in walking order. The area name says its group ("✅ BO", "🏷 C1", "✂ C2").
+const AWD_KINDS = { full: { rank: 1, icon: '✅', title: '1️⃣ ✅ FULL CASE — just put the label on (grab these first: the bottom of the pallet)', color: '#15803D' },
+  label: { rank: 2, icon: '🏷', title: '2️⃣ 🏷 NEED LABELING — rebag / relabel / cover the label', color: '#EA580C' },
+  recount: { rank: 3, icon: '✂', title: '3️⃣ ✂ RECOUNT the quantities — the right part #, not one whole case', color: '#CA8A04' },
+  none: { rank: 9, icon: '⚠', title: '⚠ Not on our shelves', color: '#DC2626' } };
+function awdKindArea(m) { if (/not on our shelves/i.test(m.loc || '')) return '⚠ not on our shelves';
+  const K = AWD_KINDS[m.kind]; return (K ? K.icon + ' ' : '') + (String(m.loc || '?').split('=')[0] || '?'); }
+function awdKindOfArea(a) { a = String(a || ''); if (a === 'PREVIOUS PACKED') return 'prev'; return Object.keys(AWD_KINDS).find(k => a.indexOf(AWD_KINDS[k].icon + ' ') === 0) || ''; }
+function awdKindAreaCmp(a, b) { const r = x => x === 'PREVIOUS PACKED' ? 0 : (AWD_KINDS[awdKindOfArea(x)] || { rank: 5 }).rank, s = x => String(x).replace(/^\S+\s/, '');
+  return r(a) - r(b) || awdAreaRank(s(a)) - awdAreaRank(s(b)) || String(a).localeCompare(String(b)); }
 function awdAreaButtons(groups) {
   const areas = []; (groups || []).forEach(g => { const a = g.area || '?'; let x = areas.find(z => z.a === a); if (!x) areas.push(x = { a, n: 0 }); x.n += g.pages.length; });
+  areas.sort((x, y) => awdKindAreaCmp(x.a, y.a));
   const b = 'padding:5px 10px;border-radius:7px;border:1.5px solid #1D4ED8;background:#fff;color:#1D4ED8;font-weight:800;font-size:12px;cursor:pointer;margin:3px 4px 0 0';
-  return '<div class="awd-area-print" style="margin-top:4px">🖨 Print just one area: ' + areas.map(x => '<button type="button" style="' + b + '" data-a="' + String(x.a).replace(/["<&]/g, '') + '" onclick="awdPrintArea(this.dataset.a)">'
-    + String(x.a).replace(/[<&]/g, '') + ' · ' + x.n + '</button>').join('') + '<button type="button" style="' + b + ';background:#1D4ED8;color:#fff" onclick="awdPrintArea(\'\')">All</button></div>';
+  const btn = x => '<button type="button" style="' + b + '" data-a="' + String(x.a).replace(/["<&]/g, '') + '" onclick="awdPrintArea(this.dataset.a)">' + String(x.a).replace(/[<&]/g, '') + ' · ' + x.n + '</button>';
+  const kinds = []; areas.forEach(x => { const k = awdKindOfArea(x.a); let g = kinds.find(z => z.k === k); if (!g) kinds.push(g = { k, L: [], n: 0 }); g.L.push(x); g.n += x.n; });
+  return '<div class="awd-area-print" style="margin-top:4px">🖨 Print just one group / area:' + kinds.map(g => { const K = AWD_KINDS[g.k];
+      return '<div class="awd-kind" data-k="' + (g.k || 'other') + '" style="margin-top:5px;padding:5px 7px;border-radius:8px;border:1.5px solid ' + (K ? K.color : '#94A3B8') + '">'
+        + '<div style="font-weight:800;font-size:12px;color:' + (K ? K.color : '#475569') + '">' + (K ? K.title : g.k === 'prev' ? '✅ PREVIOUS PACKED — packed already' : 'Other') + ' · ' + g.n + ' label' + (g.n === 1 ? '' : 's')
+        + (K && g.L.length > 1 ? ' <button type="button" style="' + b + ';border-color:' + K.color + ';color:' + K.color + '" data-k="' + g.k + '" onclick="awdPrintKind(this.dataset.k)">🖨 the whole group</button>' : '') + '</div>'
+        + g.L.map(btn).join('') + '</div>'; }).join('')
+    + '<button type="button" style="' + b + ';background:#1D4ED8;color:#fff;margin-top:6px" onclick="awdPrintArea(\'\')">All</button></div>';
 }
+function awdPrintKind(k) { const K = AWD_KINDS[k]; if (!K) return; const G = (window.AWD_LBL_GROUPS || []).filter(g => awdKindOfArea(g.area) === k), pages = [].concat(...G.map(g => g.pages));
+  if (!pages.length) { awd_planner_toast('No labels in that group', 'error'); return; }
+  if (!awdPrintPages(pages, 'Box labels — ' + K.icon + ' group')) { awd_planner_toast('Allow pop-ups for this page, then try again', 'error'); return; }
+  (typeof awdAct === 'function') && awdAct('label_print', { shipment: window.AWD_LBL_SHIP || '', area: K.icon + ' all', labels: pages.length }); }
 function awdPrintArea(area) {
   const G = window.AWD_LBL_GROUPS || [], pages = [].concat(...G.filter(g => !area || (g.area || '?') === area).map(g => g.pages));
   if (!pages.length) { awd_planner_toast('No labels for ' + (area || 'this shipment') + ' — make the labels again', 'error'); return; }
@@ -2624,7 +2652,7 @@ async function awdLabelsDo(file) {
     Object.keys(bySku).forEach(K => { const l = bySku[K]; l.forEach((m, k) => { m.seq = l.length + '-' + (k + 1); });
       const pick = l.filter(m => !m.prevKey), plan = pick.length ? awdGrabPlan(l[0].sku, pick.map(m => m.units)) : null;
       if (plan) plans[K] = { plan, pick, sku: l[0].sku };
-      pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.plan = k === 0 ? plan.summary : ''; }); });
+      pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.kind = (plan.kindOf || [])[k] || ''; m.plan = k === 0 ? plan.summary : ''; }); });
     const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
     const boxUpc = await awdBoxUpcs([...new Set(metas.map(m => partOf(m.sku)))]);
     const metaAt = (p, i) => metas.find(m => m.p === p && m.i === i);
@@ -2650,8 +2678,8 @@ async function awdLabelsDo(file) {
         const m = metaAt(p, i), sku = m.sku, cell = Math.round(cv.width / 60), lfn = awdLabelFnsku(lines, f.y), I = info(m);
         if (m.prevKey) prevDone[m.prevKey] = (prevDone[m.prevKey] || 0) + 1;
         if (!I.tpl.label && !I.tpl.upc) noTpl[f.sku] = (noTpl[f.sku] || 0) + 1;
-        if (!grp.key) grp.area = m.prevKey ? 'PREVIOUS PACKED' : (String(m.loc || '?').split('=')[0] || '?');
-        if (!grp.key) grp.key = m.prevKey ? '0' : '1|' + String(awdAreaRank(m.loc)).padStart(2, '0') + '|' + (m.loc || '') + '|' + sku + '|' + String(metas.indexOf(m)).padStart(5, '0');
+        if (!grp.key) grp.area = m.prevKey ? 'PREVIOUS PACKED' : awdKindArea(m);
+        if (!grp.key) grp.key = m.prevKey ? '0' : '1|' + (AWD_KINDS[m.kind] || AWD_KINDS.none).rank + '|' + String(awdAreaRank(m.loc)).padStart(2, '0') + '|' + (m.loc || '') + '|' + sku + '|' + String(metas.indexOf(m)).padStart(5, '0');
         const sc = extra ? awdScanCode(sku, [I.tpl.upc], amz, lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = extra ? await awdPhoto(sku) : null;
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const rect = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
@@ -2691,7 +2719,7 @@ async function awdLabelsDo(file) {
     // (on the pallet) first, then by area in walking order, spot, SKU, box. Each label's own extra label stays right after it.
     groups.sort((a, b) => a.key.localeCompare(b.key));
     const pages = [].concat(...groups.map(g => g.pages));
-    const byArea = {}; metas.forEach(m => { const a = m.prevKey ? 'PREVIOUS PACKED' : (String(m.loc || '?').split('=')[0] || '?'); byArea[a] = (byArea[a] || 0) + 1; });
+    const byArea = {}; metas.forEach(m => { const a = m.prevKey ? 'PREVIOUS PACKED' : awdKindArea(m); byArea[a] = (byArea[a] || 0) + 1; });
     // 🗺 Every Amazon box kept on the server (SSCC → SKU, box N-k, bags, spot, PREVIOUS PACKED): the phones' Box check reads the box label,
     // and Stock Out Big Company → 📦 Current AWD shipment lists what to grab by location.
     const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase(), seq: m.seq, units: m.units,
@@ -2712,7 +2740,7 @@ async function awdLabelsDo(file) {
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
     out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
       + mapNote
-      + '<div style="color:#1D4ED8">🗺 Printed by where they are grabbed: ' + Object.keys(byArea).sort((a, b) => (a === 'PREVIOUS PACKED' ? -1 : b === 'PREVIOUS PACKED' ? 1 : awdAreaRank(a) - awdAreaRank(b))).map(a => '<b>' + String(a).replace(/[<&]/g, '') + '</b> ' + byArea[a]).join(' · ') + '</div>'
+      + '<div style="color:#1D4ED8">🗺 Printed by where they are grabbed: ' + Object.keys(byArea).sort(awdKindAreaCmp).map(a => '<b>' + String(a).replace(/[<&]/g, '') + '</b> ' + byArea[a]).join(' · ') + '</div>'
       + awdAreaButtons(groups)
       + (oneLabel ? '<div style="color:#1D4ED8">🏷 <b>' + oneLabel + '</b> full Amazon label' + (oneLabel === 1 ? '' : 's') + ' printed at 85% with our info under it — one label per box (' + pages.length + ' labels to print).</div>' : '')
       + (ownPages ? '<div style="color:#1D4ED8">📄 <b>' + ownPages + '</b> Amazon label' + (ownPages === 1 ? ' has' : 's have') + ' no empty spot (AWD labels are full) — our template is printed on its <b>own label right after it</b> (' + (pages.length) + ' labels to print): stick both on the box.</div>' : '')
