@@ -11213,5 +11213,23 @@ console.log('\n📤 Box check: a box put on a pallet by mistake can be taken OFF
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-OFF1'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-OFF1'");
 }
 
+// 🖥 Owner (2026-10-28): "under the Shipment Builder I want to see all, don't have to scroll — PC only, make the screen wider to see all"
+console.log('\n🖥 Shipment Builder: the labels not on a pallet yet across the whole width (a grid), the builder tab uses the full screen');
+{
+  const { readFileSync: rfW } = await import('node:fs');
+  const ah = rfW(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = n => { const m = ah.match(new RegExp('(?:async )?function ' + n + '\\([\\s\\S]*?\\n\\}')); return m ? m[0] : ''; };
+  const els = { 'awd-lbl-pal': { innerHTML: '' }, 'awd-lbl-pal-wide': { innerHTML: '' } };
+  const notYet = Array.from({ length: 12 }, (_, i) => ({ sscc: 's' + i, seq: '4-' + (1 + i % 4), part: '30-2-8=10', sku: '30-2-8=10-', loc: 'FRONT=3-2-3', prev: i < 2 }));
+  const d = { ok: true, shipment: 'STAR-WIDE', boxes: 20, prev: 2, onPallets: 8, notYet, ready: [], split: [], rebag: [], mismatch: [], off: [] };
+  await new Function('ge', 'wFetch', 'W', 'window', (ah.match(/const AWD_NOTPAL = [^\n]*/) || [''])[0] + '\nlet _awdPal = null;\n' + fnA('awdPalShow') + '; return awdPalShow();')(
+    id => els[id], async () => ({ json: async () => d }), '', { AWD_LBL_SHIP: 'STAR-WIDE' });
+  const n = els['awd-lbl-pal'].innerHTML, w = els['awd-lbl-pal-wide'].innerHTML;
+  check('the right column keeps only the totals ("8 ON a pallet · ⚠ 12 NOT on a pallet yet · 20 labels in all (2 of them PREVIOUS PACKED)" — they add up, no false ≠) + "⬇ See all 12 below"; the 12 are listed in the full-width panel as a grid (one line a label, several columns) with 🖨 on each; the Shipment Builder tab uses the full screen width',
+    /8 labels ON a pallet<\/span> · <span[^>]*>⚠ 12 NOT on a pallet yet<\/span> · 20 labels in all/.test(n) && /\(2 of them PREVIOUS PACKED\)/.test(n) && !/≠/.test(n + w) && /⬇ See all 12 below/.test(n) && !/awd-pal-row/.test(n)
+      && (w.match(/class="awd-pal-row"/g) || []).length === 12 && /grid-template-columns:repeat\(auto-fill,minmax\(350px,1fr\)\)/.test(w) && (w.match(/>PREV</g) || []).length === 2 && (w.match(/onclick="awdPalReprint\(\[\d+\]\)"/g) || []).length === 12
+      && /id="awd-lbl-pal-wide"/.test(ah) && /\.main\.awd-wide\{max-width:none\}/.test(ah) && /mainEl\.classList\.toggle\('awd-wide', n === 'builder'\)/.test(ah), { n, w: w.slice(0, 400) });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

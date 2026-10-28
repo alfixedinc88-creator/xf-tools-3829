@@ -54,6 +54,8 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 .tab:hover{color:var(--gray-700)}.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 .tbadge{background:var(--blue);color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px}
 .main{flex:1;padding:24px;max-width:1600px;width:100%;margin:0 auto}
+/* 🖥 Owner (2026-10-28): "Shipment Builder — I want to see all, don't have to scroll; it is PC only — make the screen wider": the whole screen width */
+.main.awd-wide{max-width:none}
 .page{display:none}.page.active{display:block}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--rs);font-size:13px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;border:1px solid transparent;transition:all .15s;line-height:1}
 .btn-primary{background:var(--blue);color:white;border-color:var(--blue)}.btn-primary:hover{background:#1D4ED8}
@@ -1085,6 +1087,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             </div></div>
           </div>
         </div>
+        <!-- ⚠ Owner (2026-10-28): "under the Shipment Builder I want to see all, don't have to scroll — this is PC only, make it wider to see all":
+             the labels not on a pallet yet, across the whole width (a grid, one line a label), not squeezed in the right column. -->
+        <div id="awd-lbl-pal-wide" style="margin-top:14px"></div>
       </div>
       <!-- 🕘 Owner (2026-10-27): "every tab has a History at the bottom, recording everything done — whoever, when, what they did — only
            Admin and up can see it". Everything done in the Shipment Builder: SKUs in / out / qty, labels made / printed (which area), sent to
@@ -2454,24 +2459,37 @@ async function awdLblBringBack(at) {
 const AWD_NOTPAL = { notYet: ['⬜', 'not scanned yet'], ready: ['✅', 'labeled — NO PALLET scanned'], split: ['✂', 'recount / separate'], rebag: ['🏷', 'in the packing room'], mismatch: ['❌', 'not a match'], off: ['📤', 'taken OFF a pallet (a mistake) — fix it, reprint its label'] };
 let _awdPal = null;
 async function awdPalShow() {
-  const el = ge('awd-lbl-pal'), ship = window.AWD_LBL_SHIP; if (!el) return;
-  if (!ship) { el.innerHTML = ''; return; }
+  const el = ge('awd-lbl-pal'), wide = ge('awd-lbl-pal-wide'), ship = window.AWD_LBL_SHIP; if (!el) return;
+  if (!ship) { el.innerHTML = ''; if (wide) wide.innerHTML = ''; return; }
   let d; try { d = await wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(ship)).then(r => r.json()); } catch (e) { el.innerHTML = '<span style="color:#DC2626">📶 Pallet check not loaded (no WiFi?)</span>'; return; }
-  if (!d || !d.ok) { el.innerHTML = ''; return; }
+  if (!d || !d.ok) { el.innerHTML = ''; if (wide) wide.innerHTML = ''; return; }
   const h = v => String(v == null ? '' : v).replace(/[<&"]/g, ''), L = [], nv = x => String(x || '').split('-').map(v => parseInt(v, 10) || 0);
   ['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'].forEach(k => (d[k] || []).forEach(b => L.push(Object.assign({ k }, b))));
   L.sort((x, y) => String(x.loc || '~').localeCompare(String(y.loc || '~')) || String(x.part).localeCompare(String(y.part)) || (nv(x.seq)[0] - nv(y.seq)[0]) || (nv(x.seq)[1] - nv(y.seq)[1]));
-  const all = (d.boxes || 0) - (d.prev || 0), on = d.onPallets || 0; _awdPal = { d, L };
+  // every label — PREVIOUS PACKED too (owner 2026-10-28: they go on our pallets as well)
+  const all = d.boxes || 0, on = d.onPallets || 0; _awdPal = { d, L };
   const b = 'padding:5px 10px;border-radius:7px;border:1.5px solid #B45309;background:#fff;color:#B45309;font-weight:800;font-size:12px;cursor:pointer;margin:3px 4px 0 0';
-  el.innerHTML = '<div style="border:2px solid ' + (L.length ? '#D97706' : '#15803D') + ';border-radius:8px;padding:8px">'
-    + '<div style="font-weight:800">🟫 Pallet check — ' + h(d.shipment) + ': <span style="color:#15803D">' + on + ' label' + (on === 1 ? '' : 's') + ' ON a pallet</span> · <span style="color:' + (L.length ? '#B45309' : '#15803D') + '">⚠ ' + L.length + ' NOT on a pallet yet</span> · ' + all + ' in all'
-    + (d.prev ? ' <span style="font-weight:400;color:#64748B">(+ ' + d.prev + ' PREVIOUS PACKED)</span>' : '') + ' <button type="button" style="' + b + '" onclick="awdPalShow()">↻</button></div>'
-    + (on + L.length !== all ? '<div style="color:#DC2626;font-weight:700">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' labels — something is not counted</div>' : '')
-    + (L.length ? '<table style="border-collapse:collapse;width:100%;margin-top:4px"><tr style="text-align:left;color:#64748B"><th><input type="checkbox" title="all" onchange="document.querySelectorAll(\'.awd-pal-ck\').forEach(c => c.checked = this.checked)"></th><th>Box</th><th>Part #</th><th>Spot</th><th>Where it is</th><th></th></tr>'
-      + L.map((x, i) => '<tr style="border-top:1px solid #E2E8F0"><td><input type="checkbox" class="awd-pal-ck" data-i="' + i + '"></td><td><b>' + h(x.seq) + '</b></td><td style="font-family:monospace">' + h(x.part) + '</td><td>' + h(x.loc) + '</td>'
-        + '<td>' + AWD_NOTPAL[x.k][0] + ' ' + AWD_NOTPAL[x.k][1] + (x.k === 'off' && x.note ? ' <span style="color:#0E7490">(' + h(x.note) + ')</span>' : '') + (x.by ? ' <span style="color:#64748B">· ' + h(x.by) + '</span>' : '') + '</td><td><button type="button" style="' + b + '" onclick="awdPalReprint([' + i + '])">🖨 Reprint</button></td></tr>').join('') + '</table>'
-      + '<button type="button" style="' + b + '" onclick="awdPalReprint(null, true)">🖨 Reprint the ticked</button><button type="button" style="' + b + ';background:#B45309;color:#fff" onclick="awdPalReprint(null)">🖨 Reprint all ' + L.length + ' not on a pallet</button>'
+  const head = '<div style="font-weight:800">🟫 Pallet check — ' + h(d.shipment) + ': <span style="color:#15803D">' + on + ' label' + (on === 1 ? '' : 's') + ' ON a pallet</span> · <span style="color:' + (L.length ? '#B45309' : '#15803D') + '">⚠ ' + L.length + ' NOT on a pallet yet</span> · ' + all + ' labels in all'
+    + (d.prev ? ' <span style="font-weight:400;color:#64748B">(' + d.prev + ' of them PREVIOUS PACKED)</span>' : '') + ' <button type="button" style="' + b + '" onclick="awdPalShow()">↻</button></div>'
+    + (on + L.length !== all ? '<div style="color:#DC2626;font-weight:700">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' labels — something is not counted</div>' : '');
+  // the right column: just the totals; the list itself is the wide panel under the Shipment Builder
+  el.innerHTML = '<div style="border:2px solid ' + (L.length ? '#D97706' : '#15803D') + ';border-radius:8px;padding:8px">' + head
+    + (L.length ? '<a href="#awd-lbl-pal-wide" onclick="var w=document.getElementById(\'awd-lbl-pal-wide\');if(w)w.scrollIntoView({behavior:\'smooth\'});return false" style="color:#B45309;font-weight:700">⬇ See all ' + L.length + ' below (full width) + 🖨 reprint</a>'
       : '<div style="color:#15803D;font-weight:700;margin-top:3px">✅ Every label is on a pallet</div>') + '</div>';
+  if (!wide) return;
+  if (!L.length) { wide.innerHTML = ''; return; }
+  // one line a label, as many columns as the screen is wide — every label at once
+  const cell = 'display:flex;align-items:center;gap:6px;padding:3px 6px;border:1px solid #E2E8F0;border-radius:6px;font-size:12px;white-space:nowrap;overflow:hidden;background:#fff';
+  wide.innerHTML = '<div class="card" style="border:2px solid #D97706;padding:10px 12px">' + head
+    + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0"><label style="font-size:12px;font-weight:700;cursor:pointer"><input type="checkbox" title="all" onchange="document.querySelectorAll(\'.awd-pal-ck\').forEach(c => c.checked = this.checked)"> tick all</label>'
+    + '<button type="button" style="' + b + '" onclick="awdPalReprint(null, true)">🖨 Reprint the ticked</button><button type="button" style="' + b + ';background:#B45309;color:#fff" onclick="awdPalReprint(null)">🖨 Reprint all ' + L.length + ' not on a pallet</button>'
+    + '<span style="font-size:11px;color:#64748B">by spot, then part #, then box</span></div>'
+    + '<div class="awd-pal-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:4px">'
+    + L.map((x, i) => '<div class="awd-pal-row" style="' + cell + '"><input type="checkbox" class="awd-pal-ck" data-i="' + i + '"><b style="min-width:30px">' + h(x.seq) + '</b><span style="font-family:monospace;font-weight:700">' + h(x.part) + '</span>'
+      + '<span style="color:#475569">' + h(x.loc) + '</span>' + (x.prev ? '<span style="color:#0E7490;font-weight:800">PREV</span>' : '')
+      + '<span title="' + h(AWD_NOTPAL[x.k][1] + (x.note ? ' (' + x.note + ')' : '') + (x.by ? ' · ' + x.by : '')) + '" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">' + AWD_NOTPAL[x.k][0] + ' ' + AWD_NOTPAL[x.k][1] + (x.k === 'off' && x.note ? ' (' + h(x.note) + ')' : '') + (x.by ? ' · ' + h(x.by) : '') + '</span>'
+      + '<button type="button" style="padding:2px 7px;border-radius:6px;border:1.5px solid #B45309;background:#fff;color:#B45309;font-weight:800;font-size:11px;cursor:pointer" onclick="awdPalReprint([' + i + '])" title="🖨 Reprint this label">🖨</button></div>').join('')
+    + '</div></div>';
 }
 // The saved pages of these Amazon boxes. Labels made from now on carry their SSCCs; older saved labels are matched by SKU + box N-k
 // (only when the SKU has one label per page and no PREVIOUS PACKED, so the match is exact — otherwise: upload the label PDF again).
@@ -3088,6 +3106,7 @@ function awd_switchTab(n) {
   // Activate selected tab/page safely
   const tabEl = ge('tab-' + n);
   const pageEl = ge('page-' + n);
+  const mainEl = document.querySelector('.main'); if (mainEl) mainEl.classList.toggle('awd-wide', n === 'builder'); // 🖥 Shipment Builder: full screen width
 
   if (tabEl) tabEl.classList.add('active');
   if (pageEl) pageEl.classList.add('active');
