@@ -11259,5 +11259,44 @@ console.log('\n🗂 AWD labels in 3 groups: ✅ full case / 🏷 need labeling /
     areas.join('|') === 'PREVIOUS PACKED|✅ BO|✅ C2|🏷 C1|✂ BO|⚠ not on our shelves' && k.awdKindArea({ kind: 'full', loc: 'C1=1-1-1' }) === '✅ C1' && k.awdKindArea({ kind: 'label', loc: 'C1=1-1-1' }) === '🏷 C1', areas);
 }
 
+// 🕕 Owner (2026-10-28): "release it back every day at 6 pm — even when he comes back tomorrow, he needs to 'Put ## on my Pull List' to start"
+console.log('\n🕕 Every day at 6 PM (New York): spots taken go back to everyone; un-grabbed AWD items come off the Pull Lists (grabbed ones stay)');
+{
+  const { readFileSync: rfS6 } = await import('node:fs');
+  const ws = rfS6(workerPath, 'utf8'), ih = rfS6(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const cutW = new Function((ws.match(/function awdSixPmCut\(nowMs\) \{[\s\S]*?\n\}/) || [''])[0] + '; return awdSixPmCut;')();
+  const cutP = new Function((ih.match(/function invSixPmCut\(nowMs\) \{[\s\S]*?\n  \}/) || [''])[0] + '; return invSixPmCut;')();
+  const T = [['2026-10-28T21:59:00Z', '2026-10-27T22:00:00.000Z'], ['2026-10-28T22:00:00Z', '2026-10-28T22:00:00.000Z'], ['2026-10-29T03:00:00Z', '2026-10-28T22:00:00.000Z'], ['2026-11-02T23:30:00Z', '2026-11-02T23:00:00.000Z']];
+  check('6 PM New York time, summer and winter: 5:59 PM → still yesterday\'s 6 PM; 6:00 PM → today\'s (22:00 UTC in EDT); 11 PM → today\'s; in November (EST) 6 PM = 23:00 UTC — the server and the phone say the same',
+    T.every(([n, c]) => cutW(Date.parse(n)) === c && cutP(Date.parse(n)) === c), T.map(([n]) => [n, cutW(Date.parse(n)), cutP(Date.parse(n))]));
+  // pretend it is 6:30 PM on 2026-10-28 (EDT): 6 PM = 22:00 UTC
+  env.AWD_NOW_MS = String(Date.parse('2026-10-28T22:30:00Z'));
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, PK = { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' };
+  const items = [
+    { key: 'A', partNum: '61-1-1=10', location: 'BARN=1-1-1', cases: '2', dest: 'company', awdShipment: 'STAR-6PM', addedAt: '2026-10-28T17:05:00.000Z' }, // 1:05 PM, not grabbed → released
+    { key: 'B', partNum: '61-1-1=10', location: 'BARN=1-1-2', cases: '1', dest: 'company', awdShipment: 'STAR-6PM', addedAt: '2026-10-28T17:05:00.000Z', grabbed: true, submitted: true }, // grabbed → stays
+    { key: 'C', partNum: '61-1-1=10', location: 'BARN=1-1-3', cases: '1', dest: 'company', awdShipment: 'STAR-6PM', addedAt: '2026-10-28T22:10:00.000Z' }, // 6:10 PM → stays (put on after 6)
+    { key: 'D', partNum: '8-8-8=10', location: 'C1=1-1-1', cases: '1', dest: 'shelving', addedAt: '2026-10-28T17:05:00.000Z' }]; // Shelving → not touched
+  // the phone sends its list, then the 6 PM sweep runs (any Pull List call) — save first with no pretend time so it is stored as is
+  const keep = env.AWD_NOW_MS; delete env.AWD_NOW_MS;
+  await call('/inventory/pull/mine', { method: 'POST', headers: PK, body: JSON.stringify({ items }) });
+  // the spots taken (after that save, so only the pretend-6:30-PM sweep below sees them — the same whatever day the checks run)
+  sq.prepare("CREATE TABLE IF NOT EXISTS awd_claim (id TEXT PRIMARY KEY, at TEXT, by_user TEXT, area TEXT, part TEXT, for_part TEXT, cases REAL, ships TEXT, loc TEXT, status TEXT DEFAULT 'open', closed_at TEXT, closed_by TEXT, how TEXT)").run();
+  sq.prepare("INSERT INTO awd_claim (id, at, by_user, area, part, for_part, cases, ships, loc, status) VALUES ('c6pm1', '2026-10-28T17:05:00.000Z', 'NB', 'BARN', '61-1-1=10', '61-1-1=10', 2, 'STAR-6PM', 'BARN=1-1-1', 'open'), ('c6pm2', '2026-10-28T22:10:00.000Z', 'NB', 'BARN', '61-1-1=10', '61-1-1=10', 1, 'STAR-6PM', 'BARN=1-1-3', 'open')").run();
+  env.AWD_NOW_MS = keep;
+  const back = await (await call('/inventory/pull/mine', { headers: { 'X-Cred-Token': pkT } })).json();
+  const again = await (await call('/inventory/pull/mine', { method: 'POST', headers: PK, body: JSON.stringify({ items }) })).json(); // the phone still had the old list
+  const cl = sq.prepare("SELECT id, status, how FROM awd_claim WHERE id IN ('c6pm1','c6pm2') ORDER BY id").all();
+  const log = sq.prepare("SELECT by_user, items FROM inventory_pull_delete_log WHERE by_user LIKE '%6 PM%' ORDER BY id DESC LIMIT 1").get();
+  delete env.AWD_NOW_MS;
+  check('…at 6:30 PM: the AWD item put on at 1:05 PM and not grabbed comes off (kept in the 📜 record "released at 6 PM"); the grabbed one, the one put on at 6:10 PM and the Shelving one stay; a phone sending its old list is told to drop it; the spot taken at 1:05 PM is released, the 6:10 PM one stays taken',
+    JSON.stringify(back.items.map(i => i.key)) === '["B","C","D"]' && JSON.stringify(again.removed || []) === '["A|2026-10-28T17:05:00.000Z"]' && cl[0].status === 'released' && /released at 6 PM/.test(cl[0].how) && cl[1].status === 'open'
+      && log && /61-1-1=10/.test(log.items) && /STAR-6PM/.test(log.items), { back: back.items.map(i => i.key), again: again.removed, cl, log });
+  check('…the phone does the same for a list left open past 6 PM (says so: "6 PM: N AWD items not grabbed went back to everyone — ➕ Put … on my Pull List to start again"); the card says the 6 PM rule',
+    /function invPullSixPm\(\) \{/.test(ih) && /invPullSixPm\(\);\n    var mine = invPullList\.filter\(invPullInTab\);/.test(ih) && /🕕 Every day at 6 PM, whatever is on a Pull List and not grabbed goes back to everyone/.test(ih), null);
+  await call('/inventory/pull/mine', { method: 'POST', headers: PK, body: JSON.stringify({ items: [] }) });
+  sq.exec("DELETE FROM awd_claim WHERE id IN ('c6pm1','c6pm2')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

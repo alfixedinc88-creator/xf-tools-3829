@@ -656,7 +656,7 @@ window.invCredLogin = async function() {
        can start grabbing right now" — every shipment sent and not ✅ Done, open as soon as Big Company is picked. -->
   <details class="icard" id="inv-awdship-card" open style="display:none;border:2px solid #1D4ED8" ontoggle="if(this.open&&window.AWDS&&!AWDS.data&&this.style.display!=='none')invAwdShipLoad()">
     <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 AWD shipments ready — what to grab, by location</summary>
-    <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a></div>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. 🕕 Every day at 6 PM, whatever is on a Pull List and not grabbed goes back to everyone — the next day, ➕ Put it on your Pull List again. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a></div>
     <div id="inv-awdship-out" style="font-size:13px">Loading…</div>
     <!-- 🕘 Owner (2026-10-27): "a history, so we can go back and check the previous shipments — only Admin can see it". -->
     <details id="inv-awdship-hist" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:6px" ontoggle="if(this.open)invAwdHistLoad()">
@@ -7204,7 +7204,29 @@ window.invCredLogin = async function() {
   function invPullTab(x) { return x && x.dest === 'company' ? 'company' : 'shelving'; }
   function invPullInTab(x) { return invPullTab(x) === (invStockOutDest === 'company' ? 'company' : 'shelving'); }
   window.invPullInTab = invPullInTab;
+  // 🕕 Owner (2026-10-28): "release it back every day at 6 pm — even when he comes back tomorrow, he needs to 'Put ## on my Pull List' to
+  // start". The AWD items not grabbed by 6 PM (New York time) come off this phone's list too (the server does the same for every list and gives
+  // the spots back); grabbed ones stay. A phone left open past 6 PM drops them the next time the list is drawn.
+  function invSixPmCut(nowMs) {
+    var now = nowMs || Date.now(), p = {};
+    try { new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+      .formatToParts(new Date(now)).forEach(function(x) { p[x.type] = x.value; }); } catch (e) { return ''; }
+    var off = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(now / 1000) * 1000, cut = Date.UTC(+p.year, +p.month - 1, +p.day, 18, 0, 0) - off;
+    if (cut > now) cut -= 864e5; return new Date(cut).toISOString();
+  }
+  window.invSixPmCut = invSixPmCut;
+  function invPullSixPm() {
+    var cut = invSixPmCut(); if (!cut) return 0;
+    var old = function(i) { return i && !i.grabbed && !i.submitted && !i.noneFound && i.awdShipment && i.dest === 'company' && String(i.addedAt || '') < cut; };
+    var n = invPullList.filter(old).length; if (!n) return 0;
+    invPullList = invPullList.filter(function(i) { return !old(i); });
+    try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+    invFlash('🕕 6 PM: ' + n + ' AWD item' + (n === 1 ? '' : 's') + ' not grabbed went back to everyone — tap ➕ Put … on my Pull List to start again', 'warn');
+    if (window.AWDS) { window.AWDS.mine = null; } // the AWD list works them out again
+    return n;
+  }
   function invRenderPullList() {
+    invPullSixPm();
     var mine = invPullList.filter(invPullInTab);
     invPhotoLoadFor(mine);
     var el = g("inv-pulllist-items");

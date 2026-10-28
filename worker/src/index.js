@@ -1668,8 +1668,44 @@ async function awdClaimTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_claim (id TEXT PRIMARY KEY, at TEXT, by_user TEXT, area TEXT, part TEXT, for_part TEXT, cases REAL,
     ships TEXT, loc TEXT, status TEXT DEFAULT 'open', closed_at TEXT, closed_by TEXT, how TEXT)`).run();
 }
+// 🕕 Owner (2026-10-28): "release it back every day at 6 pm — even when he comes back tomorrow, he needs to 'Put ## on my Pull List' to start".
+// The latest 6:00 PM New York time (EST / EDT) at or before now, as an ISO time.
+function awdSixPmCut(nowMs) {
+  const now = nowMs || Date.now(), p = {}; new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+    .formatToParts(new Date(now)).forEach(x => { p[x.type] = x.value; });
+  const off = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(now / 1000) * 1000; // NY wall clock − UTC
+  let cut = Date.UTC(+p.year, +p.month - 1, +p.day, 18, 0, 0) - off;
+  if (cut > now) cut -= 864e5;
+  return new Date(cut).toISOString();
+}
+// At / after 6 PM: every spot still taken goes back to everyone, and the un-grabbed AWD items put on a Pull List before 6 PM come off it
+// (kept in the 📜 deleted record: "released at 6 PM"). What was grabbed stays grabbed — nothing on the shelves changes.
+let _awdSixPmAt = 0;
+async function awdSixPmSweep(env) {
+  const cut = awdSixPmCut(env && env.AWD_NOW_MS ? +env.AWD_NOW_MS : 0); // (AWD_NOW_MS: checks only — a pretend "now")
+  if (!(env && env.AWD_NOW_MS) && Date.now() - _awdSixPmAt < 60000) return cut; // at most once a minute (a list a phone sends late is caught next time)
+  _awdSixPmAt = Date.now();
+  const now = new Date().toISOString();
+  try { await awdClaimTable(env); await env.DB.prepare("UPDATE awd_claim SET status = 'released', closed_at = ?, closed_by = 'auto', how = 'released at 6 PM' WHERE status = 'open' AND at < ?").bind(now, cut).run(); } catch (_) {}
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_pull_user (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, items TEXT NOT NULL DEFAULT '[]', updated_at TEXT)`).run().catch(() => {});
+    await env.DB.prepare(`ALTER TABLE inventory_pull_user ADD COLUMN removed TEXT`).run().catch(() => {});
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_pull_delete_log (id INTEGER PRIMARY KEY AUTOINCREMENT, by_user TEXT, user_id INTEGER, user_name TEXT, items TEXT, at TEXT)`).run().catch(() => {});
+    const pullId = i => String((i && i.key) || ((i && i.partNum) || '') + '|' + ((i && i.location) || '')).toUpperCase() + '|' + String((i && i.addedAt) || '');
+    const old = i => i && !i.grabbed && !i.submitted && !i.noneFound && i.awdShipment && i.dest === 'company' && String(i.addedAt || '') < cut;
+    for (const r of ((await env.DB.prepare('SELECT user_id, display_name, username, items, removed FROM inventory_pull_user').all()).results || [])) {
+      let items = [], gone = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} try { gone = JSON.parse(r.removed || '[]'); } catch (_) {}
+      const del = items.filter(old); if (!del.length) continue;
+      gone = gone.concat(del.map(i => ({ id: pullId(i), by: '🕕 6 PM', at: now }))).slice(-500);
+      await env.DB.prepare('UPDATE inventory_pull_user SET items = ?, removed = ?, updated_at = ? WHERE user_id = ?').bind(JSON.stringify(items.filter(i => !old(i))), JSON.stringify(gone), now, r.user_id).run();
+      await env.DB.prepare('INSERT INTO inventory_pull_delete_log (by_user, user_id, user_name, items, at) VALUES (?,?,?,?,?)').bind('🕕 released at 6 PM', r.user_id, r.display_name || r.username || '',
+        JSON.stringify(del.map(i => ({ partNum: i.partNum || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null, awd: i.awdShipment || '' }))), now).run();
+    }
+  } catch (e) { console.error('[awd 6 PM]', e.message); }
+  return cut;
+}
 async function awdClaimsOpen(env) {
-  await awdClaimTable(env);
+  await awdClaimTable(env); await awdSixPmSweep(env);
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE awd_claim SET status = 'expired', closed_at = ?, how = 'not grabbed in 24 hours' WHERE status = 'open' AND at < ?").bind(now, new Date(Date.now() - 864e5).toISOString()).run().catch(() => {});
   return ((await env.DB.prepare("SELECT * FROM awd_claim WHERE status = 'open' ORDER BY at").all()).results || []).map(r => ({ id: r.id, at: r.at, by: r.by_user, area: r.area,
@@ -18143,6 +18179,7 @@ async function inventoryPullRoute(path, method, request, env) {
   const pullId = i => String((i && i.key) || ((i && i.partNum) || '') + '|' + ((i && i.location) || '')).toUpperCase() + '|' + String((i && i.addedAt) || '');
   const isOpen = i => i && !i.grabbed && !i.submitted && !i.noneFound;
   const isAdminUp = (cs.roles || []).includes('admin') || (cs.roles || []).includes('owner');
+  await awdSixPmSweep(env); // 🕕 the AWD items not grabbed by 6 PM come off every Pull List (owner 2026-10-28)
   if (path === '/inventory/pull/mine' && method === 'GET') {
     const r = await env.DB.prepare('SELECT items, updated_at FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first();
     let items = []; try { items = JSON.parse((r && r.items) || '[]'); } catch (_) {}
