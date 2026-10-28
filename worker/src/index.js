@@ -1540,7 +1540,7 @@ async function awdBoxPallet(request, url, env, session) {
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
     const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev, name, loc FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
-    const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [], ok: [] };
+    const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [], ok: [], off: [] };
     // 🟫 Owner (2026-10-27: "pallet 1 has 14 cases, the record shows 7"): a pallet counts AMAZON boxes — and now our CASES too (one Amazon box
     // can be 2 of our cases put together): cases = the box's pieces (units × pack) ÷ SKU Mgr's pieces a case of that part #
     const eachOf = {}; { const P = [...new Set(boxes.map(b => String(b.part || '').toUpperCase()).filter(Boolean))];
@@ -1553,30 +1553,37 @@ async function awdBoxPallet(request, url, env, session) {
     boxes.forEach(b => { const r = x.by[b.sscc], w = was[b.sscc]; if (!r || !w) return;
       ['relabel', 'recount'].forEach(k => { if (!w[k]) return; const f = fix[k]; f.all++;
         if (r.kind === 'pallet') f.onPallet++; else if (r.kind === 'ok') f.ready++; else if (r.kind === (k === 'relabel' ? 'rebag' : 'split')) f.waiting++; }); });
-    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const w = was[b.sscc] || {}; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b), relabel: !!w.relabel, recount: !!w.recount };
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const w = was[b.sscc] || {}; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b), relabel: !!w.relabel, recount: !!w.recount, note: r.note || '' };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
     // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"
     let photos = {}; try { photos = await productPhotoMap(env, boxes.map(b => b.part)); } catch (_) {}
     return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
-      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n], relabel: pallets[n].filter(o => o.relabel).length, recount: pallets[n].filter(o => o.recount).length })), fix, split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, ready: kinds.ok,
+      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n], relabel: pallets[n].filter(o => o.relabel).length, recount: pallets[n].filter(o => o.recount).length })), fix, split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, off: kinds.off, ready: kinds.ok,
       // Owner (2026-10-28): "PREVIOUS PACKED still has to be scanned and put on our pallets to ship" — not scanned yet counts them too (prev: true)
       notYet: boxes.filter(b => !x.by[b.sscc]).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, loc: b.loc || '', prev: !!b.prev })) });
   }
   const b = await request.json().catch(() => ({}));
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
   if (rid) { const c = await claimRequestId(env, rid, 'awd/box-pallet'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
-  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch', 'ok'].includes(b.kind) ? b.kind : ''; // ok = whole box, Amazon label on, waiting for a pallet
+  // off = 📤 taken back OFF a pallet (owner 2026-10-28: "I put it on pallet 2 by mistake — it only needs half a case; take it out and reprint the label")
+  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch', 'ok', 'off'].includes(b.kind) ? b.kind : ''; // ok = whole box, Amazon label on, waiting for a pallet
   if (!ss || !kind) return J({ ok: false, error: 'Which box (Amazon label) and what happened to it?' }, 400);
   const pallet = kind === 'pallet' ? parseInt(b.pallet, 10) || 0 : null;
   if (kind === 'pallet' && !(pallet > 0)) return J({ ok: false, error: 'Scan the PALLET label' }, 400);
   const lm = await env.DB.prepare('SELECT shipment, seq, part FROM awd_label_map WHERE sscc = ?').bind(ss).first().catch(() => null);
   const at = t(b.at, 30) || new Date().toISOString();
+  let fromPallet = null;
+  if (kind === 'off') { // only a box that is on a pallet now; the pallet it came off is kept in the note
+    const now = await env.DB.prepare('SELECT kind, pallet FROM awd_box_scan WHERE sscc = ? ORDER BY id DESC LIMIT 1').bind(ss).first().catch(() => null);
+    if (!now || now.kind !== 'pallet') { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J({ ok: false, error: 'This box is not on a pallet' }, 400); }
+    fromPallet = now.pallet; b.note = 'off PALLET ' + now.pallet + (t(b.note, 150) ? ' — ' + t(b.note, 150) : '');
+  }
   await env.DB.prepare('INSERT INTO awd_box_scan (at, by_user, sscc, shipment, seq, part, product_part, kind, pallet, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .bind(at, who, ss, (lm && lm.shipment) || t(b.shipment, 60), (lm && lm.seq) || t(b.seq, 20), (lm && lm.part) || t(b.part, 60).toUpperCase(), t(b.productPart, 60).toUpperCase(), kind, pallet, t(b.note, 200)).run();
   let onPallet = null;
   if (kind === 'pallet') { const x = await latest('shipment = ?', (lm && lm.shipment) || t(b.shipment, 60)); onPallet = Object.values(x.by).filter(r => r.kind === 'pallet' && r.pallet === pallet).length; }
-  const res = { ok: true, sscc: ss, kind, pallet, onPallet, by: who, at };
+  const res = { ok: true, sscc: ss, kind, pallet, onPallet, by: who, at, ...(kind === 'off' ? { fromPallet } : {}) };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
