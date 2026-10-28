@@ -1515,15 +1515,27 @@ async function awdBoxPallet(request, url, env, session) {
     if (ss) { const x = await latest('sscc = ?', ss); return J({ ok: true, box: x.by[ss] || null, history: x.rows }); }
     let sh = t(url.searchParams.get('shipment'), 60);
     if (!sh && url.searchParams.get('latest')) { const l = await env.DB.prepare('SELECT shipment FROM awd_box_scan ORDER BY id DESC LIMIT 1').first().catch(() => null); sh = l ? l.shipment : ''; if (!sh) return J({ ok: true, shipment: null }); }
+    // ⚡ Owner (2026-10-28): "after we scan the Amazon label, then the outside box UPC, it takes a while … with many boxes we wait for each one".
+    // ?open=SSCC → in ONE answer: the label, its SKU's boxes, the barcodes that are that item (outside box / inside bag UPC) and its pieces
+    // a case — the phone checks every box with no more trips to the server.
+    let openBox = null;
+    const openQ = t(url.searchParams.get('open'), 24).replace(/\D/g, '').slice(-18);
+    if (openQ) {
+      openBox = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(openQ).first().catch(() => null);
+      if (!openBox) return J({ ok: true, box: null });
+      sh = openBox.shipment;
+    }
     if (!sh) return J({ ok: false, error: 'Which shipment?' }, 400);
     // 📦 Owner (2026-10-27): one SKU's Amazon boxes (5 labels → 5 to scan), each with where it is now — the Box check works through them
-    const skuQ = t(url.searchParams.get('sku'), 80).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+    const skuQ = (openBox ? String(openBox.sku || openBox.part || '') : t(url.searchParams.get('sku'), 80)).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
     if (skuQ) {
       const L = ((await env.DB.prepare("SELECT sscc, sku, part, seq, units, prev, name, loc FROM awd_label_map WHERE shipment = ? AND (UPPER(REPLACE(RTRIM(sku, '-'), ' ', '')) = ? OR UPPER(part) = ?)").bind(sh, skuQ, skuQ).all()).results || []);
       const x = await latest('shipment = ?', sh), n = s => String(s || '').split('-').map(v => parseInt(v, 10) || 0);
       L.sort((a, b) => { const A = n(a.seq), B = n(b.seq); return (A[1] || 0) - (B[1] || 0) || (A[0] || 0) - (B[0] || 0); });
-      return J({ ok: true, shipment: sh, sku: skuQ, boxes: L.map(b => { const r = x.by[b.sscc]; return { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, prev: !!b.prev, name: b.name || '', loc: b.loc || '',
-        kind: r ? r.kind : '', pallet: r ? r.pallet : null, by: r ? r.by_user : '', at: r ? r.at : '', note: r ? r.note : '' }; }) });
+      const out = { ok: true, shipment: sh, sku: skuQ, boxes: L.map(b => { const r = x.by[b.sscc]; return { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, prev: !!b.prev, name: b.name || '', loc: b.loc || '',
+        kind: r ? r.kind : '', pallet: r ? r.pallet : null, by: r ? r.by_user : '', at: r ? r.at : '', note: r ? r.note : '' }; }) };
+      if (openBox) Object.assign(out, { box: openBox }, await awdPartCodes(env, [...new Set(L.map(b => String(b.part || '').toUpperCase()).filter(Boolean))]));
+      return J(out);
     }
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
@@ -1722,6 +1734,26 @@ async function awdShipHistoryAll(env) {
 // 🏷 Owner (2026-10-27): "if I scan the outside barcode and it is the same item it shows match too — but write the outside box UPC code on the
 // label too, in case they want to check". GET /awd/box-upc?parts=A,B → each part #'s outside box UPC, as written: SKU Mgr → 🔢 UPC codes
 // first (the newest), then the UPC list (newest row), Reorder fixes, the vendor sheets, the built-in list.
+// ⚡ the barcodes that ARE these part #s (outside box + inside bag UPC: SKU Mgr → 🔢 UPC codes first — its own list wins for that part #, then the
+// UPC list, UPCs linked at Stock In, Reorder fixes, vendor sheets, built-in list) and SKU Mgr's pieces a case. A code on 2 part #s is left out
+// (the phone asks the server for it, as before). → { codes: { digits (no leading 0s): part }, each: { part: pcs } }
+async function awdPartCodes(env, parts) {
+  const U = x => String(x || '').trim().toUpperCase(), Z = u => String(u || '').replace(/\D/g, '').replace(/^0+/, ''), codes = {}, bad = new Set(), each = {};
+  if (!parts.length) return { codes, each };
+  const add = (p, u) => { const z = Z(u); if (z.length < 8 || z.length > 14) return; if (codes[z] && codes[z] !== p) bad.add(z); else codes[z] = p; };
+  const ed = await upcEditMap(env), want = new Set(parts);
+  parts.forEach(p => { const e = ed.byPart.get(p); if (e) { add(p, e.outside); add(p, e.inside); } });
+  const qs = parts.map(() => '?').join(',');
+  for (const sql of [`SELECT UPPER(TRIM(sku)) p, outside_upc a, inside_upc b FROM upc WHERE UPPER(TRIM(sku)) IN (${qs})`, `SELECT UPPER(TRIM(part)) p, upc a, '' b FROM upc_link WHERE UPPER(TRIM(part)) IN (${qs})`,
+    `SELECT UPPER(TRIM(part)) p, outside_upc a, inside_upc b FROM reorder_fix WHERE UPPER(TRIM(part)) IN (${qs})`, `SELECT UPPER(TRIM(part)) p, outside_upc a, inside_upc b FROM reorder_vendor_catalog WHERE UPPER(TRIM(part)) IN (${qs})`])
+    (await d1All(env, sql, parts)).forEach(r => { if (ed.byPart.has(r.p)) return; add(r.p, r.a); add(r.p, r.b); });
+  for (const [part, o, i] of VENDOR_UPC) { const p = U(part); if (want.has(p) && !ed.byPart.has(p)) { add(p, o); add(p, i); } }
+  // a code SKU Mgr's own list gives to ANOTHER part # is not this one's
+  for (const [z, p] of ed.byUpc) if (codes[z] && codes[z] !== p) bad.add(z);
+  bad.forEach(z => { delete codes[z]; });
+  (await d1All(env, `SELECT UPPER(TRIM(part_num)) p, MAX(units_per_case) e FROM master_list WHERE UPPER(TRIM(part_num)) IN (${qs}) GROUP BY UPPER(TRIM(part_num))`, parts)).forEach(r => { each[r.p] = parseFloat(r.e) || 0; });
+  return { codes, each };
+}
 async function awdBoxUpc(url, env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   const U = x => String(x || '').trim().toUpperCase(), ok = u => /^\d{8,14}$/.test(String(u || '').replace(/\s/g, ''));
