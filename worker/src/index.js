@@ -1610,8 +1610,10 @@ async function awdLock(request, url, env, session) {
   }
   const sh = t(b.shipment, 60), num = v => Math.max(0, Math.round((parseFloat(v) || 0) * 1000) / 1000);
   if (!sh) return J({ ok: false, error: 'Which shipment? (the Amazon Shipment ID on the labels)' }, 400);
-  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 2000).map(x => ({ forPart: t(x.forPart, 60).toUpperCase(), sku: t(x.sku, 60), boxes: num(x.boxes),
-    grabs: (Array.isArray(x.grabs) ? x.grabs : []).slice(0, 200).map(g => ({ loc: t(g.loc, 60), part: t(g.part, 60).toUpperCase(), n: num(g.n), pcs: num(g.pcs), used: num(g.used), exact: !!g.exact, caseOf: t(g.caseOf, 60), labels: num(g.labels) }))
+  // 📋 owner (2026-10-28): each grab keeps how / why (exact · cover the label · rebag), and the other bags NOT used and why — the record
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 2000).map(x => ({ forPart: t(x.forPart, 60).toUpperCase(), sku: t(x.sku, 60), boxes: num(x.boxes), pcs: num(x.pcs), short: num(x.short),
+    others: (Array.isArray(x.others) ? x.others : []).slice(0, 8).map(o => ({ part: t(o.part, 60).toUpperCase(), cases: num(o.cases), why: t(o.why, 200) })).filter(o => o.part),
+    grabs: (Array.isArray(x.grabs) ? x.grabs : []).slice(0, 200).map(g => ({ loc: t(g.loc, 60), part: t(g.part, 60).toUpperCase(), n: num(g.n), pcs: num(g.pcs), used: num(g.used), exact: !!g.exact, caseOf: t(g.caseOf, 60), labels: num(g.labels), how: t(g.how, 160), why: t(g.why, 240) }))
       .filter(g => g.loc && g.part && g.n > 0) })).filter(x => x.forPart && x.grabs.length);
   if (!lines.length) return J({ ok: false, error: 'Nothing to lock — no spot to grab from' }, 400);
   await env.DB.prepare('INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status) VALUES (?,?,?,?,?)').bind(sh, new Date().toISOString(), who, JSON.stringify(lines), 'locked').run();
@@ -1728,7 +1730,7 @@ async function awdBoxUpc(url, env) {
 // GET ?prints=<shipment> — who printed which area of those box labels (everyone signed in: the 🖨 buttons say "printed").
 // GET ?tab=builder&days=N — everything done in the Shipment Builder (Admin / Owner only).
 const AWD_BUILDER_ACTS = ['builder_add', 'builder_remove', 'builder_qty', 'builder_clear', 'builder_add_all', 'builder_remove_all', 'make_template',
-  'label_print', 'labels_bring_back', 'label_reprint'];
+  'label_print', 'labels_bring_back', 'label_reprint', 'lock', 'unlock'];
 const AWD_BUILDER_LOGGED = AWD_BUILDER_ACTS.map(a => 'awd_' + a).concat(['awd_label_map', 'awd_ship_send', 'awd_shipment_export', 'awd_prep_fix']);
 async function awdActivity(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
