@@ -11150,5 +11150,36 @@ console.log('\n📦 AWD grab plan follows the Big Company rules (same bag count 
   sq.exec("DELETE FROM awd_lock WHERE shipment = 'STAR-REC1'");
 }
 
+// ⚡ Owner (2026-10-28): "after we scan the Amazon label then the outside box UPC it takes a while to load; with many boxes we wait for each one
+// before we can scan the next — make it faster".
+console.log('\n⚡ Box check: one trip opens the label (boxes + the item\'s barcodes + pieces a case); boxes scanned back to back, no wait');
+{
+  const now = new Date().toISOString();
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('791-1-1','fast tee','791-1-1=10','C1=7-7-7',5,100)").run();
+  sq.prepare("INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES ('', '791-1-1=10', '791-1-1', '850079100011', '10850079100018', ?)").run(now);
+  const bx = (ss, seq) => ({ sscc: ss, sku: '791-1-1=10-', part: '791-1-1=10', seq, units: 10, loc: 'C1=7-7-7' });
+  await post('/awd/label-map', { shipment: 'STAR-FAST1', labels: [bx('401952611628550001', '3-1'), bx('401952611628550002', '3-2'), bx('401952611628550003', '3-3')] });
+  const op = await get('/awd/box-pallet?open=00401952611628550002');
+  check('GET /awd/box-pallet?open=<the Amazon label> answers in ONE trip: the label (STAR-FAST1, Box 3-2), its 3 boxes, the item\'s barcodes (outside box 10850079100018 + inside bag 850079100011 → 791-1-1=10) and 100 pcs a case',
+    op.ok && op.box && op.box.seq === '3-2' && op.shipment === 'STAR-FAST1' && op.boxes.length === 3 && op.codes['10850079100018'] === '791-1-1=10' && op.codes['850079100011'] === '791-1-1=10' && op.each['791-1-1=10'] === 100, op);
+  const { readFileSync: rfF } = await import('node:fs');
+  const ihF = rfF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihF.slice(ihF.indexOf('  var BXC = { label: null };'), ihF.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gF = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }), urls = [];
+  const wF = (u, o) => { urls.push(u); return call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H }); };
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gF, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  B.invBoxCheckScan('00401952611628550001'); for (let i = 0; i < 30 && !/inv-bxs-row/.test(gF('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 50));
+  const opened = urls.filter(u => /label-map|box-pallet\?(shipment|open)/.test(u)).length;
+  urls.length = 0;
+  B.invBoxCheckScan('10850079100018'); B.invBoxCheckScan('10850079100018'); B.invBoxCheckScan('850079100011'); // 3 boxes, back to back — no waiting
+  for (let i = 0; i < 30 && !/🟫 Scan the PALLET label for 3 boxes/.test(gF('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 50));
+  const h = gF('inv-bc-res').innerHTML, looked = urls.filter(u => /inventory\/lookup|label-map/.test(u)).length;
+  check('…the label opened with 1 trip; then 3 boxes scanned right after each other (outside UPC ×2, inside bag UPC) → all 3 "whole box" in order, straight to the PALLET for 3 boxes — none of them asked the server what the barcode is',
+    opened === 1 && looked === 0 && /🟫 Scan the PALLET label for 3 boxes/.test(h) && /Box 3-1 · Box 3-2 · Box 3-3/.test(h), { opened, looked, urls, h: h.slice(0, 300) });
+  B.invBoxCheckReset(); await new Promise(r => setTimeout(r, 300));
+  sq.exec("DELETE FROM master_list WHERE base_sku = '791-1-1'; DELETE FROM upc WHERE base_sku = '791-1-1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-FAST1'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-FAST1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
