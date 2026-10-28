@@ -2267,17 +2267,23 @@ window.invCredLogin = async function() {
         .then(function(x) { return x && x.partNum ? { part: String(x.partNum).toUpperCase(), name: x.name || '' } : null; }).catch(function() { return null; });
     });
   }
-  window.invBoxCheckReset = function() { BXC.label = null; BXC.pending = null; BXS = null; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the AMAZON BOX LABEL (or a box label)'; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var i = g('inv-bc-inp'); if (i) i.focus(); };
+  window.invBoxCheckReset = function() { BXC.label = null; BXC.pending = null; BXC.bulk = null; BXS = null; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the AMAZON BOX LABEL (or a box label)'; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var i = g('inv-bc-inp'); if (i) i.focus(); };
   window.invBoxCheckScan = function(v) {
     v = String(v || '').trim(); if (!v) return;
     var res = g('inv-bc-res'), st = g('inv-bc-step');
     // 📦 an Amazon box label (SSCC) → that SKU's boxes, one row each, scanned one by one, then the pallet (owner 2026-10-27)
+    if (BXC.bulk) return invBcBulkScan(v); // 🟫 the boxes labeled earlier, waiting for a pallet
     if (BXS) {
       if (BXS.step === 'pallet') return window.invBxsPallet(v);
       var ssx = invBcSscc(v);
       if (!ssx) return window.invBxsBox(v);
       var k = -1; BXS.boxes.forEach(function(b, i) { if (b.sscc === ssx) k = i; });
       if (k >= 0) { BXS.cur = k; invBxsRender(); return; } // another label of the same SKU → that box
+      // 🟫 Owner (2026-10-28, "pallet 1 has 14 full cases with 14 Amazon labels, the record shows 7"): another SKU's label while boxes of this
+      // one have the Amazon label on but no pallet → they went nowhere. Now: their PALLET first, then the new label opens by itself.
+      var rdy = BXS.boxes.filter(function(b) { return b.kind === 'ok'; }).length;
+      if (rdy) { BXS.step = 'pallet'; BXS.after = v; if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+        return invBxsRender('<div class="inv-bxs-first" style="margin-top:6px;padding:8px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:800">⚠ First scan the PALLET for the ' + rdy + ' box' + (rdy === 1 ? '' : 'es') + ' of ' + ckE(BXS.sku) + ' with the Amazon label on — then the label you just scanned opens by itself</div>'); }
     }
     if (invBcSscc(v)) { BXC.label = null; return window.invBxsStart(v); }
     if (!BXC.label) {
@@ -2412,7 +2418,10 @@ window.invCredLogin = async function() {
   window.invBxsLater = function() { var S = BXS; if (!S) return; var left = S.boxes.filter(invBxsWaiting).length, ready = S.boxes.filter(function(b) { return b.kind === 'ok'; }).length;
     invFlash('⏸ ' + left + ' box' + (left === 1 ? '' : 'es') + ' of ' + S.sku + ' saved for later — scan any of their Amazon labels to go on', 'success');
     if (ready) { S.step = 'pallet'; invBxsRender('<div style="font-size:12px;color:#ca8a04;margin-top:6px">⏸ the other ' + left + ' are saved for later</div>'); } else window.invBxsClose(); };
-  window.invBxsClose = function() { BXS = null; BXC.label = null; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the AMAZON BOX LABEL (or a box label)'; var i = g('inv-bc-inp'); if (i) i.focus(); invBcPallets(); };
+  window.invBxsClose = function() {
+    var rdyC = BXS && BXS.step !== 'pallet' ? BXS.boxes.filter(function(b) { return b.kind === 'ok'; }).length : 0; // 🟫 owner 2026-10-28: never silent
+    if (rdyC && !confirm('⚠ ' + rdyC + ' box' + (rdyC === 1 ? ' has' : 'es have') + ' the Amazon label on but NO PALLET scanned.\n\nOK = close (they stay on the list "labeled, waiting for a pallet")\nCancel = scan the PALLET now')) { BXS.step = 'pallet'; invBxsRender(); return; }
+    var aft = BXS && BXS.after; BXS = null; if (aft) setTimeout(function() { window.invBxsStart(aft); }, 300); BXC.label = null; var r = g('inv-bc-res'); if (r) r.innerHTML = ''; var st = g('inv-bc-step'); if (st) st.textContent = '1️⃣ Scan the AMAZON BOX LABEL (or a box label)'; var i = g('inv-bc-inp'); if (i) i.focus(); invBcPallets(); };
   function invBcPalletNo(v) { var m = /^(?:PALLET|PLT)[\s\-#:]*(\d{1,3})$/i.exec(String(v || '').trim()); return m ? parseInt(m[1], 10) : 0; }
   // 2️⃣ the pallet: every box of this SKU with the Amazon label on goes on it
   window.invBxsPallet = function(v) {
@@ -2425,8 +2434,28 @@ window.invCredLogin = async function() {
       if (res) res.innerHTML = invBcBig('var(--green)', '✅ ' + L.length + ' box' + (L.length === 1 ? '' : 'es') + ' of ' + ckE(S.sku) + ' on PALLET ' + n + (last && last.onPallet ? '<div style="font-size:14px;font-weight:700">PALLET ' + n + ' now has ' + last.onPallet + ' box' + (last.onPallet === 1 ? '' : 'es') + '</div>' : (last && last.queued ? '<div style="font-size:13px">📶 saved on the phone — sends when WiFi is back</div>' : ''))
         + (left ? '<div style="font-size:13px;font-weight:600">⏸ ' + left + ' more of ' + ckE(S.sku) + ' saved for later</div>' : ''));
       if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; var i = g('inv-bc-inp'); if (i) i.focus(); invBcPallets();
+      if (S.after) { var nx = S.after; setTimeout(function() { window.invBxsStart(nx); }, 900); } // the other SKU's label scanned before the pallet
     });
   };
+  // 🟫 the boxes with the Amazon label on but no PALLET scanned (any phone, any time) → put them on a pallet in one scan
+  window.invBcBulkPallet = function() {
+    var L = BXC.readyList || []; if (!L.length) return;
+    BXC.bulk = L; BXS = null; var st = g('inv-bc-step'), res = g('inv-bc-res');
+    if (st) st.textContent = '🟫 Scan the PALLET label for these ' + L.length + ' box' + (L.length === 1 ? '' : 'es');
+    if (res) res.innerHTML = invBcBig('var(--green)', '🟫 Scan the PALLET label for ' + L.length + ' labeled box' + (L.length === 1 ? '' : 'es') + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + L.map(function(b) { return ckE(b.seq) + ' ' + ckE(b.part); }).join(' · ') + '</div>')
+      + '<button type="button" onclick="invBoxCheckReset()" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer">✕ Not now</button>';
+    var i = g('inv-bc-inp'); if (i) i.focus();
+  };
+  function invBcBulkScan(v) {
+    var n = invBcPalletNo(v), L = BXC.bulk; if (!L) return;
+    if (!n) { invFlash('That is not a PALLET label — scan PALLET 1, 2, 3… (or ✕ Not now)', 'error'); if (navigator.vibrate) navigator.vibrate([200, 80, 200]); return; }
+    BXC.bulk = null; var last = null;
+    L.reduce(function(pr, b) { return pr.then(function() { return invBcKeep(b.sscc, { shipment: BXC.ship || '', seq: b.seq, part: b.part }, 'pallet', { pallet: n, productPart: b.part }).then(function(d) { last = d; }); }); }, Promise.resolve()).then(function() {
+      var res = g('inv-bc-res'), st = g('inv-bc-step');
+      if (res) res.innerHTML = invBcBig('var(--green)', '✅ ' + L.length + ' box' + (L.length === 1 ? '' : 'es') + ' on PALLET ' + n + (last && last.onPallet ? '<div style="font-size:14px;font-weight:700">PALLET ' + n + ' now has ' + last.onPallet + ' box' + (last.onPallet === 1 ? '' : 'es') + '</div>' : ''));
+      if (st) st.textContent = '1️⃣ Scan the next AMAZON BOX LABEL'; invBcPallets();
+    });
+  }
   // a box scanned again: where it is now (on PALLET n / set aside to split / to rebag)
   function invBcBoxStatus(ss) {
     wFetch(W + '/awd/box-pallet?sscc=' + ss).then(function(r) { return r.json(); }).then(function(d) {
@@ -2442,7 +2471,7 @@ window.invCredLogin = async function() {
     var el = g('inv-bc-pallets'), sh = BXC.ship; if (!el) return;
     wFetch(W + '/awd/box-pallet?' + (sh ? 'shipment=' + encodeURIComponent(sh) : 'latest=1')).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok || !d.shipment) return; BXC.ship = d.shipment;
-      var ph = d.photos || {}, T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; };
+      var ph = d.photos || {}, T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }; BXC.readyList = d.ready || [];
       // 🟫 Owner (2026-10-27, "pallet 1 has 14 cases, the record shows 7"): Amazon boxes AND our cases (an Amazon box can be 2 of our cases);
       // boxes with the Amazon label on but no PALLET scanned; box scans on this phone not sent yet
       var csN = function(l) { var c = 0, unk = 0; l.forEach(function(b) { if (b.cases != null) c += b.cases; else unk++; }); return { c: Math.round(c * 100) / 100, unk: unk }; };
@@ -2461,7 +2490,8 @@ window.invCredLogin = async function() {
       el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + (d.boxes - d.prev) + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(+ ' + d.prev + ' PREVIOUS PACKED)</span>' : '') + '</div>'
         + d.pallets.map(function(p) { return panel('🟫 PALLET ' + p.pallet + ' — ' + p.boxes.length + ' Amazon box' + (p.boxes.length === 1 ? '' : 'es') + csTxt(p.boxes) + ' · ' + parts(p.boxes) + ' part #' + (parts(p.boxes) === 1 ? '' : 's'), p.boxes, 'var(--green)', d.pallets.length <= 3); }).join('')
         + (unsent ? '<div class="inv-bc-unsent" style="margin-top:6px;color:#b45309;font-weight:700">📶 ' + unsent + ' box scan' + (unsent === 1 ? '' : 's') + ' on THIS phone not sent yet — they count when WiFi is back</div>' : '')
-        + ((d.ready || []).length ? panel('<span style="color:var(--green)">✅ ' + d.ready.length + ' labeled, waiting for a pallet</span>', d.ready, 'var(--green)') : '')
+        + ((d.ready || []).length ? panel('<span style="color:var(--green)">✅ ' + d.ready.length + ' labeled, waiting for a pallet</span>', d.ready, 'var(--green)', true)
+          + '<button type="button" class="inv-bc-bulk" onclick="invBcBulkPallet()" style="margin-top:4px;width:100%;padding:10px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">🟫 Put these ' + d.ready.length + ' on a PALLET — then scan the PALLET label</button>' : '')
         + (d.split.length ? panel('<span style="color:#ca8a04">✂ ' + d.split.length + ' to recount / separate</span>', d.split, '#ca8a04') : '')
         + (d.rebag.length ? panel('<span style="color:#ea580c">🏷 ' + d.rebag.length + ' in the packing room to rebag</span>', d.rebag, '#ea580c') : '')
         + (d.mismatch.length ? panel('<span style="color:var(--red)">❌ ' + d.mismatch.length + ' not a match — double check</span>', d.mismatch, 'var(--red)') : '')
