@@ -11150,5 +11150,37 @@ console.log('\n📦 AWD grab plan follows the Big Company rules (same bag count 
   sq.exec("DELETE FROM awd_lock WHERE shipment = 'STAR-REC1'");
 }
 
+// Owner (2026-10-28): "some box I made a mistake and put on pallet 2 — I want to be able to take it out; e.g. 31-1-2=10XX only needs about half
+// a case, I didn't see it, I thought it was a full case; I have to take it out and reprint that Amazon label".
+console.log('\n📤 Box check: a box put on a pallet by mistake can be taken OFF (who / when / which pallet / why), then scanned again');
+{
+  const { readFileSync: rfF } = await import('node:fs');
+  const ih = rfF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ah = rfF(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const S1 = '201952611628600001', S2 = '201952611628600002', S3 = '201952611628600003';
+  await post('/awd/label-map', { shipment: 'STAR-OFF1', labels: [{ sscc: S1, sku: '98-1-2=10XX-', part: '98-1-2=10XX', seq: '3-1', units: 5, loc: 'C1=1-1-1' },
+    { sscc: S2, sku: '98-1-2=10XX-', part: '98-1-2=10XX', seq: '3-2', units: 10, loc: 'C1=1-1-1' }, { sscc: S3, sku: '98-1-2=10XX-', part: '98-1-2=10XX', seq: '3-3', units: 10, loc: 'C1=1-1-1' }] });
+  await post('/awd/box-pallet', { sscc: S1, kind: 'pallet', pallet: 2 }); await post('/awd/box-pallet', { sscc: S2, kind: 'pallet', pallet: 2 });
+  const before = await get('/awd/box-pallet?shipment=STAR-OFF1');
+  const off = await post('/awd/box-pallet', { sscc: S1, kind: 'off', note: 'only half a case needed — reprint the Amazon label', _requestId: 'off-1' });
+  const again = await post('/awd/box-pallet', { sscc: S1, kind: 'off', note: 'x', _requestId: 'off-1' });
+  const notOn = await post('/awd/box-pallet', { sscc: S3, kind: 'off', note: 'x' });
+  const after = await get('/awd/box-pallet?shipment=STAR-OFF1');
+  const p2 = d => ((d.pallets || []).find(p => p.pallet === 2) || { boxes: [] }).boxes.length;
+  check('before: PALLET 2 has 2 boxes (3-1, 3-2); 📤 take 3-1 OFF → PALLET 2 has 1, 3-1 is "off" ("off PALLET 2 — only half a case needed …", who, when); ON 1 + NOT on 2 (1 off, 1 not scanned) = 3 labels; sent twice → once; a box not on a pallet can\'t be taken off',
+    p2(before) === 2 && off.ok && off.fromPallet === 2 && again.ok && notOn.ok === false && p2(after) === 1 && after.onPallets === 1 && after.off.length === 1 && after.off[0].seq === '3-1'
+      && after.off[0].note === 'off PALLET 2 — only half a case needed — reprint the Amazon label' && !!after.off[0].by && after.notYet.length === 1 && after.onPallets + after.off.length + after.notYet.length === after.boxes,
+    { off, notOn, after: { on: after.onPallets, off: after.off, notYet: after.notYet.length } });
+  // fixed (half a case), label back on → scanned again → PALLET 3
+  await post('/awd/box-pallet', { sscc: S1, kind: 'ok' }); await post('/awd/box-pallet', { sscc: S1, kind: 'pallet', pallet: 3 });
+  const fin = await get('/awd/box-pallet?shipment=STAR-OFF1'), hist = await get('/awd/box-pallet?sscc=' + S1);
+  check('…fixed and scanned again → on PALLET 3, nothing "off" any more; its history keeps every step (pallet 2 → off → ok → pallet 3)',
+    fin.onPallets === 2 && fin.off.length === 0 && (fin.pallets.find(p => p.pallet === 3) || { boxes: [] }).boxes.length === 1 && hist.history.map(r => r.kind + (r.pallet || '')).join(',') === 'pallet2,off,ok,pallet3', hist.history.map(r => r.kind));
+  check('…phone: a box already on a pallet → ⚠ ALREADY SCANNED has "📤 Take it OFF the pallet" (asks why); taken-off boxes are scanned again and listed under ⚠ NOT on a pallet (📤 with why); the AWD Planner lists them with 🖨 Reprint',
+    /\(b\.kind === 'pallet' \? '<button type="button" class="inv-bxs-off" onclick="invBxsOff\(' \+ k \+ '\)"/.test(ih) && /function invBxsWaiting\(b\) \{ return !b\.kind \|\| b\.kind === 'mismatch' \|\| b\.kind === 'off'; \}/.test(ih)
+      && /invBcKeep\(b\.sscc, \{ shipment: S\.ship, seq: b\.seq, part: b\.part \|\| S\.part \}, 'off', \{ note:/.test(ih) && /\['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'\]\.forEach\(function\(k\)/.test(ih)
+      && /\['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'\]\.forEach\(k => /.test(ah) && /d\.mismatch \|\| \[\], d\.off \|\| \[\], d\.notYet/.test(ah), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-OFF1'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-OFF1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

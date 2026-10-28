@@ -2350,9 +2350,10 @@ window.invCredLogin = async function() {
       });
     }).catch(function(e) { if (res) res.innerHTML = '<div style="color:var(--red)">📶 Could not load this SKU\'s boxes (' + ckE(e && e.message || 'no WiFi?') + ') — scan the label again</div>'; });
   };
-  function invBxsWaiting(b) { return !b.kind || b.kind === 'mismatch'; }
+  function invBxsWaiting(b) { return !b.kind || b.kind === 'mismatch' || b.kind === 'off'; } // 📤 taken off a pallet → scan it again
   var BXS_TXT = { '': ['⬜', 'scan this box', 'var(--text3)'], ok: ['✅', 'whole box — Amazon label on, waiting for a pallet', 'var(--green)'], pallet: ['🟫', 'on PALLET', 'var(--green)'],
-    split: ['✂', 'recount, or separate the box', '#ca8a04'], rebag: ['🏷', 'in the packing room — rebag + label', '#ea580c'], mismatch: ['❌', 'not a match — scan the right box', 'var(--red)'] };
+    split: ['✂', 'recount, or separate the box', '#ca8a04'], rebag: ['🏷', 'in the packing room — rebag + label', '#ea580c'], mismatch: ['❌', 'not a match — scan the right box', 'var(--red)'],
+    off: ['📤', 'taken OFF the pallet — fix it, reprint its Amazon label if needed, then scan it again', '#0e7490'] };
   function invBxsRender(msg) {
     var res = g('inv-bc-res'), st = g('inv-bc-step'); if (!res || !BXS) return;
     var S = BXS, waiting = S.boxes.filter(invBxsWaiting).length, ready = S.boxes.filter(function(b) { return b.kind === 'ok'; }).length;
@@ -2396,7 +2397,9 @@ window.invCredLogin = async function() {
         + '<div style="font-size:12px;margin-top:3px">It is counted ONCE — scanning the label again did not add it.</div>'
         + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
         + '<button type="button" class="inv-bxs-dup-ok" onclick="invBxsDupOk()" style="flex:1;min-width:130px;padding:10px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">✓ Correct — leave it</button>'
-        + '<button type="button" class="inv-bxs-dup-redo" onclick="invBxsRedo(' + k + ')" style="flex:1;min-width:130px;padding:10px;border-radius:9px;border:2px solid #d97706;background:var(--bg);color:#92400e;font-weight:800;cursor:pointer">🔁 Scan it again / other pallet</button></div></div>';
+        + '<button type="button" class="inv-bxs-dup-redo" onclick="invBxsRedo(' + k + ')" style="flex:1;min-width:130px;padding:10px;border-radius:9px;border:2px solid #d97706;background:var(--bg);color:#92400e;font-weight:800;cursor:pointer">🔁 Scan it again / other pallet</button>'
+        + (b.kind === 'pallet' ? '<button type="button" class="inv-bxs-off" onclick="invBxsOff(' + k + ')" style="flex:1 1 100%;padding:10px;border-radius:9px;border:2px solid #0e7490;background:var(--bg);color:#0e7490;font-weight:800;cursor:pointer">📤 Take it OFF the pallet (a mistake — e.g. only half a case needed)</button>' : '')
+        + '</div></div>';
     };
     S.cur = k; if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
     invBxsRender(html(b.kind === 'pallet' ? '⏳ counting PALLET ' + ckE(pn) + '…' : ''));
@@ -2409,6 +2412,21 @@ window.invCredLogin = async function() {
     }).catch(function() { if (BXS === S && S.cur === k) invBxsRender(html('📶 PALLET ' + ckE(pn) + ' total not loaded (no WiFi?)')); });
   }
   window.invBxsDupOk = function() { if (!BXS) return; invBxsNext(); invBxsRender(); };
+  // 📤 Owner (2026-10-28): "some box I put on pallet 2 by mistake — I want to be able to take it out; e.g. 31-1-2=10XX only needs about half a
+  // case, I thought it was a full case; I have to take it out and reprint that Amazon label". Kept on the server (who / when / which pallet /
+  // why); the box is then NOT on a pallet (listed with 🖨 reprint in the AWD Planner) and is scanned again like a new one.
+  window.invBxsOff = function(k) {
+    var S = BXS, b = S && S.boxes[k]; if (!b || b.kind !== 'pallet') return;
+    var why = prompt('📤 Take Box ' + b.seq + ' (' + (b.part || S.part) + ') OFF PALLET ' + b.pallet + '?\n\nWhy? (kept in the record)', 'not a full case — only part of a case needed, reprint the Amazon label');
+    if (why === null) return;
+    var was = b.pallet;
+    invBcKeep(b.sscc, { shipment: S.ship, seq: b.seq, part: b.part || S.part }, 'off', { note: String(why).trim().slice(0, 150) }).then(function(d) {
+      if (d && d.ok === false) { invFlash('Not taken off: ' + (d.error || 'error'), 'error'); return; }
+      invBcPallets(); });
+    b.kind = 'off'; b.pallet = null; b.note = 'off PALLET ' + was + (why ? ' — ' + why : ''); b.by = invBxsMe(); b.at = new Date().toISOString(); S.cur = k; S.step = 'scan';
+    invFlash('📤 Box ' + b.seq + ' taken OFF PALLET ' + was + ' — fix it (reprint its Amazon label in the AWD Planner if needed), then scan it again', 'warn');
+    invBxsRender('<div class="inv-bxs-first" style="margin-top:6px;padding:8px;border-radius:8px;background:#cffafe;color:#0e7490;font-weight:800">📤 Box ' + ckE(b.seq) + ' is OFF PALLET ' + ckE(was) + '. Fix it (take out what is not needed), put the Amazon label on — reprint it in the AWD Planner → ⚠ Not on a pallet yet → 🖨 if needed — then scan the box again and its PALLET.</div>');
+  };
   // 🔁 the box goes back to ⬜ on this phone: scan the box again, then the pallet → its newest scan is the one kept (still counted once)
   window.invBxsRedo = function(k) { var S = BXS, b = S && S.boxes[k]; if (!b) return; b.kind = ''; b.note = ''; S.cur = k; S.step = 'scan';
     invBxsRender('<div class="inv-bxs-first" style="margin-top:6px;padding:8px;border-radius:8px;background:#ede9fe;color:#5b21b6;font-weight:800">🔁 Box ' + ckE(b.seq) + ': scan the box again, then its PALLET — the new scan replaces the old one (still counted once)</div>'); };
@@ -2554,9 +2572,9 @@ window.invCredLogin = async function() {
   // on the pallet, and reprint the label if we need to". Every Amazon label of the shipment (PREVIOUS PACKED aside) is ON a pallet or listed
   // here with why (not scanned yet / labeled, no pallet / recount / packing room / not a match); ON + NOT ON = all labels, always.
   var BC_NOTPAL = { notYet: ['⬜', 'not scanned yet', 'var(--text2)'], ready: ['✅', 'labeled — NO PALLET scanned', 'var(--green)'], split: ['✂', 'recount / separate', '#ca8a04'],
-    rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'] };
+    rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'], off: ['📤', 'taken OFF a pallet — fix / reprint the label', '#0e7490'] };
   function invBcNotPal(d) {
-    var L = []; ['notYet', 'ready', 'split', 'rebag', 'mismatch'].forEach(function(k) { (d[k] || []).forEach(function(b) { L.push({ b: b, k: k }); }); });
+    var L = []; ['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'].forEach(function(k) { (d[k] || []).forEach(function(b) { L.push({ b: b, k: k }); }); });
     // every Amazon label — PREVIOUS PACKED too (owner 2026-10-28: they go on our pallets as well)
     var all = d.boxes || 0, on = d.onPallets || 0, nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
     L.sort(function(x, y) { var a = String(x.b.loc || '~'), c = String(y.b.loc || '~'), A = nv(x.b.seq), B = nv(y.b.seq);
@@ -2568,7 +2586,7 @@ window.invCredLogin = async function() {
         + L.map(function(x) { var T = BC_NOTPAL[x.k];
           return '<div class="inv-bc-np" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span>' + T[0] + '</span><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b>' + (x.b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>'
             + (x.b.loc ? ' <span style="color:var(--text3)">· ' + ckE(x.b.loc) + '</span>' : '') + ' <span style="color:' + T[2] + ';font-weight:700">· ' + T[1] + '</span>'
-            + (x.b.by ? ' <span style="color:var(--text3)">· ' + ckE(x.b.by) + '</span>' : '') + ' <span style="color:var(--text3);font-family:var(--mono);font-size:10px">…' + ckE(String(x.b.sscc || '').slice(-6)) + '</span></div></div>'; }).join('')
+            + (x.k === 'off' && x.b.note ? ' <span style="color:#0e7490">(' + ckE(x.b.note) + ')</span>' : '') + (x.b.by ? ' <span style="color:var(--text3)">· ' + ckE(x.b.by) + '</span>' : '') + ' <span style="color:var(--text3);font-family:var(--mono);font-size:10px">…' + ckE(String(x.b.sscc || '').slice(-6)) + '</span></div></div>'; }).join('')
         + '<div style="font-size:12px;color:var(--text2);margin-top:5px">🖨 Label lost or torn? Reprint the exact Amazon label on the office computer: <b>AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨</b></div></details>' : '');
   }
   // 🖨 PALLET labels: big "PALLET 1" + its barcode, one per 4 × 6 label

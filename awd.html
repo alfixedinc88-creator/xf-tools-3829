@@ -2451,7 +2451,7 @@ async function awdLblBringBack(at) {
 // ⚠ Owner (2026-10-28): "keep track of the total labels put on a pallet and the total still not on a pallet — check which label is still not
 // on the pallet, and reprint the label if we need to". From the phones' 🔍 Box check (/awd/box-pallet): ON a pallet + NOT on a pallet = every
 // label of the shipment (PREVIOUS PACKED aside). 🖨 reprints the exact Amazon label (with our template) from the labels saved on this computer.
-const AWD_NOTPAL = { notYet: ['⬜', 'not scanned yet'], ready: ['✅', 'labeled — NO PALLET scanned'], split: ['✂', 'recount / separate'], rebag: ['🏷', 'in the packing room'], mismatch: ['❌', 'not a match'] };
+const AWD_NOTPAL = { notYet: ['⬜', 'not scanned yet'], ready: ['✅', 'labeled — NO PALLET scanned'], split: ['✂', 'recount / separate'], rebag: ['🏷', 'in the packing room'], mismatch: ['❌', 'not a match'], off: ['📤', 'taken OFF a pallet (a mistake) — fix it, reprint its label'] };
 let _awdPal = null;
 async function awdPalShow() {
   const el = ge('awd-lbl-pal'), ship = window.AWD_LBL_SHIP; if (!el) return;
@@ -2459,7 +2459,7 @@ async function awdPalShow() {
   let d; try { d = await wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(ship)).then(r => r.json()); } catch (e) { el.innerHTML = '<span style="color:#DC2626">📶 Pallet check not loaded (no WiFi?)</span>'; return; }
   if (!d || !d.ok) { el.innerHTML = ''; return; }
   const h = v => String(v == null ? '' : v).replace(/[<&"]/g, ''), L = [], nv = x => String(x || '').split('-').map(v => parseInt(v, 10) || 0);
-  ['notYet', 'ready', 'split', 'rebag', 'mismatch'].forEach(k => (d[k] || []).forEach(b => L.push(Object.assign({ k }, b))));
+  ['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'].forEach(k => (d[k] || []).forEach(b => L.push(Object.assign({ k }, b))));
   L.sort((x, y) => String(x.loc || '~').localeCompare(String(y.loc || '~')) || String(x.part).localeCompare(String(y.part)) || (nv(x.seq)[0] - nv(y.seq)[0]) || (nv(x.seq)[1] - nv(y.seq)[1]));
   const all = (d.boxes || 0) - (d.prev || 0), on = d.onPallets || 0; _awdPal = { d, L };
   const b = 'padding:5px 10px;border-radius:7px;border:1.5px solid #B45309;background:#fff;color:#B45309;font-weight:800;font-size:12px;cursor:pointer;margin:3px 4px 0 0';
@@ -2469,14 +2469,14 @@ async function awdPalShow() {
     + (on + L.length !== all ? '<div style="color:#DC2626;font-weight:700">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' labels — something is not counted</div>' : '')
     + (L.length ? '<table style="border-collapse:collapse;width:100%;margin-top:4px"><tr style="text-align:left;color:#64748B"><th><input type="checkbox" title="all" onchange="document.querySelectorAll(\'.awd-pal-ck\').forEach(c => c.checked = this.checked)"></th><th>Box</th><th>Part #</th><th>Spot</th><th>Where it is</th><th></th></tr>'
       + L.map((x, i) => '<tr style="border-top:1px solid #E2E8F0"><td><input type="checkbox" class="awd-pal-ck" data-i="' + i + '"></td><td><b>' + h(x.seq) + '</b></td><td style="font-family:monospace">' + h(x.part) + '</td><td>' + h(x.loc) + '</td>'
-        + '<td>' + AWD_NOTPAL[x.k][0] + ' ' + AWD_NOTPAL[x.k][1] + (x.by ? ' <span style="color:#64748B">· ' + h(x.by) + '</span>' : '') + '</td><td><button type="button" style="' + b + '" onclick="awdPalReprint([' + i + '])">🖨 Reprint</button></td></tr>').join('') + '</table>'
+        + '<td>' + AWD_NOTPAL[x.k][0] + ' ' + AWD_NOTPAL[x.k][1] + (x.k === 'off' && x.note ? ' <span style="color:#0E7490">(' + h(x.note) + ')</span>' : '') + (x.by ? ' <span style="color:#64748B">· ' + h(x.by) + '</span>' : '') + '</td><td><button type="button" style="' + b + '" onclick="awdPalReprint([' + i + '])">🖨 Reprint</button></td></tr>').join('') + '</table>'
       + '<button type="button" style="' + b + '" onclick="awdPalReprint(null, true)">🖨 Reprint the ticked</button><button type="button" style="' + b + ';background:#B45309;color:#fff" onclick="awdPalReprint(null)">🖨 Reprint all ' + L.length + ' not on a pallet</button>'
       : '<div style="color:#15803D;font-weight:700;margin-top:3px">✅ Every label is on a pallet</div>') + '</div>';
 }
 // The saved pages of these Amazon boxes. Labels made from now on carry their SSCCs; older saved labels are matched by SKU + box N-k
 // (only when the SKU has one label per page and no PREVIOUS PACKED, so the match is exact — otherwise: upload the label PDF again).
 function awdPalPages(groups, want, d) {
-  const out = [], got = {}, all = [].concat(...(d.pallets || []).map(p => p.boxes), d.ready || [], d.split || [], d.rebag || [], d.mismatch || [], d.notYet || []);
+  const out = [], got = {}, all = [].concat(...(d.pallets || []).map(p => p.boxes), d.ready || [], d.split || [], d.rebag || [], d.mismatch || [], d.off || [], d.notYet || []);
   const old = {}; (groups || []).forEach(g => { if (g.ssccs) { if (g.ssccs.some(x => want[x])) { out.push(...g.pages); g.ssccs.forEach(x => { if (want[x]) got[x] = 1; }); } return; }
     const k = String(g.key || '').split('|'); if (k[0] !== '1' || k.length < 5) return; const sku = String(k[k.length - 2]).toUpperCase(); (old[sku] = old[sku] || []).push({ g, i: +k[k.length - 1] }); });
   Object.keys(old).forEach(sku => { const G = old[sku].sort((a, b) => a.i - b.i), B = all.filter(x => String(x.sku || '').toUpperCase() === sku);
