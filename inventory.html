@@ -1840,6 +1840,7 @@ window.invCredLogin = async function() {
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock Out</div>
         <div id="hist-rt-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
         <div id="hist-rt-out-cases" style="font-size:10px;color:var(--text3);font-family:var(--mono)"></div>
+        <div id="hist-rt-out-bigco" style="font-size:10px;color:var(--purple);font-family:var(--mono)"></div>
       </div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
@@ -1888,6 +1889,7 @@ window.invCredLogin = async function() {
         <div id="hist-type-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;margin-top:4px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.15)">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="IN"> Stock In</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="OUT"> Stock Out</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="BIGCO"> 🏢 Stock Out Big Company</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="TRANSFER_OUT"> Transfer</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="AUDIT"> Audit</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="EDIT"> Edit</label>
@@ -8421,6 +8423,7 @@ window.invCredLogin = async function() {
           if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases · ' + fmt(P.stockOut) + ' pcs';
           if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases · ' + fmt(P.transfers) + ' pcs moved';
         }
+        if (g('hist-rt-out-bigco')) g('hist-rt-out-bigco').textContent = t.casesOutBigCo != null ? '🏢 Big Company: ' + (t.casesOutBigCo||0).toLocaleString() + ' cases' : '';
         histRenderValue(d.value);
         var ct = d.container;
         if (g('hist-rt-ctr')) g('hist-rt-ctr').textContent = ct && !ct.error ? fmt(ct.cases) + ' cases' : '—';
@@ -8444,6 +8447,7 @@ window.invCredLogin = async function() {
           + '<th style="' + thS + ';text-align:right">Out</th>'
           + '<th style="' + thS + ';text-align:right">Cases In</th>'
           + '<th style="' + thS + ';text-align:right">Cases Out</th>'
+          + '<th style="' + thS + ';text-align:right" title="The part of Cases Out that went out on Stock Out Big Company">🏢 Big Co Cases Out</th>'
           + '<th style="' + thS + ';text-align:right">Transfers</th>'
           + '<th style="' + thS + ';text-align:right">Xfer Cases</th>'
           + '<th style="' + thS + ';text-align:right" title="🚢 Container here: boxes moved off pallets · pallets worked on (emptied)">🚢 Cases / Pallets</th>'
@@ -8458,6 +8462,7 @@ window.invCredLogin = async function() {
             + '<td style="' + tdS + ';text-align:right;color:var(--red)">' + p.stockOut + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--green);font-weight:700">' + (p.casesIn||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red);font-weight:700">' + (p.casesOut||0).toLocaleString() + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--purple);font-weight:700">' + (p.casesOutBigCo != null ? (p.casesOutBigCo||0).toLocaleString() : '—') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + p.transfers + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple);font-weight:700">' + (p.transferCases||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + (p.container ? (p.container.cases||0).toLocaleString() + ' / ' + p.container.pallets + (p.container.palletsFinished ? ' (' + p.container.palletsFinished + ' emptied)' : '') + (p.container.avgMinutes != null ? ' · avg ' + histMins(p.container.avgMinutes) : '') : '—') + '</td>'
@@ -8483,9 +8488,23 @@ window.invCredLogin = async function() {
   };
 
   function histTypeDisplayName(v) {
-    var map = { IN: 'Stock In', OUT: 'Stock Out', TRANSFER_OUT: 'Transfer', AUDIT: 'Audit', EDIT: 'Edit' };
+    var map = { IN: 'Stock In', OUT: 'Stock Out', BIGCO: '🏢 Stock Out Big Company', TRANSFER_OUT: 'Transfer', AUDIT: 'Audit', EDIT: 'Edit' };
     return map[v] || v;
   }
+
+  // 🏢 A Stock Out for Big Company carries [BIG COMPANY …] in its notes.
+  function histIsBigCo(r) { return String((r && r.type) || '').toUpperCase() === 'OUT' && /\[BIG COMPANY/i.test(String((r && r.notes) || '')) && !/\[AUDIT\]/.test(String((r && r.notes) || '')); }
+  window.histIsBigCo = histIsBigCo;
+  // Same rules as the server's ?types= (worker inventoryHistory) — Stock Out includes Big Company; 🏢 Big Company is only those.
+  function histTypeMatch(r, types) {
+    if (!types || !types.length) return true;
+    var t = String((r && r.type) || '').toUpperCase(), aud = /\[AUDIT\]/.test(String((r && r.notes) || ''));
+    return types.some(function(k) {
+      return k === 'IN' ? t === 'IN' && !aud : k === 'OUT' ? t === 'OUT' && !aud : k === 'BIGCO' ? histIsBigCo(r)
+        : k === 'TRANSFER_OUT' ? t.indexOf('TRANSFER') === 0 : k === 'AUDIT' ? aud : k === 'EDIT' ? t === 'EDIT' : t === k;
+    });
+  }
+  window.histTypeMatch = histTypeMatch;
 
   window.histApplyTypeFilter = function() {
     var checked = Array.prototype.slice.call(document.querySelectorAll('.hist-type-chk:checked')).map(function(c) { return c.value; });
@@ -8538,7 +8557,8 @@ window.invCredLogin = async function() {
           totalBar.style.display = 'flex';
           if (totalEl) totalEl.textContent = Number(d.totalCases).toLocaleString() + ' cases';
         }
-        histRender(d.rows, d.count, d.source);
+        var rows = (d.rows || []).filter(function(r) { return histTypeMatch(r, _histSelectedTypes); });
+        histRender(rows, rows.length, d.source);
       })
       .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Load failed</div>'; });
   };
@@ -8622,7 +8642,7 @@ window.invCredLogin = async function() {
         timeCell = fmtT(r.timestamp);
       }
       var typ = (r.type||'').toUpperCase();
-      var typLabel = typ === 'TRANSFER_OUT' ? 'TRANSFER' : typ === 'TRANSFER_IN' ? 'XFR IN' : typ;
+      var typLabel = typ === 'TRANSFER_OUT' ? 'TRANSFER' : typ === 'TRANSFER_IN' ? 'XFR IN' : histIsBigCo(r) ? 'OUT · 🏢 BIG CO' : typ;
       var typCol  = typeColor[typ] || 'var(--text2)';
       var stCol   = statusColor[(r.status||'').toLowerCase()] || 'var(--text2)';
       var notes   = (r.notes||'').replace(/\[AUDIT\]\s*/,'').slice(0,60);
