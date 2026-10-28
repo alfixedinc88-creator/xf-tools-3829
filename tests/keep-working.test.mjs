@@ -11023,5 +11023,50 @@ console.log('\n🟫 Box check: another SKU\'s label first → the PALLET for the
   sq.exec("DELETE FROM master_list WHERE name = 'pal y'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALY'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALY'");
 }
 
+// Owner (2026-10-28): "keep track of the total labels put on a pallet, the total still not on a pallet — check which label is still not on the
+// pallet, and reprint the label if we need to".
+console.log('\n⚠ Labels ON a pallet / NOT on a pallet yet (which ones) + 🖨 reprint those labels');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('85-5-5','pal x','85-5-5=10','GARAGE',9,100), ('86-6-6','pal x','86-6-6=10','GARAGE',9,100)").run();
+  const bx = (ss, part, seq, loc, prev) => ({ sscc: ss, sku: part + '-', part, seq, units: 10, loc, prev: !!prev });
+  await post('/awd/label-map', { shipment: 'STAR-PALX', labels: [bx('301952611628551001', '85-5-5=10', '3-1', 'C1=1-1-1'), bx('301952611628551002', '85-5-5=10', '3-2', 'C1=1-1-1'), bx('301952611628551003', '85-5-5=10', '3-3', 'C2=2-2-2'),
+    bx('301952611628551011', '86-6-6=10', '2-1', 'C4=4-4-4'), bx('301952611628551012', '86-6-6=10', '2-2', 'C4=4-4-4'), bx('301952611628551021', '86-6-6=10', '1-1', '', true)] });
+  await post('/awd/box-pallet', { sscc: '301952611628551001', kind: 'pallet', pallet: 1, productPart: '85-5-5=10' });
+  await post('/awd/box-pallet', { sscc: '301952611628551011', kind: 'pallet', pallet: 1, productPart: '86-6-6=10' });
+  await post('/awd/box-pallet', { sscc: '301952611628551002', kind: 'ok', productPart: '85-5-5=10' });
+  await post('/awd/box-pallet', { sscc: '301952611628551012', kind: 'rebag', productPart: '86-6-6=10' });
+  const T = await get('/awd/box-pallet?shipment=STAR-PALX'), notOn = T.notYet.length + T.ready.length + T.split.length + T.rebag.length + T.mismatch.length;
+  check('6 labels (1 PREVIOUS PACKED) → 2 ON a pallet + 3 NOT on a pallet (1 labeled no pallet, 1 packing room, 1 not scanned) = 5 ✅; every row has its SKU + spot',
+    T.onPallets === 2 && notOn === 3 && T.onPallets + notOn === T.boxes - T.prev && T.notYet[0].sku === '85-5-5=10-' && T.notYet[0].loc === 'C2=2-2-2' && T.ready[0].loc === 'C1=1-1-1', T);
+  // phone card
+  const { readFileSync: rfX } = await import('node:fs');
+  const ihX = rfX(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihX.slice(ihX.indexOf('  var BXC = { label: null };'), ihX.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gX = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} });
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gX, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  B.invBoxCheckScan('00301952611628551003'); await new Promise(r => setTimeout(r, 300)); B.invBoxCheckReset();
+  B.invBcPallets(); for (let i = 0; i < 20 && !/inv-bc-tot/.test(gX('inv-bc-pallets').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
+  const pH = gX('inv-bc-pallets').innerHTML, rowsX = (pH.match(/class="inv-bc-np" data-k="[a-zA-Z]+"/g) || []).map(x => x.split('"')[3]).join(',');
+  check('phone (Stock Out Big Company → Box check): big totals "2 labels ON a pallet · 3 NOT on a pallet yet · 5 labels in all"; "⚠ Which 3 labels are not on a pallet yet": Box 3-2 C1 labeled no pallet, Box 3-3 C2 not scanned, Box 2-2 C4 packing room (by spot); where to 🖨 reprint',
+    />2<\/div><div[^>]*>🟫 labels ON a pallet/.test(pH) && />3<\/div><div[^>]*>⚠ NOT on a pallet yet/.test(pH) && />5<\/div><div[^>]*>📦 labels in all/.test(pH) && /⚠ Which 3 labels are not on a pallet yet/.test(pH)
+      && rowsX === 'ready,notYet,rebag' && /Box 3-2<\/b> <b[^>]*>85-5-5=10<\/b> <span[^>]*>· C1=1-1-1/.test(pH) && /labeled — NO PALLET scanned/.test(pH) && /AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨/.test(pH) && !/≠/.test(pH), { rowsX, pH: pH.slice(0, 1500) });
+  // office: 🖨 the exact saved label pages of those boxes — new labels by SSCC, labels saved before by SKU + box N-k (exact only)
+  const awX = rfX(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const pg = new Function(awX.slice(awX.indexOf('function awdPalPages('), awX.indexOf('function awdPalReprint(')) + '; return awdPalPages;')();
+  const newG = [{ key: '1|01|C1=1-1-1|85-5-5=10-|00000', ssccs: ['301952611628551001'], pages: [{ url: 'A1' }] }, { key: '1|01|C1=1-1-1|85-5-5=10-|00001', ssccs: ['301952611628551002'], pages: [{ url: 'A2' }, { url: 'A2own' }] },
+    { key: '1|02|C2=2-2-2|85-5-5=10-|00002', ssccs: ['301952611628551003'], pages: [{ url: 'A3' }] }];
+  const r1 = pg(newG, { '301952611628551002': 1, '301952611628551003': 1 }, T);
+  const oldG = [{ key: '0', pages: [{ url: 'P' }] }, { key: '1|01|C1=1-1-1|85-5-5=10-|00000', pages: [{ url: 'B1' }] }, { key: '1|01|C1=1-1-1|85-5-5=10-|00001', pages: [{ url: 'B2' }] }, { key: '1|02|C2=2-2-2|85-5-5=10-|00002', pages: [{ url: 'B3' }] },
+    { key: '1|04|C4=4-4-4|86-6-6=10-|00004', pages: [{ url: 'C1' }] }];
+  const r2 = pg(oldG, { '301952611628551003': 1, '301952611628551012': 1 }, T);
+  const aj = rfX(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8'), wj = rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('office (AWD Planner): 🖨 Reprint Box 3-2 + 3-3 → exactly their saved pages (3-2 with its own template page: A2, A2own, A3); labels saved before this change: 85-5-5 3-3 → B3 (SKU + box N-k), 86-6-6 2-2 not printed (its 2 labels are not all saved, so no guessing); kept in 🕘 History; 🧩 check marks',
+    r1.pages.map(p => p.url).join() === 'A2,A2own,A3' && Object.keys(r1.got).length === 2 && r2.pages.map(p => p.url).join() === 'B3' && !r2.got['301952611628551012']
+      && /'label_reprint'\]/.test(wj) && /case 'label_reprint'/.test(awX) && /grp\.ssccs = found\.map/.test(awX) && /id="awd-lbl-pal"/.test(awX) && /sel: '#awd-lbl-pal'/.test(aj) && /sel: '\.inv-bc-notpal'/.test(aj), { r1: r1.pages, r2: r2.pages });
+  sq.exec("DELETE FROM master_list WHERE name = 'pal x'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALX'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALX'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

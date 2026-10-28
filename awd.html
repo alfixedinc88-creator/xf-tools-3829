@@ -1074,6 +1074,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                   <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.</div>
                 </div>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
+                <!-- ⚠ Owner (2026-10-28): "keep track of the labels on a pallet / not on a pallet yet, which ones, and reprint a label if we need to". -->
+                <div id="awd-lbl-pal" style="font-size:12px;margin-top:6px"></div>
                 <!-- 🕘 Owner (2026-10-27): the label sets made before (last 10 on this computer) — Admin / Owner only. -->
                 <details id="awd-lbl-hist" style="display:none;margin-top:6px;font-size:12px" ontoggle="if(this.open)awdLblHistShow()">
                   <summary style="cursor:pointer;font-weight:700">🕘 Earlier box labels <span style="font-weight:400;color:var(--gray-400)">(Admin only · last 10 on this computer)</span></summary>
@@ -2360,6 +2362,7 @@ function awdActTxt(r) {
     case 'builder_remove_all': return '✕ Removed all shown: ' + h(d.n) + ' SKUs (' + L(d.skus) + ')';
     case 'make_template': return (d.on ? '☑' : '☐') + ' Make template for <b>' + h(d.sku) + '</b>';
     case 'label_print': return '🖨 Printed <b>' + h(d.area) + '</b> of ' + h(d.shipment || 'the box labels') + ' — ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + (d.made ? ' (right after making them)' : '');
+    case 'label_reprint': return '🖨 Reprinted ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + ' of ' + h(d.shipment || '?') + ' (not on a pallet yet): Box ' + L(d.boxes);
     case 'labels_bring_back': return '↩ Brought back the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels)';
     case 'label_map': return '🏷 Made the box labels of <b>' + h(d.shipment || '?') + '</b> (' + h(d.boxes) + ' boxes)';
     case 'ship_send': return '📤 Sent <b>' + h(d.shipment) + '</b> to Stock Out Big Company (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';
@@ -2392,9 +2395,56 @@ async function awdLblBringBack(at) {
   const rec = await awdLblLoad('h:' + at), out = ge('awd-lbl-out');
   if (!rec || !out) { awd_planner_toast('Those labels are not on this computer anymore', 'error'); return; }
   window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; window.AWD_LOCK_DRAFT = rec.lock || null; await awdLblSave(rec, true);
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow();
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow(); (typeof awdPalShow === 'function') && awdPalShow();
   (typeof awdAct === 'function') && awdAct('labels_bring_back', { shipment: rec.shipment || '', made: rec.at, labels: (rec.groups || []).reduce((a, g) => a + g.pages.length, 0) });
   awd_planner_toast('↩ ' + (rec.shipment || 'Labels') + ' brought back — 🖨 print an area or All');
+}
+// ⚠ Owner (2026-10-28): "keep track of the total labels put on a pallet and the total still not on a pallet — check which label is still not
+// on the pallet, and reprint the label if we need to". From the phones' 🔍 Box check (/awd/box-pallet): ON a pallet + NOT on a pallet = every
+// label of the shipment (PREVIOUS PACKED aside). 🖨 reprints the exact Amazon label (with our template) from the labels saved on this computer.
+const AWD_NOTPAL = { notYet: ['⬜', 'not scanned yet'], ready: ['✅', 'labeled — NO PALLET scanned'], split: ['✂', 'recount / separate'], rebag: ['🏷', 'in the packing room'], mismatch: ['❌', 'not a match'] };
+let _awdPal = null;
+async function awdPalShow() {
+  const el = ge('awd-lbl-pal'), ship = window.AWD_LBL_SHIP; if (!el) return;
+  if (!ship) { el.innerHTML = ''; return; }
+  let d; try { d = await wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(ship)).then(r => r.json()); } catch (e) { el.innerHTML = '<span style="color:#DC2626">📶 Pallet check not loaded (no WiFi?)</span>'; return; }
+  if (!d || !d.ok) { el.innerHTML = ''; return; }
+  const h = v => String(v == null ? '' : v).replace(/[<&"]/g, ''), L = [], nv = x => String(x || '').split('-').map(v => parseInt(v, 10) || 0);
+  ['notYet', 'ready', 'split', 'rebag', 'mismatch'].forEach(k => (d[k] || []).forEach(b => L.push(Object.assign({ k }, b))));
+  L.sort((x, y) => String(x.loc || '~').localeCompare(String(y.loc || '~')) || String(x.part).localeCompare(String(y.part)) || (nv(x.seq)[0] - nv(y.seq)[0]) || (nv(x.seq)[1] - nv(y.seq)[1]));
+  const all = (d.boxes || 0) - (d.prev || 0), on = d.onPallets || 0; _awdPal = { d, L };
+  const b = 'padding:5px 10px;border-radius:7px;border:1.5px solid #B45309;background:#fff;color:#B45309;font-weight:800;font-size:12px;cursor:pointer;margin:3px 4px 0 0';
+  el.innerHTML = '<div style="border:2px solid ' + (L.length ? '#D97706' : '#15803D') + ';border-radius:8px;padding:8px">'
+    + '<div style="font-weight:800">🟫 Pallet check — ' + h(d.shipment) + ': <span style="color:#15803D">' + on + ' label' + (on === 1 ? '' : 's') + ' ON a pallet</span> · <span style="color:' + (L.length ? '#B45309' : '#15803D') + '">⚠ ' + L.length + ' NOT on a pallet yet</span> · ' + all + ' in all'
+    + (d.prev ? ' <span style="font-weight:400;color:#64748B">(+ ' + d.prev + ' PREVIOUS PACKED)</span>' : '') + ' <button type="button" style="' + b + '" onclick="awdPalShow()">↻</button></div>'
+    + (on + L.length !== all ? '<div style="color:#DC2626;font-weight:700">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' labels — something is not counted</div>' : '')
+    + (L.length ? '<table style="border-collapse:collapse;width:100%;margin-top:4px"><tr style="text-align:left;color:#64748B"><th><input type="checkbox" title="all" onchange="document.querySelectorAll(\'.awd-pal-ck\').forEach(c => c.checked = this.checked)"></th><th>Box</th><th>Part #</th><th>Spot</th><th>Where it is</th><th></th></tr>'
+      + L.map((x, i) => '<tr style="border-top:1px solid #E2E8F0"><td><input type="checkbox" class="awd-pal-ck" data-i="' + i + '"></td><td><b>' + h(x.seq) + '</b></td><td style="font-family:monospace">' + h(x.part) + '</td><td>' + h(x.loc) + '</td>'
+        + '<td>' + AWD_NOTPAL[x.k][0] + ' ' + AWD_NOTPAL[x.k][1] + (x.by ? ' <span style="color:#64748B">· ' + h(x.by) + '</span>' : '') + '</td><td><button type="button" style="' + b + '" onclick="awdPalReprint([' + i + '])">🖨 Reprint</button></td></tr>').join('') + '</table>'
+      + '<button type="button" style="' + b + '" onclick="awdPalReprint(null, true)">🖨 Reprint the ticked</button><button type="button" style="' + b + ';background:#B45309;color:#fff" onclick="awdPalReprint(null)">🖨 Reprint all ' + L.length + ' not on a pallet</button>'
+      : '<div style="color:#15803D;font-weight:700;margin-top:3px">✅ Every label is on a pallet</div>') + '</div>';
+}
+// The saved pages of these Amazon boxes. Labels made from now on carry their SSCCs; older saved labels are matched by SKU + box N-k
+// (only when the SKU has one label per page and no PREVIOUS PACKED, so the match is exact — otherwise: upload the label PDF again).
+function awdPalPages(groups, want, d) {
+  const out = [], got = {}, all = [].concat(...(d.pallets || []).map(p => p.boxes), d.ready || [], d.split || [], d.rebag || [], d.mismatch || [], d.notYet || []);
+  const old = {}; (groups || []).forEach(g => { if (g.ssccs) { if (g.ssccs.some(x => want[x])) { out.push(...g.pages); g.ssccs.forEach(x => { if (want[x]) got[x] = 1; }); } return; }
+    const k = String(g.key || '').split('|'); if (k[0] !== '1' || k.length < 5) return; const sku = String(k[k.length - 2]).toUpperCase(); (old[sku] = old[sku] || []).push({ g, i: +k[k.length - 1] }); });
+  Object.keys(old).forEach(sku => { const G = old[sku].sort((a, b) => a.i - b.i), B = all.filter(x => String(x.sku || '').toUpperCase() === sku);
+    const N = B.length ? parseInt(String(B[0].seq).split('-')[0], 10) : 0; if (!N || G.length !== N || B.length !== N) return;
+    B.forEach(x => { const kk = parseInt(String(x.seq).split('-')[1], 10); if (want[x.sscc] && G[kk - 1]) { out.push(...G[kk - 1].g.pages); got[x.sscc] = 1; } }); });
+  return { pages: out, got };
+}
+function awdPalReprint(idx, ticked) {
+  const P = _awdPal; if (!P) return;
+  if (ticked) idx = [...document.querySelectorAll('.awd-pal-ck')].filter(c => c.checked).map(c => +c.dataset.i);
+  const L = (idx || P.L.map((x, i) => i)).map(i => P.L[i]).filter(Boolean); if (!L.length) { awd_planner_toast('Tick the labels to reprint first', 'error'); return; }
+  const want = {}; L.forEach(x => { want[x.sscc] = 1; });
+  const r = awdPalPages(window.AWD_LBL_GROUPS, want, P.d), miss = L.filter(x => !r.got[x.sscc]);
+  if (!r.pages.length) { awd_planner_toast('These labels are not saved on this computer — upload the label PDF of ' + (P.d.shipment || 'this shipment') + ' again, then 🖨 Reprint', 'error'); return; }
+  if (!awdPrintPages(r.pages, 'Reprint — ' + L.length + ' label' + (L.length === 1 ? '' : 's'))) { awd_planner_toast('Allow pop-ups for this page, then try again', 'error'); return; }
+  (typeof awdAct === 'function') && awdAct('label_reprint', { shipment: P.d.shipment || '', labels: L.length - miss.length, boxes: L.filter(x => r.got[x.sscc]).map(x => x.part + ' ' + x.seq) });
+  if (miss.length) awd_planner_toast('⚠ ' + miss.length + ' not saved on this computer (' + miss.slice(0, 6).map(x => x.part + ' ' + x.seq).join(', ') + ') — upload the label PDF again to reprint those', 'error');
 }
 function awdLblSavedHead(rec) {
   const n = (rec.groups || []).reduce((a, g) => a + g.pages.length, 0), h = v => String(v == null ? '' : v).replace(/[<&]/g, '');
@@ -2405,7 +2455,7 @@ async function awdLblRestore() {
   const out = ge('awd-lbl-out'); awdLblHistShow(); if (!out || window.AWD_LBL_GROUPS) return;
   const rec = await awdLblLoad(); if (!rec || !(rec.groups || []).length || window.AWD_LBL_GROUPS) return;
   window.AWD_LBL_GROUPS = rec.groups; window.AWD_LBL_SHIP = rec.shipment || ''; window.AWD_LOCK_DRAFT = rec.lock || null;
-  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow();
+  out.innerHTML = awdLblSavedHead(rec) + (rec.html || awdAreaButtons(rec.groups)); (typeof awdPrintMarks === 'function') && awdPrintMarks(); (typeof awdLockShow === 'function') && awdLockShow(); (typeof awdPalShow === 'function') && awdPalShow();
 }
 // 🔒 Lock it: the grab plan by area (cases · labels), and the button. Locked → saved on the server for this shipment: Stock Out Big Company
 // grabs exactly these spots and cases, and they are HELD — no other Stock Out (Shelving or Big Company) is sent to take them — until it is
@@ -2547,6 +2597,7 @@ async function awdLabelsDo(file) {
           grp.pages.push({ url: c2.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 }); ownPages++;
         }
       }
+      grp.ssccs = found.map((f, i) => (metaAt(p, i) || {}).sscc).filter(Boolean); // 🖨 which Amazon boxes are on these pages (reprint one label)
       grp.key = grp.key || '2|' + String(p).padStart(5, '0'); groups.push(grp);
     }
     // 🗺 Owner (2026-10-25): "arrange all the Amazon box labels by the location where we grab them — all the C1 together…": PREVIOUS PACKED
@@ -2586,7 +2637,7 @@ async function awdLabelsDo(file) {
       + (nt.length ? '<div style="color:#C2410C">⚠ No label line / UPC on record for: ' + nt.map(k => k + ' ×' + noTpl[k]).join(', ') + ' — printed with the Amazon name</div>' : '');
     const rec = { at: new Date().toISOString(), shipment: shipId, file: file.name || '', groups, html: out.innerHTML, lock: lockDraft };
     if (await awdLblSave(rec)) out.innerHTML = awdLblSavedHead(rec) + rec.html; // 💾 kept for next time
-    (typeof awdLockShow === 'function') && awdLockShow(); // 🔒 the grab plan + Lock it
+    (typeof awdLockShow === 'function') && awdLockShow(); (typeof awdPalShow === 'function') && awdPalShow(); // 🔒 the grab plan + Lock it
     (typeof awdPrintMarks === 'function') && awdPrintMarks();
     awdLblHistShow();
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }

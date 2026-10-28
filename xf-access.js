@@ -64,6 +64,7 @@ document.addEventListener('input', function (e) {
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
         { key: 'awdlock', label: '…🔒 Lock it (hold the shipment\'s grab plan for Stock Out Big Company)', sel: '#awd-lock-box' },
+        { key: 'lblnotpal', label: '…⚠ Labels not on a pallet yet + 🖨 Reprint them', sel: '#awd-lbl-pal' },
         { key: 'boxlabelshist', label: '…🕘 Earlier box labels (Admin only)', sel: '#awd-lbl-hist' },
         { key: 'bldhist', label: '🕘 History — everything done in the Shipment Builder (Admin only)', sel: '#awd-bld-hist' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
@@ -100,7 +101,8 @@ document.addEventListener('input', function (e) {
         { key: 'awdshiphist', label: '…🕘 Shipment history (Admin only)', sel: '#inv-awdship-hist' },
         { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' },
-        { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' } ] },
+        { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' },
+        { key: 'notpallet', label: '…⚠ Labels not on a pallet yet (which ones)', sel: '.inv-bc-notpal' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
         { key: 'quickadd', label: 'Quick Add', sel: '#inv-quickadd-card' },
