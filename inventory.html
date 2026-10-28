@@ -2333,16 +2333,19 @@ window.invCredLogin = async function() {
   var BXS = null; // { ship, sku, part, name, boxes:[…], cur, step: 'scan' | 'pallet', each: {} }
   window.invBxsStart = function(code) {
     var res = g('inv-bc-res'); if (res) res.innerHTML = '<div style="color:var(--text3)">⏳ reading the Amazon label…</div>';
-    invBcPart(code).then(function(p) {
-      if (!p || !p.box) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:700">⚠ This Amazon box label is not in the boxes saved by the office — upload the labels in the AWD Planner first</div>'; return; }
-      var b = p.box; BXC.ship = b.shipment || BXC.ship;
-      return wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(b.shipment || '') + '&sku=' + encodeURIComponent(b.sku || b.part)).then(function(r) { return r.json(); }).then(function(d) {
-        if (!d || !d.ok) throw new Error((d && d.error) || 'not loaded');
+    // ⚡ one trip (owner 2026-10-28: "it takes a while to load"): the label, its SKU's boxes, the item's barcodes and pieces a case
+    wFetch(W + '/awd/box-pallet?open=' + encodeURIComponent(invBcSscc(code))).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'not loaded');
+      if (!d.box) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:700">⚠ This Amazon box label is not in the boxes saved by the office — upload the labels in the AWD Planner first</div>'; return; }
+      var b = d.box; BXC.ship = b.shipment || BXC.ship;
+      Object.keys(d.codes || {}).forEach(function(z) { BXC.codes[z] = { part: d.codes[z], name: b.name || '' }; }); // ⚡ this item's barcodes, on the phone
+      Object.keys(d.each || {}).forEach(function(P) { BXC.each[P] = d.each[P]; });
+      return Promise.resolve(d).then(function(d) {
         // Owner (2026-10-28): PREVIOUS PACKED boxes are scanned and put on our pallets too — a row each, like the others
         var boxes = d.boxes.slice(), prev = boxes.filter(function(x) { return x.prev; }).length, ss = invBcSscc(code), k = 0;
         boxes.forEach(function(x, i) { if (x.sscc === ss) k = i; });
         if (!boxes.length) { if (res) res.innerHTML = '<div style="font-weight:700">⚠ No Amazon boxes saved for ' + ckE(b.sku) + '</div>'; return; }
-        BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', boxes: boxes, prev: prev, cur: k, step: 'scan', each: {} };
+        BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', boxes: boxes, prev: prev, cur: k, step: 'scan', each: BXC.each, q: Promise.resolve() };
         var hit = -1; boxes.forEach(function(x, i) { if (x.sscc === ss) hit = i; });
         var wasPrev = false;
         if (hit >= 0 && !invBxsWaiting(boxes[hit]) && typeof invBxsDup === 'function') return invBxsDup(BXS, hit); // ⚠ this box was scanned already
@@ -2414,18 +2417,32 @@ window.invCredLogin = async function() {
     invBxsRender('<div class="inv-bxs-first" style="margin-top:6px;padding:8px;border-radius:8px;background:#ede9fe;color:#5b21b6;font-weight:800">🔁 Box ' + ckE(b.seq) + ': scan the box again, then its PALLET — the new scan replaces the old one (still counted once)</div>'); };
   function invBxsNext() { var S = BXS; if (!S) return; for (var k = 1; k <= S.boxes.length; k++) { var j = (S.cur + k) % S.boxes.length; if (invBxsWaiting(S.boxes[j])) { S.cur = j; return; } } }
   // one box scanned for the 👉 row: what to do with it
+  // ⚡ a barcode known on the phone (this item's outside / inside UPC from the label, or one scanned before) needs no trip to the server
+  BXC.codes = BXC.codes || {}; BXC.each = BXC.each || {};
+  function invBxsPart(code) {
+    var z = String(code || '').replace(/\D/g, '').replace(/^0+/, ''), k = /^\d{8,14}$/.test(String(code || '').trim()) ? z : String(code || '').trim().toUpperCase();
+    if (BXC.codes[k]) return Promise.resolve(BXC.codes[k]);
+    return invBcPart(code).then(function(p) { if (p && p.part && !p.box) BXC.codes[k] = { part: String(p.part).toUpperCase(), name: p.name || '' }; return p; });
+  }
+  var _invBcPalT = null;
+  function invBcPalletsSoon() { clearTimeout(_invBcPalT); _invBcPalT = setTimeout(function() { invBcPallets(); }, 1500); } // once after a burst of scans
+  // ⚡ scans one right after another: each waits its turn (never two on the same row), none is dropped
   window.invBxsBox = function(code) {
-    var S = BXS; if (!S) return; var b = S.boxes[S.cur];
+    var S = BXS; if (!S) return;
+    S.q = (S.q || Promise.resolve()).then(function() { return invBxsBox1(S, code); }).catch(function() {});
+  };
+  function invBxsBox1(S, code) {
+    if (BXS !== S || S.step === 'pallet') return; var b = S.boxes[S.cur];
     if (!b || !invBxsWaiting(b)) { invBxsNext(); b = S.boxes[S.cur]; if (!b || !invBxsWaiting(b)) { invFlash('Every box is scanned — ➡ scan the PALLET, or ✕', 'warn'); return; } }
     var want = String(b.part || S.part).toUpperCase();
-    invBcPart(code).then(function(p) {
+    return invBxsPart(code).then(function(p) {
       if (BXS !== S) return;
       var got = p ? String(p.part).toUpperCase() : '', ok = got === want, same = !ok && got && got.split('=')[0] === want.split('=')[0];
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: b.sscc, product: code, labelPart: want, productPart: got, ok: ok, at: new Date().toISOString() }) })
-        .then(function(r) { return r.json(); }).then(function() { invBoxCheckDay(); }).catch(function() {});
+        .then(function(r) { return r.json(); }).then(function() { clearTimeout(BXC.dayT); BXC.dayT = setTimeout(invBoxCheckDay, 1500); }).catch(function() {});
       var done = function(kind, note, big) {
         b.kind = kind; b.note = note || ''; b.by = invBxsMe(); b.at = new Date().toISOString();
-        invBcKeep(b.sscc, { shipment: S.ship, seq: b.seq, part: want }, kind, { productPart: got, note: note || '' }).then(function() { invBcPallets(); });
+        invBcKeep(b.sscc, { shipment: S.ship, seq: b.seq, part: want }, kind, { productPart: got, note: note || '' }).then(function() { invBcPalletsSoon(); });
         if (kind !== 'mismatch') invBxsNext();
         var left = S.boxes.filter(invBxsWaiting).length, ready = S.boxes.filter(function(x) { return x.kind === 'ok'; }).length;
         if (!left && ready) { S.step = 'pallet'; return invBxsRender(big); } // every box done → 2️⃣ the pallet
@@ -2437,7 +2454,7 @@ window.invCredLogin = async function() {
       // ✅ PREVIOUS PACKED: packed already — the right item is enough (no case count to check), its Amazon label on → the pallet
       if (b.prev) return done('ok', 'previous packed', invBcBig('var(--green)', '✅ PREVIOUS PACKED box — right item. Make sure its Amazon label is on<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓ → then the PALLET</div>'));
       var boxPcs = (parseFloat(b.units) || 0) * invBcPack(want), eachP = S.each[want];
-      (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
+      return (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
         var e = 0; ((x && x.locations) || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === want) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[want] = e; return e; }).catch(function() { return 0; })).then(function(each) {
         if (BXS !== S) return;
         if (each > 0 && boxPcs > 0 && Math.abs(each - boxPcs) > 0.001) {
