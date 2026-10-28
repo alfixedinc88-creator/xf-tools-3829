@@ -2294,7 +2294,7 @@ window.invCredLogin = async function() {
       if (res) res.innerHTML = '<div style="font-size:13px">📦 Box label: <b style="font-family:var(--mono)">' + ckE(v) + '</b> <span id="inv-bc-lp" style="color:var(--text3)">…</span></div>';
       if (invBcSscc(v)) invBcBoxStatus(invBcSscc(v)); // 📦 where this box is now (on a pallet / set aside)
       invBcPart(v).then(function(p) { BXC.label.info = p; var e = g('inv-bc-lp'); if (!e) return;
-        e.innerHTML = p ? '= <b>' + ckE(p.part) + '</b> ' + ckE(p.name) + (p.box ? '<div style="font-size:15px;font-weight:800;color:var(--text);margin-top:3px">Amazon box ' + ckE(p.box.seq) + (p.box.prev ? ' · ✅ PREVIOUS PACKED (on the pallet)' : p.box.loc ? ' · from ' + ckE(p.box.loc) : '') + '</div>' : '')
+        e.innerHTML = p ? '= <b>' + ckE(p.part) + '</b> ' + ckE(p.name) + (p.box ? '<div style="font-size:15px;font-weight:800;color:var(--text);margin-top:3px">Amazon box ' + ckE(p.box.seq) + (p.box.prev ? ' · ✅ PREVIOUS PACKED (packed already — scan it, then its pallet)' : p.box.loc ? ' · from ' + ckE(p.box.loc) : '') + '</div>' : '')
           : invBcSscc(v) ? '<span style="color:var(--red)">⚠ This Amazon box label is not in the boxes saved by the office — upload the labels in the AWD Planner first</span>' : '<span style="color:var(--orange)">(not a part # we know — it is checked by the code itself)</span>'; });
       return;
     }
@@ -2338,12 +2338,13 @@ window.invCredLogin = async function() {
       var b = p.box; BXC.ship = b.shipment || BXC.ship;
       return wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(b.shipment || '') + '&sku=' + encodeURIComponent(b.sku || b.part)).then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) throw new Error((d && d.error) || 'not loaded');
-        var boxes = d.boxes.filter(function(x) { return !x.prev; }), prev = d.boxes.length - boxes.length, ss = invBcSscc(code), k = 0;
+        // Owner (2026-10-28): PREVIOUS PACKED boxes are scanned and put on our pallets too — a row each, like the others
+        var boxes = d.boxes.slice(), prev = boxes.filter(function(x) { return x.prev; }).length, ss = invBcSscc(code), k = 0;
         boxes.forEach(function(x, i) { if (x.sscc === ss) k = i; });
-        if (!boxes.length) { if (res) res.innerHTML = '<div style="font-weight:700">✅ ' + ckE(b.sku) + ': every box is PREVIOUS PACKED (on the pallet already)</div>'; return; }
+        if (!boxes.length) { if (res) res.innerHTML = '<div style="font-weight:700">⚠ No Amazon boxes saved for ' + ckE(b.sku) + '</div>'; return; }
         BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', boxes: boxes, prev: prev, cur: k, step: 'scan', each: {} };
         var hit = -1; boxes.forEach(function(x, i) { if (x.sscc === ss) hit = i; });
-        var wasPrev = hit < 0 && d.boxes.some(function(x) { return x.prev && x.sscc === ss; });
+        var wasPrev = false;
         if (hit >= 0 && !invBxsWaiting(boxes[hit]) && typeof invBxsDup === 'function') return invBxsDup(BXS, hit); // ⚠ this box was scanned already
         invBxsRender(wasPrev ? '<div class="inv-bxs-dup" style="margin-top:6px;padding:8px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:800">⚠ ALREADY DONE — this Amazon box is PREVIOUS PACKED (on the pallet already). Nothing to scan for it.</div>' : undefined);
       });
@@ -2356,7 +2357,7 @@ window.invCredLogin = async function() {
     var res = g('inv-bc-res'), st = g('inv-bc-step'); if (!res || !BXS) return;
     var S = BXS, waiting = S.boxes.filter(invBxsWaiting).length, ready = S.boxes.filter(function(b) { return b.kind === 'ok'; }).length;
     var x = '<button type="button" class="inv-bxs-x" onclick="invBxsClose()" title="Close — everything done so far is kept" style="flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:18px;cursor:pointer">✕</button>';
-    var head = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div style="font-size:16px;font-weight:900">📦 ' + ckE(S.sku) + ' — ' + S.boxes.length + ' Amazon box' + (S.boxes.length === 1 ? '' : 'es') + (S.prev ? ' <span style="font-weight:400;font-size:12px;color:var(--text3)">(+ ' + S.prev + ' PREVIOUS PACKED)</span>' : '') + '</div>'
+    var head = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div style="font-size:16px;font-weight:900">📦 ' + ckE(S.sku) + ' — ' + S.boxes.length + ' Amazon box' + (S.boxes.length === 1 ? '' : 'es') + (S.prev ? ' <span style="font-weight:400;font-size:12px;color:var(--text3)">(' + S.prev + ' of them PREVIOUS PACKED)</span>' : '') + '</div>'
       + '<div style="font-size:12px;color:var(--text2)">' + ckE(S.name) + ' · ' + ckE(S.ship) + '</div></div>' + x + '</div>';
     if (S.step === 'pallet') {
       if (st) st.textContent = '2️⃣ Scan the PALLET label (PALLET 1, 2, 3…) for the ' + ready + ' box' + (ready === 1 ? '' : 'es') + ' with the Amazon label on';
@@ -2369,7 +2370,7 @@ window.invCredLogin = async function() {
     if (st) st.textContent = waiting ? '1️⃣ Scan the BOX for Amazon box ' + (cur ? cur.seq : '') + ' (' + waiting + ' of ' + S.boxes.length + ' still to scan)' : '✓ Every box scanned';
     var rows = S.boxes.map(function(b, i) { var T = BXS_TXT[b.kind] || BXS_TXT[''], on = i === S.cur && invBxsWaiting(b);
       return '<div class="inv-bxs-row" data-k="' + (b.kind || 'wait') + '" style="display:flex;align-items:center;gap:8px;padding:7px 8px;margin-top:4px;border-radius:8px;border:' + (on ? '2.5px solid #7c3aed' : '1px solid var(--border)') + ';background:' + (on ? 'rgba(124,58,237,.08)' : 'var(--bg)') + '">'
-        + '<div style="font-size:20px;width:26px;text-align:center">' + (on ? '👉' : T[0]) + '</div><div style="flex:1;min-width:0"><b>Box ' + ckE(b.seq) + '</b> <span style="font-size:12px;color:var(--text3)">' + ckE(b.units) + ' bags' + (b.loc ? ' · ' + ckE(b.loc) : '') + '</span>'
+        + '<div style="font-size:20px;width:26px;text-align:center">' + (on ? '👉' : T[0]) + '</div><div style="flex:1;min-width:0"><b>Box ' + ckE(b.seq) + '</b>' + (b.prev ? ' <span style="font-size:11px;font-weight:800;color:#0e7490">✅ PREVIOUS PACKED</span>' : '') + ' <span style="font-size:12px;color:var(--text3)">' + ckE(b.units) + ' bags' + (b.loc ? ' · ' + ckE(b.loc) : '') + '</span>'
         + '<div style="font-size:12px;font-weight:700;color:' + T[2] + '">' + T[1] + (b.kind === 'pallet' ? ' ' + ckE(b.pallet) : '') + (b.note ? ' <span style="font-weight:400;color:var(--text2)">· ' + ckE(b.note) + '</span>' : '') + (b.by ? ' <span style="font-weight:400;color:var(--text3)">· ' + ckE(b.by) + '</span>' : '') + '</div></div>'
         + (b.kind === 'split' || b.kind === 'rebag' ? '<button type="button" onclick="invBxsFixed(' + i + ')" style="padding:6px 9px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:800;cursor:pointer;font-size:12px">✓ Fixed — label on</button>' : '')
         + (invBxsWaiting(b) && !on ? '<button type="button" onclick="invBxsPick(' + i + ')" style="padding:5px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;font-size:12px">this one</button>' : '') + '</div>'; }).join('');
@@ -2433,6 +2434,8 @@ window.invCredLogin = async function() {
       if (!ok && !same) { if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
         return done('mismatch', got ? 'scanned ' + got : 'scanned ' + code, invBcBig('var(--red)', '❌ WRONG PRODUCT — don\'t pack it!<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'this is ' + ckE(got) : 'not a part # we know') + ' — Box ' + ckE(b.seq) + ' needs ' + ckE(want) + '. Put it back, scan the right box.</div>')); }
       if (same) return done('rebag', got + ' → ' + want, invBcBig('#ea580c', '🏷 Bring it to the PACKING ROOM — rebag and label it as ' + ckE(want) + '<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ': this is ' + ckE(got) + ' · when it is done: ✓ Fixed</div>'));
+      // ✅ PREVIOUS PACKED: packed already — the right item is enough (no case count to check), its Amazon label on → the pallet
+      if (b.prev) return done('ok', 'previous packed', invBcBig('var(--green)', '✅ PREVIOUS PACKED box — right item. Make sure its Amazon label is on<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓ → then the PALLET</div>'));
       var boxPcs = (parseFloat(b.units) || 0) * invBcPack(want), eachP = S.each[want];
       (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
         var e = 0; ((x && x.locations) || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === want) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[want] = e; return e; }).catch(function() { return 0; })).then(function(each) {
@@ -2524,7 +2527,7 @@ window.invCredLogin = async function() {
             + '<div style="color:var(--text2)">' + ckE(last.by) + ' · ' + T(last.at) + '</div></div></div>'; }).join('') + '</div>'; };
       var panel = function(title, list, color, open) { return '<details class="inv-bc-pallet"' + (open ? ' open' : '') + ' style="margin-top:6px;border:2px solid ' + color + ';border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:var(--text)">' + title + '</summary>' + tiles(list, color) + '</details>'; };
       var parts = function(l) { var m = {}; l.forEach(function(b) { m[b.part] = 1; }); return Object.keys(m).length; };
-      el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + (d.boxes - d.prev) + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(+ ' + d.prev + ' PREVIOUS PACKED)</span>' : '') + '</div>'
+      el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + d.boxes + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(' + d.prev + ' of them PREVIOUS PACKED — scanned onto a pallet too)</span>' : '') + '</div>'
         + invBcNotPal(d)
         + d.pallets.map(function(p) { return panel('🟫 PALLET ' + p.pallet + ' — ' + p.boxes.length + ' Amazon box' + (p.boxes.length === 1 ? '' : 'es') + csTxt(p.boxes) + ' · ' + parts(p.boxes) + ' part #' + (parts(p.boxes) === 1 ? '' : 's'), p.boxes, 'var(--green)', d.pallets.length <= 3); }).join('')
         + (unsent ? '<div class="inv-bc-unsent" style="margin-top:6px;color:#b45309;font-weight:700">📶 ' + unsent + ' box scan' + (unsent === 1 ? '' : 's') + ' on THIS phone not sent yet — they count when WiFi is back</div>' : '')
@@ -2544,7 +2547,8 @@ window.invCredLogin = async function() {
     rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'] };
   function invBcNotPal(d) {
     var L = []; ['notYet', 'ready', 'split', 'rebag', 'mismatch'].forEach(function(k) { (d[k] || []).forEach(function(b) { L.push({ b: b, k: k }); }); });
-    var all = (d.boxes || 0) - (d.prev || 0), on = d.onPallets || 0, nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
+    // every Amazon label — PREVIOUS PACKED too (owner 2026-10-28: they go on our pallets as well)
+    var all = d.boxes || 0, on = d.onPallets || 0, nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
     L.sort(function(x, y) { var a = String(x.b.loc || '~'), c = String(y.b.loc || '~'), A = nv(x.b.seq), B = nv(y.b.seq);
       return a < c ? -1 : a > c ? 1 : String(x.b.part).localeCompare(String(y.b.part)) || (A[0] - B[0]) || (A[1] - B[1]); });
     var tile = function(n, t, bg) { return '<div style="flex:1;min-width:120px;padding:8px;border-radius:10px;background:' + bg + ';color:#fff;text-align:center"><div style="font-size:24px;font-weight:900">' + n + '</div><div style="font-size:12px;font-weight:700">' + t + '</div></div>'; };
@@ -2552,7 +2556,7 @@ window.invCredLogin = async function() {
       + (on + L.length !== all ? '<div style="color:var(--red);font-weight:700;margin-top:4px">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' — tell the office</div>' : '')
       + (L.length ? '<details class="inv-bc-notpal" open style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
         + L.map(function(x) { var T = BC_NOTPAL[x.k];
-          return '<div class="inv-bc-np" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span>' + T[0] + '</span><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b> <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>'
+          return '<div class="inv-bc-np" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span>' + T[0] + '</span><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b>' + (x.b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>'
             + (x.b.loc ? ' <span style="color:var(--text3)">· ' + ckE(x.b.loc) + '</span>' : '') + ' <span style="color:' + T[2] + ';font-weight:700">· ' + T[1] + '</span>'
             + (x.b.by ? ' <span style="color:var(--text3)">· ' + ckE(x.b.by) + '</span>' : '') + ' <span style="color:var(--text3);font-family:var(--mono);font-size:10px">…' + ckE(String(x.b.sscc || '').slice(-6)) + '</span></div></div>'; }).join('')
         + '<div style="font-size:12px;color:var(--text2);margin-top:5px">🖨 Label lost or torn? Reprint the exact Amazon label on the office computer: <b>AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨</b></div></details>' : '');

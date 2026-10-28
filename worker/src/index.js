@@ -1541,7 +1541,8 @@ async function awdBoxPallet(request, url, env, session) {
     let photos = {}; try { photos = await productPhotoMap(env, boxes.map(b => b.part)); } catch (_) {}
     return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
       pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, ready: kinds.ok,
-      notYet: boxes.filter(b => !x.by[b.sscc] && !b.prev).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, loc: b.loc || '' })) });
+      // Owner (2026-10-28): "PREVIOUS PACKED still has to be scanned and put on our pallets to ship" — not scanned yet counts them too (prev: true)
+      notYet: boxes.filter(b => !x.by[b.sscc]).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, loc: b.loc || '', prev: !!b.prev })) });
   }
   const b = await request.json().catch(() => ({}));
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';

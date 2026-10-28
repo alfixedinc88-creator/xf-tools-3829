@@ -10974,16 +10974,17 @@ console.log('\n📦 Box check → PALLET: whole case on a pallet, split / rebag 
       && /this Amazon box = 3 of our cases: RECOUNT, or put them together in one box/.test(d4) && /🏷 Bring it to the PACKING ROOM — rebag and label it as 73-3-3=10/.test(d5) && /❌ WRONG PRODUCT — don't pack it!/.test(d6) && d6r === 'mismatch', { d1: d1.slice(-400), d4: d4.slice(-300), d6r });
   for (let i = 0; i < 20 && sq.prepare("SELECT COUNT(*) n FROM awd_box_scan WHERE shipment = 'STAR-PAL1'").get().n < 9; i++) await wait();
   const T = await get('/awd/box-pallet?shipment=STAR-PAL1'), hB = await get('/awd/box-pallet?sscc=301952611628550002');
-  check('…STAR-PAL1 tally: 2 of 8 boxes on PALLET 2 (+1 PREVIOUS PACKED) with who / when; 2 labeled, waiting for a pallet (76 3-1, 3-3); 1 to recount / separate (77); 1 in the packing room; 1 not a match; 1 not checked yet (71); box 72-2-2 history: split → ok (fixed) → PALLET 2',
+  // Owner (2026-10-28): PREVIOUS PACKED boxes are scanned onto our pallets too — counted in every total, "not scanned yet" until they are
+  check('…STAR-PAL1 tally: 2 of 9 boxes on PALLET 2 (1 of the 9 PREVIOUS PACKED) with who / when; 2 labeled, waiting for a pallet (76 3-1, 3-3); 1 to recount / separate (77); 1 in the packing room; 1 not a match; 2 not scanned yet (71 and the PREVIOUS PACKED 71); box 72-2-2 history: split → ok (fixed) → PALLET 2',
     T.ok && T.boxes === 9 && T.prev === 1 && T.onPallets === 2 && T.pallets.length === 1 && T.pallets[0].pallet === 2 && T.pallets[0].boxes.every(b => b.by === 'TS' && b.at) && T.ready.length === 2
-      && T.split.length === 1 && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 1 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,ok,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
+      && T.split.length === 1 && T.rebag.length === 1 && T.mismatch.length === 1 && T.notYet.length === 2 && T.notYet.filter(b => b.prev).length === 1 && hB.history.map(x => x.kind + (x.pallet || '')).join() === 'split,ok,pallet2' && hB.box.pallet === 2, { T, h: hB.history });
   // the tally on the card + 🖨 PALLET labels + offline-safe (one guard per entry) + 🧩 check marks
   // 📷 Owner (2026-10-27): "keep a record of what is in which pallet — in photos like the boxes, easy to see"
   await get('/inventory/lookup?code=76-6-6=10'); sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url) VALUES ('76-6-6', 'https://img.example/76.jpg')").run();
   B.invBcPallets(); await wait(); await wait();
   const pH = gP('inv-bc-pallets').innerHTML, pal2 = pH.slice(pH.indexOf('🟫 PALLET 2'), pH.indexOf('</details>', pH.indexOf('🟫 PALLET 2')));
   check('…the card shows each PALLET as a panel of photos (🟫 PALLET 2 — 2 boxes · 2 part #s: 76-6-6=10 with its photo, 1 box (3-2), who / when; 72-2-2=10 📦 no photo), labeled-waiting / recount / packing room / not a match the same way; 🖨 Print PALLET labels; 🧩',
-    /📦 STAR-PAL1: 2 of 8 boxes on pallets/.test(pH) && /🟫 PALLET 2 — 2 Amazon boxes · <b>[\d.]+<\/b> of our cases? · 2 part #s/.test(pH) /* owner 2026-10-27: Amazon boxes AND our cases */ && /<img src="https:\/\/img\.example\/76\.jpg"/.test(pal2) && /76-6-6=10<\/b><div><b style="font-size:13px">1<\/b> Amazon box( = <b>[\d.]+<\/b> cs)? <span[^>]*>\(3-2\)/.test(pal2)
+    /📦 STAR-PAL1: 2 of 9 boxes on pallets <span[^>]*>\(1 of them PREVIOUS PACKED — scanned onto a pallet too\)/.test(pH) && /🟫 PALLET 2 — 2 Amazon boxes · <b>[\d.]+<\/b> of our cases? · 2 part #s/.test(pH) /* owner 2026-10-27: Amazon boxes AND our cases */ && /<img src="https:\/\/img\.example\/76\.jpg"/.test(pal2) && /76-6-6=10<\/b><div><b style="font-size:13px">1<\/b> Amazon box( = <b>[\d.]+<\/b> cs)? <span[^>]*>\(3-2\)/.test(pal2)
       && /72-2-2=10/.test(pal2) && /TS · /.test(pal2) && (pal2.match(/class="inv-bc-ptile"/g) || []).length === 2 && /✅ 2 labeled, waiting for a pallet/.test(pH) && /✂ 1 to recount \/ separate/.test(pH) && /🏷 1 in the packing room to rebag/.test(pH) && /❌ 1 not a match/.test(pH)
       && /JsBarcode\(sv, 'PALLET-' \+ n/.test(ihP) && /id="inv-bc-plabels"/.test(ihP) && /sel: '#inv-bc-pallets, #inv-bc-plabels'/.test(rfP2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), pal2.slice(0, 600));
   const lt = await get('/awd/box-pallet?latest=1');
@@ -11066,8 +11067,8 @@ console.log('\n⚠ Labels ON a pallet / NOT on a pallet yet (which ones) + 🖨 
   await post('/awd/box-pallet', { sscc: '301952611628551002', kind: 'ok', productPart: '85-5-5=10' });
   await post('/awd/box-pallet', { sscc: '301952611628551012', kind: 'rebag', productPart: '86-6-6=10' });
   const T = await get('/awd/box-pallet?shipment=STAR-PALX'), notOn = T.notYet.length + T.ready.length + T.split.length + T.rebag.length + T.mismatch.length;
-  check('6 labels (1 PREVIOUS PACKED) → 2 ON a pallet + 3 NOT on a pallet (1 labeled no pallet, 1 packing room, 1 not scanned) = 5 ✅; every row has its SKU + spot',
-    T.onPallets === 2 && notOn === 3 && T.onPallets + notOn === T.boxes - T.prev && T.notYet[0].sku === '85-5-5=10-' && T.notYet[0].loc === 'C2=2-2-2' && T.ready[0].loc === 'C1=1-1-1', T);
+  check('6 labels (1 PREVIOUS PACKED, owner 2026-10-28: it goes on a pallet too) → 2 ON a pallet + 4 NOT on a pallet (1 labeled no pallet, 1 packing room, 2 not scanned — one of them PREVIOUS PACKED) = 6 ✅; every row has its SKU + spot',
+    T.onPallets === 2 && notOn === 4 && T.onPallets + notOn === T.boxes && T.notYet.some(b => b.prev && b.seq === '1-1') && T.notYet[0].sku === '85-5-5=10-' && T.notYet[0].loc === 'C2=2-2-2' && T.ready[0].loc === 'C1=1-1-1', T);
   // phone card
   const { readFileSync: rfX } = await import('node:fs');
   const ihX = rfX(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
@@ -11079,9 +11080,17 @@ console.log('\n⚠ Labels ON a pallet / NOT on a pallet yet (which ones) + 🖨 
   B.invBoxCheckScan('00301952611628551003'); await new Promise(r => setTimeout(r, 300)); B.invBoxCheckReset();
   B.invBcPallets(); for (let i = 0; i < 20 && !/inv-bc-tot/.test(gX('inv-bc-pallets').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
   const pH = gX('inv-bc-pallets').innerHTML, rowsX = (pH.match(/class="inv-bc-np" data-k="[a-zA-Z]+"/g) || []).map(x => x.split('"')[3]).join(',');
-  check('phone (Stock Out Big Company → Box check): big totals "2 labels ON a pallet · 3 NOT on a pallet yet · 5 labels in all"; "⚠ Which 3 labels are not on a pallet yet": Box 3-2 C1 labeled no pallet, Box 3-3 C2 not scanned, Box 2-2 C4 packing room (by spot); where to 🖨 reprint',
-    />2<\/div><div[^>]*>🟫 labels ON a pallet/.test(pH) && />3<\/div><div[^>]*>⚠ NOT on a pallet yet/.test(pH) && />5<\/div><div[^>]*>📦 labels in all/.test(pH) && /⚠ Which 3 labels are not on a pallet yet/.test(pH)
-      && rowsX === 'ready,notYet,rebag' && /Box 3-2<\/b> <b[^>]*>85-5-5=10<\/b> <span[^>]*>· C1=1-1-1/.test(pH) && /labeled — NO PALLET scanned/.test(pH) && /AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨/.test(pH) && !/≠/.test(pH), { rowsX, pH: pH.slice(0, 1500) });
+  check('phone (Stock Out Big Company → Box check): big totals "2 labels ON a pallet · 4 NOT on a pallet yet · 6 labels in all" (the PREVIOUS PACKED one counted); "⚠ Which 4 labels are not on a pallet yet": Box 3-2 C1 labeled no pallet, Box 3-3 C2 not scanned, Box 2-2 C4 packing room, Box 1-1 PREVIOUS PACKED not scanned (by spot); where to 🖨 reprint',
+    />2<\/div><div[^>]*>🟫 labels ON a pallet/.test(pH) && />4<\/div><div[^>]*>⚠ NOT on a pallet yet/.test(pH) && />6<\/div><div[^>]*>📦 labels in all/.test(pH) && /⚠ Which 4 labels are not on a pallet yet/.test(pH)
+      && rowsX === 'ready,notYet,rebag,notYet' && /Box 1-1<\/b> <span[^>]*>PREVIOUS PACKED<\/span>/.test(pH) && /Box 3-2<\/b> <b[^>]*>85-5-5=10<\/b> <span[^>]*>· C1=1-1-1/.test(pH) && /labeled — NO PALLET scanned/.test(pH) && /AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨/.test(pH) && !/≠/.test(pH), { rowsX, pH: pH.slice(0, 1500) });
+  // Owner (2026-10-28): "PREVIOUS PACKED still has to be scanned and put in our pallets" — its label opens the rows with it; its box scanned → ready for the pallet
+  B.invBoxCheckScan('00301952611628551021'); for (let i = 0; i < 20 && !/inv-bxs-row/.test(gX('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
+  const pv1 = gX('inv-bc-res').innerHTML; B.invBoxCheckScan('86-6-6=10'); for (let i = 0; i < 20 && !/PREVIOUS PACKED box — right item/.test(gX('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
+  const pv2 = gX('inv-bc-res').innerHTML; B.invBoxCheckReset(); await new Promise(r => setTimeout(r, 200));
+  const T2 = await get('/awd/box-pallet?shipment=STAR-PALX');
+  check('…a PREVIOUS PACKED label opens its SKU\'s rows WITH it (3 rows, "✅ PREVIOUS PACKED" tag, 👉 on it); its box scanned → "PREVIOUS PACKED box — right item. Make sure its Amazon label is on → then the PALLET" (no case count); now labeled, waiting for a pallet',
+    (pv1.match(/class="inv-bxs-row"/g) || []).length === 3 && /👉<\/div><div style="flex:1;min-width:0"><b>Box 1-1<\/b> <span[^>]*>✅ PREVIOUS PACKED<\/span>/.test(pv1) && /\(1 of them PREVIOUS PACKED\)/.test(pv1)
+      && /✅ PREVIOUS PACKED box — right item/.test(pv2) && T2.ready.some(b => b.seq === '1-1') && !T2.notYet.some(b => b.seq === '1-1'), { pv1: pv1.slice(0, 500), ready: T2.ready });
   // office: 🖨 the exact saved label pages of those boxes — new labels by SSCC, labels saved before by SKU + box N-k (exact only)
   const awX = rfX(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const pg = new Function(awX.slice(awX.indexOf('function awdPalPages('), awX.indexOf('function awdPalReprint(')) + '; return awdPalPages;')();
