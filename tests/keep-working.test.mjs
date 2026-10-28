@@ -9964,14 +9964,16 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   check('…every label has the scan barcode and the photo — PREVIOUS PACKED too (its FNSKU is X00… → the Amazon barcode)',
     codes.length === 6 && codes.includes('X00SEVEN77') && codes.filter(c => c === '850000008881').length === 4 && photos.length === 6, { codes, photos: photos.length });
   const order = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
-  check('…printed in the order of where they are grabbed: PREVIOUS PACKED (on the pallet) first, then BSMT (9-9-9), then C1 (8-8-8 boxes 1–3), then C2 (box 4); the result line counts each area',
-    order === '6,5,1,2,3,4' && /🗺 Printed by where they are grabbed: <b>PREVIOUS PACKED<\/b> 1 · <b>BSMT<\/b> 1 · <b>C1<\/b> 3 · <b>C2<\/b> 1/.test(els['awd-lbl-out'].innerHTML), { order, out: els['awd-lbl-out'].innerHTML.slice(0, 300) });
+  // Owner (2026-10-28): 3 groups first — ✅ FULL CASE, 🏷 NEED LABELING, ✂ RECOUNT — then by area (the area names say their group)
+  check('…printed in the order: PREVIOUS PACKED first, then ✅ FULL CASE (9-9-9: 20 pcs = one case → BSMT), then ✂ RECOUNT (8-8-8: 100-pc boxes from 300-pc cases → C1 boxes 1–3, C2 box 4); the result line counts each group + area',
+    order === '6,5,1,2,3,4' && /🗺 Printed by where they are grabbed: <b>PREVIOUS PACKED<\/b> 1 · <b>✅ BSMT<\/b> 1 · <b>✂ C1<\/b> 3 · <b>✂ C2<\/b> 1/.test(els['awd-lbl-out'].innerHTML), { order, out: els['awd-lbl-out'].innerHTML.slice(0, 300) });
   // Owner (2026-10-25): "after the labels are done, click a location like C1 and print just what's in C1".
-  printed = ''; run.printArea('C1'); const c1 = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
+  printed = ''; run.printArea('✂ C1'); const c1 = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
   printed = ''; run.printArea('PREVIOUS PACKED'); const pp = (printed.match(/src="data:p(\d+)"/g) || []).map(s => s.match(/\d+/)[0]).join(',');
   printed = ''; run.printArea(''); const all = (printed.match(/src="data:p(\d+)"/g) || []).length;
-  check('…then 🖨 one area: C1 prints only the C1 labels (8-8-8 boxes 1–3), PREVIOUS PACKED only those, All = all 6; a button per area under the result',
-    c1 === '1,2,3' && pp === '6' && all === 6 && /🖨 Print just one area: .*data-a="C1"[^>]*>C1 · 3<\/button>.*data-a="C2"[^>]*>C2 · 1<\/button>/.test(els['awd-lbl-out'].innerHTML), { c1, pp, all });
+  check('…then 🖨 one area: ✂ C1 prints only the C1 labels (8-8-8 boxes 1–3), PREVIOUS PACKED only those, All = all 6; the buttons in their group boxes (✅ FULL CASE, then ✂ RECOUNT: C1 · 3, C2 · 1)',
+    c1 === '1,2,3' && pp === '6' && all === 6 && /🖨 Print just one group \/ area:/.test(els['awd-lbl-out'].innerHTML)
+      && /class="awd-kind" data-k="full"[\s\S]*1️⃣ ✅ FULL CASE[\s\S]*data-a="✅ BSMT"[\s\S]*class="awd-kind" data-k="recount"[\s\S]*data-a="✂ C1"[^>]*>✂ C1 · 3<\/button>[\s\S]*data-a="✂ C2"[^>]*>✂ C2 · 1<\/button>/.test(els['awd-lbl-out'].innerHTML), { c1, pp, all });
   globalThis.__awdWs = globalThis.__awdUpc = globalThis.__awdTpl = undefined;
 }
 
@@ -11229,6 +11231,32 @@ console.log('\n🖥 Shipment Builder: the labels not on a pallet yet across the 
     /8 labels ON a pallet<\/span> · <span[^>]*>⚠ 12 NOT on a pallet yet<\/span> · 20 labels in all/.test(n) && /\(2 of them PREVIOUS PACKED\)/.test(n) && !/≠/.test(n + w) && /⬇ See all 12 below/.test(n) && !/awd-pal-row/.test(n)
       && (w.match(/class="awd-pal-row"/g) || []).length === 12 && /grid-template-columns:repeat\(auto-fill,minmax\(350px,1fr\)\)/.test(w) && (w.match(/>PREV</g) || []).length === 2 && (w.match(/onclick="awdPalReprint\(\[\d+\]\)"/g) || []).length === 12
       && /id="awd-lbl-pal-wide"/.test(ah) && /\.main\.awd-wide\{max-width:none\}/.test(ah) && /mainEl\.classList\.toggle\('awd-wide', n === 'builder'\)/.test(ah), { n, w: w.slice(0, 400) });
+}
+
+// 🗂 Owner (2026-10-28): "separate the shipment into 3 groups first: 1. full case — just put the label on; 2. need labeling; 3. the part # but
+// recount the quantities — so next time they grab the full cases first and put them on the bottom of the pallet".
+console.log('\n🗂 AWD labels in 3 groups: ✅ full case / 🏷 need labeling / ✂ recount — then by area');
+{
+  const { readFileSync: rfG3 } = await import('node:fs');
+  const ah = rfG3(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const plan = ws => new Function('checkWarehouseStock', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + fnA('awdGrabPlan') + '; return awdGrabPlan;')(() => ws);
+  // 4 Amazon boxes of 10 bags × 10 = 100 pcs: BO has 2 cases of 100 (= one box each) → full ×2; then C1 a case of 300 → recount (take pieces) ×2
+  const a = plan({ exactRows: [{ partNum: '8-8-8=10', location: 'BO=1-1-1', casesNum: 2, eachPcs: 100 }, { partNum: '8-8-8=10', location: 'C1=1-1-1', casesNum: 1, eachPcs: 300 }], bulkRows: [] })('8-8-8=10-', [10, 10, 10, 10]);
+  // another part # of the item (=5 bags) → need labeling; an Amazon box = 2 of our cases → recount; no Ea/Case → recount
+  const b = plan({ exactRows: [], bulkRows: [{ partNum: '8-8-8=5', location: 'C2=1-1-1', casesNum: 2, eachPcs: 100, how: 'rebag' }] })('8-8-8=10-', [10]);
+  const c = plan({ exactRows: [{ partNum: '8-8-8=10', location: 'C3=1-1-1', casesNum: 4, eachPcs: 50 }], bulkRows: [] })('8-8-8=10-', [10]);
+  const d = plan({ exactRows: [{ partNum: '8-8-8=10', location: 'C4=1-1-1', casesNum: 2, eachPcs: 0 }], bulkRows: [] })('8-8-8=10-', [10]);
+  const e = plan({ exactRows: [], bulkRows: [] })('8-8-8=10-', [10]);
+  check('each label gets its group: one case of the exact part # = one Amazon box → ✅ full (BO ×2); the same part # from a 300-pc case → ✂ recount (C1 ×2); another part # of the item → 🏷 need labeling; one box = 2 of our cases → ✂ recount; no Ea/Case → ✂ recount; nothing on the shelves → ⚠',
+    a.kindOf.join() === 'full,full,recount,recount' && b.kindOf.join() === 'label' && c.kindOf.join() === 'recount' && d.kindOf.join() === 'recount' && e.kindOf.join() === 'none',
+    { a: a.kindOf, b: b.kindOf, c: c.kindOf, d: d.kindOf, e: e.kindOf });
+  const k = new Function("const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];" + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n'
+    + (ah.match(/const AWD_KINDS = [\s\S]*?\n  none: [^\n]*/) || [''])[0] + '\n' + fnA('awdKindArea') + fnA('awdKindOfArea') + fnA('awdKindAreaCmp') + '; return { awdKindArea, awdKindAreaCmp };')();
+  const areas = ['✂ BO', 'PREVIOUS PACKED', '🏷 C1', '✅ C2', '✅ BO', '⚠ not on our shelves'].sort(k.awdKindAreaCmp);
+  check('…the order: PREVIOUS PACKED, then ✅ FULL CASE (BO, C2 — walking order), then 🏷 NEED LABELING, then ✂ RECOUNT, then ⚠ not on our shelves; an area is named with its group',
+    areas.join('|') === 'PREVIOUS PACKED|✅ BO|✅ C2|🏷 C1|✂ BO|⚠ not on our shelves' && k.awdKindArea({ kind: 'full', loc: 'C1=1-1-1' }) === '✅ C1' && k.awdKindArea({ kind: 'label', loc: 'C1=1-1-1' }) === '🏷 C1', areas);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
