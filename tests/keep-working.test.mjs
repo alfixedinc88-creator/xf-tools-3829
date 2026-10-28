@@ -11009,6 +11009,17 @@ console.log('\n🟫 Box check: another SKU\'s label first → the PALLET for the
     /✅ 1 labeled, waiting for a pallet/.test(pH) && /🟫 Put these 1 on a PALLET/.test(pH) && /Scan the PALLET label for these 1 box/.test(s2) && /not a PALLET label/.test(f2) && n3 === 3, { s2, f2, n3 });
   check('…✕ on a SKU with labeled boxes and no pallet asks first (never silent); 📦 Next box clears the 🟫 one-scan step',
     /has' : 'es have'\) \+ ' the Amazon label on but NO PALLET scanned/.test(ihY) && /BXC\.bulk = null; BXS = null;/.test(ihY), null);
+  // Owner (2026-10-28): "what happens if I double scan? send out the warning: already scanned by when and who and which pallet, and total how
+  // many cases, so they can confirm it" → the label of a box already on PALLET 1 again: ⚠ ALREADY SCANNED, who / when / PALLET 1 and its totals.
+  B.invBoxCheckReset(); await scan('301952611628550081'); for (let i = 0; i < 20 && !/now has/.test(gY('inv-bc-res').innerHTML); i++) await wait();
+  const d1 = gY('inv-bc-res').innerHTML, nD = onP(), cntD = sq.prepare("SELECT COUNT(*) n FROM awd_box_scan WHERE sscc = '301952611628550081'").get().n;
+  check('double scan: the Amazon label of box 2-1 (already on PALLET 1) again → "⚠ ALREADY SCANNED — Box 2-1", on PALLET 1, by TS + when, "PALLET 1 now has 3 Amazon boxes · 3 of our cases · 2 part #s", ✓ Correct — leave it / 🔁 Scan it again; nothing new kept, still counted once',
+    /⚠ ALREADY SCANNED — Box 2-1/.test(d1) && /on PALLET 1/.test(d1) && /by <b>TS<\/b> · <b>/.test(d1) && /PALLET 1 now has 3 Amazon boxes · 3 of our cases · 2 part #s/.test(d1) && /✓ Correct — leave it/.test(d1) && /🔁 Scan it again/.test(d1)
+      && /counted ONCE/.test(d1) && nD === 3 && cntD === 2, { d1: d1.slice(0, 900), nD, cntD });
+  B.invBxsRedo(0); const d2 = gY('inv-bc-res').innerHTML; await scan('81-1-1=10'); await scan('PALLET-2'); await wait(); await wait();
+  const lastP = sq.prepare("SELECT pallet FROM awd_box_scan WHERE sscc = '301952611628550081' ORDER BY id DESC LIMIT 1").get().pallet, nR = onP();
+  check('…🔁 Scan it again → the box is ⬜ again; box + PALLET-2 → it moves to PALLET 2 (PALLET 1 has 2 now), never on both',
+    /🔁 Box 2-1: scan the box again/.test(d2) && lastP === 2 && nR === 2, { lastP, nR });
   sq.exec("DELETE FROM master_list WHERE name = 'pal y'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALY'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALY'");
 }
 
