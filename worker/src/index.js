@@ -1534,13 +1534,20 @@ async function awdBoxPallet(request, url, env, session) {
     const eachOf = {}; { const P = [...new Set(boxes.map(b => String(b.part || '').toUpperCase()).filter(Boolean))];
       for (let i = 0; i < P.length; i += 90) { const c = P.slice(i, i + 90); ((await env.DB.prepare(`SELECT UPPER(TRIM(part_num)) p, MAX(units_per_case) e FROM master_list WHERE UPPER(TRIM(part_num)) IN (${c.map(() => '?').join(',')}) GROUP BY UPPER(TRIM(part_num))`).bind(...c).all().catch(() => ({ results: [] }))).results || []).forEach(r => { eachOf[r.p] = +r.e || 0; }); } }
     const casesOf = b => { const P = String(b.part || '').toUpperCase(), m = P.split('=').pop().match(/^(\d+)/), pcs = (+b.units || 0) * (m ? +m[1] || 1 : 1), e = eachOf[P]; return e > 0 && pcs > 0 ? Math.round(pcs / e * 100) / 100 : null; };
-    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b) };
+    // 🏷 / ✂ Owner (2026-10-28): "total how many relabel, how many to recount the quantities — and each pallet with how many relabel and recount
+    // in it". From each box's whole history: it was sent to the packing room (rebag + label) → relabel; told to recount / separate → recount.
+    const was = {}; x.rows.forEach(r => { const w = was[r.sscc] = was[r.sscc] || {}; if (r.kind === 'rebag') w.relabel = true; if (r.kind === 'split') w.recount = true; });
+    const fix = { relabel: { all: 0, waiting: 0, ready: 0, onPallet: 0 }, recount: { all: 0, waiting: 0, ready: 0, onPallet: 0 } };
+    boxes.forEach(b => { const r = x.by[b.sscc], w = was[b.sscc]; if (!r || !w) return;
+      ['relabel', 'recount'].forEach(k => { if (!w[k]) return; const f = fix[k]; f.all++;
+        if (r.kind === 'pallet') f.onPallet++; else if (r.kind === 'ok') f.ready++; else if (r.kind === (k === 'relabel' ? 'rebag' : 'split')) f.waiting++; }); });
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const w = was[b.sscc] || {}; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b), relabel: !!w.relabel, recount: !!w.recount };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
     // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"
     let photos = {}; try { photos = await productPhotoMap(env, boxes.map(b => b.part)); } catch (_) {}
     return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
-      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n] })), split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, ready: kinds.ok,
+      pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n], relabel: pallets[n].filter(o => o.relabel).length, recount: pallets[n].filter(o => o.recount).length })), fix, split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, ready: kinds.ok,
       // Owner (2026-10-28): "PREVIOUS PACKED still has to be scanned and put on our pallets to ship" — not scanned yet counts them too (prev: true)
       notYet: boxes.filter(b => !x.by[b.sscc]).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, loc: b.loc || '', prev: !!b.prev })) });
   }
