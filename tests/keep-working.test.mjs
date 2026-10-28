@@ -639,6 +639,36 @@ console.log('\nHistory: whole-inventory total before → after on every row');
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+console.log('\nHistory: 🏢 Big Co Cases Out column + "Stock Out Big Company" in the Type filter');
+{
+  // Owner (2026-10-28): "under history added one more columns for cases out big company, and type also added on 'stock out big company' too".
+  const now = new Date().toISOString();
+  const ins = sq.prepare(`INSERT INTO inventory_log (timestamp,type,part_num,location,cases,initials,notes,status) VALUES (?,?,?,?,?,?,?,?)`);
+  ins.run(now, 'OUT', 'BG-1=10', 'C1=1-1-1', 3, 'BGC', '[BIG COMPANY for BG-1=10X] picked', 'Verified');
+  ins.run(now, 'OUT', 'BG-1=10', 'C1=1-1-2', 2, 'BGC', '[BIG COMPANY for BG-1=10X] [SCANNED 2/2 boxes ✓]', 'Pending');
+  ins.run(now, 'OUT', 'BG-1=10', 'C1=1-1-3', 4, 'BGC', '[SHELVING] picked', 'Verified');
+  ins.run(now, 'OUT', 'BG-1=10', 'C1=1-1-4', 1, 'BGC', '[AUDIT] [BIG COMPANY] count fix', 'Verified');
+  ins.run(now, 'IN', 'BG-1=10', 'C1=1-1-1', 5, 'BGC', '', 'Verified');
+  const sm = await get('/inventory/history-summary?days=1'), me = (sm.byPerson || []).find(p => p.initials === 'BGC');
+  check('Cases Out stays the same as before: 3 + 2 + 4 = 9 (audit not in it)', me && me.casesOut === 9, me);
+  check('🏢 Big Co Cases Out = 3 + 2 = 5 of those 9 (shelving 4 and the audit not counted)', me && me.casesOutBigCo === 5, me);
+  check('Overall totals send casesOutBigCo too, ≤ Cases Out', sm.totals && sm.totals.casesOutBigCo >= 5 && sm.totals.casesOutBigCo <= sm.totals.casesOut, sm.totals);
+  const ty = async t => ((await get('/inventory/history?days=1&initials=BGC&status=all' + (t ? '&types=' + t : ''))).rows || []).map(r => r.location).sort().join(',');
+  check('Type: all → all 5 rows', await ty('') === 'C1=1-1-1,C1=1-1-1,C1=1-1-2,C1=1-1-3,C1=1-1-4', await ty(''));
+  check('Type: 🏢 Stock Out Big Company → only the 2 Big Company stock outs', await ty('BIGCO') === 'C1=1-1-1,C1=1-1-2', await ty('BIGCO'));
+  check('Type: Stock Out → all 3 stock outs (Big Company + Shelving, no audit)', await ty('OUT') === 'C1=1-1-1,C1=1-1-2,C1=1-1-3', await ty('OUT'));
+  check('Type: Stock In + Audit → the stock in and the audit', await ty('IN,AUDIT') === 'C1=1-1-1,C1=1-1-4', await ty('IN,AUDIT'));
+  sq.exec("DELETE FROM inventory_log WHERE initials='BGC'");
+  const invB = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Type list has "🏢 Stock Out Big Company"', /class="hist-type-chk" value="BIGCO"> 🏢 Stock Out Big Company/.test(invB), null);
+  check('people table has the 🏢 Big Co Cases Out column', /🏢 Big Co Cases Out<\/th>/.test(invB) && /p\.casesOutBigCo/.test(invB), null);
+  const fnSrc = n => { const i = invB.indexOf('function ' + n + '('); let d = 0, j = invB.indexOf('{', i); for (; j < invB.length; j++) { if (invB[j] === '{') d++; else if (invB[j] === '}' && --d === 0) break; } return invB.slice(i, j + 1); };
+  const tm = new Function(fnSrc('histIsBigCo') + fnSrc('histTypeMatch') + 'return histTypeMatch;')();
+  const B = { type: 'OUT', notes: '[BIG COMPANY for X]' }, S = { type: 'OUT', notes: '[SHELVING]' }, A = { type: 'OUT', notes: '[AUDIT] [BIG COMPANY]' };
+  check('page filter (works even before the server update): Big Company only Big Company', tm(B, ['BIGCO']) && !tm(S, ['BIGCO']) && !tm(A, ['BIGCO']) && tm(S, ['OUT']) && tm(B, ['OUT']) && tm(A, ['AUDIT']) && tm(S, []), null);
+  check('History row says OUT · 🏢 BIG CO for a Big Company stock out', /histIsBigCo\(r\) \? 'OUT · 🏢 BIG CO'/.test(invB), null);
+}
+
 console.log('\nHistory: Cancel works on a None Found (puts back what it set to 0)');
 {
   // Owner: None Found at GARAGE for 26-1-2=2X was a mistake (3 → 0 cs); Cancel said "Could not find the matching row in Master List".

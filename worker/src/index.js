@@ -17759,6 +17759,7 @@ async function inventoryHistorySummary(url, env, request) {
       SUM(CASE WHEN type='OUT' AND notes NOT LIKE '%[AUDIT]%' THEN 1 ELSE 0 END) as stock_out,
       SUM(CASE WHEN type='IN'  AND notes NOT LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as cases_in,
       SUM(CASE WHEN type='OUT' AND notes NOT LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as cases_out,
+      SUM(CASE WHEN type='OUT' AND notes NOT LIKE '%[AUDIT]%' AND notes LIKE '%[BIG COMPANY%' THEN cases ELSE 0 END) as cases_out_bigco,
       SUM(CASE WHEN type='IN'  AND notes LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as audit_cases_in,
       SUM(CASE WHEN type='OUT' AND notes LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as audit_cases_out`;
 
@@ -17866,7 +17867,8 @@ async function inventoryHistorySummary(url, env, request) {
         stockIn: totals?.stock_in || 0,
         stockOut: totals?.stock_out || 0,
         casesIn: totals?.cases_in || 0,
-        casesOut: totals?.cases_out || 0
+        casesOut: totals?.cases_out || 0,
+        casesOutBigCo: totals?.cases_out_bigco || 0 // 🏢 the part of Cases Out that went to Stock Out Big Company
       },
       startingCases, endingCases, value,
       pieces: pcs.error ? { error: pcs.error } : { starting: startingPcs, ending: endingPcs, in: _n(pcs.aIn), out: _n(pcs.aOut), pendingIn: _n(pcs.pIn), pendingOut: _n(pcs.pOut),
@@ -17885,6 +17887,7 @@ async function inventoryHistorySummary(url, env, request) {
         stockOut: r.stock_out || 0,
         casesIn: r.cases_in || 0,
         casesOut: r.cases_out || 0,
+        casesOutBigCo: r.cases_out_bigco || 0,
         total: (r.transfers||0) + (r.audits||0) + (r.stock_in||0) + (r.stock_out||0)
       }))
     }), { headers: { 'Content-Type': 'application/json' } }));
@@ -18162,6 +18165,12 @@ async function inventoryHistory(url, env, request) {
     const initF    = (url.searchParams.get('initials') || '').toUpperCase();
     const locF     = (url.searchParams.get('location') || '').toUpperCase();
     const statusF  = (url.searchParams.get('status') || '').toLowerCase(); // pending|verified|rejected|all
+    // Type filter (History → Type): the page sends several, e.g. types=OUT,BIGCO. BIGCO = 🏢 Stock Out Big Company.
+    const typesF   = (url.searchParams.get('types') || '').toUpperCase().split(',').map(t => t.trim()).filter(Boolean);
+    const TYPE_SQL = { IN: "(l.type='IN' AND COALESCE(l.notes,'') NOT LIKE '%[AUDIT]%')", OUT: "(l.type='OUT' AND COALESCE(l.notes,'') NOT LIKE '%[AUDIT]%')",
+      BIGCO: "(l.type='OUT' AND COALESCE(l.notes,'') NOT LIKE '%[AUDIT]%' AND COALESCE(l.notes,'') LIKE '%[BIG COMPANY%')",
+      TRANSFER_OUT: "(l.type LIKE 'TRANSFER%')", AUDIT: "(COALESCE(l.notes,'') LIKE '%[AUDIT]%')", EDIT: "(l.type='EDIT')" };
+    const typesSql = typesF.map(t => TYPE_SQL[t]).filter(Boolean);
 
     const cutoff = days >= 9999 ? '1970-01-01T00:00:00.000Z' : nyDaysStartUTC(days);
 
@@ -18191,6 +18200,7 @@ async function inventoryHistory(url, env, request) {
         const params = [cutoff];
 
         if (typeF && typeF !== 'ALL') { sql += ' AND l.type = ?'; params.push(typeF); }
+        if (typesSql.length) sql += ' AND (' + typesSql.join(' OR ') + ')';
         if (partF) { sql += ' AND UPPER(l.part_num) LIKE ?'; params.push('%' + partF + '%'); }
         if (initF) { sql += ' AND UPPER(l.initials) = ?'; params.push(initF); }
         if (locF)  { sql += ' AND UPPER(l.location) = ?'; params.push(locF); }
