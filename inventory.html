@@ -2694,7 +2694,7 @@ window.invCredLogin = async function() {
           var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sh] = (kk[sh] || 0) + u; }); });
       var left = 0;
       G.forEach(function(y) { if (!(y.left > 0.001)) return; left += y.left; var g = y.g, row = g.row || {}, part = String(g.part).toUpperCase();
-        var how = g.caseOf ? 'a whole case of ' + g.caseOf + ' — ship the case as it is' : !g.exact ? 'of ' + part + ' — rebag' : g.pcs > 0 && g.used < g.n * g.pcs - 0.001 ? 'take ' + g.used + ' pcs, rest stays' : '';
+        var how = g.caseOf ? 'a whole case of ' + g.caseOf + ' — ship the case as it is' : !g.exact ? 'of ' + part + ' — ' + (g.how || 'rebag') : g.pcs > 0 && g.used < g.n * g.pcs - 0.001 ? 'take ' + g.used + ' pcs, rest stays' : '';
         r.takes.push({ target: o.part, name: o.name || row.name || '', pcs: g.pcs ? y.left * g.pcs : 0, partNum: part, cases: Math.round(y.left * 1000) / 1000, how: '🔒 ' + (how || 'locked plan'), area: invAwdArea(g.loc),
           loc: { location: row.location || g.loc, masterId: row.masterId || null, rowIndex: 0, cases: row.cases != null ? row.cases : y.left, adjustedCases: row.cases != null ? row.cases : y.left, eachQty: row.eachQty || g.pcs || 0 },
           L: { partNum: part, sku: row.sku || part, name: row.name || o.name || '', caseOf: g.caseOf ? (function() { var m = {}; m[o.part] = g.caseOf; return m; })() : {} },

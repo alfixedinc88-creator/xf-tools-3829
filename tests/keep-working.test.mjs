@@ -10060,7 +10060,7 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
     // the AWD Planner: the plan as data for Lock it, the box after the labels
     const ahL = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
     check('…AWD Planner: after the labels, "🗺 What to grab, by area" (spots · cases · labels) and 🔒 Lock it; locked → who / when, 🔓 Unlock (Admin); the plan kept with the labels',
-      /grabs: grp\.map\(g => \(\{ loc: g\.loc, part: g\.part, n: g\.n, pcs: g\.pcs \|\| 0, used: g\.used, exact: g\.exact \}\)\)/.test(ahL) && /🔒 Lock it — hold these for/.test(ahL) && /is LOCKED — by/.test(ahL)
+      /grabs: grp\.map\(g => \(\{ loc: g\.loc, part: g\.part, n: g\.n, pcs: g\.pcs \|\| 0, used: g\.used, exact: g\.exact(, how: g\.how \|\| '', why: g\.why \|\| '')? \}\)\)/ /* owner 2026-10-28: + how / why */.test(ahL) && /🔒 Lock it — hold these for/.test(ahL) && /is LOCKED — by/.test(ahL)
         && /🔓 Unlock \(Admin\)/.test(ahL) && /lock: lockDraft/.test(ahL) && /wFetch\(W \+ '\/awd\/lock'/.test(ahL)
         && /sel: '#awd-lock-box'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /🔒 locked by ' \+ ckE\(AWDS\.locks\[sh\.shipment\]\.by/.test(ih), null);
   }
@@ -11064,8 +11064,45 @@ console.log('\n⚠ Labels ON a pallet / NOT on a pallet yet (which ones) + 🖨 
   const aj = rfX(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8'), wj = rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('office (AWD Planner): 🖨 Reprint Box 3-2 + 3-3 → exactly their saved pages (3-2 with its own template page: A2, A2own, A3); labels saved before this change: 85-5-5 3-3 → B3 (SKU + box N-k), 86-6-6 2-2 not printed (its 2 labels are not all saved, so no guessing); kept in 🕘 History; 🧩 check marks',
     r1.pages.map(p => p.url).join() === 'A2,A2own,A3' && Object.keys(r1.got).length === 2 && r2.pages.map(p => p.url).join() === 'B3' && !r2.got['301952611628551012']
-      && /'label_reprint'\]/.test(wj) && /case 'label_reprint'/.test(awX) && /grp\.ssccs = found\.map/.test(awX) && /id="awd-lbl-pal"/.test(awX) && /sel: '#awd-lbl-pal'/.test(aj) && /sel: '\.inv-bc-notpal'/.test(aj), { r1: r1.pages, r2: r2.pages });
+      && /'label_reprint', 'lock', 'unlock'\]/.test(wj) && /case 'label_reprint'/.test(awX) && /grp\.ssccs = found\.map/.test(awX) && /id="awd-lbl-pal"/.test(awX) && /sel: '#awd-lbl-pal'/.test(aj) && /sel: '\.inv-bc-notpal'/.test(aj), { r1: r1.pages, r2: r2.pages });
   sq.exec("DELETE FROM master_list WHERE name = 'pal x'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALX'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALX'");
+}
+
+// Owner (2026-10-28): "3-2-2=25 — SKU Mgr still has 2 cases of 3-2-2=25XX but our guy grabbed the =10, not the =25XX. With =25XX we only relabel,
+// with =10 we have to rebag. And a record of what the shipment needs and, if not the exact part #, what the system told our guy to get."
+console.log('\n📦 AWD grab plan follows the Big Company rules (same bag count = just cover the label, before a rebag) + 📋 the record of why');
+{
+  const { readFileSync: rfB } = await import('node:fs');
+  const ah = rfB(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fnA = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 2); };
+  const helpers = ah.slice(ah.indexOf('function awdNz('), ah.indexOf('function awdGrabPlan('));
+  const mk = (ws, fba) => new Function('checkWarehouseStock', "const awdCaseOf = () => ''; const AWD_AREAS = ['BO','2FL','FRONT','BSMT','PR','GARAGE','C1','C2','BARN','C3','C4','C5'];"
+    + (ah.match(/function awdAreaRank\(loc\) \{[^\n]*/) || [''])[0] + '\n' + fnA('awdLocCompare') + helpers + fnA('awdGrabPlan') + fnA('awdPlanRecord') + '; _awdFbaOf = ' + JSON.stringify(fba) + '; return { awdGrabPlan, awdPlanRecord };')(() => ws);
+  // 3-2-2=25: 2 Amazon boxes × 40 bags × 25 pcs = 2,000 pcs. SKU Mgr: no 3-2-2=25; 3-2-2=10 in C1 (earlier in the walk) 5 cases of 1,000 pcs; 3-2-2=25XX in C4 2 cases of 2,500 pcs
+  const ws = { exactRows: [], bulkRows: [{ partNum: '3-2-2=10', location: 'C1=1-1-1', casesNum: 5, eachPcs: 1000 }, { partNum: '3-2-2=25XX', location: 'C4=4-4-4', casesNum: 2, eachPcs: 2500 }] };
+  const A = mk(ws, { '3-2-2': ['3-2-2=25'] }), pa = A.awdGrabPlan('3-2-2=25-', [40, 40]);
+  const rec = A.awdPlanRecord([{ forPart: '3-2-2=25', boxes: 2, pcs: 2000, grabs: pa.grabs, others: pa.others }]);
+  check('3-2-2=25 (2,000 pcs), none on the shelves: =25XX (C4, 2 cases) is taken — same bag count, just cover the label — NOT the =10 in C1 (earlier in the walk, would need a rebag); the 📋 record says how + "Not used: 3-2-2=10"',
+    pa.grabs.length === 1 && pa.grabs[0].part === '3-2-2=25XX' && pa.grabs[0].loc === 'C4=4-4-4' && pa.grabs[0].n === 1 && /just cover the label with 3-2-2=25 \(no rebag\)/.test(pa.grabs[0].how) && /just cover the label/.test(pa.summary)
+      && /📋 Record: what this shipment needs and what the system said to grab — 1 part # · <span[^>]*>1 not the exact part #/.test(rec) && /C4=4-4-4 · <b[^>]*>3-2-2=25XX<\/b> · 1 cs/.test(rec) && /Not used: <b[^>]*>3-2-2=10<\/b> 5 cs \(rebag — mix bag sizes/.test(rec), { g: pa.grabs, o: pa.others, s: pa.summary });
+  // Rule #1: when 3-2-2=25XX is our own Amazon listing, its bags are kept for it — the =10 is used, and the record says why
+  const B = mk(ws, { '3-2-2': ['3-2-2=25', '3-2-2=25XX'] }), pb = B.awdGrabPlan('3-2-2=25-', [40, 40]);
+  const recB = B.awdPlanRecord([{ forPart: '3-2-2=25', boxes: 2, grabs: pb.grabs, others: pb.others }]);
+  check('…Rule #1: if 3-2-2=25XX is our own Amazon listing, its 2 cases are kept for it and the =10 is used — the record says so ("3-2-2=25XX is our own Amazon listing — its bags are kept for it")',
+    pb.grabs.length === 1 && pb.grabs[0].part === '3-2-2=10' && /Not used: <b[^>]*>3-2-2=25XX<\/b> 2 cs \([\s\S]*?3-2-2=25XX is our own Amazon listing — its bags are kept for it/.test(recB), { g: pb.grabs, o: pb.others });
+  // exact part # first, then cut ONE bigger bag before putting 5 bags into one
+  const C = mk({ exactRows: [{ partNum: '3-2-2=25', location: 'C5=5-5-5', casesNum: 1, eachPcs: 1000 }], bulkRows: [{ partNum: '3-2-2=5', location: 'BO=1', casesNum: 9, eachPcs: 1000 }, { partNum: '3-2-2=100', location: 'C5=1', casesNum: 9, eachPcs: 1000 }] }, {});
+  const pc = C.awdGrabPlan('3-2-2=25-', [40, 40]);
+  check('…the exact part # first (C5, last in the walk), then cut ONE =100 bag before putting 5 bags of =5 into one',
+    pc.grabs.map(g => g.part + '@' + g.loc + '×' + g.n).join() === '3-2-2=25@C5=5-5-5×1,3-2-2=100@C5=1×1' && /cut one =100 bag into =25 bags \(4 per bag\)/.test(pc.grabs[1].how), pc.grabs);
+  // the lock keeps the record (how / why / not used) on the server
+  const lk = await post('/awd/lock', { shipment: 'STAR-REC1', lines: [{ forPart: '3-2-2=25', sku: '3-2-2=25-', boxes: 2, pcs: 2000, others: pa.others, grabs: pa.grabs }] });
+  const lg = await get('/awd/lock?shipment=STAR-REC1'), l0 = ((lg.lock || {}).lines || [])[0] || {};
+  const ihB = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), wB = rfB(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…🔒 Lock it keeps the record on the server (each grab\'s how / why, the bags not used and why); Stock Out Big Company shows the same how ("of 3-2-2=25XX — same bag count — just cover the label"); lock / unlock now kept in 🕘 History',
+    lk.ok && /just cover the label/.test((l0.grabs || [])[0].how) && (l0.others || [])[0].part === '3-2-2=10' && l0.pcs === 2000 && /'of ' \+ part \+ ' — ' \+ \(g\.how \|\| 'rebag'\)/.test(ihB)
+      && /'lock', 'unlock'\]/.test(wB) && /case 'lock':/.test(ah) && /awdAct\('unlock'/.test(ah) && /await awdFbaLoad\(/.test(ah), l0);
+  sq.exec("DELETE FROM awd_lock WHERE shipment = 'STAR-REC1'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
