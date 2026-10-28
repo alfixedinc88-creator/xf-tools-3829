@@ -10979,5 +10979,38 @@ console.log('\n🟫 A pallet shows Amazon boxes AND our cases (one Amazon box = 
   sq.exec("DELETE FROM master_list WHERE name = 'pal z'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALZ'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALZ'");
 }
 
+// Owner (2026-10-28): "pallet 1 has 14 full cases with 14 Amazon labels — why does the record show only 7?" Found: scanning ANOTHER SKU's label
+// while boxes of this one had the Amazon label on (no pallet yet) silently opened the new SKU — those boxes never got a pallet.
+console.log('\n🟫 Box check: another SKU\'s label first → the PALLET for the labeled boxes is asked first; boxes labeled earlier go on a pallet in one scan');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('81-1-1','pal y','81-1-1=10','GARAGE',9,100), ('82-2-2','pal y','82-2-2=10','GARAGE',9,100)`).run();
+  const bx = (ss, part, seq) => ({ sscc: ss, sku: part + '-', part, seq, units: 10, loc: 'GARAGE' });
+  await post('/awd/label-map', { shipment: 'STAR-PALY', labels: [bx('301952611628550081', '81-1-1=10', '2-1'), bx('301952611628550082', '81-1-1=10', '2-2'), bx('301952611628550091', '82-2-2=10', '1-1')] });
+  const { readFileSync: rfY } = await import('node:fs');
+  const ihY = rfY(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihY.slice(ihY.indexOf('  var BXC = { label: null };'), ihY.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gY = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }), flashes = [];
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gY, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, m => flashes.push(m), v => String(v || ''), () => 'TS');
+  const wait = () => new Promise(r => setTimeout(r, 150)), scan = async v => { B.invBoxCheckScan(v); await wait(); await wait(); };
+  const onP = () => sq.prepare("SELECT COUNT(*) n FROM (SELECT sscc, kind, pallet FROM awd_box_scan WHERE shipment = 'STAR-PALY' AND id IN (SELECT MAX(id) FROM awd_box_scan GROUP BY sscc)) WHERE kind = 'pallet' AND pallet = 1").get().n;
+  await scan('301952611628550081'); await scan('81-1-1=10'); // box 2-1 ✅ label on, 2-2 not here yet
+  await scan('301952611628550091'); const r1 = gY('inv-bc-res').innerHTML, s1 = gY('inv-bc-step').textContent; // another SKU's label
+  await scan('PALLET-1'); for (let i = 0; i < 20 && !/82-2-2=10/.test(gY('inv-bc-res').innerHTML); i++) await wait(); const n1 = onP(); // 82-2-2=10 opens by itself
+  await scan('82-2-2=10'); await scan('PALLET-1'); await wait(); const n2 = onP();
+  check('box 2-1 of 81-1-1=10 labeled, then the label of 82-2-2=10 scanned → "⚠ First scan the PALLET for the 1 box of 81-1-1=10-" (not lost); PALLET-1 → it is on PALLET 1, then 82-2-2=10 opens by itself; its box + PALLET-1 → PALLET 1 has 2',
+    /⚠ First scan the PALLET for the 1 box of 81-1-1=10-/.test(r1) && /Scan the PALLET label/.test(s1) && n1 === 1 && n2 === 2, { r1: r1.slice(-300), s1, n1, n2 });
+  // a box labeled earlier and left without a pallet (any phone) → 🟫 Put these on a PALLET → one scan
+  await post('/awd/box-pallet', { sscc: '301952611628550082', kind: 'ok', productPart: '81-1-1=10' });
+  B.invBcPallets(); await wait(); await wait(); const pH = gY('inv-bc-pallets').innerHTML;
+  B.invBcBulkPallet(); const s2 = gY('inv-bc-step').textContent; await scan('C1=1-1-1'); const f2 = flashes.slice(-1)[0]; await scan('PALLET-1'); await wait(); await wait(); const n3 = onP();
+  check('…a box with the Amazon label on but no pallet (2-2): "✅ 1 labeled, waiting for a pallet" + 🟫 Put these 1 on a PALLET → "Scan the PALLET label for these 1 box"; not a pallet label → said; PALLET-1 → PALLET 1 has 3',
+    /✅ 1 labeled, waiting for a pallet/.test(pH) && /🟫 Put these 1 on a PALLET/.test(pH) && /Scan the PALLET label for these 1 box/.test(s2) && /not a PALLET label/.test(f2) && n3 === 3, { s2, f2, n3 });
+  check('…✕ on a SKU with labeled boxes and no pallet asks first (never silent); 📦 Next box clears the 🟫 one-scan step',
+    /has' : 'es have'\) \+ ' the Amazon label on but NO PALLET scanned/.test(ihY) && /BXC\.bulk = null; BXS = null;/.test(ihY), null);
+  sq.exec("DELETE FROM master_list WHERE name = 'pal y'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PALY'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PALY'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
