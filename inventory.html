@@ -2278,7 +2278,7 @@ window.invCredLogin = async function() {
       var ssx = invBcSscc(v);
       if (!ssx) return window.invBxsBox(v);
       var k = -1; BXS.boxes.forEach(function(b, i) { if (b.sscc === ssx) k = i; });
-      if (k >= 0) { BXS.cur = k; invBxsRender(); return; } // another label of the same SKU → that box
+      if (k >= 0) { BXS.cur = k; if (!invBxsWaiting(BXS.boxes[k]) && typeof invBxsDup === 'function') return invBxsDup(BXS, k); invBxsRender(); return; } // another label of the same SKU → that box (⚠ already scanned → said)
       // 🟫 Owner (2026-10-28, "pallet 1 has 14 full cases with 14 Amazon labels, the record shows 7"): another SKU's label while boxes of this
       // one have the Amazon label on but no pallet → they went nowhere. Now: their PALLET first, then the new label opens by itself.
       var rdy = BXS.boxes.filter(function(b) { return b.kind === 'ok'; }).length;
@@ -2340,7 +2340,10 @@ window.invCredLogin = async function() {
         boxes.forEach(function(x, i) { if (x.sscc === ss) k = i; });
         if (!boxes.length) { if (res) res.innerHTML = '<div style="font-weight:700">✅ ' + ckE(b.sku) + ': every box is PREVIOUS PACKED (on the pallet already)</div>'; return; }
         BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', boxes: boxes, prev: prev, cur: k, step: 'scan', each: {} };
-        invBxsRender();
+        var hit = -1; boxes.forEach(function(x, i) { if (x.sscc === ss) hit = i; });
+        var wasPrev = hit < 0 && d.boxes.some(function(x) { return x.prev && x.sscc === ss; });
+        if (hit >= 0 && !invBxsWaiting(boxes[hit]) && typeof invBxsDup === 'function') return invBxsDup(BXS, hit); // ⚠ this box was scanned already
+        invBxsRender(wasPrev ? '<div class="inv-bxs-dup" style="margin-top:6px;padding:8px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:800">⚠ ALREADY DONE — this Amazon box is PREVIOUS PACKED (on the pallet already). Nothing to scan for it.</div>' : undefined);
       });
     }).catch(function(e) { if (res) res.innerHTML = '<div style="color:var(--red)">📶 Could not load this SKU\'s boxes (' + ckE(e && e.message || 'no WiFi?') + ') — scan the label again</div>'; });
   };
@@ -2374,6 +2377,38 @@ window.invCredLogin = async function() {
       + (ready ? '<button type="button" onclick="invBxsToPallet()" style="flex:1;min-width:150px;padding:11px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">➡ Scan the PALLET for the ' + ready + ' labeled</button>' : '') + '</div></div>';
     var i1 = g('inv-bc-inp'); if (i1) i1.focus();
   }
+  // ⚠ Owner (2026-10-28): "what happens if I double scan? send out the warning: already scanned by when and who and which pallet, and total
+  // how many cases, so they can confirm it." Scanning an Amazon label again never counts the box twice (the server keeps only its latest
+  // scan); now the screen also says who / when / which pallet and that pallet's totals: ✓ leave it, or 🔁 scan the box again.
+  function invBxsWhen(t) { try { return t ? new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return String(t || ''); } }
+  function invBxsDup(S, k) {
+    var b = S.boxes[k]; if (!b) return;
+    var T = BXS_TXT[b.kind] || BXS_TXT[''], pn = String(b.pallet == null ? '' : b.pallet).replace(/\D/g, '');
+    var html = function(tot) {
+      return '<div class="inv-bxs-dup" style="margin-top:6px;padding:10px;border-radius:10px;background:#fef3c7;border:2.5px solid #d97706;color:#92400e">'
+        + '<div style="font-size:18px;font-weight:900">⚠ ALREADY SCANNED — Box ' + ckE(b.seq) + '</div>'
+        + '<div style="font-size:15px;font-weight:800;margin-top:3px">' + T[0] + ' ' + T[1] + (b.kind === 'pallet' ? ' ' + ckE(pn || b.pallet) : '') + '</div>'
+        + '<div style="font-size:14px;margin-top:2px">' + (b.by ? 'by <b>' + ckE(b.by) + '</b>' : 'by ?') + (b.at ? ' · <b>' + ckE(invBxsWhen(b.at)) + '</b>' : '') + (b.note ? ' · ' + ckE(b.note) : '') + '</div>'
+        + '<div class="inv-bxs-dup-tot" style="font-size:14px;font-weight:800;margin-top:3px">' + (tot || '') + '</div>'
+        + '<div style="font-size:12px;margin-top:3px">It is counted ONCE — scanning the label again did not add it.</div>'
+        + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+        + '<button type="button" class="inv-bxs-dup-ok" onclick="invBxsDupOk()" style="flex:1;min-width:130px;padding:10px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">✓ Correct — leave it</button>'
+        + '<button type="button" class="inv-bxs-dup-redo" onclick="invBxsRedo(' + k + ')" style="flex:1;min-width:130px;padding:10px;border-radius:9px;border:2px solid #d97706;background:var(--bg);color:#92400e;font-weight:800;cursor:pointer">🔁 Scan it again / other pallet</button></div></div>';
+    };
+    S.cur = k; if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+    invBxsRender(html(b.kind === 'pallet' ? '⏳ counting PALLET ' + ckE(pn) + '…' : ''));
+    if (b.kind !== 'pallet' || !pn) return;
+    wFetch(W + '/awd/box-pallet?shipment=' + encodeURIComponent(S.ship || '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (BXS !== S || S.cur !== k || !d || !d.pallets) return;
+      var p = d.pallets.filter(function(x) { return String(x.pallet) === pn; })[0]; if (!p) return;
+      var c = 0, unk = 0, parts = {}; p.boxes.forEach(function(x) { if (x.cases != null) c += x.cases; else unk++; parts[x.part || x.sku] = 1; });
+      invBxsRender(html('🟫 PALLET ' + ckE(pn) + ' now has ' + p.boxes.length + ' Amazon box' + (p.boxes.length === 1 ? '' : 'es') + ' · ' + (Math.round(c * 100) / 100) + ' of our cases' + (unk ? ' (+ ' + unk + ' not worked out)' : '') + ' · ' + Object.keys(parts).length + ' part #' + (Object.keys(parts).length === 1 ? '' : 's')));
+    }).catch(function() { if (BXS === S && S.cur === k) invBxsRender(html('📶 PALLET ' + ckE(pn) + ' total not loaded (no WiFi?)')); });
+  }
+  window.invBxsDupOk = function() { if (!BXS) return; invBxsNext(); invBxsRender(); };
+  // 🔁 the box goes back to ⬜ on this phone: scan the box again, then the pallet → its newest scan is the one kept (still counted once)
+  window.invBxsRedo = function(k) { var S = BXS, b = S && S.boxes[k]; if (!b) return; b.kind = ''; b.note = ''; S.cur = k; S.step = 'scan';
+    invBxsRender('<div class="inv-bxs-first" style="margin-top:6px;padding:8px;border-radius:8px;background:#ede9fe;color:#5b21b6;font-weight:800">🔁 Box ' + ckE(b.seq) + ': scan the box again, then its PALLET — the new scan replaces the old one (still counted once)</div>'); };
   function invBxsNext() { var S = BXS; if (!S) return; for (var k = 1; k <= S.boxes.length; k++) { var j = (S.cur + k) % S.boxes.length; if (invBxsWaiting(S.boxes[j])) { S.cur = j; return; } } }
   // one box scanned for the 👉 row: what to do with it
   window.invBxsBox = function(code) {
