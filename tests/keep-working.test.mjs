@@ -11482,8 +11482,9 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
   const P = new Function(...Object.keys(env), code + '; return { psNostockPad, psNumPadKey, psNumPadOk, psNumPadOpen, _psNostockSuggestCases, psSubmitNoStock };')(...Object.values(env));
   globalThis._psPickStockoutCtx = [{ tracking: '1ZT', orderNum: 'X1', sku: '8-8-8=10', bin: '8-8-8', pieces: 20 }];
   const box = mk('ps-nostock-qty-0', { value: '2' }), chk = mk('ps-nostock-chk-0'), hint = mk('ps-nostock-hint-0');
-  check('Picking: the cases box is not a typing box any more — tapping it opens our number pad',
-    /<input type="text" readonly inputmode="none" id="ps-nostock-qty-' \+ idx \+ '"[^>]*onclick="psNostockPad\(' \+ idx \+ '\)"/.test(ps), null);
+  check('Picking: the cases box — phone: read-only, a tap opens our number pad; PC: a typing box (inputmode numeric), the number selected on focus',
+    /\(touch \? 'readonly inputmode="none" ' : 'inputmode="numeric" '\)/.test(ps) && /onclick="psNostockBoxTap\(' \+ idx \+ '\)" onfocus="if\(!psIsTouch\(\)\)this\.select\(\)"/.test(ps)
+    && /window\.psNostockBoxTap = function\(i\) \{ if \(psIsTouch\(\)\) \{ psNostockPad\(i\); return; \}/.test(ps), null);
   P.psNostockPad(0); const opened = P.psNumPadOpen() && /How many cases to bring — 8-8-8\? \(now 2\)/.test(els['ps-numpad'].innerHTML);
   ['5', '⌫', '1'].forEach(P.psNumPadKey); P.psNumPadOk();
   check('pad: 5 ⌫ 1 → OK → the box says 1, the item is ticked, "You set 1 case", pad closed', opened && box.value === '1' && chk.checked && /You set 1 case/.test(hint.innerHTML) && !P.psNumPadOpen(), { v: box.value, chk: chk.checked, hint: hint.innerHTML });
@@ -11493,6 +11494,27 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
   check('…Report → 1 case goes to Stock Out Reports (not 2)', globalThis.__psSel && globalThis.__psSel[0].qty === 1, globalThis.__psSel);
   P.psNostockPad(0); P.psNumPadOk();
   check('pad: OK with nothing tapped → "tap how many", nothing changed', P.psNumPadOpen() && box.value === '1' && toasts.some(t => /Tap how many cases/.test(t)), toasts);
+  // 🖥 Owner (2026-10-29, photo of the Picking PC): "when they select 'no stock' it just auto select on the box number, so they can start to type".
+  {
+    const sel = []; const box1 = mk('ps-nostock-qty-1', { value: '2', focus() { sel.push('focus'); }, select() { sel.push('select'); } });
+    const chk1 = mk('ps-nostock-chk-1'), hint1 = mk('ps-nostock-hint-1', { dataset: { sugg: 2 } }), bx1 = mk('ps-nostock-box-1', { className: 'ps-nostock-box' });
+    globalThis._psPickStockoutCtx = [{ sku: 'A', bin: 'A' }, { tracking: '1ZT', orderNum: 'X1', sku: '25=1/2F19', bin: '25-1-2', pieces: 50 }];
+    globalThis.psNumPadClose(); // the pad from the check above
+    globalThis.matchMedia = () => ({ matches: false }); // the PC: mouse / touchpad
+    chk1.checked = true; globalThis.psNostockTick(1, true);
+    const pcSel = sel.join(',') === 'focus,select' && !P.psNumPadOpen() && /\bon\b/.test(bx1.className);
+    box1.value = 'a1'; globalThis.psNostockTyped(1, box1);
+    check('PC: tick ⚠ No Stock → the cursor goes in the cases box with the number selected (no pad); type "1" → 1, the picker\'s number, "You set 1 case · suggested 2"',
+      pcSel && box1.value === '1' && box1.dataset.touched === '1' && /You set 1 case<\/b> · suggested 2/.test(hint1.innerHTML), { sel, v: box1.value, hint: hint1.innerHTML });
+    box1.value = ''; globalThis.psNostockTyped(1, box1); globalThis.__psSel = null; chk.checked = false; toasts.length = 0;
+    P.psSubmitNoStock();
+    check('PC: the box left empty → Report stops and says "Type the cases for 25-1-2 first" (never sent as a guess)', globalThis.__psSel === null && toasts.some(t => /Type the cases for 25-1-2 first/.test(t)), toasts);
+    globalThis.matchMedia = () => ({ matches: true }); // a phone
+    chk1.checked = true; globalThis.psNostockTick(1, true);
+    check('phone: tick ⚠ No Stock → our number pad opens for it', P.psNumPadOpen() && /25-1-2/.test(els['ps-numpad'].innerHTML), null);
+    globalThis.psNumPadClose(); delete globalThis.matchMedia;
+    ['psNostockTick', 'psNostockBoxTap', 'psNostockTyped'].forEach(k => { delete globalThis[k]; });
+  }
   check('…Escape closes the pad; the Picking scan box does not steal it while it is open', /if \(_psNumPad\)\s+\{ psNumPadClose\(\); return; \}/.test(ps) && /!typingElsewhere && !_psNumPad\) inp\.focus\(\)/.test(ps), null);
   delete globalThis._psPickStockoutCtx; delete globalThis.__psSel;
   ['psNumPad', 'psNumPadKey', 'psNumPadClose', 'psNumPadOk', 'psNumPadOpen', 'psNostockPad', 'psSubmitNoStock'].forEach(k => { delete globalThis[k]; });
