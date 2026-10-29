@@ -11622,6 +11622,31 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
   delete globalThis.invPullCasesPad;
 }
 
+// Owner (2026-10-29): one order in 2 boxes — "the 2 labels are right (box 1: 7 × 23-3-3 + 10 × 26-4-2, box 2: 10 × 26-4-2), but picking
+// 9334…295913 shows the 23-3-3 too, like the other box; it should only have the 10 × 26-4-2 the label says".
+console.log('\n📦 A box of a split order (2 labels for 1 order) picks / packs only what is on ITS label');
+{
+  await get('/veeqo/autolabel/labels?status=new').catch(() => null); // the label table exists
+  const T1 = '9334610990370315282463', T2 = '9334610990370315295913', ON = 'SPLIT-2910';
+  const lab = (t, items) => sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES ('1','1',?,'eBay',?,'USPS','Ground','{}',?,?)")
+    .run(ON, t, new Date().toISOString(), JSON.stringify(items));
+  lab(T1, [{ sku: '23-3-3,100=1/2XT', qty: 7, bin: 'C1' }, { sku: '26-4-2,100=1/2 JCLAMP', qty: 10, bin: 'C2' }]);
+  lab(T2, [{ sku: '26-4-2,100=1/2 JCLAMP', qty: 10, bin: '' }]);
+  const whole = JSON.stringify([{ s: '23-3-3,100=1/2XT', q: 7, b: 'C1' }, { s: '26-4-2,100=1/2 JCLAMP', q: 20, b: 'C2' }]);
+  sq.prepare("INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier, uploaded_by, reconcile_status, line_items) VALUES (?,?,?,?,?,?,?,?)").run('2026-10-29', T2, ON, 'eBay', 'USPS', 'veeqo-sync', 'Pending', whole);
+  const i2 = await get('/ship/items?tracking=' + T2), i1 = await get('/ship/items?tracking=' + T1);
+  const saved = JSON.parse(sq.prepare('SELECT line_items FROM ship_manifest_log WHERE tracking = ?').get(T2).line_items);
+  const q = l => (l || []).map(x => x.s + '×' + x.q + (x.b ? '@' + x.b : '')).join(' | ');
+  check('box 2 (…295913) → ONLY 10 × 26-4-2 (bin C2 kept), not the whole order (7 × 23-3-3 + 20 × 26-4-2) — the saved copy is put right too; box 1 (…282463) → 7 × 23-3-3 + 10 × 26-4-2; together = the order (7 + 20) ✅',
+    q(i2.lineItems) === '26-4-2,100=1/2 JCLAMP×10@C2' && q(saved) === '26-4-2,100=1/2 JCLAMP×10@C2' && q(i1.lineItems) === '23-3-3,100=1/2XT×7@C1 | 26-4-2,100=1/2 JCLAMP×10@C2' && i2.orderNum === ON, { i2: i2.lineItems, i1: i1.lineItems, saved });
+  // a one-box order is left as it was (the whole order still fills a short list)
+  sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES ('2','2','ONE-1','eBay','9334610990370315000001','USPS','Ground','{}',?,?)").run(new Date().toISOString(), JSON.stringify([{ sku: '1-1-1=10', qty: 1 }]));
+  sq.prepare("INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier, uploaded_by, reconcile_status, line_items) VALUES (?,?,?,?,?,?,?,?)").run('2026-10-29', '9334610990370315000001', 'ONE-1', 'eBay', 'USPS', 'veeqo-sync', 'Pending', JSON.stringify([{ s: '1-1-1=10', q: 1 }, { s: '2-2-2=10', q: 3 }]));
+  const i3 = await get('/ship/items?tracking=9334610990370315000001');
+  check('…a one-box order (1 label) still shows the whole order (1-1-1=10 + 2-2-2=10), as before', q(i3.lineItems) === '1-1-1=10×1 | 2-2-2=10×3', i3.lineItems);
+  sq.exec("DELETE FROM label_print_queue WHERE order_number IN ('" + ON + "', 'ONE-1'); DELETE FROM ship_manifest_log WHERE order_num IN ('" + ON + "', 'ONE-1')");
+}
+
 // Owner (2026-10-29, photo: "24-6-6=OLD @ C4=1-3-22 — 2.8100972046218103e+24 cases · 3 of 2.81…e+24 boxes scanned"): "why is the system showing
 // I need to grab something like 2.81…?" A box barcode was scanned into the line's cases box ("2" + 810097204621…) and taken as a number.
 console.log('\n📷 A barcode in a Pull List cases box is never taken as cases; a line saved that way asks for the right cases first');

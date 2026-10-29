@@ -23857,7 +23857,31 @@ function shipItemsMoreComplete(a, b) { // is list a more complete than list b?
 // Our own copy first: ship_manifest_log already has the order's items and
 // bins for anything Veeqo Sync (hourly) or an earlier scan/pick saw — one
 // D1 read, instant. Returns { orderNum, items } or null.
+// 📦 Owner (2026-10-29, one order in 2 boxes: "the 2 labels are right, it matches the order, but picking 9334…295913 also shows the 2 of
+// 23-3-3 like the other box — it should only have the 10 × 26-4-2 the label says"). Our Auto Label splits one Veeqo order into boxes, each with
+// its own tracking # and its own items (printed on its label), but Veeqo still has ONE allocation, so every look-up (scan / pick / pack, the
+// Veeqo sync) gave each box the WHOLE order. A box of a split order (2+ labels of ours for the order) now always gets the items printed on its
+// own label. A one-box order is left as it was (its label list can be short when Veeqo was not settled — the whole order fills it).
+async function shipSplitBoxItems(env, clean) {
+  if (!clean || !env.DB) return null;
+  try {
+    const q = async live => env.DB.prepare(`SELECT order_number, items FROM label_print_queue WHERE UPPER(tracking) = ? AND items IS NOT NULL AND items != '' AND items != '[]'${live ? " AND (cancel_hold IS NULL OR cancel_hold = '')" : ''} ORDER BY id DESC LIMIT 1`).bind(clean).first();
+    let live = true, row; try { row = await q(true); } catch (_) { live = false; row = await q(false); }
+    if (!row || !row.order_number) return null;
+    const n = await env.DB.prepare(`SELECT COUNT(DISTINCT UPPER(tracking)) n FROM label_print_queue WHERE order_number = ? AND tracking IS NOT NULL AND tracking != ''${live ? " AND (cancel_hold IS NULL OR cancel_hold = '')" : ''}`).bind(row.order_number).first();
+    if (!n || !(n.n >= 2)) return null;
+    let it = []; try { it = JSON.parse(row.items) || []; } catch (_) {}
+    const items = (Array.isArray(it) ? it : []).filter(i => i && i.sku && parseInt(i.qty) > 0).map(i => ({ s: String(i.sku), q: parseInt(i.qty), b: i.bin || '', i: i.img || '' }));
+    return items.length ? { orderNum: String(row.order_number), items } : null;
+  } catch (_) { return null; }
+}
+// a split box's own items, keeping a bin we already know for a SKU
+function shipSplitWithBins(split, known) {
+  const binBy = {}; (known || []).forEach(i => { if (i && i.s && i.b) binBy[String(i.s).toUpperCase()] = i.b; });
+  return split.items.map(i => (!i.b && binBy[String(i.s).toUpperCase()]) ? { ...i, b: binBy[String(i.s).toUpperCase()] } : i);
+}
 async function shipLocalOrder(env, clean) {
+  const split = await shipSplitBoxItems(env, clean);
   try {
     const rows = (await env.DB.prepare(
       `SELECT order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY date DESC, id DESC LIMIT 5`
@@ -23867,6 +23891,11 @@ async function shipLocalOrder(env, clean) {
     for (const r of rows) {
       let items = []; try { items = JSON.parse(r.line_items || '[]'); } catch (_) {}
       if (Array.isArray(items) && items.length && (!best || shipItemsMoreComplete(items, best.items))) best = { orderNum: String(r.order_num || ''), items };
+    }
+    if (split) { // 📦 a box of a split order: its own items — and the saved copy is put right (so Packing / reports read the same)
+      const items = shipSplitWithBins(split, best && best.items);
+      if (rows.length && rows.some(r => r.line_items !== JSON.stringify(items))) await env.DB.prepare('UPDATE ship_manifest_log SET line_items = ? WHERE UPPER(tracking) = ?').bind(JSON.stringify(items), clean).run().catch(() => {});
+      return { orderNum: (best && best.orderNum) || split.orderNum, items };
     }
     if (best) return best;
   } catch (_) {}
@@ -23958,8 +23987,11 @@ async function shipVeeqoOrder(env, clean, date, carrier) {
       rawOrderItems = whole.map(i => (!i.b && binBy[String(i.s).toUpperCase()]) ? { ...i, b: binBy[String(i.s).toUpperCase()] } : i);
     }
   }
+  const split = mergedBox ? null : await shipSplitBoxItems(env, clean); // 📦 a box of a split order: only what is on its label
+  if (split) rawOrderItems = shipSplitWithBins(split, rawOrderItems);
   const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
   await manifestUpsertScanned(env, date, clean, {
+    exactItems: !!split,
     orderNum, channel: (matched.order.channel && matched.order.channel.name) || '', carrier,
     service: ((matched.order.allocations || [])[0]?.delivery_method?.name || ''),
     shipToState: (matched.order.deliver_to?.state || ''),
@@ -28460,10 +28492,11 @@ async function veeqoManifestSync(env) {
   let upgraded = 0;
   for (const o of todayOrders) {
     const tracking = veeqoExtractTracking(o);
+    const split = await shipSplitBoxItems(env, tracking); // 📦 a box of a split order keeps its own label's items (owner 2026-10-29)
     if (existingToday.has(tracking)) {
       // Saved before Veeqo had the whole order? Upgrade it to the full list
       // (one-box orders only; a merged box keeps its own list of every order).
-      if ((o.allocations || []).length <= 1) {
+      if ((o.allocations || []).length <= 1 && !split) {
         const full = await veeqoExtractLineItems(env, o);
         for (const r of (existingBy[tracking] || [])) {
           if (r.uploaded_by === 'autolabel-merge') continue;
@@ -28485,7 +28518,7 @@ async function veeqoManifestSync(env) {
       service: ((o.allocations || [])[0]?.delivery_method?.name || ''),
       shipToState: (o.deliver_to?.state || ''),
       customerName: veeqoExtractCustomerName(o), city: addr.city, zip: addr.zip,
-      lineItems: JSON.stringify(await veeqoExtractLineItems(env, o)),
+      lineItems: JSON.stringify(split ? split.items : await veeqoExtractLineItems(env, o)),
       address1: addr.address1, address2: addr.address2,
       weightLb: veeqoExtractWeightLb(o),
     });
@@ -28945,7 +28978,8 @@ async function manifestUpsertScanned(env, today, tracking, orderData) {
       const needsCustomer = !existing.customer_name && orderData.customerName;
       // ...or the new list is more complete than the saved one (it was saved
       // before Veeqo had the whole order) — never replaced by a shorter one.
-      const needsItems    = newItems.length > 0 && shipItemsMoreComplete(newItems, existingItems);
+      // 📦 a box of a split order (exactItems): its own label's items replace the whole order saved before (owner 2026-10-29)
+      const needsItems    = newItems.length > 0 && (orderData.exactItems ? JSON.stringify(newItems) !== JSON.stringify(existingItems) : shipItemsMoreComplete(newItems, existingItems));
       // Same independent-backfill treatment for the real Veeqo weight
       // (weight_lb) as line_items above — a null on the existing row (never
       // captured, or captured before this column existed) gets filled in
