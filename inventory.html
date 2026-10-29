@@ -3554,6 +3554,12 @@ window.invCredLogin = async function() {
   function invMaybeAutoPick(d, fromReport) {
     var inp = g('inv-need-cases');
     var need = fromReport ? fromReport.cases : (inp ? parseFloat(inp.value) : 0);
+    // 🐞 Owner (2026-10-29, photo: "we only need one case, the system wants 124 boxes"): "1" typed, then the part # scan landed in Cases
+    // needed too ("124-5-9=5XX") — the 124 in front was read as the cases. Only a plain number counts; anything else → 1 case, and said.
+    if (!fromReport && inp && String(inp.value || '').trim() && !/^\d{1,4}(\.\d+)?$/.test(String(inp.value).trim())) {
+      invFlash('⚠ Cases needed had "' + String(inp.value).trim() + '" (a scan went into it) — taken as 1 case. Check the cases on the Pull List.', 'warn');
+      need = 1; inp.value = '';
+    }
     if (invMode !== 'out' || !d || !d.partNum) return;
     var company = invStockOutDest === 'company';
     // Big Company ships to our Amazon warehouse for one FBA listing, so the
@@ -7594,6 +7600,9 @@ window.invCredLogin = async function() {
     invModal('inv-psg-modal', '<div style="font-size:16px;font-weight:800">📷 Scan every box you grab</div>'
       + '<div style="font-size:14px;margin:6px 0"><b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(it.location) + '</b> — <b>' + invEsc(it.cases) + ' case' + (parseFloat(it.cases) === 1 ? '' : 's') + '</b>'
       + (it.forPart && it.forPart !== it.partNum ? ' <span style="color:#b45309">for ' + invEsc(it.forPart) + '</span>' : '') + (it.name ? '<div style="font-size:12px;color:var(--text3)">' + invEsc(it.name) + '</div>' : '') + '</div>'
+      // ✏ the cases can be changed right here (owner 2026-10-29: "we only need one case, it wants 124 boxes"); more than the system has → said
+      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;margin:4px 0">Cases to grab: <input id="inv-psg-cases" type="text" inputmode="decimal" value="' + invEsc(it.cases) + '" onchange="invPullScanCases(this.value)" style="width:70px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+      + '<span id="inv-psg-sys" style="font-size:12px"></span></div>'
       + '<div id="inv-psg-count" style="font-size:22px;font-weight:800;margin:6px 0;color:#1D4ED8"></div>'
       + '<input id="inv-psg-inp" placeholder="Scan the box barcode" autocomplete="off" inputmode="none" onkeydown="if(event.key===\'Enter\'){event.preventDefault();invPullScanBox(this.value);this.value=\'\';}" '
       + 'style="width:100%;box-sizing:border-box;padding:12px;border:2px solid #1D4ED8;border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
@@ -7602,7 +7611,19 @@ window.invCredLogin = async function() {
       + (invAwdIsAdmin() ? '<button type="button" onclick="invPullScanSkip()" style="width:100%;margin-top:6px;padding:9px;border:1px dashed var(--orange);border-radius:10px;background:var(--bg);color:var(--orange);font-size:12px;cursor:pointer">🔓 Admin: box has no barcode — checked by eye (kept on record)</button>' : ''));
     invPullScanCount(); setTimeout(function() { var x = g('inv-psg-inp'); if (x) x.focus(); }, 50);
   };
-  function invPullScanCount() { var c = g('inv-psg-count'); if (c && PSG) c.textContent = PSG.ok.length + ' of ' + PSG.need + ' box' + (PSG.need === 1 ? '' : 'es') + ' scanned ✓'; }
+  function invPullScanCount() { var c = g('inv-psg-count'); if (c && PSG) c.textContent = PSG.ok.length + ' of ' + PSG.need + ' box' + (PSG.need === 1 ? '' : 'es') + ' scanned ✓';
+    var sy = g('inv-psg-sys'), it = PSG && PSG.item, sc = it && it.systemCases != null ? parseFloat(it.systemCases) : NaN;
+    if (sy && it) sy.innerHTML = !isNaN(sc) && (parseFloat(it.cases) || 0) > sc ? '<b style="color:var(--red)">⚠ more than the ' + invEsc(xfrN(sc)) + ' the system has here — check the cases</b>' : (!isNaN(sc) ? '<span style="color:var(--text3)">(system: ' + invEsc(xfrN(sc)) + ')</span>' : ''); }
+  window.invPullScanCases = function(v) {
+    var S = PSG; if (!S) return; var n = parseFloat(String(v).trim());
+    if (!/^\d{1,4}(\.\d+)?$/.test(String(v).trim()) || !(n > 0)) { invFlash('Cases: a number, e.g. 1', 'error'); var x = g('inv-psg-cases'); if (x) x.value = S.item.cases; return; }
+    var i = invPullList.indexOf(S.item); if (i >= 0) invUpdatePullCases(i, String(n)); else S.item.cases = n;
+    S.need = Math.max(1, Math.ceil(n - 1e-9)); invPullScanCount(); invRenderPullList();
+    if (S.ok.length >= S.need) { // enough scanned already
+      var it = S.item; it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED ' + S.ok.length + '/' + S.need + ' boxes ✓]';
+      invPullScanClose(); invFlash('✓ All ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' scanned — ' + it.partNum + ' grabbed', 'success'); invTogglePullCheck(invPullList.indexOf(it));
+    }
+  };
   window.invPullScanClose = function() { PSG = null; invModalClose('inv-psg-modal'); };
   window.invPullScanBox = function(code) {
     code = String(code || '').trim(); if (!code || !PSG) return;
