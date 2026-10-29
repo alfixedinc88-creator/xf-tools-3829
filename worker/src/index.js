@@ -25327,6 +25327,22 @@ async function inventoryGetStockouts(url, env) {
     quantity: r.quantity != null ? r.quantity : 1, // pre-quantity-column rows read back as 1
     origQuantity: r.orig_quantity != null ? r.orig_quantity : null, qtyChangedBy: r.qty_changed_by || '', qtyChangedAt: r.qty_changed_at || '',
   }));
+  // Owner (2026-10-29): "as soon as it goes under the Pull List it should disappear from Stock Out Reports". An open report
+  // that is on someone's Pull List (not grabbed yet), or in an open 💾 Saved For Later batch, says so (onPull: who / when);
+  // the page hides it from the list. If the Pull List item goes away un-grabbed (cleared, 6 PM, deleted), it shows again.
+  // Grabbed / None Found still resolve the report as before.
+  if (status === 'open' && out.length) {
+    const onPull = {};
+    const mark = (items, by, saved) => { (items || []).forEach(i => {
+      const id = i && parseInt(i.sourceStockoutId, 10);
+      if (id && !i.grabbed && !i.submitted && !i.noneFound && !onPull[id]) onPull[id] = { by: by || '', at: i.addedAt || '', saved: !!saved };
+    }); };
+    const users = (await env.DB.prepare('SELECT display_name, username, items FROM inventory_pull_user').all().catch(() => ({ results: [] }))).results || [];
+    users.forEach(u => { let it = []; try { it = JSON.parse(u.items || '[]'); } catch (_) {} mark(it, u.display_name || u.username); });
+    const batches = (await env.DB.prepare(`SELECT saved_by, items FROM inventory_pull_batch WHERE status = 'open'`).all().catch(() => ({ results: [] }))).results || [];
+    batches.forEach(b => { let it = []; try { it = JSON.parse(b.items || '[]'); } catch (_) {} mark(it, b.saved_by, true); });
+    out.forEach(o => { o.onPull = onPull[o.id] || null; });
+  }
   return cors(new Response(JSON.stringify({ ok: true, stockouts: out, count: out.length }), {
     headers: { 'Content-Type': 'application/json' }
   }));
