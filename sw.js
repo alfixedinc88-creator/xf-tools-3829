@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v309-pace-hidden-20261029';
+const CACHE_VERSION = 'v310-scan-cases-fix-20261029';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
