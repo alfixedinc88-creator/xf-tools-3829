@@ -9898,6 +9898,40 @@ console.log('\n📋 Stock Out Reports: cases changed on the Pull List (2 → 1) 
       && /cs<\/span>' \+ invStockoutWasHtml\(s\);/.test(ih) && /' \(was ' \+ \(Math\.round\(s\.origQuantity \* 100\) \/ 100\)/.test(ih), null);
 }
 
+// Owner (2026-10-29, photo of Stock Out Reports): "as soon as it goes under the Pull List it should auto disappear from the
+// Stock Out Reports" — it used to stay there (crossed out) until grabbed.
+console.log('\n📋 Stock Out Reports: a report put on a Pull List disappears from the list (back if it comes off un-grabbed)');
+{
+  await get('/inventory/stockouts?status=open'); // makes the table
+  const ins = sq.prepare("INSERT INTO ship_stockout_log (date, timestamp, sku, bin_location, reported_by, status, quantity) VALUES ('2026-10-29','2026-10-29T19:51:00Z',?,?,'MG','open',1)");
+  const ra = Number(ins.run('33=3/4SWETB', '26-1-2').lastInsertRowid), rb = Number(ins.run('10=1/2X', '202-4-5').lastInsertRowid), rc = Number(ins.run('25=1x1', '24-5-9').lastInsertRowid);
+  const mineBefore = (await get('/inventory/pull/mine')).items || [];
+  const so = async () => { const l = (await get('/inventory/stockouts?status=open')).stockouts || []; const f = id => l.find(r => r.id === id) || {}; return [f(ra), f(rb), f(rc)]; };
+  const s0 = await so();
+  await post('/inventory/pull/mine', { items: mineBefore.concat([{ key: '26-1-2=3|C1-1-1', partNum: '26-1-2=3', location: 'C1-1-1', cases: '1', addedAt: '2026-10-29T20:00:00Z', sourceStockoutId: ra }]) });
+  await post('/inventory/pull-batch/save', { savedBy: 'KL', items: [{ key: '24-5-9=25|C2-1-1', partNum: '24-5-9=25', location: 'C2-1-1', cases: '2', addedAt: '2026-10-29T20:01:00Z', sourceStockoutId: rc }] });
+  const s1 = await so();
+  await post('/inventory/pull/mine', { items: mineBefore }); // taken off the Pull List un-grabbed
+  const s2 = await so();
+  check('on someone\'s Pull List (26-1-2) or in a 💾 Saved For Later batch (24-5-9) → onPull (who / when); not on one (202-4-5) → still shown; off the list un-grabbed → shown again',
+    s0.every(r => r.id && !r.onPull) && !!(s1[0].onPull && s1[0].onPull.by) && s1[0].onPull.at === '2026-10-29T20:00:00Z' && !s1[1].onPull && s1[2].onPull && s1[2].onPull.by === 'KL' && s1[2].onPull.saved === true
+      && !s2[0].onPull && !!s2[2].onPull, { s0, s1, s2 });
+  const bid = (sq.prepare("SELECT id FROM inventory_pull_batch WHERE saved_by = 'KL' AND items LIKE ? ORDER BY id DESC").get('%24-5-9=25%') || {}).id;
+  if (bid) sq.prepare('DELETE FROM inventory_pull_batch WHERE id = ?').run(bid);
+  sq.prepare('DELETE FROM ship_stockout_log WHERE id IN (?,?,?)').run(ra, rb, rc);
+  const { readFileSync: rfSO } = await import('node:fs');
+  const ih = rfSO(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = n => (ih.match(new RegExp('  function ' + n + '\\([^]*?\\n  \\}')) || [''])[0];
+  const lib = new Function('invPullList', 'INV_CRED_USER', '_invStockoutOpenList', 'g', fn('invStockoutOnPull') + fn('invStockoutWaiting') + fn('invStockoutBadge') + '; return { on: invStockoutOnPull, wait: invStockoutWaiting, badge: invStockoutBadge };');
+  const badgeEl = { style: {} };
+  const L = lib([{ sourceStockoutId: 1, cases: 1 }, { sourceStockoutId: 2, grabbed: true }], { displayName: 'MG' }, [{ id: 1 }, { id: 2 }, { id: 3, onPull: { by: 'KL' } }, { id: 4 }], () => badgeEl);
+  L.badge();
+  check('…page: a report on this phone\'s Pull List (1) or the server\'s onPull (3) is hidden; a grabbed one (2) and one not on any list (4) stay; the badge counts only those 2',
+    L.wait().map(r => r.id).join() === '2,4' && L.on({ id: 1 }).by === 'MG' && badgeEl.textContent === 2
+      && /if \(invStockoutOnPull\(s\)\) return '';/.test(ih) && /var open = invStockoutWaiting\(\);/.test(ih) && /already on a Pull List/.test(ih)
+      && /function invSavePullList\(\) \{[^]{0,500}invRenderStockoutList\(\)/.test(ih), L.wait());
+}
+
 // Owner (2026-10-24): "the Amazon label with PREVIOUS PACKED — put the product name, how many pieces a bag, how many bags, and a product photo".
 console.log('\n✅ PREVIOUS PACKED label: product name, bags × pieces a bag = pieces, photo');
 {

@@ -5336,12 +5336,25 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         _invStockoutOpenList = (d.stockouts || []);
-        var n = _invStockoutOpenList.length;
-        var b = g("inv-stockout-badge");
-        if (b) { b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+        invStockoutBadge();
         if (_invStockoutListShown) invRenderStockoutList();
       }).catch(function() {});
   };
+
+  // Owner (2026-10-29): "as soon as it goes under the Pull List it should auto disappear from Stock Out Reports". A report
+  // on a Pull List (this phone's, or anyone's / a saved batch — the server's onPull) is hidden from the list and the badge;
+  // it comes back if the Pull List item goes away un-grabbed. Grabbed / None Found resolve it as before.
+  function invStockoutOnPull(s) {
+    if (s.onPull) return s.onPull;
+    var mine = (typeof invPullList !== 'undefined' ? invPullList : []).filter(function(i) {
+      return i && String(i.sourceStockoutId) === String(s.id) && !i.grabbed && !i.submitted && !i.noneFound; })[0];
+    return mine ? { by: (INV_CRED_USER && INV_CRED_USER.displayName) || 'me', at: mine.addedAt || '' } : null;
+  }
+  function invStockoutWaiting() { return _invStockoutOpenList.filter(function(s) { return !invStockoutOnPull(s); }); }
+  function invStockoutBadge() {
+    var b = g("inv-stockout-badge");
+    if (b) { var n = invStockoutWaiting().length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+  }
 
   // ── 🚢 Which pallet is it on? ─────────────────────────────────────────
   // Boxes of a 📦 Received container that are still on their pallet (not
@@ -5484,12 +5497,16 @@ window.invCredLogin = async function() {
     // there's something in it — hidden the rest of the time so it can't be
     // tapped by accident from a collapsed card.
     var raWrap = g("inv-stockout-resolveall-wrap");
-    if (raWrap) raWrap.style.display = (_invStockoutListShown && _invStockoutOpenList.length) ? 'block' : 'none';
-    if (!_invStockoutOpenList.length) {
-      wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">Nothing reported out of stock right now.</div>';
+    var waiting = invStockoutWaiting(), onPullN = _invStockoutOpenList.length - waiting.length;
+    if (raWrap) raWrap.style.display = (_invStockoutListShown && waiting.length) ? 'block' : 'none';
+    invStockoutBadge();
+    var pullNote = onPullN ? '<div class="inv-so-onpull" style="font-size:11px;color:var(--text3);padding:2px 0 6px">📋 ' + onPullN + ' more already on a Pull List (hidden here until grabbed / None Found)</div>' : '';
+    if (!waiting.length) {
+      wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">Nothing reported out of stock right now.</div>' + pullNote;
       return;
     }
     wrap.innerHTML = _invStockoutOpenList.map(function(s, idx) {
+      if (invStockoutOnPull(s)) return ''; // on a Pull List → not shown here (owner 2026-10-29)
       var when = '';
       try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
       // Bin location is the headline now — that's what someone walking the
@@ -5531,7 +5548,7 @@ window.invCredLogin = async function() {
         + '</div>'
         + (s.sku ? invPalletSpan(s.sku, '') : '')
         + '</div>';
-    }).join('');
+    }).join('') + pullNote;
   }
 
   // A report's cases: the picker's number (pre-quantity reports = 1), or the Pull List's new number after a change.
@@ -5718,7 +5735,7 @@ window.invCredLogin = async function() {
         if (!d.ok) throw new Error(d.error || 'Failed');
         _invStockoutOpenList = _invStockoutOpenList.filter(function(s) { return s.id !== id; });
         var b = g("inv-stockout-badge");
-        if (b) { var n = _invStockoutOpenList.length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+        invStockoutBadge();
         invRenderStockoutList();
       }).catch(function(e) {
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resolved'; }
@@ -5733,7 +5750,7 @@ window.invCredLogin = async function() {
   // the whole list once they've all come back — same batching pattern as
   // Pack & Ship's "Report Selected as Out of Stock" on the Picking tab.
   window.invStockoutResolveAll = function() {
-    var open = _invStockoutOpenList.slice();
+    var open = invStockoutWaiting(); // the ones shown — not the ones already on a Pull List
     if (!open.length) return;
     if (!confirm('Resolve all ' + open.length + ' open report' + (open.length !== 1 ? 's' : '') + '?')) return;
     var raBtn = g("inv-stockout-resolveall-btn");
@@ -5753,7 +5770,7 @@ window.invCredLogin = async function() {
       var failedCount = results.length - Object.keys(resolvedIds).length;
       _invStockoutOpenList = _invStockoutOpenList.filter(function(s) { return !resolvedIds[s.id]; });
       var b = g("inv-stockout-badge");
-      if (b) { var n = _invStockoutOpenList.length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+      invStockoutBadge();
       if (raBtn) { raBtn.disabled = false; raBtn.textContent = 'Resolve All'; }
       invRenderStockoutList();
       if (failedCount > 0) {
@@ -6191,6 +6208,8 @@ window.invCredLogin = async function() {
   window.invPullDirty = invPullDirty;
   function invSavePullList() {
     try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+    // A Stock Out Report just put on (or taken off) the Pull List disappears from / comes back to the reports list.
+    try { if (typeof invStockoutBadge === 'function') { invStockoutBadge(); if (_invStockoutListShown) invRenderStockoutList(); } } catch (e) {}
     invPullEditedSinceLoad = true;
     invPullDirty(true);
     invQueuePullSync();
@@ -7411,7 +7430,7 @@ window.invCredLogin = async function() {
         if (d && d.ok) {
           _invStockoutOpenList = _invStockoutOpenList.filter(function(s) { return s.id !== item.sourceStockoutId; });
           var b = g("inv-stockout-badge");
-          if (b) { var n = _invStockoutOpenList.length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+          invStockoutBadge();
           if (_invStockoutListShown) invRenderStockoutList();
         } else {
           item._stockoutResolved = false; // allow retrying later if this failed
