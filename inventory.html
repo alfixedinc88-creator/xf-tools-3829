@@ -15675,6 +15675,8 @@ window.invCredLogin = async function() {
       // 📍 Owner (2026-10-23, screenshot): "space between What was done and SKU Mgr now — move it closer, and move Columns to the top".
       // The table is as wide as what's in it (no stretch), and the Columns list goes right under the first line of the report.
       var colsH = rcSkuWarnHtml(skOff, d.columns);
+      // 📏 Owner (2026-10-29): "Column, Started, Done, Took — keep it in one line, easy to see" (the space is there)
+      var tdN = td.slice(0, -1) + ';white-space:nowrap"';
       colsH += '<div style="font-weight:800;color:var(--text);margin:12px 0 4px">📍 Columns (newest first) <span style="font-weight:400;color:var(--text3)">· <span style="background:var(--red-bg,#fdf0ee);color:var(--red);padding:0 4px;border-radius:4px">red</span> = took more than 10 minutes</span></div>'
         + '<div class="rc-cols-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--border);border-radius:8px"><table class="rc-cols-table" style="border-collapse:separate;border-spacing:0;width:auto;font-size:12px;color:var(--text)"><thead><tr>'
         + ['Column', 'Who', 'Started', 'Done', 'Took', 'Skipped to scan (not scanned → looked again)', '📋 What was done (before → after)', '🏬 SKU Mgr now (double check)'].map(function(x, i) { return '<th class="rc-sticky-h" style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg2);z-index:' + (i ? 2 : 3) + (i ? '' : ';left:0') + '">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
@@ -15695,7 +15697,7 @@ window.invCredLogin = async function() {
                     + '<td style="padding:2px 5px;white-space:nowrap;color:' + (x.how === 'none' ? 'var(--red)' : 'var(--text2)') + '">' + (x.new ? '➕ new line' : (how[x.how] || '✓ scanned')) + '</td></tr>'; }).join('') + '</table></details>'
               : '<span style="color:var(--text3)">—</span>';
             if (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok) bg = 'var(--red-bg,#fdf0ee)';
-            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok ? ' rc-col-skuoff' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono)">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + td + '>' + ckE(c.by) + '</td><td ' + td + '>' + ckE(T(c.startedAt)) + '</td><td ' + td + '>' + ckE(T(c.doneAt)) + '</td><td ' + td + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td><td ' + td + '>' + rcSkuMgrCell(c) + '</td></tr>';
+            return '<tr class="' + (o10 ? 'rc-col-over10' : '') + (c.skuMgr && c.skuMgr.lines && !c.skuMgr.ok ? ' rc-col-skuoff' : '') + '" style="background:' + bg + '"><td ' + td.slice(0, -1) + ';position:sticky;left:0;z-index:1;background:' + bg + '"><b style="font-family:var(--mono);white-space:nowrap">' + ckE(c.location) + '</b>' + (c.stopped ? '<div style="color:var(--orange);font-weight:700">✕ stopped, not done</div>' : '') + chk + '</td><td ' + tdN + '>' + ckE(c.by) + '</td><td ' + tdN + '>' + ckE(T(c.startedAt)) + '</td><td ' + tdN + '>' + ckE(T(c.doneAt)) + '</td><td ' + tdN + '>' + (o10 ? '<b style="color:var(--red)">⏱ ' + M(c.minutes) + '</b>' : M(c.minutes)) + '</td><td ' + td + '>' + sk + '</td><td ' + td + '>' + wd + '</td><td ' + td + '>' + rcSkuMgrCell(c) + '</td></tr>';
           }).join('') + '</tbody></table></div>';
       h = h.replace('<!--rc-cols-->', function() { return colsH; });
       var nd = d.aisles.filter(function(a) { return a.notDone.length; });
@@ -15737,11 +15739,35 @@ window.invCredLogin = async function() {
         + '<td style="padding:2px 5px"><b>' + N(x.now) + '</b></td><td style="padding:2px 5px;white-space:nowrap">' + why + '</td></tr>'; }).join('');
     var fxs = (k.fixes || []).map(function(f) { return '<div class="rc-sku-fix" style="color:var(--accent)">🛡 ' + ckE(f.part) + ': SKU Mgr ' + N(f.from) + ' → <b>' + N(f.to) + '</b> (set to the Audit number ' + ckE(xfrFmtT(f.at)) + ')' + (f.why ? '<div style="color:var(--text2);white-space:normal;max-width:300px">🔍 Why: ' + ckE(f.why) + '</div>' : '') + '</div>'; }).join('');
     var em = (k.emptied || []).map(function(x) { return '<div style="color:var(--orange)">🧹 ' + ckE(x.part) + ': counted ' + N(x.counted) + ', found empty later by ' + ckE(x.by) + ' ' + ckE(xfrFmtT(x.at)) + '</div>'; }).join('');
-    return '<details class="rc-sku-cell"' + (k.ok ? '' : ' open') + '><summary style="cursor:pointer;white-space:nowrap">' + head + '</summary>'
+    // 👀 Owner (2026-10-29): "keep Matches open too, and let me click to see how it looks in SKU Mgr — double check exactly what that column has"
+    return '<details class="rc-sku-cell" open><summary style="cursor:pointer;white-space:nowrap">' + head + '</summary>'
+      + '<div class="rc-sku-peekbar" style="margin:3px 0;white-space:nowrap"><a href="#" class="rc-sku-peek" data-l="' + ckE(c.location) + '" onclick="rcSkuPeek(this);return false" style="color:var(--accent);font-weight:700;font-size:11px">🏬 See ' + ckE(c.location) + ' in SKU Mgr</a>'
+      + ' · <a href="#" data-l="' + ckE(c.location) + '" onclick="rcSkuOpen(this.dataset.l);return false" style="color:var(--accent);font-size:11px">↗ open SKU Mgr</a><div class="rc-sku-peek-out"></div></div>'
       + (rows ? '<table style="border-collapse:collapse;margin-top:4px;font-size:11px"><tr>' + ['Part #', 'Name', 'Counted', 'Moved since', 'Should be', 'SKU Mgr now', ''].map(function(x) { return '<th style="text-align:left;padding:2px 5px;border-bottom:1px solid var(--border);white-space:nowrap">' + x + '</th>'; }).join('') + '</tr>' + rows + '</table>'
         : '<div style="color:var(--text3)">SKU Mgr has nothing at this spot</div>') + fxs + em + '</details>';
   }
   window.rcSkuMgrCell = rcSkuMgrCell; window.rcSkuWarnHtml = rcSkuWarnHtml;
+  // 🏬 That column exactly as SKU Mgr has it NOW (the same list SKU Mgr → 📍 Location shows): part #, name, cases, Ea/Case, pieces,
+  // waiting for approval. Tap again to hide. ↗ opens SKU Mgr itself on that location.
+  window.rcSkuPeek = function(a) {
+    var out = a.parentNode && a.parentNode.querySelector('.rc-sku-peek-out'), loc = a.getAttribute('data-l'); if (!out) return;
+    if (out.innerHTML) { out.innerHTML = ''; return; }
+    out.innerHTML = '<div style="color:var(--text3)">⏳ reading SKU Mgr…</div>';
+    wFetch(W + '/inventory/sku-search?location=' + encodeURIComponent(loc)).then(function(r) { return r.json(); }).then(function(d) {
+      var R = (d && d.results) || [], N = function(v) { return ckE(xfrN(parseFloat(v) || 0)); };
+      if (!R.length) { out.innerHTML = '<div style="color:var(--text3)">SKU Mgr has nothing at ' + ckE(loc) + ' now</div>'; return; }
+      var cs = 0, pcs = 0; R.forEach(function(r) { cs += parseFloat(r.cases) || 0; pcs += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0); });
+      out.innerHTML = '<table class="rc-sku-peek-t" style="border-collapse:collapse;margin-top:3px;font-size:11px;border:1.5px solid var(--accent)"><tr>' + ['Part #', 'Name', 'Spot', 'Cases', 'Ea/Case', 'Pcs', 'Waiting'].map(function(x) { return '<th style="text-align:left;padding:2px 5px;background:var(--bg2);white-space:nowrap">' + x + '</th>'; }).join('') + '</tr>'
+        + R.map(function(r) { var c = parseFloat(r.cases) || 0, e = parseFloat(r.units_per_case) || 0;
+          return '<tr><td style="padding:2px 5px;font-family:var(--mono);white-space:nowrap">' + ckE(r.part_num) + '</td><td style="padding:2px 5px;white-space:normal;min-width:120px">' + ckE(r.name || '—') + '</td><td style="padding:2px 5px;font-family:var(--mono);white-space:nowrap">' + ckE(r.location) + '</td>'
+            + '<td style="padding:2px 5px"><b>' + N(c) + '</b></td><td style="padding:2px 5px">' + (e ? N(e) : '—') + '</td><td style="padding:2px 5px">' + (e ? N(c * e) : '—') + '</td><td style="padding:2px 5px;white-space:nowrap">' + (r.pending || []).map(function(p) { return (p.cases > 0 ? '+' : '') + ckE(xfrN(p.cases)) + ' ' + ckE(p.by); }).join(', ') + '</td></tr>'; }).join('')
+        + '<tr style="font-weight:800"><td style="padding:2px 5px" colspan="3">' + R.length + ' line' + (R.length === 1 ? '' : 's') + '</td><td style="padding:2px 5px">' + N(cs) + '</td><td></td><td style="padding:2px 5px">' + N(pcs) + '</td><td></td></tr></table>';
+    }).catch(function() { out.innerHTML = '<div style="color:var(--red)">📶 SKU Mgr not loaded — check WiFi</div>'; });
+  };
+  window.rcSkuOpen = function(loc) {
+    invSwitchTab('skumgr'); if (typeof skumgrSetMode === 'function') skumgrSetMode('loc');
+    var inp = g('skumgr-search-inp'); if (inp) inp.value = loc; if (typeof skumgrSearch === 'function') skumgrSearch();
+  };
   // ⏱ A finished column that took more than 10 minutes (a stopped one isn't a finished column).
   function rcOver10(c) { return !!c && !c.stopped && c.minutes != null && c.minutes > 10; }
   // 🔎 Search by name / day (New York day) over every column ever done: per person per day — columns, boxes, time, avg / column, over 10 min.
