@@ -178,6 +178,7 @@ document.addEventListener('input', function (e) {
         { key: 'printed', label: 'Printed Today tile', sel: '#ps-scan-summary-printed' },
         { key: 'notprinted', label: 'Not Printed tile', sel: '#ps-scan-summary-notprinted' },
         { key: 'summary', label: 'Scanned Today / by person', sel: '#ps-scan-summary' },
+        { key: 'pacenote', label: '📌 Note: Mayra can pack 130 an hour (Admin / Owner)', sel: '#ps-pack-pace-note' },
         { key: 'itemcount', label: 'Package-size breakdown', sel: '#ps-scan-itemcount-breakdown' },
         { key: 'list', label: 'Today\'s Scans', sel: '#ps-panel-scan > .ps-section-header:has(#ps-scan-cnt-label), #ps-panel-scan > .ps-filter-row, #ps-scan-list' },
         { key: 'debug', label: 'debug link', sel: '#ps-panel-scan span[onclick*="psShowDebug"]' } ] },

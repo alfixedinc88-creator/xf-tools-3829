@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261025a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261029a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11337,6 +11337,38 @@ console.log('\n📍 Audit Columns: no wide gap — long names wrap, Skipped wrap
     /<td style="padding:2px 5px;min-width:110px;max-width:200px;white-space:normal">' \+ ckE\(x\.name \|\| '—'\)/.test(ih) && /<td style="padding:2px 5px;min-width:100px;max-width:180px;white-space:normal">' \+ ckE\(x\.name/.test(ih)
       && /<td style="padding:2px 5px;white-space:normal;min-width:100px;max-width:180px">' \+ ckE\(r\.name/.test(ih) && /'<\/td><td ' \+ td \+ '><div style="max-width:230px">' \+ sk \+ '<\/div><\/td>/.test(ih)
       && /\(i === 5 \? 'white-space:normal;min-width:150px;max-width:230px' : 'white-space:nowrap'\)/.test(ih) && !/min-width:140px">' \+ ckE\(x\.name/.test(ih), null);
+}
+
+// Owner (2026-10-29): "on the packing put a note somewhere I can see — Mayra can pack 130 in an hour".
+console.log('\n📌 Packing: a note "Mayra can pack 130 an hour" (Admin / Owner only)');
+{
+  const { readFileSync: rfP } = await import('node:fs');
+  const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), xa = rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const fnSrc = (ph.match(/function _psPaceNote\(\) \{[^\n]*\n[^\n]*\}/) || [''])[0];
+  const run = roles => { const n = { style: { display: 'none' } }; new Function('document', 'psCredUser', fnSrc + '; _psPaceNote();')({ getElementById: () => n }, { roles }); return n.style.display; };
+  check('Packing tab, above Scanned Today: "📌 Note: Mayra can pack 130 an hour" — shown to Admin / Owner, hidden for everyone else; shown on sign-in and when Packing opens; 🧩 check mark',
+    /<div id="ps-pack-pace-note" style="display:none[^"]*">📌 <b>Note:<\/b> Mayra can pack <b>130 an hour<\/b>/.test(ph) && ph.indexOf('id="ps-pack-pace-note"') < ph.indexOf('id="ps-scan-summary"') && ph.indexOf('id="ps-pack-pace-note"') > ph.indexOf('id="ps-panel-scan"')
+      && run(['admin']) === 'block' && run(['owner']) === 'block' && run(['picker']) === 'none' && run([]) === 'none'
+      && /if \(name === 'scan'\) _psPaceNote\(\);/.test(ph) && (ph.match(/_psRenderOrderLookupDebugTool\(\);\n  _psPaceNote\(\);/g) || []).length === 2 && /sel: '#ps-pack-pace-note'/.test(xa), null);
+}
+
+// Owner (2026-10-29): "if you see they keep packing or picking, give an average time — how many minutes they can pick and pack — under their
+// name; I like to see how fast they go and all the others can see how fast they go too".
+console.log('\n⏱ Picking / Packing: each person\'s pace under their name (steady work only, breaks left out)');
+{
+  const { readFileSync: rfQ } = await import('node:fs');
+  const ph = rfQ(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('var PS_PACE_GAP_MIN = 10'), ph.indexOf('function _psRenderPersonChips() {'));
+  const P = new Function(src + '; return { pace: _psPace, html: _psPaceHtml };')();
+  const at = (m) => new Date(Date.UTC(2026, 9, 29, 13, 0, 0) + m * 1000).toISOString();
+  // MY: a package every 28 s for 10 packages, a 40-min lunch, then 6 more every 30 s → 14 steady gaps: (9 × 28 + 5 × 30) s ÷ 14 = 28.7 s each ≈ 125 an hour
+  const my = [], k = []; for (let i = 0; i < 10; i++) my.push(at(i * 28)); for (let i = 0; i < 6; i++) my.push(at(9 * 28 + 2400 + i * 30));
+  const p = P.pace(my), few = P.pace([at(0), at(60), at(120)]);
+  check('16 scans with a 40-min lunch in the middle: the lunch is left out → 14 steady scans, 28.7 sec each, 125 an hour; shown "⏱ 29 sec each · 125 an hour"; fewer than 5 steady scans → nothing shown',
+    p && p.n === 14 && Math.abs(p.avgMin * 60 - 28.71) < 0.5 && p.perHour === 125 && /⏱ 29 sec each · 125 an hour/.test(P.html({ ts: my })) && few === null && P.html({ ts: [] }) === '', { p, html: P.html({ ts: my }) });
+  check('…under every name on Packing (Scanned Today / by person) and Picking (Picked Today / by person) — everyone sees it; the times come from each scan',
+    (ph.match(/parts\.join\(' · '\) \+ '<\/span>' \+ _psPaceHtml\(u\)/g) || []).length === 2 && (ph.match(/if \(s\.timestamp\) byUser\[who\]\.ts\.push\(s\.timestamp\);/g) || []).length === 2
+      && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psRenderPersonChips() {')) < ph.indexOf('// ── Per-person scan-history detail modal') && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psPickRenderPersonChips() {')) > 0, null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

@@ -1332,6 +1332,8 @@ body {
          date picker below (Printed reads the real-time print-log DB, no
          history lookup wired up for it; Not Printed is kept alongside it
          for the same at-a-glance comparison). -->
+    <!-- 📌 Owner (2026-10-29): "on the packing put a note somewhere I can see: Mayra can pack 130 in an hour". Admin / Owner only. -->
+    <div id="ps-pack-pace-note" style="display:none;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1.5px solid var(--accent);background:var(--bg2);font-size:13px;color:var(--text)">📌 <b>Note:</b> Mayra can pack <b>130 an hour</b> <span style="color:var(--text3);font-size:11px">(only Admin / Owner see this)</span></div>
     <div class="ps-scan-summary" id="ps-scan-summary">
       <div class="ps-scan-summary-total" id="ps-scan-summary-printed" style="display:none">
         <div class="ps-scan-summary-total-val" id="ps-scan-summary-printed-val">0</div>
@@ -2674,6 +2676,7 @@ function _psLaunchInner() {
   // loads), when there's no session yet to check.
   if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   _psRenderOrderLookupDebugTool();
+  _psPaceNote();
   if (psRole === 'mgmt') {
     // Gap report always available for managers — show tab and reconcile bar
     var gapTab = document.getElementById('ps-tab-gaps');
@@ -4351,8 +4354,9 @@ function _psPaintScanSummary(scans, labelHtml) {
   var byUser = {};
   scans.forEach(function(s) {
     var who = s.initials || 'Unassigned';
-    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0 };
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[] };
     byUser[who].total++;
+    if (s.timestamp) byUser[who].ts.push(s.timestamp);
     if (s.carrier === 'UPS') byUser[who].ups++;
     else if (s.carrier === 'USPS') byUser[who].usps++;
     else byUser[who].other++;
@@ -4496,6 +4500,25 @@ window.psCloseItemCountDetail = function() {
 // lets a manager narrow a long shipper list down to one name before
 // clicking in, on top of whatever date is picked above. No new fetch;
 // just re-slices data that's already loaded.
+// ⏱ Owner (2026-10-29): "if you see they keep packing or picking, give an average time — how many minutes they take — under their name;
+// I like to see how fast they go, and everyone else can see it too". Only steady work counts: the time between one scan and the next
+// when it is under 10 minutes (a longer gap = a break, lunch, other work — left out). Average = that time ÷ those packages;
+// per hour = 60 ÷ the average. Shown once there are 5+ steady scans (too few to say otherwise).
+var PS_PACE_GAP_MIN = 10, PS_PACE_MIN_N = 5;
+function _psPace(ts) {
+  var t = (ts || []).map(function(x) { return Date.parse(x); }).filter(function(x) { return !isNaN(x); }).sort(function(a, b) { return a - b; });
+  var ms = 0, n = 0;
+  for (var i = 1; i < t.length; i++) { var d = t[i] - t[i - 1]; if (d > 0 && d < PS_PACE_GAP_MIN * 60000) { ms += d; n++; } }
+  if (n < PS_PACE_MIN_N || !ms) return null;
+  var avg = ms / n / 60000;
+  return { n: n, avgMin: Math.round(avg * 100) / 100, perHour: Math.round(60 / avg) };
+}
+function _psPaceHtml(u) {
+  var p = _psPace(u && u.ts); if (!p) return '';
+  var sec = Math.round(p.avgMin * 60);
+  return '<span class="ps-scan-summary-chip-pace" title="Steady work only: ' + p.n + ' scans less than ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out)" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
+    + (sec < 90 ? sec + ' sec' : p.avgMin + ' min') + ' each · ' + p.perHour + ' an hour</span>';
+}
 function _psRenderPersonChips() {
   var byEl = document.getElementById('ps-scan-summary-by');
   if (!byEl) return;
@@ -4521,7 +4544,7 @@ function _psRenderPersonChips() {
     return '<div class="ps-scan-summary-chip" data-person="' + n.replace(/"/g,'&quot;') + '" role="button" tabindex="0">'
       +   '<div class="ps-scan-summary-chip-info">'
       +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
-      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
+      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>' + _psPaceHtml(u)
       +   '</div>'
       +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
       + '</div>';
@@ -6128,6 +6151,7 @@ window.psUnlockTab = async function(tab) {
     // without needing a full page reload.
     if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   _psRenderOrderLookupDebugTool();
+  _psPaceNote();
   } catch(e) {
     if (errEl) errEl.textContent = 'Connection error — try again.';
     return;
@@ -6156,7 +6180,11 @@ window.psUnlockTab = async function(tab) {
 };
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
+// 📌 the packing pace note: Admin / Owner only
+function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), r = (psCredUser && psCredUser.roles) || [];
+  if (n) n.style.display = r.indexOf('admin') !== -1 || r.indexOf('owner') !== -1 ? 'block' : 'none'; }
 window.psSwitchTab = function(name) {
+  if (name === 'scan') _psPaceNote();
   if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
   if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
@@ -8033,8 +8061,9 @@ function _psPaintPickSummary(scans, labelHtml) {
   var byUser = {};
   scans.forEach(function(s) {
     var who = s.initials || 'Unassigned';
-    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0 };
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[] };
     byUser[who].total++;
+    if (s.timestamp) byUser[who].ts.push(s.timestamp);
     if (s.carrier === 'UPS') byUser[who].ups++;
     else if (s.carrier === 'USPS') byUser[who].usps++;
     else byUser[who].other++;
@@ -8071,7 +8100,7 @@ function _psPickRenderPersonChips() {
     return '<div class="ps-scan-summary-chip" data-person="' + n.replace(/"/g,'&quot;') + '" role="button" tabindex="0">'
       +   '<div class="ps-scan-summary-chip-info">'
       +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
-      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
+      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>' + _psPaceHtml(u)
       +   '</div>'
       +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
       + '</div>';
@@ -11571,5 +11600,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20261025a"></script>
+<script src="xf-access.js?v=20261029a"></script>
 </html>
