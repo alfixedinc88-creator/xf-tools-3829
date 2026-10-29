@@ -11600,5 +11600,39 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
   delete globalThis.invPullCasesPad;
 }
 
+// Owner (2026-10-29, photo: "24-6-6=OLD @ C4=1-3-22 — 2.8100972046218103e+24 cases · 3 of 2.81…e+24 boxes scanned"): "why is the system showing
+// I need to grab something like 2.81…?" A box barcode was scanned into the line's cases box ("2" + 810097204621…) and taken as a number.
+console.log('\n📷 A barcode in a Pull List cases box is never taken as cases; a line saved that way asks for the right cases first');
+{
+  const { readFileSync: rfE } = await import('node:fs');
+  const ih = rfE(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const cut = (a, b) => ih.slice(ih.indexOf(a), ih.indexOf(b, ih.indexOf(a)));
+  const code = cut('  window.invTogglePullCheck = function(i) {', '\n  };\n') + '\n  };\n' + cut('  var PSG = null;', '  function invModal(id, html) {')
+    + cut('  window.invUpdatePullCases = function(i, val) {', '\n  };\n') + '\n  };\n';
+  const els = {}, flashes = [], subs = [], renders = [];
+  const mkEl = id => els[id] || (els[id] = { id, innerHTML: '', textContent: '', value: '', focus() {} });
+  const list = [{ partNum: '24-6-6=OLD', location: 'C4=1-3-22', cases: 2.8100972046218103e+24, systemCases: 14, dest: 'shelving' }, { partNum: '24-6-6=OLD', location: 'C4=1-3-23', cases: 2, dest: 'shelving' }];
+  const env = {
+    g: id => els[id] || null, invModal: (id, html) => { const m = mkEl(id); m.innerHTML = html; ['inv-psg-count', 'inv-psg-res', 'inv-psg-inp', 'inv-psg-sys', 'inv-psg-cases'].forEach(mkEl); return m; },
+    invModalClose: id => { ['inv-psg-modal', 'inv-psg-count', 'inv-psg-res', 'inv-psg-inp', 'inv-psg-sys', 'inv-psg-cases'].forEach(k => delete els[k]); },
+    invEsc: v => String(v == null ? '' : v), xfrN: v => Math.round((parseFloat(v) || 0) * 100) / 100, invFlash: (m, t) => flashes.push(t + ': ' + m), invMe: () => 'MG', invParent: p => String(p).split('=')[0].toUpperCase(),
+    invAwdIsAdmin: () => false, W: '', invPost: async () => ({ json: async () => ({ ok: true }) }), invBcPart: async c => c === '810097204621' ? { part: '24-6-6=OLD' } : null, invStockoutQtyQueue() {},
+    invAutoResolveStockoutIfNeeded() {}, invSavePullList() {}, invRenderPullList: () => renders.push(1), invSubmitOnePullItem: i => subs.push(i), setTimeout: f => f(), confirm: () => true, prompt: () => '', window: globalThis
+  };
+  const W = new Function(...Object.keys(env), 'invPullList', code + '; return window;')(...Object.values(env), list);
+  const tick = () => new Promise(r => setImmediate(r));
+  W.invUpdatePullCases(1, '2810097204621810'); const refused = list[1].cases === 2 && flashes.some(f => /not a number of cases/.test(f)) && renders.length === 1;
+  W.invUpdatePullCases(1, '3'); const ok3 = list[1].cases === 3;
+  W.invTogglePullCheck(0);
+  const asks = /⚠ \? case/.test(els['inv-psg-modal'].innerHTML) && !/e\+24/.test(els['inv-psg-modal'].innerHTML) && /The cases are wrong/.test(els['inv-psg-count'].textContent) && /id="inv-psg-cases"[^>]*value=""/.test(els['inv-psg-modal'].innerHTML);
+  W.invPullScanBox('810097204621'); await tick(); const blocked = /Type the right cases above first/.test(els['inv-psg-res'].innerHTML) && !list[0].grabbed;
+  W.invPullScanCases('1'); const fixed = list[0].cases === 1 && /0 of 1 box scanned/.test(els['inv-psg-count'].textContent);
+  W.invPullScanBox('810097204621'); await tick(); await tick();
+  const done = list[0].grabbed === true && /\[SCANNED 1\/1 boxes ✓\]/.test(list[0].scanNote || '') && subs.includes(0);
+  check('a barcode typed / scanned into a cases box (2810097204621810) → refused, the 2 cases stay, said; 3 → taken. A line saved as 2.81e+24 cases → the scan box shows "⚠ ? cases", says the cases are wrong, won\'t count scans; cases typed 1 → "0 of 1 box" → one scan → grabbed',
+    refused && ok3 && asks && blocked && fixed && done, { refused, ok3, asks, blocked, fixed, done, flashes });
+  ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip', 'invPullScanCases', 'invUpdatePullCases'].forEach(k => { delete globalThis[k]; });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

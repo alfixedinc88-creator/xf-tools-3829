@@ -7575,9 +7575,13 @@ window.invCredLogin = async function() {
     });
   };
 
+  // 🐞 Owner (2026-10-29, photo: "2.8100972046218103e+24 cases"): a box barcode was scanned into a line's cases box ("2" + 81009720462…). Only a
+  // plain number (up to 9999) is taken (invCasesOk); anything else is refused, the old number stays, and it says so.
   window.invUpdatePullCases = function(i, val) {
     if (invPullList[i]) {
-      invPullList[i].cases = val ? parseFloat(val) : '';
+      var v = String(val == null ? '' : val).trim();
+      if (v && !invCasesOk(v)) { invFlash('⚠ "' + v.slice(0, 30) + '" is not a number of cases (a scan went into the cases box?) — not taken. Type the cases, e.g. 1', 'error'); invRenderPullList(); return; }
+      invPullList[i].cases = v ? parseFloat(v) : '';
       invSavePullList();
       if (invPullList[i].sourceStockoutId) invStockoutQtyQueue(invPullList[i].sourceStockoutId);
     }
@@ -7703,19 +7707,22 @@ window.invCredLogin = async function() {
   // Small modal used by the three helpers below.
   // 📷 Scan to grab (Big Company): every case scanned, each must be the exact part # on the Pull List line.
   var PSG = null;
+  function invCasesOk(v) { v = String(v == null ? '' : v).trim(); return /^\d{1,4}(\.\d+)?$/.test(v) && parseFloat(v) > 0; } // a plain number of cases (see invUpdatePullCases)
   function invPsgNorm(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
   // first = a box already scanned and matched (the ▸ scan-to-grab box, 🔁 Replace): it counts as box 1 — never scanned twice.
   window.invPullScanOpen = function(i, first) {
     var it = invPullList[i]; if (!it) return;
     var need = Math.max(1, Math.ceil((parseFloat(it.cases) || 0) - 1e-9));
     if (!(parseFloat(it.cases) > 0)) { invFlash('Enter cases before marking grabbed', 'error'); return; }
-    if (first && need <= 1) { it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED 1/1 boxes ✓]'; invTogglePullCheck(invPullList.indexOf(it)); return; }
-    PSG = { item: it, need: need, ok: first ? [String(first)] : [], wrong: 0, first: first ? String(first).trim().toUpperCase() : '' };
+    var bad = !invCasesOk(it.cases); // a line saved before the check (e.g. 2.81e+24): fix the cases first, in the box below
+    if (bad) need = 0;
+    if (first && need <= 1 && !bad) { it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED 1/1 boxes ✓]'; invTogglePullCheck(invPullList.indexOf(it)); return; }
+    PSG = { item: it, need: need, bad: bad, ok: first ? [String(first)] : [], wrong: 0, first: first ? String(first).trim().toUpperCase() : '' };
     invModal('inv-psg-modal', '<div style="font-size:16px;font-weight:800">📷 Scan every box you grab</div>'
-      + '<div style="font-size:14px;margin:6px 0"><b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(it.location) + '</b> — <b>' + invEsc(it.cases) + ' case' + (parseFloat(it.cases) === 1 ? '' : 's') + '</b>'
+      + '<div style="font-size:14px;margin:6px 0"><b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(it.location) + '</b> — <b>' + (bad ? '⚠ ?' : invEsc(it.cases)) + ' case' + (parseFloat(it.cases) === 1 ? '' : 's') + '</b>'
       + (it.forPart && it.forPart !== it.partNum ? ' <span style="color:#b45309">for ' + invEsc(it.forPart) + '</span>' : '') + (it.name ? '<div style="font-size:12px;color:var(--text3)">' + invEsc(it.name) + '</div>' : '') + '</div>'
       // ✏ the cases can be changed right here (owner 2026-10-29: "we only need one case, it wants 124 boxes"); more than the system has → said
-      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;margin:4px 0">Cases to grab: <input id="inv-psg-cases" type="text" inputmode="decimal" value="' + invEsc(it.cases) + '" onchange="invPullScanCases(this.value)" style="width:70px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+      + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;margin:4px 0">Cases to grab: <input id="inv-psg-cases" type="text" inputmode="decimal" value="' + (bad ? '' : invEsc(it.cases)) + '" onchange="invPullScanCases(this.value)" style="width:70px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700;font-family:var(--mono);background:var(--bg);color:var(--text)">'
       + '<span id="inv-psg-sys" style="font-size:12px"></span></div>'
       + '<div id="inv-psg-count" style="font-size:22px;font-weight:800;margin:6px 0;color:#1D4ED8"></div>'
       + '<input id="inv-psg-inp" placeholder="Scan the box barcode" autocomplete="off" inputmode="none" onkeydown="if(event.key===\'Enter\'){event.preventDefault();invPullScanBox(this.value);this.value=\'\';}" '
@@ -7725,14 +7732,14 @@ window.invCredLogin = async function() {
       + (invAwdIsAdmin() ? '<button type="button" onclick="invPullScanSkip()" style="width:100%;margin-top:6px;padding:9px;border:1px dashed var(--orange);border-radius:10px;background:var(--bg);color:var(--orange);font-size:12px;cursor:pointer">🔓 Admin: box has no barcode — checked by eye (kept on record)</button>' : ''));
     invPullScanCount(); setTimeout(function() { var x = g('inv-psg-inp'); if (x) x.focus(); }, 50);
   };
-  function invPullScanCount() { var c = g('inv-psg-count'); if (c && PSG) c.textContent = PSG.ok.length + ' of ' + PSG.need + ' box' + (PSG.need === 1 ? '' : 'es') + ' scanned ✓';
+  function invPullScanCount() { var c = g('inv-psg-count'); if (c && PSG) c.textContent = PSG.bad ? '⚠ The cases are wrong (a scan went into the cases box) — type the right cases above, then scan' : PSG.ok.length + ' of ' + PSG.need + ' box' + (PSG.need === 1 ? '' : 'es') + ' scanned ✓';
     var sy = g('inv-psg-sys'), it = PSG && PSG.item, sc = it && it.systemCases != null ? parseFloat(it.systemCases) : NaN;
-    if (sy && it) sy.innerHTML = !isNaN(sc) && (parseFloat(it.cases) || 0) > sc ? '<b style="color:var(--red)">⚠ more than the ' + invEsc(xfrN(sc)) + ' the system has here — check the cases</b>' : (!isNaN(sc) ? '<span style="color:var(--text3)">(system: ' + invEsc(xfrN(sc)) + ')</span>' : ''); }
+    if (sy && it) sy.innerHTML = PSG.bad ? (!isNaN(sc) ? '<span style="color:var(--text3)">(system: ' + invEsc(xfrN(sc)) + ')</span>' : '') : !isNaN(sc) && (parseFloat(it.cases) || 0) > sc ? '<b style="color:var(--red)">⚠ more than the ' + invEsc(xfrN(sc)) + ' the system has here — check the cases</b>' : (!isNaN(sc) ? '<span style="color:var(--text3)">(system: ' + invEsc(xfrN(sc)) + ')</span>' : ''); }
   window.invPullScanCases = function(v) {
     var S = PSG; if (!S) return; var n = parseFloat(String(v).trim());
-    if (!/^\d{1,4}(\.\d+)?$/.test(String(v).trim()) || !(n > 0)) { invFlash('Cases: a number, e.g. 1', 'error'); var x = g('inv-psg-cases'); if (x) x.value = S.item.cases; return; }
+    if (!/^\d{1,4}(\.\d+)?$/.test(String(v).trim()) || !(n > 0)) { invFlash('Cases: a number, e.g. 1', 'error'); var x = g('inv-psg-cases'); if (x) x.value = S.bad ? '' : S.item.cases; return; }
     var i = invPullList.indexOf(S.item); if (i >= 0) invUpdatePullCases(i, String(n)); else S.item.cases = n;
-    S.need = Math.max(1, Math.ceil(n - 1e-9)); invPullScanCount(); invRenderPullList();
+    S.bad = false; S.need = Math.max(1, Math.ceil(n - 1e-9)); invPullScanCount(); invRenderPullList();
     if (S.ok.length >= S.need) { // enough scanned already
       var it = S.item; it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED ' + S.ok.length + '/' + S.need + ' boxes ✓]';
       invPullScanClose(); invFlash('✓ All ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' scanned — ' + it.partNum + ' grabbed', 'success'); invTogglePullCheck(invPullList.indexOf(it));
@@ -7742,6 +7749,7 @@ window.invCredLogin = async function() {
   window.invPullScanBox = function(code) {
     code = String(code || '').trim(); if (!code || !PSG) return;
     var S = PSG, it = S.item, want = invPsgNorm(it.partNum), res = g('inv-psg-res');
+    if (S.bad) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:800">⚠ Type the right cases above first</div>'; var cx = g('inv-psg-cases'); if (cx && cx.focus) cx.focus(); return; }
     if (res) res.innerHTML = '<span style="color:var(--text3)">⏳ checking ' + invEsc(code) + '…</span>';
     // 📴 No WiFi (owner 2026-10-19: the app keeps working offline): the phone's stock copy answers the barcode (sw.js). Only a barcode that is
     // not in that copy can't be checked — never called "wrong", never counted; scan again when the WiFi is back (or an Admin's 🔓).
