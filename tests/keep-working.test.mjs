@@ -9030,9 +9030,9 @@ console.log('\n🔎 Recount numbers check: counted + moved since = SKU Mgr now (
     const W2 = new Function('ckE', 'xfrN', 'xfrFmtT', 'window', ihS.slice(ihS.indexOf('  function rcSkuWarnHtml(off) {'), ihS.indexOf('  window.rcSkuMgrCell = rcSkuMgrCell;')) + '; return { cell: rcSkuMgrCell, warn: rcSkuWarnHtml };')(x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100, x => String(x), {});
     const off = (rep.columns || []).filter(x => /^Q5=/.test(x.location) && x.skuMgr && x.skuMgr.lines && !x.skuMgr.ok);
     const w = W2.warn(off), hb = W2.cell(C('Q5=1-1-2')), ha = W2.cell(C('Q5=1-1-1'));
-    check('…the screen: ⚠ warning on top naming the columns not matching (Q5=1-1-3 · Q5=1-1-2, newest first), red rows, the 🏬 cell opens by itself when off; ✅ matches stays closed',
+    check('…the screen: ⚠ warning on top naming the columns not matching (Q5=1-1-3 · Q5=1-1-2, newest first), red rows, the 🏬 cell opens by itself when off; ✅ matches open too (owner 2026-10-29)',
       /⚠ 2 columns NOT matching SKU Mgr/.test(w) && /Q5=1-1-3 · Q5=1-1-2/.test(w) && /✅ Every column/.test(W2.warn([]))
-        && /<details class="rc-sku-cell" open>/.test(hb) && /⚠ NOT matching SKU Mgr/.test(hb) && /⚠ -2 off/.test(hb) && /<details class="rc-sku-cell">/.test(ha) && /✅ matches<\/b> · 3 boxes · 1 part #/.test(ha)
+        && /<details class="rc-sku-cell" open>/.test(hb) && /⚠ NOT matching SKU Mgr/.test(hb) && /⚠ -2 off/.test(hb) && /<details class="rc-sku-cell" open>/.test(ha) && /✅ matches<\/b> · 3 boxes · 1 part #/.test(ha)
         && /'🏬 SKU Mgr now \(double check\)'/.test(ihS) && /rc-col-skuoff/.test(ihS) && /\+ rcSkuMgrCell\(c\) \+/.test(ihS), { w, hb });
     // 🔍 Owner (2026-10-23): "if not matching, find out why — make sure it doesn't happen again". Each line not matching says why.
     check('🔍 every line not matching says WHY: Q5=1-1-2 → the phone\'s number vs SKU Mgr (an old number / a change with no History line); Q5=1-1-3 705-1-4=5 → not on the phone\'s list (old list); shown on the screen (🔍 Why)',
@@ -11304,6 +11304,27 @@ console.log('\n🕕 Every day at 6 PM (New York): spots taken go back to everyon
     /function invPullSixPm\(\) \{/.test(ih) && /invPullSixPm\(\);\n    var mine = invPullList\.filter\(invPullInTab\);/.test(ih) && /🕕 Every day at 6 PM, whatever is on a Pull List and not grabbed goes back to everyone/.test(ih), null);
   await call('/inventory/pull/mine', { method: 'POST', headers: PK, body: JSON.stringify({ items: [] }) });
   sq.exec("DELETE FROM awd_claim WHERE id IN ('c6pm1','c6pm2')");
+}
+
+// Owner (2026-10-29, Audit report screenshot): "Column, Started, Done, Took — keep it in one line, easy to see (there is a lot of space); keep
+// Matches open too; and let me click something to see how it looks in SKU Mgr, so I can double check exactly what that column has".
+console.log('\n📍 Audit Columns: one line for Column / Started / Done / Took, ✅ matches open, 🏬 see the column in SKU Mgr');
+{
+  const { readFileSync: rfR } = await import('node:fs');
+  const ih = rfR(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('99-4-4','1/2 jclamp','99-4-4=50XX','Q9=2-2-11',25,1000), ('99-4-4','1/2 jclamp','99-4-4=25XX','Q9=2-2-11',3,1000)").run();
+  const peekSrc = ih.slice(ih.indexOf('  window.rcSkuPeek = function(a) {'), ih.indexOf('  window.rcSkuOpen = function(loc) {'));
+  const out = { innerHTML: '' }, a = { parentNode: { querySelector: () => out }, getAttribute: () => 'Q9=2-2-11' }, win = {};
+  new Function('window', 'wFetch', 'W', 'ckE', 'xfrN', peekSrc)(win, u => call(u, { headers: H }), '', x => String(x == null ? '' : x), x => Math.round((+x || 0) * 100) / 100);
+  win.rcSkuPeek(a); for (let i = 0; i < 40 && /⏳/.test(out.innerHTML); i++) await new Promise(r => setTimeout(r, 20));
+  const h = out.innerHTML;
+  check('🏬 See Q9=2-2-11 in SKU Mgr: the lines SKU Mgr has there now — 99-4-4=25XX 3 cases × 1000 = 3000 pcs, 99-4-4=50XX 25 cases = 25000 pcs; total 2 lines · 28 cases · 28000 pcs; tap again hides it',
+    /rc-sku-peek-t/.test(h) && /99-4-4=25XX<\/td>[^]*?<b>3<\/b><\/td><td[^>]*>1000<\/td><td[^>]*>3000</.test(h) && /99-4-4=50XX<\/td>[^]*?<b>25<\/b>/.test(h) && /2 lines<\/td><td[^>]*>28<\/td><td><\/td><td[^>]*>28000</.test(h)
+      && (win.rcSkuPeek(a), out.innerHTML === ''), h.slice(0, 600));
+  check('…every column row: Column / Who / Started / Done / Took on one line (nowrap); the 🏬 cell always open with "🏬 See … in SKU Mgr" and "↗ open SKU Mgr" (SKU Mgr → 📍 Location on that spot)',
+    /var tdN = td\.slice\(0, -1\) \+ ';white-space:nowrap"';/.test(ih) && /'<\/td><td ' \+ tdN \+ '>' \+ ckE\(T\(c\.startedAt\)\) \+ '<\/td><td ' \+ tdN \+ '>' \+ ckE\(T\(c\.doneAt\)\) \+ '<\/td><td ' \+ tdN \+ '>'/.test(ih)
+      && /return '<details class="rc-sku-cell" open><summary/.test(ih) && /onclick="rcSkuPeek\(this\);return false"/.test(ih) && /skumgrSetMode\('loc'\);/.test(ih.slice(ih.indexOf('window.rcSkuOpen'))), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '99-4-4'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
