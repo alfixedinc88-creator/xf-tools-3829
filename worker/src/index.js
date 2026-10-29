@@ -28044,7 +28044,7 @@ async function veeqoUndeliveredReport(url, env) {
   const endDate   = new Date(Date.now() - excludeRecentDays * 86400000).toISOString().slice(0, 10);
 
   const manifestRes = await env.DB.prepare(
-    `SELECT tracking, order_num, channel, carrier, date, customer_name, address1, address2, city, ship_to_state, zip FROM ship_manifest_log
+    `SELECT tracking, order_num, channel, carrier, date, customer_name, address1, address2, city, ship_to_state, zip, uploaded_by, service FROM ship_manifest_log
      WHERE date >= ? AND date <= ? ORDER BY date ASC LIMIT ? OFFSET ?`
   ).bind(startDate, endDate, PAGE_SIZE, (page - 1) * PAGE_SIZE).all();
   const manifestRows = manifestRes.results || [];
@@ -28083,6 +28083,10 @@ async function veeqoUndeliveredReport(url, env) {
   }
   const cancelled = [], replaced = [];
   let delivered = 0, noOrder = 0;
+  // Owner (2026-10-29): "N not found in Veeqo — can we check on USPS and UPS? some labels we buy in stamps.com … I try to open
+  // a claim". Labels Veeqo can't check (bought in Stamps.com, or no Veeqo order for the tracking #) used to be only counted —
+  // now each one is returned (notInVeeqo) and goes on its own sheet to check on the carrier's site, never silently left out.
+  const notInVeeqo = [];
 
   // BUGFIX: previously any API failure (rate limit, timeout, bad ID) was
   // silently swallowed and treated identically to "confirmed not
@@ -28109,11 +28113,15 @@ async function veeqoUndeliveredReport(url, env) {
         if (!who.state) who.state = String(d.state || d.region || '').trim(); };
       const base = { tracking, carrier: m.carrier || '', orderNum: m.order_num || '', channel, shippedAt: m.date || '', ...who };
       if (cancelledSet.has(tracking)) { cancelled.push(base); return null; }
+      const carrierCheck = why => { noOrder++; notInVeeqo.push({ ...base, why, trackingUrl: veeqoTrackingUrl(base.carrier, tracking) }); return null; };
+      // A Stamps.com label linked to its order (🔗 Picking / Packing): Veeqo's order carries no such tracking #, so Veeqo
+      // can't say if it was delivered (and must not call it a "replaced" label either).
+      if (m.uploaded_by === 'stamps-link' || /stamps/i.test(m.service || '')) return carrierCheck('Label bought in Stamps.com — Veeqo has no tracking for it');
 
       if (!shipmentId) {
         const lookup = await veeqoLookupByTrackingSafe(env, tracking);
         if (lookup.error) { failedLookups.push({ tracking, stage: 'order-lookup', error: lookup.error }); return null; }
-        if (!lookup.order) { noOrder++; return null; } // no matching order in Veeqo - counted, shown on the page
+        if (!lookup.order) return carrierCheck('No Veeqo order has this tracking # (Stamps.com or another site?)');
         // Owner (2026-10-09): Veeqo's export had 23 of our "undelivered" numbers under the same order with a DIFFERENT
         // tracking number — the label was bought again (old one voided), so the old number never moves. Only check the
         // order's shipment when it still carries OUR tracking number; otherwise it's a replaced label, never a claim.
@@ -28125,7 +28133,7 @@ async function veeqoUndeliveredReport(url, env) {
         if (!mine) { replaced.push({ ...base, channel: channel || veeqoExtractChannel(lookup.order) || '', currentTracking: theirs.map(x => x.t).join(', ') }); return null; }
         shipmentId = mine.id;
         channel = channel || veeqoExtractChannel(lookup.order);
-        if (!shipmentId) { noOrder++; return null; }
+        if (!shipmentId) return carrierCheck('Veeqo order has no shipment for this label');
       }
 
       const { events, error } = await veeqoGetTrackingEventsSafe(env, shipmentId);
@@ -28162,7 +28170,7 @@ async function veeqoUndeliveredReport(url, env) {
 
   return cors(new Response(JSON.stringify({
     ok: true, page, hasMore: manifestRows.length === PAGE_SIZE,
-    checked: manifestRows.length, undelivered, delivered, noOrder, cancelled, replaced,
+    checked: manifestRows.length, undelivered, delivered, noOrder, notInVeeqo, cancelled, replaced,
     failedLookups: failedLookups.slice(0, 20), // sample - full count still accurate below
     failedLookupCount: failedLookups.length,
     windowStart: startDate, windowEnd: endDate,

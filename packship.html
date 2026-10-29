@@ -5464,6 +5464,7 @@ window.psAlWhyMerge = function() {
 // ── Undelivered Report ───────────────────────────────
 var psUndeliveredRows = null; // holds the built (deduped) result until downloaded
 var psUndeliveredNotClaims = []; // replaced (voided) / cancelled labels — never shipped, never a claim
+var psUndeliveredNotInVeeqo = []; // labels Veeqo can't check (Stamps.com / no Veeqo order) — check on USPS / UPS
 
 window.psRunUndeliveredReport = async function() {
   var btn = document.getElementById('ps-und-run-btn');
@@ -5481,7 +5482,7 @@ window.psRunUndeliveredReport = async function() {
 
   var allRaw = [];
   var totalFailedLookups = 0;
-  var tot = { checked: 0, delivered: 0, noOrder: 0 }, notClaims = [];
+  var tot = { checked: 0, delivered: 0, noOrder: 0 }, notClaims = [], notInVeeqo = [];
   var page = 1;
   var hasMore = true;
   var MAX_PAGES = 200; // safety ceiling - matches the worker's own cap
@@ -5499,6 +5500,7 @@ window.psRunUndeliveredReport = async function() {
       tot.checked += data.checked || 0; tot.delivered += data.delivered || 0; tot.noOrder += data.noOrder || 0;
       (data.replaced || []).forEach(function(r) { notClaims.push(Object.assign({ why: 'Label replaced — the order now ships on ' + (r.currentTracking || 'another label') + ' (this one was voided, never moves)' }, r)); });
       (data.cancelled || []).forEach(function(r) { notClaims.push(Object.assign({ why: 'We cancelled this label (Picking → Canceled Labels)' }, r)); });
+      notInVeeqo = notInVeeqo.concat(data.notInVeeqo || []);
       hasMore = data.hasMore;
       page++;
     }
@@ -5518,6 +5520,8 @@ window.psRunUndeliveredReport = async function() {
 
     psUndeliveredRows = deduped;
     psUndeliveredNotClaims = notClaims;
+    var seenNiv = {};
+    psUndeliveredNotInVeeqo = notInVeeqo.filter(function(r) { if (seenNiv[r.tracking]) return false; seenNiv[r.tracking] = 1; return true; });
 
     var uspsCount = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'USPS'; }).length;
     var upsCount  = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'UPS'; }).length;
@@ -5528,7 +5532,7 @@ window.psRunUndeliveredReport = async function() {
     var doneMsg = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).'
       + ' Checked ' + tot.checked + ' labels: ' + tot.delivered + ' delivered, ' + deduped.length + ' not delivered'
       + (notClaims.length ? ', ' + notClaims.length + ' replaced / cancelled labels (never shipped — NOT a claim, on their own sheet)' : '')
-      + (tot.noOrder ? ', ' + tot.noOrder + ' not found in Veeqo (not counted either way)' : '') + '.';
+      + (tot.noOrder ? ', ' + tot.noOrder + ' Veeqo can\'t check (Stamps.com / not in Veeqo) — NOT checked yet: on the "Check on carrier site" sheet, check each on USPS / UPS' : '') + '.';
     // Surfaced explicitly: these are real API failures (e.g. rate
     // limiting), NOT confirmed undelivered - they're excluded from the
     // count above entirely rather than silently counted as undelivered.
@@ -5550,7 +5554,7 @@ var PS_CARRIER_BATCH_LIMITS = { USPS: 35, UPS: 25, FEDEX: 25 };
 var PS_DEFAULT_BATCH_LIMIT = 25;
 
 window.psDownloadUndeliveredReport = function() {
-  if (!psUndeliveredRows || !psUndeliveredRows.length) { _psToast('Run the report first'); return; }
+  if (!psUndeliveredRows || (!psUndeliveredRows.length && !psUndeliveredNotInVeeqo.length)) { _psToast('Run the report first'); return; }
   if (typeof XLSX === 'undefined') {
     var s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -5577,6 +5581,7 @@ function _psBuildUndeliveredWorkbook() {
     [],
     ['Window: last ' + document.getElementById('ps-und-days').value + ' days, excluding the most recent ' + document.getElementById('ps-und-exclude').value + ' days'],
     [psUndeliveredRows.length + ' unique tracking numbers to verify.'],
+    (psUndeliveredNotInVeeqo.length ? ['+ ' + psUndeliveredNotInVeeqo.length + ' labels Veeqo can\'t check (Stamps.com / not in Veeqo): see the "Check on carrier site" sheet — check those on USPS / UPS too.'] : []),
     [],
     ['This report lists shipments Veeqo has not confirmed as delivered. Veeqo\'s'],
     ['own tracking status can lag or differ from the carrier\'s real status, so'],
@@ -5627,6 +5632,33 @@ function _psBuildUndeliveredWorkbook() {
     ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }, { wch: 24 }, { wch: 12 }, { wch: 24 }, { wch: 24 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 7 }, { wch: 11 }];
     XLSX.utils.book_append_sheet(wb, ws, carrier.slice(0, 31));
   });
+
+  // Owner (2026-10-29): labels Veeqo can't check (bought in Stamps.com, or no Veeqo order) — NOT checked yet, so they get
+  // their own sheet in carrier batches to check on USPS / UPS by hand; whatever isn't delivered there is a claim too.
+  if (psUndeliveredNotInVeeqo.length) {
+    var nv = [['CHECK ON CARRIER SITE — ' + psUndeliveredNotInVeeqo.length + ' labels Veeqo can\'t check (bought in Stamps.com, or no Veeqo order). Not checked yet: look each batch up on USPS / UPS; anything not delivered is a claim.'], []];
+    var nvBy = {};
+    psUndeliveredNotInVeeqo.forEach(function(r) { var c = (r.carrier || 'Unknown').toUpperCase(); (nvBy[c] = nvBy[c] || []).push(r); });
+    Object.keys(nvBy).forEach(function(c) {
+      var lim = PS_CARRIER_BATCH_LIMITS[c] || PS_DEFAULT_BATCH_LIMIT;
+      var list = nvBy[c].slice().sort(function(a, b) { return (a.shippedAt || '').localeCompare(b.shippedAt || ''); });
+      for (var i = 0; i < list.length; i += lim) {
+        var batch = list.slice(i, i + lim);
+        nv.push([c + ' batch ' + (i / lim + 1) + ' (' + batch.length + ' tracking numbers)']);
+        nv.push(['Copy-paste block (one per line):']);
+        nv.push([batch.map(function(r) { return r.tracking; }).join('\n')]);
+        nv.push([]);
+        nv.push(['Tracking Number', 'Carrier', 'Order Num', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)', 'Why not checked',
+          'Customer Name', 'Address 1', 'Address 2', 'City', 'State', 'ZIP']);
+        batch.forEach(function(r) { nv.push([r.tracking, r.carrier || '', r.orderNum || '', r.channel || '', r.shippedAt || '', r.trackingUrl || '', '', r.why || '',
+          r.customerName || '', r.address1 || '', r.address2 || '', r.city || '', r.state || '', r.zip || '']); });
+        nv.push([]); nv.push([]);
+      }
+    });
+    var wsv = XLSX.utils.aoa_to_sheet(nv);
+    wsv['!cols'] = [{ wch: 24 }, { wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }, { wch: 50 }, { wch: 24 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 7 }, { wch: 11 }];
+    XLSX.utils.book_append_sheet(wb, wsv, 'Check on carrier site');
+  }
 
   // Replaced (voided) and cancelled labels: never shipped, so never a claim — listed so nothing is silently dropped.
   if (psUndeliveredNotClaims.length) {
