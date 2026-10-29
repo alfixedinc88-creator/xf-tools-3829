@@ -5430,6 +5430,16 @@ async function inventoryLookup(url, env) {
       }
     } catch (_) {}
   }
+  // ⚠ A spot someone marked None Found (Pull List) that nobody has counted since → Stock Out uses it last (owner 2026-10-29).
+  if (env.DB && locations.length) {
+    try {
+      const open = (await invNoneFoundList(env, { days: 30, parts: locations.map(l => l.partNum) })).filter(x => !x.checked);
+      for (const loc of locations) {
+        const x = open.find(o => o.part === String(loc.partNum || '').toUpperCase() && String(o.location).toUpperCase() === String(loc.location || '').toUpperCase());
+        if (x) loc.noneFound = { by: x.by, at: x.at };
+      }
+    } catch (_) {}
+  }
 
   // 📦 Owner (2026-10-17, 30-4-6=100X: "that's a case — when Amazon / we order 30-4-6=100X we just ship a whole case of
   // 30-4-6=10X"): this item's part #s sold as a whole case of another (Reorder 📦) → Stock Out Big Company takes whole cases of it.
@@ -5770,13 +5780,17 @@ async function inventoryLog(request, env) {
         // None Found means the shelf was actually checked and had zero
         // cases — the true remaining count is always 0, regardless of what
         // the system thought was there or how many cases were "removed".
-        const afterCases   = noneFound
+        // ⚠ Owner (2026-10-29): a Pull List None Found ([TO AUDIT]) takes NOTHING off — the spot goes on 🔍 Audit to double check.
+        const nfAudit = noneFound && /\[TO AUDIT\]/.test(String(notes || ''));
+        const afterCases   = nfAudit ? currentCases : noneFound
           ? 0
           : type === 'IN'
             ? currentCases + changeCases
             : Math.max(0, currentCases - changeCases);
         const sysNote = type === 'IN'
           ? `[STOCK IN] Had ${currentCases} — adding ${changeCases} — should be ${afterCases}`
+          : nfAudit
+            ? `[STOCK OUT] Had ${currentCases} — none found — NOT taken off: sent to 🔍 Audit to double check`
           : noneFound
             ? `[STOCK OUT] Had ${currentCases} — found 0 — should leave 0`
             : `[STOCK OUT] Had ${currentCases} — removing ${changeCases} — should leave ${afterCases}`;
@@ -6181,7 +6195,8 @@ async function inventoryVerify(request, env) {
         // What this part # total SHOULD be: IN adds, OUT takes off — but a
         // shelf never goes below 0, so taking more than the system had there
         // (or "none found") only takes off what the system had.
-        const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]');
+        // [TO AUDIT] (Pull List None Found, owner 2026-10-29): nothing taken off — a plain 0-case Stock Out.
+        const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]') && !String(item.notes || '').includes('[TO AUDIT]');
         let change = type === 'IN' ? casesAmt : -casesAmt, info = null;
         if (type === 'OUT' && rowBefore !== null && (noneFound || rowBefore < casesAmt - 1e-9)) {
           change = -rowBefore;
@@ -6493,7 +6508,8 @@ async function inventoryVerifyInner(request, env) {
 
       // Phase 3: Atomic SQL update — prevents race condition on bulk approve
       // Instead of read-then-write (which loses updates when concurrent), use SQL arithmetic
-      const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]');
+      // [TO AUDIT] (Pull List None Found, owner 2026-10-29): the spot is NOT set to 0 — 🔍 Audit double checks it.
+      const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]') && !String(item.notes || '').includes('[TO AUDIT]');
       let newCases;
       if (env.DB) {
         try {
@@ -8802,6 +8818,40 @@ async function inventoryCheckSpots(request, env) {
     if (!s.pack) s.pack = { timestamp: r.ts, from: r.from_pcs, to: r.to_pcs, by: r.by_user || '' };
   }
   return J({ ok: true, spots });
+}
+
+// ── ⚠ None Found → 🔍 Audit (owner 2026-10-29) ───────────────────────────
+// "we already done the audit, so SKU Mgr should be right — None Found on the Pull List takes down all our inventory on that
+// spot; don't do it no more: show where they can grab next and report it to the Audit tab — what, when, how many we should
+// have, which spot — so people can double check that spot: a system error, or the picker didn't see it".
+// A Pull List None Found is a 0-case Stock Out tagged [TO AUDIT] (History keeps who / when; nothing is taken off). It stays
+// open on 🔍 Audit until that spot is counted (📋 recount / 🔁 Checking) after it; then it shows the count result.
+async function invNoneFoundList(env, opts = {}) {
+  const since = new Date(Date.now() - (opts.days || 60) * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
+  const parts = opts.parts ? [...new Set(opts.parts.map(U))].filter(Boolean).slice(0, 80) : null;
+  if (parts && !parts.length) return [];
+  const pq = parts ? ` AND UPPER(part_num) IN (${parts.map(() => '?').join(',')})` : '';
+  const sql = c => `SELECT id, timestamp, part_num, location, initials, notes, status FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[TO AUDIT]%'
+    AND COALESCE(status, '') != 'Rejected'${c ? " AND COALESCE(cancelled_at, '') = ''" : ''} AND timestamp >= ?${pq} ORDER BY timestamp DESC LIMIT 500`;
+  const rows = ((await env.DB.prepare(sql(true)).bind(since, ...(parts || [])).all()
+    .catch(() => env.DB.prepare(sql(false)).bind(since, ...(parts || [])).all()).catch(() => ({ results: [] }))).results || []);
+  if (!rows.length) return [];
+  await recountTables(env);
+  const counts = ((await env.DB.prepare('SELECT location, ts, by_user FROM recount_columns WHERE COALESCE(stopped, 0) = 0 AND ts >= ? ORDER BY ts').bind(since).all().catch(() => ({ results: [] }))).results || []);
+  const out = [];
+  for (const r of rows) {
+    const L = U(r.location), n = String(r.notes || '');
+    const c = counts.find(x => U(x.location) === L && String(x.ts) > String(r.timestamp));
+    const had = /Had ([\d.]+) — none found/.exec(n), want = /\[WANTED ([\d.]+)\]/.exec(n);
+    const o = { id: r.id, at: r.timestamp, by: r.initials || '', part: U(r.part_num), location: r.location, status: r.status || '',
+      had: had ? parseFloat(had[1]) : null, wanted: want ? parseFloat(want[1]) : null, dest: /\[BIG COMPANY/.test(n) ? 'company' : 'shelving', checked: null };
+    if (c) {
+      const now = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ?', [o.part, L]).catch(() => null);
+      o.checked = { by: c.by_user || '', at: c.ts, now: now && now.c != null ? Math.round(parseFloat(now.c) * 100) / 100 : 0 };
+    }
+    out.push(o);
+  }
+  return out;
 }
 
 // ── 🔍 Audit → 📋 Full recount (about once a year), column by column ─────
@@ -11125,6 +11175,11 @@ const _app = {
       // of the Scan-tab actions like /inventory/log.
       if (path === '/inventory/stockouts' && method === 'GET') {
         return await inventoryGetStockouts(url, env);
+      }
+      // ⚠ None Found spots to double check on 🔍 Audit (owner 2026-10-29) — any signed-in person.
+      if (path === '/inventory/none-found' && method === 'GET') {
+        const list = await invNoneFoundList(env, { days: Math.min(180, parseInt(url.searchParams.get('days'), 10) || 60) });
+        return cors(new Response(JSON.stringify({ ok: true, list }), { headers: { 'Content-Type': 'application/json' } }));
       }
       if (path === '/inventory/stockout-resolve' && method === 'POST') {
         return await inventoryResolveStockout(request, env);
@@ -18191,8 +18246,10 @@ async function inventoryPullRoute(path, method, request, env) {
     // Drop un-grabbed items an Admin deleted (the phone still had them) and tell the phone.
     const prev = await env.DB.prepare('SELECT removed FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first().catch(() => null);
     let gone = []; try { gone = JSON.parse((prev && prev.removed) || '[]'); } catch (_) {}
-    const goneSet = new Set(gone.map(r => r.id)), dropped = [];
-    if (goneSet.size) items = items.filter(i => { if (isOpen(i) && goneSet.has(pullId(i))) { dropped.push(pullId(i)); return false; } return true; });
+    const goneSet = new Set(gone.map(r => r.id)), dropped = [], taken = [];
+    // 👥 taken by a teammate (owner 2026-10-29) — said apart from an Admin delete (the phone keeps no claim to give back)
+    const takeOf = id => gone.find(r => r.id === id && r.take);
+    if (goneSet.size) items = items.filter(i => { if (isOpen(i) && goneSet.has(pullId(i))) { (takeOf(pullId(i)) ? taken : dropped).push(pullId(i)); return false; } return true; });
     const json = JSON.stringify(items);
     if (json.length > 400000) return J({ ok: false, error: 'Pull list too big' }, 413);
     const now = new Date().toISOString();
@@ -18200,7 +18257,48 @@ async function inventoryPullRoute(path, method, request, env) {
       ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, items = excluded.items, updated_at = excluded.updated_at`)
       .bind(cs.userId, cs.username || '', cs.displayName || '', json, now).run();
     const by = dropped.length ? (gone.find(r => r.id === dropped[0]) || {}).by || '' : '';
-    return J({ ok: true, updatedAt: now, removed: dropped, removedBy: by });
+    const takenBy = taken.length ? (takeOf(taken[0]) || {}).by || '' : '';
+    return J({ ok: true, updatedAt: now, removed: dropped, removedBy: by, taken, takenBy });
+  }
+  // 👥 Owner (2026-10-29): "can everyone share the Pull List? when we're busy two people grab the inventory". Everyone's
+  // un-grabbed items (not mine) for a helper to pick from; POST /inventory/pull/take moves the chosen ones from that
+  // person's list onto mine (their phone drops them on its next save, every ~20 s) — recorded (who took what from whom).
+  if (path === '/inventory/pull/team' && method === 'GET') {
+    const rows = (await env.DB.prepare('SELECT user_id, username, display_name, items, updated_at FROM inventory_pull_user WHERE user_id != ? ORDER BY display_name').bind(cs.userId).all()).results || [];
+    const people = rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {}
+      const ungrabbed = items.filter(isOpen).map(i => ({ id: pullId(i), partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null, dest: i.dest === 'company' ? 'company' : 'shelving' }));
+      return { userId: r.user_id, displayName: r.display_name || r.username, updatedAt: r.updated_at, ungrabbed }; }).filter(p => p.ungrabbed.length);
+    return J({ ok: true, people });
+  }
+  if (path === '/inventory/pull/take' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const uid = parseInt(b.fromUserId, 10);
+    if (!uid || uid === cs.userId) return J({ ok: false, error: 'Pick a teammate' }, 400);
+    const r = await env.DB.prepare('SELECT user_id, username, display_name, items, removed FROM inventory_pull_user WHERE user_id = ?').bind(uid).first();
+    if (!r) return J({ ok: false, error: 'No pull list for that person' }, 404);
+    let items = [], gone = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} try { gone = JSON.parse(r.removed || '[]'); } catch (_) {}
+    const want = new Set((b.ids || []).map(x => String(x).toUpperCase()));
+    const move = items.filter(i => isOpen(i) && want.has(pullId(i).toUpperCase()));
+    if (!move.length) return J({ ok: false, error: 'Already grabbed or taken — refresh the list' }, 409);
+    const ids = new Set(move.map(pullId)), by = String(cs.displayName || cs.username || '').slice(0, 40), now = new Date().toISOString();
+    const from = r.display_name || r.username || '';
+    items = items.filter(i => !(isOpen(i) && ids.has(pullId(i))));
+    gone = gone.concat([...ids].map(id => ({ id, by, at: now, take: true }))).slice(-500);
+    await env.DB.prepare('UPDATE inventory_pull_user SET items = ?, removed = ?, updated_at = ? WHERE user_id = ?').bind(JSON.stringify(items), JSON.stringify(gone), now, uid).run();
+    const moved = move.map(i => ({ ...i, takenFrom: from, takenAt: now }));
+    const me = await env.DB.prepare('SELECT items FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first();
+    let mine = []; try { mine = JSON.parse((me && me.items) || '[]'); } catch (_) {}
+    const have = new Set(mine.map(pullId)); mine = mine.concat(moved.filter(i => !have.has(pullId(i))));
+    await env.DB.prepare(`INSERT INTO inventory_pull_user (user_id, username, display_name, items, updated_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET items = excluded.items, updated_at = excluded.updated_at`).bind(cs.userId, cs.username || '', cs.displayName || '', JSON.stringify(mine), now).run();
+    // 👤 Big Company spots taken for an AWD shipment: now held by the helper
+    const claimIds = [].concat(...move.map(i => Array.isArray(i.awdClaims) ? i.awdClaims : [])).map(String).filter(Boolean);
+    for (const c of claimIds.slice(0, 200)) await env.DB.prepare('UPDATE awd_claim SET by_user = ? WHERE id = ?').bind(by, c).run().catch(() => {});
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS inventory_pull_take_log (id INTEGER PRIMARY KEY AUTOINCREMENT, by_user TEXT, from_user TEXT, items TEXT, at TEXT)').run();
+    await env.DB.prepare('INSERT INTO inventory_pull_take_log (by_user, from_user, items, at) VALUES (?,?,?,?)')
+      .bind(by, from, JSON.stringify(move.map(i => ({ partNum: i.partNum || '', location: i.location || '', cases: i.cases, dest: i.dest || 'shelving' }))), now).run();
+    await logUserActivity(env, cs.userId, 'pull_take', { from, items: move.length }).catch(() => {});
+    return J({ ok: true, items: moved, from });
   }
   // POST /inventory/pull/delete {userId, ids:[...]} or {userId, all:true} — Admin and up
   // delete un-grabbed items from that person's list. Recorded (who, whose, what).

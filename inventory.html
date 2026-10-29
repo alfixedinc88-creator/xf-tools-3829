@@ -922,6 +922,7 @@ window.invCredLogin = async function() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
       <div class="icard-label" style="margin:0">Pull List</div>
       <div style="display:flex;gap:4px;align-items:center">
+        <span id="inv-pullshare-btn" onclick="invPullTeamOpen()" title="Take items from a teammate's Pull List to grab them" style="font-size:12px;color:var(--accent);font-weight:700;text-decoration:underline dotted;cursor:pointer;padding:4px 8px">👥 Help</span>
         <span onclick="invShowSavedPullBatches()" style="font-size:12px;color:var(--text3);text-decoration:underline dotted;cursor:pointer;padding:4px 8px">📂 Saved For Later<span class="ibadge" id="inv-pull-saved-badge" style="display:none;margin-left:4px">0</span></span>
         <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
       </div>
@@ -1177,6 +1178,9 @@ window.invCredLogin = async function() {
        Found / None found. A column must be finished before the next one. -->
   <!-- 📋 For you (owner 2026-10-19): spots a manager sent this person to go back over (Recount report → 📤). -->
   <div id="rc-mine"></div>
+  <!-- ⚠ Owner (2026-10-29): Pull List "None Found" no longer takes the stock down — each one is listed here (what, how many the
+       system has, how many they came for, which spot, who, when) so someone counts that spot: a system error, or not seen. -->
+  <div class="icard" id="inv-nf-audit-card" style="display:none;border:2px solid var(--red)"></div>
   <div class="icard" id="rc-card" style="border:2px solid var(--accent)">
     <div class="icard-label">📋 Full recount — column by column</div>
     <div id="rc-progress" style="font-size:12px;color:var(--text2);margin-bottom:8px">Scan the column label to start.</div>
@@ -3646,11 +3650,11 @@ window.invCredLogin = async function() {
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; l._left -= n; left = Math.round((left - n) * 100) / 100;
       var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, pallet: !!l._pick.pallet }); };
     // FIRST boxes (open / damaged), then =OLD: always used up first, even when that means more than one spot (owner).
-    rankedAll.forEach(function(l) { if (left > 0 && l._pick.first < 2) take(l, Math.min(l._left, left)); });
+    rankedAll.forEach(function(l) { if (left > 0 && l._pick.first < 2 && !l._pick.nf) take(l, Math.min(l._left, left)); });
     // Shelf spots first (all the rules below), then spots still on pallets (same rules).
-    [false, true].forEach(function(onPal) {
+    [0, 1, 2].forEach(function(onPal) { // shelves, pallets, then ⚠ None Found spots
     if (left <= 0) return;
-    var ranked = rankedAll.filter(function(l) { return !!l._pick.pallet === onPal; });
+    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
     [0, 1].forEach(function(tier) {
       if (left <= 0) return;
       var c = ranked.filter(function(l) { return l._pick.tier === tier; });
@@ -3723,12 +3727,13 @@ window.invCredLogin = async function() {
         : tier === 1 ? 'same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA'
         : '';
       var pal = invOnPallet(l);
-      l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal,
-        why: (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
+      l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal, nf: !!l.noneFound,
+        why: (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
           + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b), A = a._pick, B = b._pick;
+      if (A.nf !== B.nf) return A.nf ? 1 : -1; // ⚠ reported None Found, not counted since → last of all (owner 2026-10-29)
       if (A.pallet !== B.pallet) return A.pallet ? 1 : -1; // shelves before pallets
       if (A.tier !== B.tier) return A.tier - B.tier;
       if (A.score !== B.score) return A.score - B.score;
@@ -3772,9 +3777,9 @@ window.invCredLogin = async function() {
       if (ex) { ex.cases += n; ex.pieces += n * u; } else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, how: l._pick.how, pieces: n * u, pallet: !!l._pick.pallet }); };
     var casesFor = function(l) { return Math.min(l._left, Math.ceil(left / unitOf(l) - 1e-9)); };
     // Shelf spots first (all the rules below), then spots still on pallets (same rules).
-    [false, true].forEach(function(onPal) {
+    [0, 1, 2].forEach(function(onPal) { // shelves, pallets, then ⚠ None Found spots
     if (left <= 0.001) return;
-    var ranked = rankedAll.filter(function(l) { return !!l._pick.pallet === onPal; });
+    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
     // Tiers -1 (the part # itself), 0 (not FBA), 1 (kept for a low FBA part #):
     // part # by part # in rank order; one spot that has them all, else the
     // fullest spots first.
@@ -4108,6 +4113,8 @@ window.invCredLogin = async function() {
     var ia = +a.masterId || +a.rowIndex || 0, ib = +b.masterId || +b.rowIndex || 0;
     return ia && ib && ia !== ib ? ia - ib : 0;
   }
+  // ⚠ Owner (2026-10-29): a spot someone marked None Found (and nobody has counted since, on 🔍 Audit: l.noneFound) is used
+  // last — shelves, then pallets, then these — so the next picker isn't sent to the same empty spot. Stock is NOT taken off it.
   function invPickForShelving(locs) {
     function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
     function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
@@ -4124,13 +4131,14 @@ window.invCredLogin = async function() {
     function firstOf(pn) { return /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2; }
     locs.forEach(function(l) {
       var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn);
-      l._pick = { tier: t, pallet: pal, first: f, why: f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
+      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, why: (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
         : f === 1 ? '=OLD — always used first (after FIRST boxes)' + (pal ? ' · 🚢 on a pallet' : '') : ((t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
-        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '')) };
+        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : ''))) };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b);
+      if (a._pick.nf !== b._pick.nf) return a._pick.nf ? 1 : -1; // ⚠ reported None Found, not counted since → last of all (owner 2026-10-29)
       if (a._pick.first !== b._pick.first) return a._pick.first - b._pick.first; // FIRST boxes, then =OLD, before everything
       if (a._pick.pallet !== b._pick.pallet) return a._pick.pallet ? 1 : -1; // shelves (even FBA bags) before pallets
       if (a._pick.tier !== b._pick.tier) return a._pick.tier - b._pick.tier;
@@ -6240,6 +6248,17 @@ window.invCredLogin = async function() {
           invFlash('🗑 ' + (before - invPullList.length) + ' un-grabbed item(s) were deleted by ' + (d.removedBy || 'an Admin'), 'warn');
         }
       }
+      if (d.taken && d.taken.length) { // 👥 a teammate took these to grab them (their spots for an AWD shipment go with them)
+        var tk = {}; d.taken.forEach(function(id) { tk[id] = 1; });
+        var idOf2 = function(i) { return String(i.key || (i.partNum || '') + '|' + (i.location || '')).toUpperCase() + '|' + String(i.addedAt || ''); };
+        var before2 = invPullList.length;
+        invPullList = invPullList.filter(function(i) { return !(!i.grabbed && !i.submitted && !i.noneFound && tk[idOf2(i)]); });
+        if (invPullList.length !== before2) {
+          try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+          invRenderPullList();
+          invFlash('👥 ' + (d.takenBy || 'A teammate') + ' took ' + (before2 - invPullList.length) + ' item(s) off your Pull List to grab them', 'warn');
+        }
+      }
       if (!invPullSyncTimer) invPullDirty(false); // saved (and nothing newer waiting)
     }).catch(function(e) { console.warn('[INV] pull list save failed', e); invPullRetryLater(); });
   }
@@ -6250,6 +6269,68 @@ window.invCredLogin = async function() {
     invPullRetryTimer = setTimeout(function() { if (invPullDirty()) invPushPullList(); }, 20000);
   }
   window.addEventListener('online', function() { if (invPullDirty()) setTimeout(invPushPullList, 1500); });
+  // 👥 While this phone has un-grabbed items, check in every 20 s — a teammate who took some (👥 Help) sees them gone here fast.
+  setInterval(function() {
+    if (document.hidden || invPullSyncTimer || !INV_CRED_USER || !INV_CRED_USER.userId) return;
+    if (invPullList.some(function(i) { return i && !i.grabbed && !i.submitted && !i.noneFound; })) invPushPullList();
+  }, 20000);
+
+  // 👥 Owner (2026-10-29): "can everyone share the Pull List? sometimes when we're busy two people grab the inventory".
+  // 👥 Help a teammate: everyone's un-grabbed items on this Stock Out tab, in walking order — tick the ones you'll grab
+  // (or "take the back half") → they move onto YOUR Pull List and off theirs (recorded: who took what from whom, when).
+  var _invTeam = [];
+  window.invPullTeamOpen = function() {
+    invModal('inv-team-modal', '<div style="font-size:16px;font-weight:800">👥 Help a teammate</div><div style="font-size:12px;color:var(--text3)">Loading…</div>');
+    wFetch(W + '/inventory/pull/team').then(function(r) { return r.json(); }).then(function(d) {
+      var tab = invStockOutDest === 'company' ? 'company' : 'shelving';
+      _invTeam = ((d && d.people) || []).map(function(p) { return Object.assign({}, p, { ungrabbed: p.ungrabbed.filter(function(i) { return (i.dest === 'company' ? 'company' : 'shelving') === tab; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location); }) }); }).filter(function(p) { return p.ungrabbed.length; });
+      invPullTeamRender();
+    }).catch(function() { invModal('inv-team-modal', '<div style="font-size:16px;font-weight:800">👥 Help a teammate</div><div style="color:var(--red);font-size:13px">Could not load — check WiFi</div>'); });
+  };
+  function invPullTeamRender() {
+    var tabName = invStockOutDest === 'company' ? 'Big Company' : 'Shelving';
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:16px;font-weight:800">👥 Help a teammate — ' + tabName + '</div>'
+      + '<button onclick="invModalClose(\'inv-team-modal\')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">&times;</button></div>'
+      + '<div style="font-size:12px;color:var(--text3);margin:4px 0 8px">Tick what you\'ll grab → it moves onto YOUR Pull List and off theirs. Recorded (who / when).</div>';
+    if (!_invTeam.length) h += '<div style="padding:10px 0;color:var(--text3)">Nobody else has un-grabbed ' + tabName + ' items.</div>';
+    h += _invTeam.map(function(p, pi) {
+      return '<div style="border:1.5px solid var(--border);border-radius:9px;padding:8px;margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:6px;align-items:center;flex-wrap:wrap">'
+        + '<b>' + invPullEsc(p.displayName) + ' — ' + p.ungrabbed.length + ' un-grabbed</b>'
+        + '<span><button onclick="invPullTeamPick(' + pi + ',\'half\')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-weight:700;cursor:pointer">Tick the back half</button> '
+        + '<button onclick="invPullTeamPick(' + pi + ',\'all\')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer">All</button></span></div>'
+        + p.ungrabbed.map(function(i, ii) {
+          return '<label style="display:flex;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px;cursor:pointer"><input type="checkbox" class="inv-team-cb" data-p="' + pi + '" data-i="' + ii + '"' + (i._pick ? ' checked' : '') + ' onchange="invPullTeamTick(' + pi + ',' + ii + ',this.checked)" style="width:18px;height:18px">'
+            + '<span><b style="font-family:var(--mono)">' + invPullEsc(i.location) + '</b> · ' + invPullEsc(i.partNum) + ' · ' + invPullEsc(String(i.cases || '')) + ' cs' + (i.name ? ' <span style="color:var(--text3)">' + invPullEsc(i.name) + '</span>' : '') + '</span></label>';
+        }).join('') + '</div>';
+    }).join('');
+    var n = 0; _invTeam.forEach(function(p) { p.ungrabbed.forEach(function(i) { if (i._pick) n++; }); });
+    if (_invTeam.length) h += '<button id="inv-team-take" onclick="invPullTeamTake()"' + (n ? '' : ' disabled') + ' style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;cursor:pointer;opacity:' + (n ? 1 : .5) + '">👥 Put ' + n + ' item' + (n === 1 ? '' : 's') + ' on MY Pull List</button>';
+    invModal('inv-team-modal', h);
+  }
+  window.invPullTeamTick = function(pi, ii, on) { var x = _invTeam[pi] && _invTeam[pi].ungrabbed[ii]; if (x) x._pick = !!on; invPullTeamRender(); };
+  // "the back half": they keep the first half of their walk, the helper starts from the other end — nobody walks the same aisle.
+  window.invPullTeamPick = function(pi, how) {
+    var p = _invTeam[pi]; if (!p) return; var L = p.ungrabbed, from = how === 'all' ? 0 : Math.floor(L.length / 2);
+    L.forEach(function(i, k) { i._pick = k >= from; }); invPullTeamRender();
+  };
+  window.invPullTeamTake = function() {
+    var jobs = _invTeam.map(function(p) { return { p: p, ids: p.ungrabbed.filter(function(i) { return i._pick; }).map(function(i) { return i.id; }) }; }).filter(function(j) { return j.ids.length; });
+    if (!jobs.length) return;
+    var b = g('inv-team-take'); if (b) { b.disabled = true; b.textContent = 'Moving…'; }
+    var got = 0, errs = [];
+    jobs.reduce(function(pr, j) { return pr.then(function() {
+      return wFetch(W + '/inventory/pull/take', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fromUserId: j.p.userId, ids: j.ids }) })
+        .then(function(r) { return r.json(); }).then(function(d) {
+          if (!d || !d.ok) { errs.push(j.p.displayName + ': ' + ((d && d.error) || 'not moved')); return; }
+          var have = {}; invPullList.forEach(function(i) { have[String(i.key || '').toUpperCase() + '|' + String(i.addedAt || '')] = 1; });
+          (d.items || []).forEach(function(i) { if (!have[String(i.key || '').toUpperCase() + '|' + String(i.addedAt || '')]) { invPullList.push(i); got++; } });
+        }).catch(function() { errs.push(j.p.displayName + ': check WiFi'); });
+    }); }, Promise.resolve()).then(function() {
+      invSavePullList(); invRenderPullList(); invModalClose('inv-team-modal');
+      invFlash(got ? '👥 ' + got + ' item' + (got === 1 ? '' : 's') + ' on your Pull List now' + (errs.length ? ' — ' + errs.join('; ') : '') : 'Nothing moved — ' + errs.join('; '), got && !errs.length ? 'success' : 'warn');
+    });
+  };
   // After sign-in: load this person's list from their account. The server
   // copy wins; if the account has no list yet, the local one is uploaded.
   function invLoadPullListFromServer() {
@@ -6701,7 +6782,8 @@ window.invCredLogin = async function() {
     // here ungrabbed.
     var coBadge = item.dest === 'company' ? (item.awdKind ? invAwdKindBadge(item.awdKind) : '') + " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + (item.caseOf ? ' (📦 whole case)' : '') + "</span>"
       + (item.how ? "<div style='font-size:11px;font-weight:600;color:var(--purple,var(--accent));font-family:var(--sans);margin-top:2px'>" + item.how + "</div>" : "") : "";
-    var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "";
+    var stockoutBadge = (item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "")
+      + (item.takenFrom ? " <span class='inv-pull-taken' style='font-size:10px;font-weight:700;color:var(--text2);font-family:var(--sans)'>👥 from " + invPullEsc(item.takenFrom) + "</span>" : "");
     var sysCasesHtml = item.systemCases !== undefined
       ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " — tap to correct' "
         + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
@@ -6719,7 +6801,7 @@ window.invCredLogin = async function() {
         + (item.noneFound ? "None Found" : item.cases + " cases") + " — saved on this phone, sends when WiFi is back</div>";
     } else if (item.submitted) {
       statusLine = "<div style='font-size:11px;color:var(--green);margin-top:4px;font-weight:600'>✓ "
-        + (item.noneFound ? "None Found — submitted for review" : "Submitted — " + item.cases + " cases")
+        + (item.noneFound ? "None Found — sent to 🔍 Audit to double check (stock not taken off)" : "Submitted — " + item.cases + " cases")
         + "</div>";
     } else if (item._submitting) {
       statusLine = "<div style='font-size:11px;color:var(--text3);margin-top:4px;font-weight:600'>Submitting…</div>";
@@ -7573,7 +7655,7 @@ window.invCredLogin = async function() {
         + '<button style="display:block;width:100%;padding:12px;margin-bottom:8px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;cursor:pointer" onclick="invNoneFoundAlt()">📍 Grab ' + n + ' at ' + invEsc(best.location) + ' instead</button>'
         + '<button style="display:block;width:100%;padding:11px;margin-bottom:8px;border:1.5px solid var(--red);border-radius:9px;background:var(--red-bg);color:var(--red);font-size:14px;font-weight:800;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\');invNoneFoundNow(' + i + ')">✗ None Found</button>'
         + '<button style="display:block;width:100%;padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\')">Cancel</button>'
-        + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Either way ' + invEsc(it.location) + ' is logged None Found, so its count gets fixed in Review.</div>');
+        + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Either way ' + invEsc(it.location) + ' is logged None Found and goes on 🔍 Audit to double check — its stock is NOT taken off.</div>');
     }).catch(function() { invNoneFoundNow(i); });
   };
   var _invNfAlt = null;
@@ -7595,6 +7677,7 @@ window.invCredLogin = async function() {
   window.invNoneFoundNow = function(i, skipCount) {
     var item = invPullList[i]; if (!item) return;
     item.noneFound = true;
+    item.wanted = parseFloat(item.cases) || 1; // how many they came for (on the 🔍 Audit list)
     item.cases = 0;
     item.grabbed = true;
     item.grabbedAt = new Date().toISOString();
@@ -7603,7 +7686,7 @@ window.invCredLogin = async function() {
     invRenderPullList(); // can re-sort the list — find the item again
     invSubmitOnePullItem(invPullList.indexOf(item)); // submits immediately, same as Grabbed
     if (skipCount) return;
-    invFlash('None Found logged — sent for review', 'warn');
+    invFlash('None Found — sent to 🔍 Audit to double check (stock NOT taken off)', 'warn');
     invNfCountOpen(item);
   };
 
@@ -7962,7 +8045,7 @@ window.invCredLogin = async function() {
         if (fam.length === 1) pn = String(fam[0].partNum).toUpperCase();
         else { say('Scan the box label with the full part # (e.g. ' + pn + '=10)'); return; }
       }
-      if (pn === n.nfPart) { say(pn + ' is the item you marked None Found. If it IS here, a manager must Reject that None Found in Review — don\'t count it here.'); return; }
+      if (pn === n.nfPart) { say(pn + ' is the item you marked None Found — it IS here? Grab it. The spot is on 🔍 Audit to double check; don\'t count it here.'); return; }
       var row = rowsHere.filter(function(r) { return String(r.partNum).toUpperCase() === pn; })[0];
       var sys = row ? (parseFloat(row.casesNum != null ? row.casesNum : row.cases) || 0) : 0;
       var diff = Math.round((cases - sys) * 100) / 100, me = invMe();
@@ -8008,8 +8091,10 @@ window.invCredLogin = async function() {
 
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var notes = (g("inv-pull-notes") && g("inv-pull-notes").value.trim()) || "";
+    // ⚠ Owner (2026-10-29): None Found no longer takes the spot to 0 — [TO AUDIT]: logged (who / when / how many wanted),
+    // nothing taken off, and listed on 🔍 Audit so someone counts that spot.
     var itemNotes = item.noneFound
-      ? ('[NONE FOUND ON SHELF] ' + notes).trim()
+      ? ('[NONE FOUND ON SHELF] [TO AUDIT] [WANTED ' + (item.wanted != null ? item.wanted : 1) + '] ' + notes).trim()
       : item.foundOnShelf
         ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
@@ -15278,6 +15363,7 @@ window.invCredLogin = async function() {
       if (RC.loc) rcRender();
     }).catch(function() {});
     rcMine();
+    invNfAuditLoad(); // ⚠ None Found spots — refreshed with the recount (a counted spot drops off the open list)
   };
   // 📋 For you on every Inventory tab (owner 2026-10-19: "I sent it to MG, but nothing shows on her end"): a bar under the
   // tabs + a count on 🔍 Audit, checked when the page opens and every 2 minutes — tap → Audit, where the list is.
@@ -15325,6 +15411,37 @@ window.invCredLogin = async function() {
     rcStart(loc, false, { by: by || '', at: at || '' });
     var c = g('rc-card'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' });
   };
+  // ⚠ None Found spots to double check (owner 2026-10-29). Open = nobody has counted that spot since; tap the spot → count it
+  // (🔁 Checking, same as a recount: SKU Mgr is set to what is really there). Counted ones stay listed with the result.
+  window.invNfAuditLoad = function() {
+    var card = g('inv-nf-audit-card'); if (!card) return;
+    wFetch(W + '/inventory/none-found?days=30').then(function(r) { return r.json(); }).then(function(d) {
+      var L = (d && d.ok && d.list) || [];
+      if (!L.length) { card.style.display = 'none'; card.innerHTML = ''; return; }
+      card.innerHTML = invNfAuditHtml(L);
+      card.style.display = '';
+    }).catch(function() {});
+  };
+  function invNfAuditHtml(L) {
+    var open = L.filter(function(x) { return !x.checked; }).sort(function(a, b) { return invPullWalkCompare(a.location, b.location); }), done = L.filter(function(x) { return x.checked; });
+    var row = function(x) {
+      var sys = x.had != null ? x.had + ' cs on record' : '', want = x.wanted != null ? 'came for ' + x.wanted : '';
+      var head = x.checked
+        ? '<span style="font-family:var(--mono);font-weight:800">' + ckE(x.location) + '</span>'
+        : '<button type="button" class="inv-nf-spot" data-l="' + ckE(x.location) + '" onclick="rcCheckCol(this.dataset.l, \'\', \'\')" style="padding:5px 9px;border-radius:7px;font-family:var(--mono);font-size:13px;font-weight:800;cursor:pointer;background:var(--red-bg,#fdf0ee);border:1.5px solid var(--red);color:var(--text)">' + ckE(x.location) + '</button>';
+      var res = x.checked ? '<div style="font-size:11px;color:var(--green);font-weight:700">✓ Counted by ' + ckE(x.checked.by) + ' · ' + ckE(xfrFmtT(x.checked.at)) + ' — now ' + x.checked.now + ' cs'
+        + (x.had != null ? (x.checked.now > 0 ? ' (it was there — not seen)' : ' (really not there — system fixed)') : '') + '</div>' : '';
+      return '<div style="padding:6px 0;border-top:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' + head
+        + '<b style="font-family:var(--mono);font-size:12px">' + ckE(x.part) + '</b>'
+        + (x.dest === 'company' ? '<span style="font-size:10px;font-weight:700;color:var(--purple,var(--accent))">🏢 BIG CO</span>' : '') + '</div>'
+        + '<div style="font-size:11px;color:var(--text2)">' + [sys, want].filter(Boolean).join(' · ') + (sys || want ? ' · ' : '') + 'None Found by <b>' + ckE(x.by || '?') + '</b> · ' + ckE(xfrFmtT(x.at)) + '</div>' + res + '</div>';
+    };
+    return '<div class="icard-label" style="color:var(--red)">⚠ None Found — double check these spots (' + open.length + ')</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:4px">The picker didn\'t find it, so the stock was NOT taken off. Tap a spot and count it: it fixes SKU Mgr if the system was wrong. Until then Stock Out sends people there last.</div>'
+      + (open.length ? open.map(row).join('') : '<div style="font-size:12px;color:var(--green);padding:4px 0">✓ Every None Found spot has been counted.</div>')
+      + (done.length ? '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">✓ Counted already (' + done.length + ', last 30 days)</summary>' + done.map(row).join('') + '</details>' : '');
+  }
+  window.invNfAuditHtml = invNfAuditHtml;
   window.rcNewRound = function() {
     if (!confirm('Start a NEW recount? Every column will show as "not done" again. (Counts already saved stay.)')) return;
     wFetch(W + '/inventory/recount/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); })

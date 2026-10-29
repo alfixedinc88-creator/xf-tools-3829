@@ -80,6 +80,9 @@ the rules below still apply among the pallets). On the Pull List the picker can
 grab whatever box on the pallet is easiest and scan it (🔁 Replace) to swap the
 item for it — same item (parent part #) only, recorded in the Stock Out notes.
 
+**None Found (owner 2026-10-29):** Pull List ✗ None Found never takes stock off — the spot goes on 🔍 Audit to be
+counted, and until it is counted Stock Out uses that spot last (after the pallets), on both tabs.
+
 Then Shelving: oldest first (fewer letters after the pack number = older),
 one spot rather than two.
 

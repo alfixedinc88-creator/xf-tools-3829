@@ -94,6 +94,7 @@ document.addEventListener('input', function (e) {
         { key: 'scansearch', label: 'Scan or Search', sel: '#inv-scansearch-card' },
         { key: 'camera', label: '📷 Start Camera', sel: '#inv-cam-btn' },
         { key: 'allpulls', label: '👥 Everyone\'s Un-grabbed Items', sel: '#inv-allpull-card' },
+        { key: 'pullshare', label: '👥 Help — take items from a teammate\'s Pull List', sel: '#inv-pullshare-btn' },
         { key: 'pulllist', label: 'Pull List', sel: '#inv-pulllist-card' } ] },
       { key: 'stockoutco', label: '🏢 Stock Out Big Company', sel: '#inv-tab-stockoutco', parts: [
         { key: 'awdship', label: '📦 AWD shipments ready — what to grab, by location', sel: '#inv-awdship-card' },
@@ -120,6 +121,7 @@ document.addEventListener('input', function (e) {
         { key: 'recountreport', label: '📊 Recount report', sel: '#rc-report' },
         { key: 'recountcheck', label: '🔎 Recount numbers check', sel: '#rc-numcheck' },
         { key: 'recountsearch', label: '🔎 Recount report: search by name / day', sel: '#rc-report .rc-daysearch' },
+        { key: 'nonefound', label: '⚠ None Found — spots to double check', sel: '#inv-nf-audit-card' },
         { key: 'foryou', label: '📋 For you (recount spots sent to me) — bar on every Inventory tab + Audit count', sel: '#rc-mine, #rc-foryou-bar, #rc-foryou-badge' },
         { key: 'othertools', label: '🔧 Other audit tools (search a part # / a location)', sel: '#inv-audit-old' },
         { key: 'prefixes', label: '🏷 Location Prefixes', sel: '#inv-prefix-card' },
