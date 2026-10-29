@@ -11327,5 +11327,17 @@ console.log('\n📍 Audit Columns: one line for Column / Started / Done / Took, 
   sq.exec("DELETE FROM master_list WHERE base_sku = '99-4-4'");
 }
 
+// Owner (2026-10-29): "I don't want to scroll to see the other info — there's still a lot of space between What was done and SKU Mgr now".
+// The gap was long product names stretched on one line (the table grows inside its scroll box): names wrap now.
+console.log('\n📍 Audit Columns: no wide gap — long names wrap, Skipped wraps');
+{
+  const { readFileSync: rfG2 } = await import('node:fs');
+  const ih = rfG2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('What was done / SKU Mgr now / 🏬 See in SKU Mgr: the Name column wraps (max 200 / 180 px); Skipped to scan wraps (max 230 px, its header too) — the table fits without scrolling sideways',
+    /<td style="padding:2px 5px;min-width:110px;max-width:200px;white-space:normal">' \+ ckE\(x\.name \|\| '—'\)/.test(ih) && /<td style="padding:2px 5px;min-width:100px;max-width:180px;white-space:normal">' \+ ckE\(x\.name/.test(ih)
+      && /<td style="padding:2px 5px;white-space:normal;min-width:100px;max-width:180px">' \+ ckE\(r\.name/.test(ih) && /'<\/td><td ' \+ td \+ '><div style="max-width:230px">' \+ sk \+ '<\/div><\/td>/.test(ih)
+      && /\(i === 5 \? 'white-space:normal;min-width:150px;max-width:230px' : 'white-space:nowrap'\)/.test(ih) && !/min-width:140px">' \+ ckE\(x\.name/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
