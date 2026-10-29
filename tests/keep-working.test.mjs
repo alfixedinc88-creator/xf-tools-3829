@@ -11462,5 +11462,56 @@ console.log('\n📷 Scan every box: "124-5-9=5XX" in Cases needed is never 124 c
   ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip', 'invPullScanCases'].forEach(k => { delete globalThis[k]; });
 }
 
+console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number pad (the phone keyboard never opens)');
+{
+  // Owner (2026-10-29): "before we added to the 'stock out reports' we already change the case to 1 box in 'picking' then submit it …
+  // it still showing need to grab 2 boxes … build our own keyboard to type the cases we need". On the phones the keyboard is off
+  // (xf-access.js), so the typed box stayed at 2 and 2 was sent.
+  const fsK = await import('node:fs');
+  const ps = fsK.readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const cutP = (a, b) => ps.slice(ps.indexOf(a), ps.indexOf(b, ps.indexOf(a)));
+  const els = {}, toasts = [];
+  const mk = (id, o) => (els[id] = Object.assign({ id, value: '', innerHTML: '', textContent: '', checked: false, dataset: {}, style: {}, remove() { delete els[id]; } }, o || {}));
+  const doc = { getElementById: id => els[id] || null, createElement: () => mk('__new'), body: { appendChild(n) { els['ps-numpad'] = n; delete els['__new']; n.id = 'ps-numpad'; } } };
+  const fetches = [];
+  const env = { document: doc, window: globalThis, _psToast: (m, t) => toasts.push(t + ': ' + m), PS_WORKER: '', psCredToken: 't',
+    fetch: (u, o) => { fetches.push({ u, b: JSON.parse(o.body) }); return Promise.resolve({ json: () => Promise.resolve({ results: [{ piecesPerCase: 50, noStockFound: false }] }) }); },
+    _psShowNostockConfirmModal: (sel) => { globalThis.__psSel = sel; } };
+  const code = cutP('var _psNumPad = null;', '// Hides and empties the Picking tab') + cutP('var PS_NOSTOCK_MIN_CASES', '// Hides and empties the Picking tab')
+    + cutP('window.psSubmitNoStock = function() {', '// ── No Stock confirm modal');
+  const P = new Function(...Object.keys(env), code + '; return { psNostockPad, psNumPadKey, psNumPadOk, psNumPadOpen, _psNostockSuggestCases, psSubmitNoStock };')(...Object.values(env));
+  globalThis._psPickStockoutCtx = [{ tracking: '1ZT', orderNum: 'X1', sku: '8-8-8=10', bin: '8-8-8', pieces: 20 }];
+  const box = mk('ps-nostock-qty-0', { value: '2' }), chk = mk('ps-nostock-chk-0'), hint = mk('ps-nostock-hint-0');
+  check('Picking: the cases box is not a typing box any more — tapping it opens our number pad',
+    /<input type="text" readonly inputmode="none" id="ps-nostock-qty-' \+ idx \+ '"[^>]*onclick="psNostockPad\(' \+ idx \+ '\)"/.test(ps), null);
+  P.psNostockPad(0); const opened = P.psNumPadOpen() && /How many cases to bring — 8-8-8\? \(now 2\)/.test(els['ps-numpad'].innerHTML);
+  ['5', '⌫', '1'].forEach(P.psNumPadKey); P.psNumPadOk();
+  check('pad: 5 ⌫ 1 → OK → the box says 1, the item is ticked, "You set 1 case", pad closed', opened && box.value === '1' && chk.checked && /You set 1 case/.test(hint.innerHTML) && !P.psNumPadOpen(), { v: box.value, chk: chk.checked, hint: hint.innerHTML });
+  P._psNostockSuggestCases(); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  check('…the suggestion (2) that comes back later never puts it back to 2', box.value === '1', box.value);
+  P.psSubmitNoStock(); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  check('…Report → 1 case goes to Stock Out Reports (not 2)', globalThis.__psSel && globalThis.__psSel[0].qty === 1, globalThis.__psSel);
+  P.psNostockPad(0); P.psNumPadOk();
+  check('pad: OK with nothing tapped → "tap how many", nothing changed', P.psNumPadOpen() && box.value === '1' && toasts.some(t => /Tap how many cases/.test(t)), toasts);
+  check('…Escape closes the pad; the Picking scan box does not steal it while it is open', /if \(_psNumPad\)\s+\{ psNumPadClose\(\); return; \}/.test(ps) && /!typingElsewhere && !_psNumPad\) inp\.focus\(\)/.test(ps), null);
+  delete globalThis._psPickStockoutCtx; delete globalThis.__psSel;
+  ['psNumPad', 'psNumPadKey', 'psNumPadClose', 'psNumPadOk', 'psNumPadOpen', 'psNostockPad', 'psSubmitNoStock'].forEach(k => { delete globalThis[k]; });
+
+  const ihK = fsK.readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Pull List: the cases box opens the number pad (xfrKeypad) instead of the phone keyboard',
+    /"<input type='text' readonly inputmode='none' placeholder='Cases'[^\n]*\n[^\n]*\n\s*"onclick='invPullCasesPad\(" \+ i \+ "\)'>"/.test(ihK), null);
+  const cutI = (a, b) => ihK.slice(ihK.indexOf(a), ihK.indexOf(b, ihK.indexOf(a)));
+  const list = [{ partNum: '8-8-8=10', location: 'A1=1-1-1', cases: 2, sourceStockoutId: 7 }, { partNum: '9-9-9', location: 'B', cases: 1, submitted: true }];
+  let pad = null; const upd = [], fl = [];
+  const envI = { invPullList: list, xfrKeypad: (t, s0, cb) => { pad = { t, cb }; }, invUpdatePullCases: (i, v) => { upd.push([i, v]); list[i].cases = parseFloat(v); }, invRenderPullList() {}, invFlash: (m) => fl.push(m), window: globalThis };
+  new Function(...Object.keys(envI), cutI('  window.invPullCasesPad = function(i) {', '  window.invUpdatePullCases = function(i, val) {'))(...Object.values(envI));
+  globalThis.invPullCasesPad(0); const t0 = pad && pad.t; pad.cb(1);
+  pad = null; globalThis.invPullCasesPad(1);
+  check('…tap 2 cases of 8-8-8=10 → pad "How many cases of 8-8-8=10 @ A1=1-1-1? (now 2)" → 1 → saved as 1 (the Stock Out Report follows: was 2); a submitted item has no pad',
+    /How many cases of 8-8-8=10 @ A1=1-1-1\? \(now 2\)/.test(t0) && list[0].cases === 1 && upd.length === 1 && upd[0][1] === '1' && pad === null, { t0, upd, list });
+  check('…invUpdatePullCases still sends the new number to the Stock Out Report', /invPullList\[i\]\.sourceStockoutId\) invStockoutQtyQueue\(invPullList\[i\]\.sourceStockoutId\)/.test(ihK), null);
+  delete globalThis.invPullCasesPad;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
