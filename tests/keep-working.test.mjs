@@ -169,7 +169,7 @@ const lkP = await get('/inventory/lookup?code=' + encodeURIComponent('60-1-1=10'
 const lkG = (lkP.locations || []).find(l => l.location === 'GARAGE'), lkC = (lkP.locations || []).find(l => l.location === 'C1=1-1-2');
 check('Stock Out lookup marks boxes still on pallets per spot: GARAGE 60-1-1=10 has 20 on pallets, the shelf spot none', lkG && lkG.palletBoxes === 20 && lkC && !lkC.palletBoxes, { lkG, lkC });
 check('Stock Out picks shelf spots (FBA bags too) before spots still on pallets, on both tabs; Pull List 🔁 Replace; None Found offers one more spot',
-  /function invOnPallet\(l\)/.test(invH) && (invH.match(/\[false, true\]\.forEach\(function\(onPal\)/g) || []).length === 2 && /if \(a\._pick\.pallet !== b\._pick\.pallet\)/.test(invH)
+  /function invOnPallet\(l\)/.test(invH) && (invH.match(/\[0, 1, 2\]\.forEach\(function\(onPal\) \{ \/\/ shelves, pallets, then ⚠ None Found spots/g) || []).length === 2 && /if \(a\._pick\.pallet !== b\._pick\.pallet\)/.test(invH)
   && /if \(A\.pallet !== B\.pallet\)/.test(invH) && /window\.invPalletReplace = function/.test(invH) && /\[REPLACED: asked for /.test(invH)
   && /window\.invNoneFoundAlt = function/.test(invH) && /window\.invNoneFoundNow = function/.test(invH), null);
 check('which pallet needs a sign-in', (await call('/inventory/containers/where', { method: 'POST', body: '{"parts":["60-1-1=10"]}' })).status === 401, null);
@@ -9930,6 +9930,93 @@ console.log('\n📋 Stock Out Reports: a report put on a Pull List disappears fr
     L.wait().map(r => r.id).join() === '2,4' && L.on({ id: 1 }).by === 'MG' && badgeEl.textContent === 2
       && /if \(invStockoutOnPull\(s\)\) return '';/.test(ih) && /var open = invStockoutWaiting\(\);/.test(ih) && /already on a Pull List/.test(ih)
       && /function invSavePullList\(\) \{[^]{0,500}invRenderStockoutList\(\)/.test(ih), L.wait());
+}
+
+// Owner (2026-10-29): "we already done the audit so all the SKU Mgr should be right — the Pull List 'None Found' takes down all
+// our inventory on that spot; don't do it no more: still show where they can grab next, and report it to the Audit tab —
+// what, when, how many we should have, which spot — so people can double check: a system error, or the picker didn't see it".
+console.log('\n⚠ Pull List None Found: nothing taken off; listed on 🔍 Audit (what / when / how many / spot / who); used last until counted');
+{
+  await post('/inventory/review-mode', { mode: 'auto' });
+  sq.exec(`INSERT INTO master_list (id, sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9501,'46-1-2','46-1-2','gate valve','46-1-2=10','C1=4-1-2',3,10,0), (9502,'46-1-2','46-1-2','gate valve','46-1-2=10','C2=4-1-2',5,10,0), (9503,'46-1-2','46-1-2','gate valve','46-1-2=5X','BO=4-1-2',2,5,0)`);
+  const pt = () => sq.prepare("SELECT SUM(cases) t FROM master_list WHERE base_sku='46-1-2' AND part_num='46-1-2=10'").get().t;
+  const pcs = () => sq.prepare("SELECT SUM(cases * units_per_case) t FROM master_list WHERE base_sku='46-1-2'").get().t;
+  const whole = () => sq.prepare('SELECT SUM(cases) t FROM master_list WHERE cases > 0').get().t;
+  const t0 = { part: pt(), pcs: pcs(), whole: whole() };
+  const nf = await post('/inventory/log', { type: 'OUT', partNum: '46-1-2=10', sku: '46-1-2', location: 'C1=4-1-2', cases: 0, initials: 'MG', masterId: 9501, noneFound: true,
+    notes: '[SHELVING] [NONE FOUND ON SHELF] [TO AUDIT] [WANTED 2]' });
+  const row = sq.prepare('SELECT status, notes, total_before b, total_after a FROM inventory_log WHERE id = ?').get(nf.d1Id) || {};
+  const c1 = sq.prepare('SELECT cases, location FROM master_list WHERE id = 9501').get();
+  const t1 = { part: pt(), pcs: pcs(), whole: whole() };
+  check('None Found (Pull List) → C1=4-1-2 keeps its 3 cases (spot not cleared); 46-1-2=10 total 8 → 8, pieces 90 → 90, whole inventory unchanged; History: who / when, "NOT taken off: sent to 🔍 Audit", before = after',
+    nf.ok && c1.cases === 3 && c1.location === 'C1=4-1-2' && t0.part === 8 && t1.part === 8 && t0.pcs === 90 && t1.pcs === 90 && t1.whole === t0.whole
+      && /NOT taken off: sent to 🔍 Audit/.test(row.notes) && row.status === 'Verified' && row.b === 8 && row.a === 8, { nf, row, c1, t0, t1 });
+  const list1 = (await get('/inventory/none-found')).list || [], x1 = list1.find(x => x.id === nf.d1Id) || {};
+  check('🔍 Audit list: 46-1-2=10 at C1=4-1-2 — 3 cs on record, came for 2, by MG, when; Shelving; not counted yet', x1.part === '46-1-2=10' && x1.location === 'C1=4-1-2' && x1.had === 3 && x1.wanted === 2
+    && x1.by === 'MG' && !!x1.at && x1.dest === 'shelving' && x1.checked === null, x1);
+  const lk1 = await get('/inventory/lookup?code=46-1-2'), spot = (l, s) => (l.locations || []).find(x => x.location === s) || {};
+  check('…Stock Out lookup marks C1=4-1-2 "None Found by MG" (used last); the other spots not', !!spot(lk1, 'C1=4-1-2').noneFound && spot(lk1, 'C1=4-1-2').noneFound.by === 'MG' && !spot(lk1, 'C2=4-1-2').noneFound && !spot(lk1, 'BO=4-1-2').noneFound, lk1.locations);
+  await post('/inventory/recount/column-done', { location: 'C1=4-1-2', items: 1, changed: 0, recheck: true });
+  const x2 = ((await get('/inventory/none-found')).list || []).find(x => x.id === nf.d1Id) || {};
+  const lk2 = await get('/inventory/lookup?code=46-1-2');
+  const nowC1 = (sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num = '46-1-2=10' AND location = 'C1=4-1-2'").get() || {}).c || 0;
+  check('…someone counts C1=4-1-2 (🔁 Checking / recount) → listed as counted (who / when / what SKU Mgr has there now), and Stock Out uses the spot normally again',
+    x2.checked && x2.checked.now === nowC1 && !!x2.checked.by && !!x2.checked.at && !spot(lk2, 'C1=4-1-2').noneFound, { x2, nowC1 });
+  // a None Found from elsewhere (no [TO AUDIT], e.g. Transfer "checked empty") still sets the spot to 0 as before
+  const old = await post('/inventory/log', { type: 'OUT', partNum: '46-1-2=5X', sku: '46-1-2', location: 'BO=4-1-2', cases: 0, initials: 'TS', masterId: 9503, noneFound: true, notes: '[NONE FOUND ON SHELF] [TRANSFER] BO=4-1-2 checked empty' });
+  check('…a None Found that is not from the Pull List (Transfer "checked empty") is unchanged: BO=4-1-2 2 → 0', old.ok && sq.prepare('SELECT cases FROM master_list WHERE id = 9503').get().cases === 0, null);
+  const { readFileSync: rfNF } = await import('node:fs');
+  const ih = rfNF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const mk = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return { plan: invPlanShelvingPull };');
+  const locs = [{ partNum: '46-1-2=10', location: 'C1=4-1-2', cases: '3', noneFound: { by: 'MG' } }, { partNum: '46-1-2=10', location: 'C2=4-1-2', cases: '5' }];
+  const p2 = mk({ partNum: '46-1-2=10', locations: locs, fbaParts: [] }, []).plan(2), p7 = mk({ partNum: '46-1-2=10', locations: locs, fbaParts: [] }, []).plan(7);
+  check('…pick: need 2 → C2=4-1-2 (not the None Found spot); need 7 → all 5 of C2 first, then 2 at the None Found spot (last, said why)',
+    p2.takes.length === 1 && p2.takes[0].loc.location === 'C2=4-1-2' && p7.takes[0].loc.location === 'C2=4-1-2' && p7.takes[0].cases === 5 && p7.takes[1].loc.location === 'C1=4-1-2' && /None Found here by MG/.test(p7.takes[1].loc._pick.why), p7.takes.map(t => [t.loc.location, t.cases]));
+  check('…page: None Found sends [NONE FOUND ON SHELF] [TO AUDIT] [WANTED n] (still offers the next spot first); 🔍 Audit lists the spots, tap one to count it',
+    /\[NONE FOUND ON SHELF\] \[TO AUDIT\] \[WANTED ' \+ \(item\.wanted/.test(ih) && /item\.wanted = parseFloat\(item\.cases\) \|\| 1;/.test(ih) && /window\.invNoneFoundAlt = function/.test(ih)
+      && /id="inv-nf-audit-card"/.test(ih) && /wFetch\(W \+ '\/inventory\/none-found\?days=30'\)/.test(ih) && /onclick="rcCheckCol\(this\.dataset\.l/.test(ih), null);
+  const html = new Function('ckE', 'xfrFmtT', 'invPullWalkCompare', fn('invNfAuditHtml') + '; return invNfAuditHtml;')(v => String(v == null ? '' : v), v => String(v || ''), (a, b) => a < b ? -1 : 1)(
+    [{ id: 1, part: '46-1-2=10', location: 'C1=4-1-2', had: 3, wanted: 2, by: 'MG', at: '2026-10-29T20:00:00Z', dest: 'shelving', checked: null },
+     { id: 2, part: '9-9-9=5', location: 'BO=1-1-1', had: 2, wanted: 1, by: 'KL', at: '2026-10-28T20:00:00Z', dest: 'company', checked: { by: 'AB', at: '2026-10-29T15:00:00Z', now: 0 } }]);
+  check('…the 🔍 Audit card: "None Found — double check these spots (1)", the spot as a button, 3 cs on record · came for 2 · by MG; the counted one under ✓ Counted with the result',
+    /double check these spots \(1\)/.test(html) && /class="inv-nf-spot" data-l="C1=4-1-2"/.test(html) && /3 cs on record · came for 2 · None Found by <b>MG<\/b>/.test(html) && /✓ Counted already \(1/.test(html) && /now 0 cs \(really not there — system fixed\)/.test(html), html.slice(0, 400));
+  sq.exec("DELETE FROM master_list WHERE base_sku = '46-1-2'"); sq.prepare("DELETE FROM inventory_log WHERE part_num LIKE '46-1-2%'").run(); sq.exec("DELETE FROM recount_columns WHERE location = 'C1=4-1-2'");
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
+// Owner (2026-10-29): "can everyone share the Pull List? sometimes if we're busy we need two people to grab the inventory".
+console.log('\n👥 Pull List: Help a teammate — take items off their list onto yours (recorded); their phone drops them');
+{
+  const pk = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pkCall = (path, body) => call(path, body ? { method: 'POST', headers: { 'X-Cred-Token': pk, 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { headers: { 'X-Cred-Token': pk } }).then(r => r.json());
+  const mineBefore = (await get('/inventory/pull/mine')).items || [];
+  const it = (k, loc, extra) => ({ key: k + '|' + loc, partNum: k, location: loc, cases: '1', addedAt: '2026-10-29T20:0' + loc.slice(-1) + ':00Z', dest: 'shelving', ...extra });
+  const theirs = [it('51-1-1=10', 'BO=1-1-1'), it('52-2-2=10', 'C1=1-1-2'), it('53-3-3=10', 'C3=1-1-3'), it('54-4-4=10', 'C4=1-1-4', { grabbed: true })];
+  await pkCall('/inventory/pull/mine', { items: theirs });
+  const team = await get('/inventory/pull/team'), p = (team.people || []).find(x => (x.ungrabbed || []).some(i => i.partNum === '51-1-1=10')) || {};
+  check('👥 Help: the teammate\'s 3 un-grabbed items are listed (not the grabbed one, not my own list)', team.ok && (p.ungrabbed || []).length === 3 && !(p.ungrabbed || []).some(i => i.partNum === '54-4-4=10'), p);
+  const want = (p.ungrabbed || []).filter(i => /^5[23]-/.test(i.partNum)).map(i => i.id);
+  const tk = await post('/inventory/pull/take', { fromUserId: p.userId, ids: want });
+  const theirsNow = (await pkCall('/inventory/pull/mine')).items || [], mineNow = (await get('/inventory/pull/mine')).items || [];
+  check('…take 2 → they are on MY list (👥 from …) and off theirs; theirs keeps 51-1-1 and the grabbed one — every item in ONE list only',
+    tk.ok && (tk.items || []).length === 2 && tk.items.every(i => !!i.takenFrom) && theirsNow.map(i => i.partNum).sort().join() === '51-1-1=10,54-4-4=10'
+      && mineNow.filter(i => /^5[23]-/.test(i.partNum)).length === 2, { tk, theirsNow: theirsNow.map(i => i.partNum) });
+  const push = await pkCall('/inventory/pull/mine', { items: theirs }); // their phone still had all 4 → saves them again
+  const theirsAfter = (await pkCall('/inventory/pull/mine')).items || [];
+  check('…their phone saves its old list → the 2 taken ones are dropped and it is told who took them (not "deleted by an Admin")',
+    push.ok && (push.taken || []).length === 2 && !!push.takenBy && !(push.removed || []).length && theirsAfter.map(i => i.partNum).sort().join() === '51-1-1=10,54-4-4=10', push);
+  const again = await post('/inventory/pull/take', { fromUserId: p.userId, ids: want });
+  const logRow = sq.prepare('SELECT by_user, from_user, items FROM inventory_pull_take_log ORDER BY id DESC LIMIT 1').get() || {};
+  check('…taking the same items again is refused (no double); the move is recorded (who took what from whom, when)', again.ok === false && /52-2-2=10/.test(logRow.items || '') && !!logRow.by_user && !!logRow.from_user, { again, logRow });
+  const { readFileSync: rfTm } = await import('node:fs');
+  const ih = rfTm(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…page: 👥 Help on the Pull List, tick the back half (walking order), "Put N items on MY Pull List"; every 20 s the phone checks in so taken items go away',
+    /id="inv-pullshare-btn" onclick="invPullTeamOpen\(\)"/.test(ih) && /window\.invPullTeamPick = function/.test(ih) && /Math\.floor\(L\.length \/ 2\)/.test(ih) && /👥 Put ' \+ n \+ ' item/.test(ih)
+      && /if \(d\.taken && d\.taken\.length\)/.test(ih) && /\}, 20000\);/.test(ih), null);
+  await pkCall('/inventory/pull/mine', { items: [] });
+  await post('/inventory/pull/mine', { items: mineBefore });
 }
 
 // Owner (2026-10-24): "the Amazon label with PREVIOUS PACKED — put the product name, how many pieces a bag, how many bags, and a product photo".
