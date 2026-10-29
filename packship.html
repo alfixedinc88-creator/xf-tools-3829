@@ -1332,6 +1332,8 @@ body {
          date picker below (Printed reads the real-time print-log DB, no
          history lookup wired up for it; Not Printed is kept alongside it
          for the same at-a-glance comparison). -->
+    <!-- 📌 Owner (2026-10-29): "on the packing put a note somewhere I can see: Mayra can pack 130 in an hour". Admin / Owner only. -->
+    <div id="ps-pack-pace-note" style="display:none;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1.5px solid var(--accent);background:var(--bg2);font-size:13px;color:var(--text)">📌 <b>Note:</b> Mayra can pack <b>130 an hour</b> <span style="color:var(--text3);font-size:11px">(only Admin / Owner see this)</span></div>
     <div class="ps-scan-summary" id="ps-scan-summary">
       <div class="ps-scan-summary-total" id="ps-scan-summary-printed" style="display:none">
         <div class="ps-scan-summary-total-val" id="ps-scan-summary-printed-val">0</div>
@@ -2674,6 +2676,7 @@ function _psLaunchInner() {
   // loads), when there's no session yet to check.
   if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   _psRenderOrderLookupDebugTool();
+  _psPaceNote();
   if (psRole === 'mgmt') {
     // Gap report always available for managers — show tab and reconcile bar
     var gapTab = document.getElementById('ps-tab-gaps');
@@ -6128,6 +6131,7 @@ window.psUnlockTab = async function(tab) {
     // without needing a full page reload.
     if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   _psRenderOrderLookupDebugTool();
+  _psPaceNote();
   } catch(e) {
     if (errEl) errEl.textContent = 'Connection error — try again.';
     return;
@@ -6156,7 +6160,11 @@ window.psUnlockTab = async function(tab) {
 };
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
+// 📌 the packing pace note: Admin / Owner only
+function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), r = (psCredUser && psCredUser.roles) || [];
+  if (n) n.style.display = r.indexOf('admin') !== -1 || r.indexOf('owner') !== -1 ? 'block' : 'none'; }
 window.psSwitchTab = function(name) {
+  if (name === 'scan') _psPaceNote();
   if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
   if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
@@ -11571,5 +11579,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20261025a"></script>
+<script src="xf-access.js?v=20261029a"></script>
 </html>

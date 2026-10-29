@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261025a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261029a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11337,6 +11337,19 @@ console.log('\n📍 Audit Columns: no wide gap — long names wrap, Skipped wrap
     /<td style="padding:2px 5px;min-width:110px;max-width:200px;white-space:normal">' \+ ckE\(x\.name \|\| '—'\)/.test(ih) && /<td style="padding:2px 5px;min-width:100px;max-width:180px;white-space:normal">' \+ ckE\(x\.name/.test(ih)
       && /<td style="padding:2px 5px;white-space:normal;min-width:100px;max-width:180px">' \+ ckE\(r\.name/.test(ih) && /'<\/td><td ' \+ td \+ '><div style="max-width:230px">' \+ sk \+ '<\/div><\/td>/.test(ih)
       && /\(i === 5 \? 'white-space:normal;min-width:150px;max-width:230px' : 'white-space:nowrap'\)/.test(ih) && !/min-width:140px">' \+ ckE\(x\.name/.test(ih), null);
+}
+
+// Owner (2026-10-29): "on the packing put a note somewhere I can see — Mayra can pack 130 in an hour".
+console.log('\n📌 Packing: a note "Mayra can pack 130 an hour" (Admin / Owner only)');
+{
+  const { readFileSync: rfP } = await import('node:fs');
+  const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), xa = rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const fnSrc = (ph.match(/function _psPaceNote\(\) \{[^\n]*\n[^\n]*\}/) || [''])[0];
+  const run = roles => { const n = { style: { display: 'none' } }; new Function('document', 'psCredUser', fnSrc + '; _psPaceNote();')({ getElementById: () => n }, { roles }); return n.style.display; };
+  check('Packing tab, above Scanned Today: "📌 Note: Mayra can pack 130 an hour" — shown to Admin / Owner, hidden for everyone else; shown on sign-in and when Packing opens; 🧩 check mark',
+    /<div id="ps-pack-pace-note" style="display:none[^"]*">📌 <b>Note:<\/b> Mayra can pack <b>130 an hour<\/b>/.test(ph) && ph.indexOf('id="ps-pack-pace-note"') < ph.indexOf('id="ps-scan-summary"') && ph.indexOf('id="ps-pack-pace-note"') > ph.indexOf('id="ps-panel-scan"')
+      && run(['admin']) === 'block' && run(['owner']) === 'block' && run(['picker']) === 'none' && run([]) === 'none'
+      && /if \(name === 'scan'\) _psPaceNote\(\);/.test(ph) && (ph.match(/_psRenderOrderLookupDebugTool\(\);\n  _psPaceNote\(\);/g) || []).length === 2 && /sel: '#ps-pack-pace-note'/.test(xa), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
