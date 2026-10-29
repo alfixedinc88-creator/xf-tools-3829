@@ -11352,5 +11352,24 @@ console.log('\n📌 Packing: a note "Mayra can pack 130 an hour" (Admin / Owner 
       && /if \(name === 'scan'\) _psPaceNote\(\);/.test(ph) && (ph.match(/_psRenderOrderLookupDebugTool\(\);\n  _psPaceNote\(\);/g) || []).length === 2 && /sel: '#ps-pack-pace-note'/.test(xa), null);
 }
 
+// Owner (2026-10-29): "if you see they keep packing or picking, give an average time — how many minutes they can pick and pack — under their
+// name; I like to see how fast they go and all the others can see how fast they go too".
+console.log('\n⏱ Picking / Packing: each person\'s pace under their name (steady work only, breaks left out)');
+{
+  const { readFileSync: rfQ } = await import('node:fs');
+  const ph = rfQ(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('var PS_PACE_GAP_MIN = 10'), ph.indexOf('function _psRenderPersonChips() {'));
+  const P = new Function(src + '; return { pace: _psPace, html: _psPaceHtml };')();
+  const at = (m) => new Date(Date.UTC(2026, 9, 29, 13, 0, 0) + m * 1000).toISOString();
+  // MY: a package every 28 s for 10 packages, a 40-min lunch, then 6 more every 30 s → 14 steady gaps: (9 × 28 + 5 × 30) s ÷ 14 = 28.7 s each ≈ 125 an hour
+  const my = [], k = []; for (let i = 0; i < 10; i++) my.push(at(i * 28)); for (let i = 0; i < 6; i++) my.push(at(9 * 28 + 2400 + i * 30));
+  const p = P.pace(my), few = P.pace([at(0), at(60), at(120)]);
+  check('16 scans with a 40-min lunch in the middle: the lunch is left out → 14 steady scans, 28.7 sec each, 125 an hour; shown "⏱ 29 sec each · 125 an hour"; fewer than 5 steady scans → nothing shown',
+    p && p.n === 14 && Math.abs(p.avgMin * 60 - 28.71) < 0.5 && p.perHour === 125 && /⏱ 29 sec each · 125 an hour/.test(P.html({ ts: my })) && few === null && P.html({ ts: [] }) === '', { p, html: P.html({ ts: my }) });
+  check('…under every name on Packing (Scanned Today / by person) and Picking (Picked Today / by person) — everyone sees it; the times come from each scan',
+    (ph.match(/parts\.join\(' · '\) \+ '<\/span>' \+ _psPaceHtml\(u\)/g) || []).length === 2 && (ph.match(/if \(s\.timestamp\) byUser\[who\]\.ts\.push\(s\.timestamp\);/g) || []).length === 2
+      && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psRenderPersonChips() {')) < ph.indexOf('// ── Per-person scan-history detail modal') && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psPickRenderPersonChips() {')) > 0, null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
