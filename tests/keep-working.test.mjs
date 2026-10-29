@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261029a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261029b/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11344,12 +11344,12 @@ console.log('\n📌 Packing: a note "Mayra can pack 130 an hour" (Admin / Owner 
 {
   const { readFileSync: rfP } = await import('node:fs');
   const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), xa = rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
-  const fnSrc = (ph.match(/function _psPaceNote\(\) \{[^\n]*\n[^\n]*\}/) || [''])[0];
-  const run = roles => { const n = { style: { display: 'none' } }; new Function('document', 'psCredUser', fnSrc + '; _psPaceNote();')({ getElementById: () => n }, { roles }); return n.style.display; };
+  const fnSrc = ph.slice(ph.indexOf('function _psPaceAdmin() {'), ph.indexOf('// ⏱ Owner (2026-10-29): "hide the average time'));
+  const run = roles => { const n = { style: { display: 'none' } }; new Function('document', 'psCredUser', 'var _psPaceOn = false;' + fnSrc + '; _psPaceNote();')({ getElementById: () => n, querySelectorAll: () => [] }, { roles }); return n.style.display; };
   check('Packing tab, above Scanned Today: "📌 Note: Mayra can pack 130 an hour" — shown to Admin / Owner, hidden for everyone else; shown on sign-in and when Packing opens; 🧩 check mark',
     /<div id="ps-pack-pace-note" style="display:none[^"]*">📌 <b>Note:<\/b> Mayra can pack <b>130 an hour<\/b>/.test(ph) && ph.indexOf('id="ps-pack-pace-note"') < ph.indexOf('id="ps-scan-summary"') && ph.indexOf('id="ps-pack-pace-note"') > ph.indexOf('id="ps-panel-scan"')
       && run(['admin']) === 'block' && run(['owner']) === 'block' && run(['picker']) === 'none' && run([]) === 'none'
-      && /if \(name === 'scan'\) _psPaceNote\(\);/.test(ph) && (ph.match(/_psRenderOrderLookupDebugTool\(\);\n  _psPaceNote\(\);/g) || []).length === 2 && /sel: '#ps-pack-pace-note'/.test(xa), null);
+      && /if \(name === 'scan' \|\| name === 'picking'\) _psPaceNote\(\);/.test(ph) && (ph.match(/_psRenderOrderLookupDebugTool\(\);\n  _psPaceNote\(\);/g) || []).length === 2 && /sel: '#ps-pack-pace-note'/.test(xa), null);
 }
 
 // Owner (2026-10-29): "if you see they keep packing or picking, give an average time — how many minutes they can pick and pack — under their
@@ -11359,7 +11359,7 @@ console.log('\n⏱ Picking / Packing: each person\'s pace under their name (stea
   const { readFileSync: rfQ } = await import('node:fs');
   const ph = rfQ(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   const src = ph.slice(ph.indexOf('var PS_PACE_GAP_MIN = 10'), ph.indexOf('function _psRenderPersonChips() {'));
-  const P = new Function(src + '; return { pace: _psPace, html: _psPaceHtml };')();
+  const P = new Function('var _psPaceOn = true; function _psPaceAdmin() { return true; }' + src + '; return { pace: _psPace, html: _psPaceHtml };')();
   const at = (m) => new Date(Date.UTC(2026, 9, 29, 13, 0, 0) + m * 1000).toISOString();
   // MY: a package every 28 s for 10 packages, a 40-min lunch, then 6 more every 30 s → 14 steady gaps: (9 × 28 + 5 × 30) s ÷ 14 = 28.7 s each ≈ 125 an hour
   const my = [], k = []; for (let i = 0; i < 10; i++) my.push(at(i * 28)); for (let i = 0; i < 6; i++) my.push(at(9 * 28 + 2400 + i * 30));
@@ -11369,6 +11369,28 @@ console.log('\n⏱ Picking / Packing: each person\'s pace under their name (stea
   check('…under every name on Packing (Scanned Today / by person) and Picking (Picked Today / by person) — everyone sees it; the times come from each scan',
     (ph.match(/parts\.join\(' · '\) \+ '<\/span>' \+ _psPaceHtml\(u\)/g) || []).length === 2 && (ph.match(/if \(s\.timestamp\) byUser\[who\]\.ts\.push\(s\.timestamp\);/g) || []).length === 2
       && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psRenderPersonChips() {')) < ph.indexOf('// ── Per-person scan-history detail modal') && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psPickRenderPersonChips() {')) > 0, null);
+}
+
+// Owner (2026-10-29): "hide the average time right now, only Admin level up can click and see".
+console.log('\n⏱ Pace hidden: only an Admin / Owner taps ⏱ Show pace to see it');
+{
+  const { readFileSync: rfH } = await import('node:fs');
+  const ph = rfH(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('var PS_PACE_GAP_MIN = 10'), ph.indexOf('function _psRenderPersonChips() {'));
+  const ctl = ph.slice(ph.indexOf('function _psPaceAdmin() {'), ph.indexOf('window.psSwitchTab = function(name) {'));
+  const at = m => new Date(Date.UTC(2026, 9, 29, 13, 0, 0) + m * 1000).toISOString(), ts = []; for (let i = 0; i < 10; i++) ts.push(at(i * 30));
+  const mk = roles => { const btns = [{ style: {}, textContent: '' }, { style: {}, textContent: '' }], renders = [];
+    const o = new Function('document', 'psCredUser', 'window', '_psRenderPersonChips', '_psPickRenderPersonChips', src + ctl + '; _psPaceNote(); return { html: _psPaceHtml };')(
+      { getElementById: () => null, querySelectorAll: () => btns }, { roles }, (globalThis.__w = {}), () => renders.push('pack'), () => renders.push('pick'));
+    return { o, btns, renders, w: globalThis.__w }; };
+  const pk = mk(['picker']), ad = mk(['admin']);
+  const pkBefore = pk.o.html({ ts }), adBefore = ad.o.html({ ts }); pk.w.psTogglePace(); ad.w.psTogglePace();
+  const pkAfter = pk.o.html({ ts }), adAfter = ad.o.html({ ts });
+  check('everyone: no pace under the names (hidden now); a picker never gets the ⏱ Show pace button and tapping does nothing; an Admin / Owner gets ⏱ Show pace on Picking and Packing → the pace shows under each name (both lists re-drawn), button says ⏱ Hide pace',
+    pkBefore === '' && adBefore === '' && pk.btns[0].style.display === 'none' && pkAfter === '' && pk.renders.length === 0
+      && /⏱ 30 sec each · 120 an hour/.test(adAfter) && ad.btns.every(b => b.style.display === 'inline-block' && b.textContent === '⏱ Hide pace') && ad.renders.join(',') === 'pack,pick'
+      && (ph.match(/<button type="button" class="ps-pace-btn" onclick="psTogglePace\(\)" style="display:none/g) || []).length === 2, { adAfter, pk: pk.btns[0].style, ad: ad.btns.map(b => [b.style.display, b.textContent]) });
+  delete globalThis.__w;
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

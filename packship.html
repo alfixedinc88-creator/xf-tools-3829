@@ -1234,6 +1234,7 @@ body {
       <div class="ps-scan-summary-namewrap">
         <label class="ps-scan-summary-namewrap-label" for="ps-pick-summary-namefilter">Find person</label>
         <input type="text" class="ps-scan-summary-name-input" id="ps-pick-summary-namefilter" placeholder="Name…" oninput="_psPickRenderPersonChips()">
+        <button type="button" class="ps-pace-btn" onclick="psTogglePace()" style="display:none;margin-top:4px;font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--green);background:var(--bg3);color:var(--green);font-weight:700;cursor:pointer">⏱ Show pace</button>
       </div>
       <div class="ps-scan-summary-datewrap">
         <label class="ps-scan-summary-date-label" for="ps-pick-summary-date">Check a date</label>
@@ -1352,6 +1353,7 @@ body {
       <div class="ps-scan-summary-namewrap">
         <label class="ps-scan-summary-namewrap-label" for="ps-scan-summary-namefilter">Find person</label>
         <input type="text" class="ps-scan-summary-name-input" id="ps-scan-summary-namefilter" placeholder="Name…" oninput="_psRenderPersonChips()">
+        <button type="button" class="ps-pace-btn" onclick="psTogglePace()" style="display:none;margin-top:4px;font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--green);background:var(--bg3);color:var(--green);font-weight:700;cursor:pointer">⏱ Show pace</button>
       </div>
       <div class="ps-scan-summary-datewrap">
         <label class="ps-scan-summary-date-label" for="ps-scan-summary-date">Check a date</label>
@@ -4514,6 +4516,7 @@ function _psPace(ts) {
   return { n: n, avgMin: Math.round(avg * 100) / 100, perHour: Math.round(60 / avg) };
 }
 function _psPaceHtml(u) {
+  if (!_psPaceOn || !_psPaceAdmin()) return ''; // hidden unless an Admin / Owner tapped ⏱ Show pace
   var p = _psPace(u && u.ts); if (!p) return '';
   var sec = Math.round(p.avgMin * 60);
   return '<span class="ps-scan-summary-chip-pace" title="Steady work only: ' + p.n + ' scans less than ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out)" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
@@ -6181,10 +6184,21 @@ window.psUnlockTab = async function(tab) {
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 // 📌 the packing pace note: Admin / Owner only
-function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), r = (psCredUser && psCredUser.roles) || [];
-  if (n) n.style.display = r.indexOf('admin') !== -1 || r.indexOf('owner') !== -1 ? 'block' : 'none'; }
+function _psPaceAdmin() { var r = (psCredUser && psCredUser.roles) || []; return r.indexOf('admin') !== -1 || r.indexOf('owner') !== -1; }
+function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), a = _psPaceAdmin();
+  if (n) n.style.display = a ? 'block' : 'none';
+  document.querySelectorAll('.ps-pace-btn').forEach(function(b) { b.style.display = a ? 'inline-block' : 'none'; b.textContent = _psPaceOn && a ? '⏱ Hide pace' : '⏱ Show pace'; }); }
+// ⏱ Owner (2026-10-29): "hide the average time right now — only Admin level up can click and see". Hidden for everyone; an Admin / Owner
+// taps ⏱ Show pace (Picking or Packing) to see it under each name, ⏱ Hide pace to hide it again.
+var _psPaceOn = false;
+window.psTogglePace = function() {
+  if (!_psPaceAdmin()) return;
+  _psPaceOn = !_psPaceOn; _psPaceNote();
+  if (typeof _psRenderPersonChips === 'function') _psRenderPersonChips();
+  if (typeof _psPickRenderPersonChips === 'function') _psPickRenderPersonChips();
+};
 window.psSwitchTab = function(name) {
-  if (name === 'scan') _psPaceNote();
+  if (name === 'scan' || name === 'picking') _psPaceNote();
   if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
   if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
@@ -11600,5 +11614,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20261029a"></script>
+<script src="xf-access.js?v=20261029b"></script>
 </html>
