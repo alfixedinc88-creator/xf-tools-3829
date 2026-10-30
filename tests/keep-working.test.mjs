@@ -11907,5 +11907,20 @@ console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up 
     (ih.match(/\+ invShelfMapHtml\(bx\.part\)/g) || []).length === 3 && /id="ps2-map-btn" onclick="[^"]*invShelfMapHtml\(''\)/.test(ih) && /sel: '\.ps2-map, #ps2-map-btn'/.test(xa), null);
 }
 
+// Owner (2026-10-30): "very good map — split 28 and 29 into two: if 202 gets picked only the 202 half turns red, not the 201 half; and the
+// basement (box) is one of our shelves too, number 42".
+console.log('\n🗺 Shelf map: a 2-number shelf lights only its half; the box by the basement is shelf 42');
+{
+  const { readFileSync: rfM3 } = await import('node:fs');
+  const ih = rfM3(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const map = new Function(ih.slice(ih.indexOf('  var INV_SHELF_MAP = {'), ih.indexOf('  window.invShelfMapHtml = invShelfMapHtml;')) + '; return { html: invShelfMapHtml, M: INV_SHELF_MAP };')();
+  const on = h => (h.match(/<rect class="ps2-shelf-on" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/) || []).slice(1).map(Number).join(',');
+  const h202 = map.html('202-4-5=10'), h201 = map.html('201-1-1'), h29 = map.html('29-2-2'), h30 = map.html('30-1-1'), h31 = map.html('31-1-1'), h23 = map.html('23-1-1'), h42 = map.html('42-1-1=5');
+  check('202 → only the bottom half of the 201/202 shelf red (201 half stays grey); 201 → the top half; 29 → bottom half of 28/29; 30 / 31 → left / right half; a 1-number shelf (23) → the whole shelf; every 2-number shelf has a line down the middle; 42 = the box by the basement (no "Basement" box any more)',
+    on(h202) === '345,1127.5,515,37.5' && on(h201) === '345,1090,515,37.5' && on(h29) === '340,922.5,330,42.5' && on(h30) === '715,615,27.5,340' && on(h31) === '742.5,615,27.5,340' && on(h23) === '355,340,315,70'
+      && (h202.match(/class="ps2-shelf-on"/g) || []).length === 1 && /x1="345" y1="1127.5" x2="860" y2="1127.5"/.test(h202)
+      && on(h42) === '690,318,58,285' && /🗺 Shelf <span[^>]*>42<\/span>/.test(h42) && map.M.faces.some(f => f.n === '42' && f.s === 'G') && !/Basement/.test(map.html('')), { h202: on(h202), h29: on(h29), h30: on(h30), h42: on(h42) });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
