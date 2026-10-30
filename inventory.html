@@ -17091,8 +17091,10 @@ window.invCredLogin = async function() {
   }
   // 🔗 Link a "not checked" listing to our part # (owner 2026-10-10) — same ✏️ mapping as Reorder, kept in its History.
   lw.unm = []; lw.unmOpen = '';
+  // 🔗 a row of the list below (lw.unm) or of the sold-out "matches no part #" list ('a' + n → lw.unmA, owner 2026-10-30)
+  function lwMapItem(i) { return typeof i === 'string' ? (lw.unmA || {})[i] : lw.unm[i]; }
   window.lwMapOpen = async function (i) {
-    var m = lw.unm[i], box = el('lw-map-' + i); if (!m || !box) return;
+    var m = lwMapItem(i), box = el('lw-map-' + i); if (!m || !box) return;
     if (box.innerHTML) { box.innerHTML = ''; return; }
     var u = m.u, inp = 'lw-map-in-' + i;
     if (!u.sku) { box.innerHTML = '<div style="font-size:12px;color:var(--red);margin:4px 0">This listing has no SKU on ' + esc(m.plat) + ' — put our part # as its SKU there, then 🔎 Scan now.</div>'; return; }
@@ -17118,11 +17120,11 @@ window.invCredLogin = async function() {
     }, 250);
   };
   window.lwMapSave = async function (i) {
-    var m = lw.unm[i], part = String((el('lw-map-in-' + i) || {}).value || '').trim(); if (!m || !part) return;
+    var m = lwMapItem(i), part = String((el('lw-map-in-' + i) || {}).value || '').trim(); if (!m || !part) return;
     var d = await call('/inventory/soldout/watch/map', { method: 'POST', body: { platform: m.plat, listingId: m.u.listingId, sku: m.u.sku, title: m.u.title, qty: m.u.qty, isVar: !!m.u.isVar, part: part } });
     if (!d.ok) { if (typeof showToast === 'function') showToast('✗ ' + (d.error || 'Not linked')); return; }
     if (typeof showToast === 'function') showToast('🔗 ' + d.sku + ' → ' + d.part + (d.warned ? ' — we have ' + d.ourCases + ' case(s): warning added below, set it' : d.ourCases > 0 ? '' : ' — SKU Mgr has none of it'));
-    lwLoad();
+    lwLoad(); if (typeof i === 'string' && typeof lwAmzLoad === 'function') lwAmzLoad(); // off the sold-out "matches no part #" list too
   };
   function lwRenderState(st) {
     lw.unm = [];
@@ -17233,8 +17235,13 @@ window.invCredLogin = async function() {
     var why = '';
     if ((st.notOnOthers || []).length) why += '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--text3)">At 0 on Amazon, part # found, but no other channel has it at 100+ (' + st.notOnOthers.length + ')</summary>'
       + st.notOnOthers.map(function (x) { return '<div style="font-family:var(--mono);font-size:11px">' + esc(x.sku) + ' → ' + esc(x.part) + ' · ' + esc(x.listingId) + '</div>'; }).join('') + '</details>';
-    if ((st.noPart || []).length) why += '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--orange)">At 0 on Amazon, but its SKU matches no part # (' + st.noPart.length + ') — add the ASIN to the AmazonSKU sheet or 🔗 link it in "not checked"</summary>'
-      + st.noPart.map(function (x) { return '<div style="font-size:11px"><span style="font-family:var(--mono)">' + esc(x.sku) + ' · ' + esc(x.listingId) + '</span> ' + esc(x.title || '') + '</div>'; }).join('') + '</details>';
+    // 🔗 Owner (2026-10-30): "under sold out I want to be able to link that ASIN to the right parent" — tap 🔗 Link on a row: the title's
+    // matches (or type the part # / parent), saved like every ✏️ mapping (kept in Reorder 🕘 History: who / when / was → now).
+    lw.unmA = {};
+    if ((st.noPart || []).length) why += '<details class="lw-nopart" style="margin-top:6px"' + (lw.npOpen ? ' open' : '') + ' ontoggle="lw.npOpen=this.open"><summary style="cursor:pointer;color:var(--orange)">At 0 on ' + esc(P) + ', but its SKU matches no part # (' + st.noPart.length + ') — tap 🔗 Link to link it to its part # or parent</summary>'
+      + st.noPart.map(function (x, n) { var k = 'a' + n; lw.unmA[k] = { plat: P, u: { sku: x.sku, listingId: x.listingId, title: x.title || '', qty: 0 } };
+        return '<div style="font-size:11px;padding:2px 0"><button type="button" class="lw-np-link" onclick="lwMapOpen(\'' + k + '\')" style="margin-right:4px;padding:1px 7px;border:1.5px solid #b45309;border-radius:10px;background:var(--bg);color:#b45309;font-size:11px;font-weight:700;cursor:pointer">🔗 Link</button>'
+          + '<span style="font-family:var(--mono)">' + esc(x.sku) + ' · ' + esc(x.listingId) + '</span> ' + esc(x.title || '') + '<div id="lw-map-' + k + '"></div></div>'; }).join('') + '</details>';
     box.innerHTML = head + (l.length ? l.map(function (a) {
       return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="font-family:var(--mono)">' + esc(a.sku) + '</b>'
         + (a.part && a.part !== String(a.sku).toUpperCase() ? ' → <span style="font-family:var(--mono)">' + esc(a.part) + '</span> <span style="font-size:10.5px;color:var(--text3)">(' + esc(a.via || '') + ')</span>' : '')

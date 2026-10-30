@@ -34791,7 +34791,9 @@ async function handleListingWatch(path, method, request, env, session) {
     const raw = String(b.sku || '').trim().toUpperCase(), part = reorderCleanPart(b.part), plat = String(b.platform || '');
     if (!raw) return _soResp({ ok: false, error: 'This listing has no SKU — put the part # as its SKU on ' + (plat || 'the channel') + ' first' }, 400);
     if (!part) return _soResp({ ok: false, error: 'Which part #?' }, 400);
-    if (!(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) LIMIT 1', [part, part + '+']).catch(() => null))) return _soResp({ ok: false, error: `${part} is not in SKU Mgr — check the part #` }, 400);
+    // a part # in SKU Mgr — or (owner 2026-10-30, "link that ASIN to the right parent") a parent with part #s in SKU Mgr (e.g. 27-3-2)
+    const isParent = !part.includes('=') && !!(await d1First(env, "SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' LIMIT 1", [part.replace(/[\\%_]/g, '\\$&') + '=%']).catch(() => null));
+    if (!isParent && !(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) LIMIT 1', [part, part + '+']).catch(() => null))) return _soResp({ ok: false, error: `${part} is not in SKU Mgr — check the part # (or its parent)` }, 400);
     await reorderFixTables(env);
     const had = await d1First(env, 'SELECT part FROM reorder_alias WHERE raw = ?', [raw]).catch(() => null);
     const now = new Date().toISOString();

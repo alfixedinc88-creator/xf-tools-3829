@@ -5638,7 +5638,14 @@ console.log('\n🔗 Listing Watch: link a "not checked" listing to our part # ri
       && al.status === 'open' && al.base_sku === 'LM-1' && !(st1.unmatchedList || []).some(x => x.sku === 'ZZ-NOMAP-2') && st1.unmatched === st0.unmatched - 1, { bad, ok, al, hist, st1 });
   check('…SKU Mgr is not changed by a link; the page lists each "not checked" listing as 🔗 to tap',
     JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0 && /onclick="lwMapOpen\(' \+ i \+ '\);return false"/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), null);
-  sq.exec("DELETE FROM lw_alerts WHERE sku = 'ZZ-NOMAP-2'; DELETE FROM reorder_alias WHERE raw = 'ZZ-NOMAP-2'; DELETE FROM master_list WHERE part_num IN ('LM-1=10','LM-9=5')");
+  // Owner (2026-10-30): "under sold out — At 0 on Amazon, but its SKU matches no part # — I want to be able to link that ASIN to the right parent"
+  const par = await post('/inventory/soldout/watch/map', { platform: 'Amazon', listingId: 'B0LM9', sku: 'ZZ-NOMAP-9', title: 'steel nipple', part: 'lm-9', qty: 0 });
+  const badPar = await post('/inventory/soldout/watch/map', { platform: 'Amazon', listingId: 'B0LM8', sku: 'ZZ-NOMAP-8', part: 'NOPE-9', qty: 0 });
+  const ihL = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…sold out "matches no part #" list: every row has 🔗 Link (the same title matches / type a part #); a PARENT (lm-9 → LM-9, has LM-9=5 in SKU Mgr) can be linked too, kept as the ✏️ mapping; an unknown parent is refused',
+    par.ok && par.part === 'LM-9' && sq.prepare("SELECT part FROM reorder_alias WHERE raw = 'ZZ-NOMAP-9'").get()?.part === 'LM-9' && badPar.ok === false && /not in SKU Mgr/.test(badPar.error)
+      && /class="lw-np-link" onclick="lwMapOpen\(\\'' \+ k \+ '\\'\)"/.test(ihL) && /function lwMapItem\(i\) \{ return typeof i === 'string' \? \(lw\.unmA \|\| \{\}\)\[i\] : lw\.unm\[i\]; \}/.test(ihL), { par, badPar });
+  sq.exec("DELETE FROM lw_alerts WHERE sku IN ('ZZ-NOMAP-2', 'ZZ-NOMAP-9'); DELETE FROM reorder_alias WHERE raw IN ('ZZ-NOMAP-2', 'ZZ-NOMAP-9'); DELETE FROM master_list WHERE part_num IN ('LM-1=10','LM-9=5')");
   if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
   globalThis.fetch = realFetch;
 }
