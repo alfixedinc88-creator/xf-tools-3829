@@ -3080,6 +3080,143 @@ window.invCredLogin = async function() {
     invPart = keep; invSavePullList(); invRenderPullList(); window.invAwdShipRender();
     invFlash(n ? '✓ ' + n + ' spot' + (n === 1 ? '' : 's') + ' in ' + area + ' on your Pull List — grab them, bring them to the garage, ✓ Grabbed' : 'Nothing new to add in ' + area, n ? 'success' : 'warn');
   };
+  // 🏷 Owner (2026-10-30): "for the 'scan or search' I want it able to search for the Amazon label, then system will tell them what to grab
+  // and where to grab, we can type in how many label we working on, some of the item might need few boxes … print out the label we was
+  // missing, then they can scan it … then they be able to added to our 'pull list' start to grabbing it".
+  // Scan or Search an Amazon box label (its SSCC, scanned or typed) → this popup: the shipment, the SKU → our part #, EVERY label (box) of that
+  // part # in the shipment (✓ scanned here / ⬜ not yet → print the missing ones in AWD Planner), "Boxes we're working on" (number pad), and
+  // where to grab — the same plan as 📦 AWD shipments ready (Rule #1, least rebag, 🔒 locked plans), minus what is already grabbed or on
+  // a Pull List for that shipment (any phone), so nothing is grabbed twice. ➕ Put on my Pull List = the same Pull List items as that card.
+  var AML = null;
+  function invAmlSscc(v) { var s = String(v || '').trim(); if (!/^[\d\s()]+$/.test(s)) return ''; var d = s.replace(/\D/g, ''); return d.length >= 18 && d.length <= 20 ? d.slice(-18) : ''; }
+  window.invAmlIsLabel = function(v) { return !!invAmlSscc(v); };
+  function invAmlPart(b) { return String((b && (b.part || b.sku)) || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
+  function invAmlTodo(A) { return A.boxes.filter(function(b) { return !b.prev; }); }
+  // How many boxes are still to grab: the plan's cases left ÷ the cases one box needs (all of them when it isn't known).
+  function invAmlLeftBoxes(A) {
+    var todo = invAmlTodo(A).length, r = A.plan; if (!r || !todo) return todo;
+    var need = r.need[A.shipment] || 0, left = r.left[A.shipment];
+    if (r.locked) { var t = r.takes.reduce(function(a, x) { return a + (x.cases || 0); }, 0); return t > 0.001 ? todo : 0; }
+    if (!(need > 0) || left == null) return todo;
+    return Math.max(0, Math.min(todo, Math.ceil(left / need * todo - 1e-6)));
+  }
+  // The plan covers every box still to grab; working on fewer → only that many boxes' worth (pieces when known, else cases), in pick order.
+  function invAmlTrim(takes, n, left) {
+    if (!(n < left)) return takes.slice();
+    var out = [], bp = takes.length ? parseFloat(takes[0].boxPcs) || 0 : 0;
+    var byPcs = bp > 0 && takes.every(function(t) { return parseFloat(t.loc && t.loc.eachQty) > 0; });
+    var tot = takes.reduce(function(a, t) { return a + (t.cases || 0); }, 0), want = byPcs ? n * bp : tot * n / left;
+    takes.forEach(function(t) { if (want <= 0.001) return; var e = byPcs ? parseFloat(t.loc.eachQty) : 1;
+      var c = Math.min(t.cases, Math.ceil(want / e - 1e-6)); if (c > 0) { out.push(Object.assign({}, t, { cases: c })); want -= c * e; } });
+    return out;
+  }
+  window.invAmlOpen = function(code) {
+    var ss = invAmlSscc(code); if (!ss) return false;
+    if (invMode === 'out' && invStockOutDest !== 'company') invSwitchTab('stockoutco');
+    var si = g('inv-search-inp'); if (si) si.value = '';
+    if (AML && AML.boxes.some(function(b) { return b.sscc === ss; })) { AML.scanned[ss] = 1; invAmlRender(); return true; } // another label of the part # open → ✓
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { invFlash('📶 No WiFi — an Amazon label can only be looked up with WiFi', 'error'); return true; }
+    invModal('inv-aml-modal', '<div style="padding:8px">⏳ Reading the Amazon label…</div>');
+    wFetch(W + '/awd/label-map?all=1&code=' + ss).then(function(r) { return r.json(); }).then(function(d) {
+      var b = d && d.box;
+      if (!b) { AML = null; invModal('inv-aml-modal', '<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Amazon label not in our records</div>'
+        + '<div style="font-size:13px;line-height:1.45">…' + invEsc(ss.slice(-8)) + ' — the office uploads the Amazon box labels in <b>AWD Planner → 🏷</b>. Until then, type the WHOLE part # in Scan or Search.</div>'
+        + '<button type="button" onclick="invAmlClose()" style="margin-top:12px;width:100%;padding:11px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);font-weight:700;cursor:pointer">Close</button>'); return; }
+      var P = invAmlPart(b), boxes = (d.labels || []).filter(function(x) { return invAmlPart(x) === P; });
+      if (!boxes.length) boxes = [b];
+      AML = { ss: ss, shipment: b.shipment, part: P, sku: b.sku, name: b.name || '', boxes: boxes, scanned: {}, n: null, plan: null, busy: true, added: false };
+      AML.scanned[ss] = 1;
+      invAmlRender(); invAmlPlan();
+    }).catch(function() { invModal('inv-aml-modal', '<div style="padding:8px;color:var(--red);font-weight:700">📶 Could not read the label — check WiFi and scan it again</div><button type="button" onclick="invAmlClose()" style="width:100%;padding:10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);font-weight:700;cursor:pointer">Close</button>'); });
+    return true;
+  };
+  function invAmlPlan() {
+    var A = AML; if (!A) return;
+    var todo = invAmlTodo(A), units = todo.reduce(function(a, x) { return a + (parseFloat(x.units) || 0); }, 0);
+    if (!todo.length) { A.busy = false; A.plan = { takes: [], short: [], need: {}, left: {}, grabbed: {}, onList: {}, allGot: true }; invAmlRender(); return; }
+    wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).catch(function() { return AWDS.data || {}; }).then(function(d) {
+      d = d || {}; if (d.locks) AWDS.locks = d.locks; else if (!AWDS.locks) AWDS.locks = {};
+      return invAwdPlanPart({ part: A.part, name: A.name, per: { 0: { units: units, boxes: todo.length } } }, [{ shipment: A.shipment }], invAwdGot(d));
+    }).then(function(r) { if (AML !== A) return; A.plan = r; A.busy = false; if (A.n == null) A.n = invAmlLeftBoxes(A); invAmlRender(); })
+      .catch(function(e) { if (AML !== A) return; A.busy = false; A.err = (e && e.message) || 'could not work it out'; invAmlRender(); });
+  }
+  function invAmlRender() {
+    var A = AML; if (!A) return;
+    var todo = invAmlTodo(A), have = A.boxes.filter(function(b) { return A.scanned[b.sscc] && !b.prev; }).length;
+    var miss = todo.filter(function(b) { return !A.scanned[b.sscc]; }).map(function(b) { return 'Box ' + (b.seq || '?'); });
+    var rows = A.boxes.map(function(b) {
+      var st = b.prev ? '<span style="color:var(--text3)">PREVIOUS PACKED — nothing to grab</span>' : A.scanned[b.sscc] ? '<b style="color:var(--green)">✓ label scanned</b>' : '<span style="color:#b45309">⬜ label not scanned</span>';
+      return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12.5px' + (b.sscc === A.ss ? ';font-weight:700' : '') + '"><span style="font-family:var(--mono)">Box ' + invEsc(b.seq || '?') + ' · ' + xfrN(b.units) + ' units</span>' + st + '</div>'; }).join('');
+    var r = A.plan, left = r ? invAmlLeftBoxes(A) : todo.length, n = A.n == null ? left : Math.min(A.n, left), plan = '';
+    if (A.busy) plan = '<div style="padding:8px 0;color:var(--text3)">⏳ Working out where to grab (Rule #1 FBA bags, least rebag)…</div>';
+    else if (A.err) plan = '<div style="color:var(--red);font-weight:700">⚠ ' + invEsc(A.err) + '</div>';
+    else if (r) {
+      var sh = A.shipment, done = (r.grabbed[sh] || 0), list = (r.onList[sh] || 0), T = invAmlTrim(r.takes, n, left);
+      plan = (done || list ? '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Already for this shipment: <b>' + xfrN(done) + ' cs grabbed</b>' + (list ? ' · <b>' + xfrN(list) + ' cs on a Pull List</b> (not grabbed yet)' : '') + '</div>' : '')
+        + (!left || !r.takes.length ? '<div style="padding:10px;border-radius:9px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800">✅ Nothing left to grab for ' + invEsc(A.part) + ' in this shipment' + (list ? ' — the rest is on a Pull List' : '') + '</div>'
+          : '<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Grab — for ' + n + ' box' + (n === 1 ? '' : 'es') + '</div>'
+            + T.map(function(t) { return '<div class="inv-aml-take" style="padding:7px 9px;margin-bottom:5px;border-radius:8px;background:var(--bg3);font-size:13px"><b style="font-family:var(--mono);font-size:15px">' + xfrN(t.cases) + ' cs</b> × <b style="font-family:var(--mono)">' + invEsc(t.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(t.loc.location) + '</b>' + invAwdKindBadge(invAwdKind(t)) + (t.how ? '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + invEsc(t.how) + '</div>' : '') + '</div>'; }).join(''))
+        + (r.short || []).map(function(x) { return '<div style="color:var(--red);font-size:12px;font-weight:700">⚠ ' + invEsc(x) + '</div>'; }).join('');
+    }
+    var canAdd = !A.busy && r && left > 0 && r.takes.length && !A.added;
+    invModal('inv-aml-modal', '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-weight:800;font-size:16px;flex:1">🏷 Amazon label</div><button type="button" onclick="invAmlClose()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">✕</button></div>'
+      + '<div style="font-size:12px;color:var(--text3)">Shipment <b style="color:var(--text)">' + invEsc(A.shipment) + '</b></div>'
+      + '<div style="font-size:15px;margin:4px 0 8px"><span style="font-family:var(--mono);font-size:12px;color:var(--text3)">' + invEsc(A.sku) + ' →</span> <b style="font-family:var(--mono);font-size:17px;color:var(--accent)">' + invEsc(A.part) + '</b>' + (A.name ? '<div style="font-size:12px;color:var(--text2)">' + invEsc(A.name) + '</div>' : '') + '</div>'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3)">' + A.boxes.length + ' Amazon label' + (A.boxes.length === 1 ? '' : 's') + ' (boxes) of ' + invEsc(A.part) + ' in this shipment</div>'
+      + '<div style="max-height:180px;overflow:auto;margin-bottom:6px">' + rows + '</div>'
+      + '<div id="inv-aml-labels" style="font-size:12.5px;margin-bottom:6px;font-weight:700;color:' + (miss.length ? '#b45309' : 'var(--green)') + '">' + (miss.length ? '⬜ ' + have + ' of ' + todo.length + ' labels scanned · missing: ' + invEsc(miss.join(', ')) + ' — no label? Print it: <b>AWD Planner → 🖨 Reprint</b>, then scan it here' : '✓ All ' + todo.length + ' labels scanned') + '</div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:10px"><input id="inv-aml-inp" type="text" autocomplete="off" placeholder="Scan the next Amazon label…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();invAmlScan(this.value);this.value=\'\';}" style="flex:1;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);background:var(--bg);color:var(--text)"></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:13px;font-weight:700">Boxes we\'re working on</span>'
+      + '<button type="button" id="inv-aml-n" onclick="invAmlNPad()" ' + (A.busy || !left ? 'disabled ' : '') + 'style="min-width:60px;padding:7px 10px;border-radius:9px;border:2px solid var(--accent);background:var(--bg);font-family:var(--mono);font-size:18px;font-weight:800;cursor:pointer">' + (A.busy ? '…' : n) + '</button>'
+      + '<span style="font-size:12px;color:var(--text3)">' + (A.busy ? '' : 'of ' + left + ' still to grab') + '</span></div>'
+      + plan
+      + '<div style="display:flex;gap:8px;margin-top:12px"><button type="button" onclick="invAmlClose()" style="flex:1;padding:12px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-weight:700;cursor:pointer">Close</button>'
+      + '<button type="button" id="inv-aml-add" onclick="invAmlAdd()" ' + (canAdd ? '' : 'disabled ') + 'style="flex:2;padding:12px;border-radius:9px;border:none;background:' + (canAdd ? 'var(--accent)' : 'var(--border)') + ';color:#fff;font-weight:800;font-size:15px;cursor:' + (canAdd ? 'pointer' : 'default') + '">' + (A.added ? '✓ On your Pull List' : '➕ Put on my Pull List') + '</button></div>');
+    var inp = g('inv-aml-inp'); if (inp && !A.added) try { inp.focus(); } catch (e) {}
+  }
+  window.invAmlScan = function(v) {
+    var ss = invAmlSscc(v); if (!ss) { if (String(v || '').trim()) invFlash('That is not an Amazon box label — scan the big barcode on the Amazon label', 'error'); return; }
+    if (AML && AML.boxes.some(function(b) { return b.sscc === ss; })) { var b = AML.boxes.filter(function(x) { return x.sscc === ss; })[0];
+      if (AML.scanned[ss]) invFlash('Box ' + (b.seq || '?') + ' already scanned', 'warn'); AML.scanned[ss] = 1; invAmlRender(); return; }
+    window.invAmlOpen(v); // another part # / shipment → its own popup
+  };
+  window.invAmlNPad = function() {
+    var A = AML; if (!A || A.busy) return; var left = invAmlLeftBoxes(A);
+    xfrKeypad('How many boxes (Amazon labels) of ' + A.part + ' are you working on? (' + left + ' still to grab)', '', function(v) {
+      if (AML !== A) return; var k = Math.round(v); if (!(k >= 1)) return; if (k > left) { invFlash('Only ' + left + ' box' + (left === 1 ? '' : 'es') + ' still to grab', 'error'); k = left; }
+      A.n = k; invAmlRender(); });
+  };
+  window.invAmlClose = function() { AML = null; invModalClose('inv-aml-modal'); var i = g('inv-search-inp'); if (i) try { i.focus(); } catch (e) {} };
+  window.invAmlAdd = function() {
+    var A = AML; if (!A || A.busy || A.added || !A.plan) return;
+    if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
+    var left = invAmlLeftBoxes(A), n = A.n == null ? left : Math.min(A.n, left), T = invAmlTrim(A.plan.takes, n, left);
+    if (!T.length) return;
+    var tag = invAwdTag(A.shipment), claims = [], sc = A.boxes.filter(function(b) { return A.scanned[b.sscc]; }).map(function(b) { return b.seq; }).filter(Boolean);
+    var note = '🏷 Amazon label ' + A.part + ': for ' + n + ' box' + (n === 1 ? '' : 'es') + (sc.length ? ' · labels scanned ' + sc.join(', ') : '');
+    T.forEach(function(t) {
+      var cid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      claims.push({ id: cid, part: t.partNum, forPart: t.target, cases: t.cases, ships: [tag], loc: t.loc.location });
+      var key = invPullItemKey(t.partNum, t.loc), ex = null;
+      invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted && x.dest === 'company' && x.forPart === t.target) ex = x; });
+      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; ex.awdClaims = (ex.awdClaims || []).concat([cid]);
+        var tg = String(ex.awdShipment || '').split('|').map(invAwdTag).filter(Boolean); if (tg.indexOf(tag) < 0) tg.push(tag); ex.awdShipment = tg.join(' | '); return; }
+      var it = { key: key, partNum: t.partNum, sku: (t.L && t.L.sku) || t.partNum, name: (t.L && t.L.name) || A.name || '', location: t.loc.location, cases: String(t.cases),
+        systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
+        isPlaceholder: !!t.loc.isPlaceholder, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: null };
+      invPullList.push(it); if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
+      it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = tag; it.awdClaims = [cid]; it.awdKind = invAwdKind(t); it.amlNote = note;
+      if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : '');
+    });
+    invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: '🏷 label ' + A.part, at: new Date().toISOString(), lines: claims }) }).catch(function() {});
+    var ls = function(l) { var m = String(l || '').match(/(\d+)/); return m ? parseInt(m[1]) : 9999; };
+    invPullList.sort(function(a, b) { return ls(a.location) - ls(b.location) || a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum); });
+    A.added = true; AWDS.addN = (AWDS.addN || 0) + 1;
+    invSavePullList(); invRenderPullList(); if (typeof window.invAwdShipLoad === 'function' && g('inv-awdship-out')) window.invAwdShipLoad();
+    invFlash('✓ On your Pull List: ' + T.map(function(t) { return xfrN(t.cases) + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ') + ' (for ' + n + ' Amazon box' + (n === 1 ? '' : 'es') + ' of ' + A.part + ')', 'success');
+    invAmlClose();
+  };
+
   // A part # picked for Big Company that ships with Amazon's barcode → said once (it never stops the pick).
   window.invAmzBcWarn = function(part) {
     var P = String(part || '').toUpperCase(); if (!P) return;
@@ -3485,6 +3622,8 @@ window.invCredLogin = async function() {
 
   window.invLookup = function(code, byName) {
     if (!code) return;
+    // 🏷 an Amazon box label in Scan or Search (Stock Out) → what to grab for its boxes (invAmlOpen)
+    if (invMode === 'out' && window.invAmlIsLabel && window.invAmlIsLabel(code)) { window.invAmlOpen(code); return; }
     // Reset here, not just when a Stock Out Report is tapped — every
     // ordinary search must start clean, so a stray leftover tag from an
     // earlier report click can never attach itself to an unrelated item.
@@ -8122,6 +8261,7 @@ window.invCredLogin = async function() {
     var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + (item.caseOf ? ' = whole case of ' + item.caseOf : '') + '] ' : '[SHELVING] ';
     if (item.awdKind && (item.dest || invStockOutDest) === 'company') destTag += '[' + ({ label: 'NEED TO LABEL', full: 'PRELABEL FULL CASE', extra: 'PRELABEL EXTRA STEP' }[item.awdKind] || '') + '] ';
     if (item.awdShipment && (item.dest || invStockOutDest) === 'company') destTag += '[AWD: ' + item.awdShipment + '] '; // 📦 which shipment(s) it was grabbed for (so it isn't listed to grab again)
+    if (item.amlNote && (item.dest || invStockOutDest) === 'company') destTag += '[' + String(item.amlNote).replace(/[\[\]]/g, '') + '] '; // 🏷 put on from Scan or Search of an Amazon label: which labels / boxes
     itemNotes = (destTag + itemNotes + (item.scanNote ? ' ' + item.scanNote : '')).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
 

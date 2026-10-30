@@ -11694,5 +11694,62 @@ console.log('\n🗜 Stock Out Big Company: AWD shipments ready + Box check close
       && /id="inv-bc-inp"/.test(ih) && /id="inv-bc-pallets"/.test(ih) && /id="inv-bc-plabels"/.test(ih), { tagA, tagB });
 }
 
+console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes / labels, "Boxes we\'re working on", ➕ Pull List');
+{
+  // Owner (2026-10-30): "for the 'scan or search' I want it able to search for the Amazon label, then system will tell them what to grab and where
+  // to grab, we can type in how many label we working on … print out the label we was missing, then they can scan it … added to our 'pull list'".
+  await post('/awd/label-map', { shipment: 'STAR-AML1', labels: [
+    { sscc: '201952611628559001', sku: '95-1-1=10-', part: '95-1-1=10', seq: '2-1', units: 10, loc: 'C1=1-1-1' }, { sscc: '201952611628559002', sku: '95-1-1=10-', part: '95-1-1=10', seq: '2-2', units: 10, loc: 'C1=1-1-1' },
+    { sscc: '201952611628559003', sku: '95-1-1=10-', part: '95-1-1=10', seq: '2-3', units: 10, loc: 'C1=1-1-1' }, { sscc: '201952611628559004', sku: '95-1-1=10-', part: '95-1-1=10', seq: '2-4', units: 10, prev: true },
+    { sscc: '201952611628559005', sku: '96-2-2=5-', part: '96-2-2=5', seq: '1-1', units: 5, loc: 'BSMT=1-1-1' }] });
+  const a1 = await get('/awd/label-map?all=1&code=00201952611628559002'), a0 = await get('/awd/label-map?code=201952611628559002');
+  check('server: ?all=1 → the label (95-1-1=10, Box 2-2) + every label of its shipment (5); without all=1 the answer is the same as before (box only)',
+    a1.box && a1.box.seq === '2-2' && a1.labels.length === 5 && a0.box && a0.box.seq === '2-2' && !a0.labels, { a1: a1.labels && a1.labels.length, a0 });
+
+  const { readFileSync: rfA } = await import('node:fs');
+  const ihA = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihA.slice(ihA.indexOf('  var AML = null;'), ihA.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  let html = '', planArgs = null, pad = null; const flashes = [], posts = [], list = [];
+  const plan = { need: { 'STAR-AML1': 3 }, left: { 'STAR-AML1': 2 }, grabbed: { 'STAR-AML1': 1 }, onList: {}, short: [],
+    takes: [{ target: '95-1-1=10', partNum: '95-1-1=10', cases: 2, how: '', boxPcs: 100, L: { sku: '95-1-1=10', name: 'Elbow' }, loc: { location: 'C1=1-1-1', eachQty: 100, cases: 5, masterId: 9, rowIndex: 3 } }] };
+  const envA = { g: id => id === 'inv-aml-inp' ? { focus() {} } : null, invModal: (id, h) => { html = h; }, invModalClose: () => { html = ''; },
+    invEsc: v => String(v == null ? '' : v), xfrN: v => Math.round((parseFloat(v) || 0) * 1000) / 1000, invFlash: (m, t) => flashes.push(t + ': ' + m), W: '',
+    wFetch: u => Promise.resolve({ json: () => /label-map/.test(u) ? get(u.replace(/^.*?\/awd/, '/awd')) : Promise.resolve({ ok: true, grabbed: [], claims: [], locks: {} }) }),
+    AWDS: {}, invAwdGot: () => [], invAwdPlanPart: (o, ships, got) => { planArgs = { o, ships }; return Promise.resolve(JSON.parse(JSON.stringify(plan))); },
+    invAwdKind: () => 'full', invAwdKindBadge: () => '', invAwdExtraHow: () => '', invAwdTag: n => String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60),
+    invPullItemKey: (p, l) => p + '@' + l.location, invPullList: list, invTagBoxSize() {}, invPost: (u, o) => { posts.push(JSON.parse(o.body)); return Promise.resolve({}); },
+    invSavePullList() {}, invRenderPullList() {}, invStockOutDest: 'company', invMode: 'out', invSwitchTab() {}, xfrKeypad: (t, s0, cb) => { pad = { t, cb }; }, window: globalThis };
+  new Function(...Object.keys(envA), code)(...Object.values(envA));
+  const wait = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); };
+  check('a typed label with spaces / brackets is read too; a part # or UPC is not a label', globalThis.invAmlIsLabel('(00) 2 0195261 162855900 2') && globalThis.invAmlIsLabel('00201952611628559002')
+    && !globalThis.invAmlIsLabel('95-1-1=10') && !globalThis.invAmlIsLabel('840428944803'), null);
+  globalThis.invAmlOpen('00201952611628559002'); await wait();
+  check('scan Box 2-2 → STAR-AML1, 95-1-1=10-  → 95-1-1=10, its 4 labels (2-4 PREVIOUS PACKED); "1 of 3 labels scanned · missing: Box 2-1, Box 2-3 … AWD Planner → 🖨 Reprint"; 96-2-2 not in it',
+    /STAR-AML1/.test(html) && /95-1-1=10/.test(html) && /4 Amazon labels \(boxes\) of 95-1-1=10/.test(html) && /PREVIOUS PACKED/.test(html) && /1 of 3 labels scanned · missing: Box 2-1, Box 2-3/.test(html) && /AWD Planner → 🖨 Reprint/.test(html) && !/96-2-2/.test(html), html.slice(0, 1500));
+  check('…the plan is the 📦 AWD shipments ready plan for 3 boxes (30 units, the PREVIOUS PACKED one left out) of that shipment',
+    planArgs && planArgs.o.part === '95-1-1=10' && planArgs.o.per[0].units === 30 && planArgs.o.per[0].boxes === 3 && planArgs.ships[0].shipment === 'STAR-AML1', planArgs);
+  check('…1 cs already grabbed for the shipment → 2 boxes still to grab: "Grab — for 2 boxes: 2 cs × 95-1-1=10 @ C1=1-1-1"; Boxes we\'re working on = 2',
+    /Already for this shipment: <b>1 cs grabbed/.test(html) && /Grab — for 2 boxes/.test(html) && /<b[^>]*>2 cs<\/b> × <b[^>]*>95-1-1=10<\/b> @ <b[^>]*>C1=1-1-1<\/b>/.test(html) && /of 2 still to grab/.test(html), html);
+  globalThis.invAmlScan('00201952611628559001'); globalThis.invAmlScan('00201952611628559003');
+  check('scan the other labels of it (one printed again) → "✓ All 3 labels scanned"', /✓ All 3 labels scanned/.test(html), null);
+  globalThis.invAmlNPad(); pad.cb(1);
+  check('Boxes we\'re working on → number pad → 1 → "Grab — for 1 box: 1 cs" (100 pcs a box, 100 pcs a case)', /How many boxes \(Amazon labels\) of 95-1-1=10/.test(pad.t) && /Grab — for 1 box/.test(html) && /<b[^>]*>1 cs<\/b>/.test(html), html);
+  globalThis.invAmlAdd();
+  const it = list[0];
+  check('➕ Put on my Pull List → 1 case of 95-1-1=10 @ C1=1-1-1 for Big Company, shipment STAR-AML1, taken for everyone (claim), the labels kept for the Stock Out notes',
+    list.length === 1 && it.cases === '1' && it.dest === 'company' && it.forPart === '95-1-1=10' && it.awdShipment === 'STAR-AML1' && it.awdClaims.length === 1
+      && posts.length === 1 && posts[0].lines[0].cases === 1 && posts[0].lines[0].ships[0] === 'STAR-AML1' && it.amlNote === '🏷 Amazon label 95-1-1=10: for 1 box · labels scanned 2-1, 2-2, 2-3' && html === '', { it, posts });
+  check('…Stock Out notes carry it: [🏷 Amazon label part: for N boxes · labels scanned …] next to [AWD: shipment]', /if \(item\.amlNote && \(item\.dest \|\| invStockOutDest\) === 'company'\) destTag \+= '\['/.test(ihA), null);
+  plan.left['STAR-AML1'] = 0; plan.takes = []; plan.onList = { 'STAR-AML1': 2 };
+  globalThis.invAmlOpen('00201952611628559002'); await wait();
+  check('everything already grabbed / on a Pull List → "✅ Nothing left to grab … the rest is on a Pull List", ➕ greyed out (never grabbed twice)', /✅ Nothing left to grab for 95-1-1=10/.test(html) && /the rest is on a Pull List/.test(html) && /id="inv-aml-add" onclick="invAmlAdd\(\)" disabled/.test(html), html);
+  globalThis.invAmlClose();
+  globalThis.invAmlOpen('00201952611628559999'); await wait();
+  check('a label not in our records → "🏷 Amazon label not in our records … AWD Planner → 🏷"', /Amazon label not in our records/.test(html), html);
+  check('Scan or Search (Stock Out): an Amazon label opens this, everything else is looked up as before', /if \(invMode === 'out' && window\.invAmlIsLabel && window\.invAmlIsLabel\(code\)\) \{ window\.invAmlOpen\(code\); return; \}/.test(ihA), null);
+  ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd'].forEach(k => { delete globalThis[k]; });
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AML1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
