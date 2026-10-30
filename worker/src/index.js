@@ -1417,7 +1417,14 @@ async function awdLabelMap(request, url, env, session) {
     return J({ ok: true, shipment, saved: L.length });
   }
   const code = S18(url.searchParams.get('code'));
-  if (code) { const r = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(code).first(); return J({ ok: true, box: r || null }); }
+  if (code) { const r = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(code).first();
+    // 🏷 ?all=1 (Stock Out Big Company → Scan or Search an Amazon label, owner 2026-10-30): + every label of that shipment, so the page
+    // shows all the boxes of that SKU / part # (which labels are in hand, which to reprint) and what to grab for them.
+    if (r && url.searchParams.get('all') === '1') {
+      const labels = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, loc, prev, fnsku, upc, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(r.shipment).all()).results || []);
+      return J({ ok: true, box: r, labels });
+    }
+    return J({ ok: true, box: r || null }); }
   const last = await env.DB.prepare('SELECT shipment, MAX(at) AS at, by_user FROM awd_label_map GROUP BY shipment ORDER BY MAX(at) DESC LIMIT 1').first();
   if (!last) return J({ ok: true, shipment: null, labels: [] });
   const labels = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, loc, prev, fnsku, upc, name FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(last.shipment).all()).results || []);
