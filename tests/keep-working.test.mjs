@@ -11687,11 +11687,26 @@ console.log('\n🗜 Stock Out Big Company: AWD shipments ready + Box check close
 {
   const { readFileSync: rfM } = await import('node:fs');
   const ih = rfM(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-  const tagA = (ih.match(/<details class="icard" id="inv-awdship-card"[^>]*>/) || [''])[0], tagB = (ih.match(/<details class="icard" id="inv-boxcheck-card"[^>]*>/) || [''])[0];
-  check('both cards are <details> with no "open" (closed); each closed line has its status (#inv-awdship-sum / #inv-bc-sum); the long how-to is behind ℹ️; ↻ Refresh stays; the AWD list still loads on Big Company while closed and says ⏳ loading / N shipments · cases left to grab',
-    !!tagA && !/\sopen[\s>]/.test(tagA) && !!tagB && !/\sopen[\s>]/.test(tagB) && /id="inv-awdship-sum"/.test(ih) && /id="inv-bc-sum"/.test(ih) && /ℹ️ how it works/.test(ih) && /invAwdShipLoad\(true\);return false">↻ Refresh/.test(ih)
+  const tagA = (ih.match(/<details class="icard" id="inv-awdship-card"[^>]*>/) || [''])[0], tagB = (ih.match(/<div class="icard" id="inv-boxcheck-card"[^>]*>/) || [''])[0]; /* owner 2026-10-30 (2nd): Box check's scan part always shows */
+  check('AWD shipments ready is closed (no "open"); Box check always shows its title, on a pallet / not yet line, 📦 Next box and the scan box — the pallets list folds (owner 2nd ask); each closed line has its status (#inv-awdship-sum / #inv-bc-sum); the long how-to is behind ℹ️; ↻ Refresh stays; the AWD list still loads on Big Company while closed and says ⏳ loading / N shipments · cases left to grab',
+    !!tagA && !/\sopen[\s>]/.test(tagA) && !!tagB && /<details class="inv-bc-more"[^>]*>\s*<summary[^>]*>🟫 Pallets · which labels are not on a pallet yet/.test(ih) && ih.indexOf('id="inv-bc-inp"') < ih.indexOf('class="inv-bc-more"') && ih.indexOf('class="inv-bc-more"') < ih.indexOf('id="inv-bc-pallets"') && /id="inv-awdship-sum"/.test(ih) && /id="inv-bc-sum"/.test(ih) && /ℹ️ how it works/.test(ih) && /invAwdShipLoad\(true\);return false">↻ Refresh/.test(ih)
       && /if \(aws\) window\.invAwdShipLoad\(\);/.test(ih) && /invAwdSum\(shown \? '⏳ checking for changes…' : '⏳ loading the shipments…'\)/.test(ih) && /' left to grab'/.test(ih) && /'<\/b> on a pallet · '/.test(ih)
       && /id="inv-bc-inp"/.test(ih) && /id="inv-bc-pallets"/.test(ih) && /id="inv-bc-plabels"/.test(ih), { tagA, tagB });
+}
+{
+  // Owner (2026-10-30): "Scan or Search — that can minimize it" — Big Company only; Stock Out Shelving (locked design) never folds
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const ih = rfS2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const src = ih.slice(ih.indexOf('  function invSsMin()'), ih.indexOf('  window.invSsApply = invSsApply;'));
+  const els = { 'inv-scansearch-card': { cl: new Set(), classList: null }, 'inv-ss-tog': { style: {}, textContent: '' } };
+  els['inv-scansearch-card'].classList = { add: c => els['inv-scansearch-card'].cl.add(c), remove: c => els['inv-scansearch-card'].cl.delete(c) };
+  const store = {}, ls = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+  const ap = new Function('g', 'localStorage', src + '; return invSsApply;')(id => els[id], ls);
+  ap('company'); const co1 = els['inv-scansearch-card'].cl.has('inv-ss-min') && els['inv-ss-tog'].textContent === '▸ show';
+  ap('shelving'); const sh1 = !els['inv-scansearch-card'].cl.has('inv-ss-min') && els['inv-ss-tog'].style.display === 'none';
+  store.inv_ss_min_co = '0'; ap('company'); const co2 = !els['inv-scansearch-card'].cl.has('inv-ss-min') && els['inv-ss-tog'].textContent === '▾ minimize';
+  check('Scan or Search on Big Company starts folded (▸ show), ▾ minimize / ▸ show remembered on the device; on Stock Out Shelving it is never folded and has no button (locked design)',
+    co1 && sh1 && co2 && /#inv-scansearch-card\.inv-ss-min > :not\(\.icard-label\)/.test(ih) && /invSsApply\(dest\)/.test(ih), { co1, sh1, co2 });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
