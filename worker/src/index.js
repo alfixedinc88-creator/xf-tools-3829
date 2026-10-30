@@ -5747,8 +5747,18 @@ async function inventoryPending(env) {
 
 // POST /inventory/log
 // Appends a new entry to Inventory_Log as Pending
+// ⚠ Owner (2026-10-30): "Stock Out Big Company — the Pull List still has None Found and it takes down all of our inventory, don't do it — do it
+// the same as Stock Out Shelving". A Pull List None Found (either tab) never takes stock off, whatever app sent it: one from a scanner still on
+// the old page (no [TO AUDIT]) is made a [TO AUDIT] one here too — 0 cases, the spot goes on 🔍 Audit. Transfer's own None Found stays as it is.
+function invNfIsPull(notes) { const n = String(notes || ''); return n.includes('[NONE FOUND ON SHELF]') && !n.includes('[TRANSFER]'); }
+function invNfZeroes(notes) { const n = String(notes || ''); return n.includes('[NONE FOUND ON SHELF]') && !n.includes('[TO AUDIT]') && !invNfIsPull(n); }
 async function inventoryLog(request, env) {
   const body = await request.json().catch(() => ({}));
+  if (String(body.type || '').toUpperCase() === 'OUT' && (body.noneFound || invNfIsPull(body.notes)) && !String(body.notes || '').includes('[TRANSFER]')) {
+    body.noneFound = true; body.cases = 0;
+    if (!String(body.notes || '').includes('[NONE FOUND ON SHELF]')) body.notes = ('[NONE FOUND ON SHELF] ' + String(body.notes || '')).trim();
+    if (!String(body.notes || '').includes('[TO AUDIT]')) body.notes = String(body.notes).replace('[NONE FOUND ON SHELF]', '[NONE FOUND ON SHELF] [TO AUDIT]');
+  }
   const {
     type, partNum, sku, name, location, overwriteLocation,
     isPlaceholder, isNew, rowIndex, cases, initials, notes,
@@ -6233,7 +6243,7 @@ async function inventoryVerify(request, env) {
         // shelf never goes below 0, so taking more than the system had there
         // (or "none found") only takes off what the system had.
         // [TO AUDIT] (Pull List None Found, owner 2026-10-29): nothing taken off — a plain 0-case Stock Out.
-        const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]') && !String(item.notes || '').includes('[TO AUDIT]');
+        const noneFound = invNfZeroes(item.notes); // a Pull List None Found never zeroes (owner 2026-10-30)
         let change = type === 'IN' ? casesAmt : -casesAmt, info = null;
         if (type === 'OUT' && rowBefore !== null && (noneFound || rowBefore < casesAmt - 1e-9)) {
           change = -rowBefore;
@@ -6546,7 +6556,7 @@ async function inventoryVerifyInner(request, env) {
       // Phase 3: Atomic SQL update — prevents race condition on bulk approve
       // Instead of read-then-write (which loses updates when concurrent), use SQL arithmetic
       // [TO AUDIT] (Pull List None Found, owner 2026-10-29): the spot is NOT set to 0 — 🔍 Audit double checks it.
-      const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]') && !String(item.notes || '').includes('[TO AUDIT]');
+      const noneFound = invNfZeroes(item.notes); // a Pull List None Found never zeroes (owner 2026-10-30) — even one sent before [TO AUDIT]
       let newCases;
       if (env.DB) {
         try {
@@ -8868,7 +8878,8 @@ async function invNoneFoundList(env, opts = {}) {
   const parts = opts.parts ? [...new Set(opts.parts.map(U))].filter(Boolean).slice(0, 80) : null;
   if (parts && !parts.length) return [];
   const pq = parts ? ` AND UPPER(part_num) IN (${parts.map(() => '?').join(',')})` : '';
-  const sql = c => `SELECT id, timestamp, part_num, location, initials, notes, status FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[TO AUDIT]%'
+  const sql = c => `SELECT id, timestamp, part_num, location, initials, notes, status FROM inventory_log WHERE type = 'OUT' AND (notes LIKE '%[TO AUDIT]%'
+      OR (notes LIKE '%[NONE FOUND ON SHELF]%' AND notes NOT LIKE '%[TRANSFER]%' AND timestamp >= '2026-10-29'))
     AND COALESCE(status, '') != 'Rejected'${c ? " AND COALESCE(cancelled_at, '') = ''" : ''} AND timestamp >= ?${pq} ORDER BY timestamp DESC LIMIT 500`;
   const rows = ((await env.DB.prepare(sql(true)).bind(since, ...(parts || [])).all()
     .catch(() => env.DB.prepare(sql(false)).bind(since, ...(parts || [])).all()).catch(() => ({ results: [] }))).results || []);

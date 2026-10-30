@@ -677,12 +677,18 @@ console.log('\nHistory: Cancel works on a None Found (puts back what it set to 0
   const pt = () => sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num='26-1-2=2X'").get().t;
   const whole = () => sq.prepare('SELECT SUM(cases) t FROM master_list WHERE cases > 0').get().t;
   await post('/inventory/review-mode', { mode: 'auto' });
-  const nf = async () => post('/inventory/log', { type: 'OUT', partNum: '26-1-2=2X', sku: '26-1-2=2X', location: 'GARAGE', cases: 0, initials: 'NF', notes: '[SHELVING] [NONE FOUND ON SHELF]', noneFound: true, masterId: 9401 });
+  // Owner (2026-10-30): a Pull List None Found never takes stock off — even one sent by a scanner still on the old page (no [TO AUDIT]):
+  const r9401 = () => sq.prepare('SELECT cases, location FROM master_list WHERE id=9401').get();
+  const old = await post('/inventory/log', { type: 'OUT', partNum: '26-1-2=2X', sku: '26-1-2=2X', location: 'GARAGE', cases: 0, initials: 'NF', notes: '[BIG COMPANY for 26-1-2=2X] [NONE FOUND ON SHELF]', noneFound: true, masterId: 9401 });
+  const oldRow = sq.prepare('SELECT notes, cases FROM inventory_log WHERE id = ?').get(old.d1Id);
+  check('a Pull List None Found from an OLD scanner page (Big Company or Shelving, no [TO AUDIT]) → GARAGE stays 3, part total stays 5; made a [TO AUDIT] one (on 🔍 Audit), 0 cases',
+    old.ok && r9401().cases === 3 && pt() === 5 && /\[NONE FOUND ON SHELF\] \[TO AUDIT\]/.test(oldRow.notes) && oldRow.cases === 0, { old, oldRow, r: r9401() });
+  // Transfer's own "checked empty" (🧹 set to 0) is the only None Found that still zeroes a spot — Cancel puts it back
+  const nf = async () => post('/inventory/log', { type: 'OUT', partNum: '26-1-2=2X', sku: '26-1-2=2X', location: 'GARAGE', cases: 0, initials: 'NF', notes: '[NONE FOUND ON SHELF] [TRANSFER] GARAGE checked empty', noneFound: true, masterId: 9401 });
   const w0 = whole();
   const n1 = await nf();
   const g = () => (sq.prepare("SELECT cases FROM master_list WHERE part_num='26-1-2=2X' AND location='GARAGE'").get() || {}).cases;
-  const r9401 = () => sq.prepare('SELECT cases, location FROM master_list WHERE id=9401').get();
-  check('None Found approved: GARAGE 3 → 0 (spot freed: its location cleared — why Cancel used to fail), part total 5 → 2', n1.autoApproved && r9401().cases === 0 && r9401().location === '' && pt() === 2, { n1, r: r9401(), pt: pt() });
+  check('Transfer "checked empty" approved: GARAGE 3 → 0 (spot freed: its location cleared — why Cancel used to fail), part total 5 → 2', n1.autoApproved && r9401().cases === 0 && r9401().location === '' && pt() === 2, { n1, r: r9401(), pt: pt() });
   const c1 = await post('/inventory/cancel-entry', { id: n1.d1Id, cancelledBy: 'NF' });
   const cl = sq.prepare("SELECT type, cases, notes, total_before b, total_after a, wh_before wb, wh_after wa FROM inventory_log WHERE notes LIKE '[CANCELLED ENTRY #" + n1.d1Id + "]%'").get();
   check('Cancel the None Found → the same row back at GARAGE with 3, part total 2 → 5, whole inventory back to ' + w0 + ', recorded "putting back the 3 case(s)"',
@@ -11966,6 +11972,27 @@ console.log('\n🗺 Shelf map: 30 / 31 next to their own half; 42 says Basement'
       && map.M.faces.every(f => (all.match(new RegExp('>' + f.n + '</text>', 'g')) || []).length === 1)
       && /🗺 Shelf <span[^>]*>42<\/span> <span[^>]*>\(Basement\)<\/span>/.test(h42) && />BASEMENT<\/text>/.test(all) && map.name('42') === 'Basement' && map.name('23') === ''
       && /invShelfName\(invShelfNo\(bx\.part\)\) \? ' <span class="ps2-shelfname"/.test(ih), { l30, l31, F });
+}
+
+// Owner (2026-10-30): "Stock Out Big Company — None Found still takes down all our inventory, don't do it; do it like Shelving; after they
+// click None Found just recommend another spot that has the item — don't ask any questions (the scanners hide the keyboard)".
+console.log('\n✗ None Found (both tabs): no questions — logged (nothing taken off) and the next spot goes straight on the Pull List');
+{
+  const { readFileSync: rfN } = await import('node:fs');
+  const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  window.invMarkNoneFound = function(i) {'), ih.indexOf('  // ── ✕ next to "Cases needed"'));
+  const list = [{ key: '26-1-2=2X|GARAGE', partNum: '26-1-2=2X', sku: '26-1-2', location: 'GARAGE', cases: '2', dest: 'company', forPart: '26-1-2=2X', awdShipment: 'STAR-1' }];
+  const modals = [], flashes = [], subs = [], counts = [], WN = {};
+  const env = { W: '', invPullList: list, _invFetchLookupRaw: async () => ({ partNum: '26-1-2', locations: [{ partNum: '26-1-2=2X', location: 'GARAGE', cases: 3 }, { partNum: '26-1-2=2X', location: 'C1=9-4-1', cases: 5 }, { partNum: '26-1-2=5', location: 'BO=1', cases: 9 }] }),
+    invParent: p => String(p).split('=')[0], invFlash: (m, t) => flashes.push(m), invModal: id => modals.push(id), invModalClose: () => {}, invEsc: v => String(v), invPart: null,
+    invRankForCompany: l => l, invPickForShelving: l => l, invAutoResolveStockoutIfNeeded: () => {}, invSavePullList: () => {}, invRenderPullList: () => {},
+    invSubmitOnePullItem: i => subs.push(i), invNfCountOpen: x => counts.push(x), invNoneFoundNow: (...x) => WN.f(...x), window: {} };
+  const Wn = new Function(...Object.keys(env), code + '; return window;')(...Object.values(env)); WN.f = Wn.invNoneFoundNow;
+  Wn.invMarkNoneFound(0); for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r));
+  const alt = list[1] || {};
+  check('✗ None Found on Big Company → NO question / pop-up, NO "what IS here?" count; GARAGE logged None Found (0 cases, sent at once); the next spot C1=9-4-1 (same part #) is put on the Pull List with the same 2 cases and the AWD shipment tag; the message says stock NOT taken off',
+    !modals.length && !counts.length && list[0].noneFound === true && list[0].cases === 0 && list[0].wanted === 2 && subs.length === 1 && alt.location === 'C1=9-4-1' && alt.cases === '2' && alt.awdShipment === 'STAR-1'
+      && flashes.some(f => /stock NOT taken off/.test(f) && /C1=9-4-1/.test(f)), { modals, counts, list, flashes });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
