@@ -1165,7 +1165,9 @@ window.invCredLogin = async function() {
     <input id="ps2-inp" type="text" autocomplete="off" inputmode="none" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();invPutShelfScan(this.value);this.value='';}"
       style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">
     <div id="ps2-res" style="margin-top:8px"></div>
-    <div style="display:flex;gap:6px;margin-top:8px"><button type="button" onclick="invPutShelfReset()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer">↺ Start over (next box)</button></div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button type="button" onclick="invPutShelfReset()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer">↺ Start over (next box)</button>
+      <button type="button" id="ps2-map-btn" onclick="var m=document.getElementById('ps2-map-all');if(m){m.innerHTML=m.innerHTML?'':invShelfMapHtml('');}" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--accent);background:var(--bg3);color:var(--accent);font-weight:700;cursor:pointer">🗺 Show the shelf map</button></div>
+    <div id="ps2-map-all"></div>
     <div id="ps2-day" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
   </div>
   <!-- 📜 Owner (2026-10-30): "must have history under Put on Shelf to record everything down" — every box → shelf check, by day. -->
@@ -11731,6 +11733,55 @@ window.invCredLogin = async function() {
   // ✅; otherwise ❌ NOT MATCH (red, buzz, a voice says "Not match") and they have to scan the RIGHT shelf (owner 2026-10-30: "take the 'I
   // checked' off"). Every check is kept (who / when / box / shelf / right or wrong) with the 🔍 Box check records → 📜 History. No stock moves.
   var PS2 = { box: null };
+  // 🗺 Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map — when they scan the package, e.g. 202-#-#, show them on the map
+  // where to put it; easy for the new people". The shelf faces carry the FIRST number of the part # (202-4-5=10 → 202). Drawn as on the
+  // owner's sheet: Front office at the top (4 · 3 · 2, 5 on the wall), Front (23–25) → Back (201 / 202), 30 / 31 by the Basement, 32,
+  // the Small room (34 · 33), the packing tables on the left. side = which face of the shelf has that number (t / b / l / r).
+  var INV_SHELF_MAP = {
+    shelves: [
+      { id: 's4', x: 340, y: 38, w: 125, h: 62 }, { id: 's3', x: 485, y: 38, w: 115, h: 62 }, { id: 's2', x: 615, y: 38, w: 100, h: 62 },
+      { id: 's5', x: 285, y: 145, w: 52, h: 135 }, { id: 's21', x: 35, y: 355, w: 70, h: 145 },
+      { id: 'A', x: 355, y: 340, w: 315, h: 70 }, { id: 'B', x: 355, y: 535, w: 315, h: 70 }, { id: 'C', x: 340, y: 715, w: 330, h: 65 },
+      { id: 'D', x: 340, y: 880, w: 330, h: 85 }, { id: 'F', x: 715, y: 615, w: 55, h: 340 }, { id: 's32', x: 820, y: 950, w: 40, h: 130 },
+      { id: 'E', x: 345, y: 1090, w: 515, h: 75 }, { id: 'R1', x: 875, y: 605, w: 210, h: 40 }, { id: 'R2', x: 875, y: 715, w: 190, h: 40 }, { id: 'R3', x: 1055, y: 645, w: 30, h: 70 } ],
+    faces: [
+      { n: '4', s: 's4', side: 'b' }, { n: '3', s: 's3', side: 'b' }, { n: '2', s: 's2', side: 'b' }, { n: '5', s: 's5', side: 'r' }, { n: '21', s: 's21', side: 'r' },
+      { n: '23', s: 'A', side: 'b' }, { n: '24', s: 'B', side: 't' }, { n: '25', s: 'B', side: 'b' }, { n: '26', s: 'C', side: 't' }, { n: '27', s: 'C', side: 'b' },
+      { n: '28', s: 'D', side: 't' }, { n: '29', s: 'D', side: 'b' }, { n: '30', s: 'F', side: 'l' }, { n: '31', s: 'F', side: 'r' }, { n: '32', s: 's32', side: 'l' },
+      { n: '201', s: 'E', side: 't' }, { n: '202', s: 'E', side: 'b' }, { n: '34', s: 'R1', side: 'b', lx: 866, ly: 636 }, { n: '33', s: 'R2', side: 't', lx: 866, ly: 746 } ],
+    other: [ { t: 'box', x: 690, y: 318, w: 58, h: 285, label: '⬇ Basement' }, { t: 'box', x: 15, y: 640, w: 80, h: 155, label: 'Packing' }, { t: 'box', x: 15, y: 1020, w: 85, h: 140, label: 'Packing' } ],
+    text: [ { x: 470, y: 205, t: 'FRONT OFFICE' }, { x: 200, y: 470, t: 'FRONT', rot: 90 }, { x: 205, y: 1060, t: 'BACK', rot: 90 }, { x: 1110, y: 690, t: 'SMALL ROOM', rot: 90 } ]
+  };
+  function invShelfNo(part) { var m = /^\s*(\d+)/.exec(String(part || '')); return m ? String(parseInt(m[1], 10)) : ''; }
+  // the map (SVG) with the shelf face of this part # lit up; '' part = the whole map
+  function invShelfMapHtml(part) {
+    var M = INV_SHELF_MAP, n = invShelfNo(part), hit = M.faces.filter(function(f) { return f.n === n; })[0], S = {};
+    M.shelves.forEach(function(r) { S[r.id] = r; });
+    var e = function(v) { return String(v).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+    var svg = '<svg class="ps2-map-svg" viewBox="0 0 1140 1260" style="width:100%;max-width:440px;height:auto;display:block;margin:0 auto;background:#fff;border-radius:10px" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">';
+    M.other.forEach(function(o) { svg += '<rect x="' + o.x + '" y="' + o.y + '" width="' + o.w + '" height="' + o.h + '" fill="#f1f5f9" stroke="#94a3b8" stroke-width="4" stroke-dasharray="10 6"/>'
+      + '<text x="' + (o.x + o.w / 2) + '" y="' + (o.y + o.h / 2) + '" font-size="26" fill="#475569" text-anchor="middle" dominant-baseline="middle" transform="rotate(90 ' + (o.x + o.w / 2) + ' ' + (o.y + o.h / 2) + ')">' + e(o.label) + '</text>'; });
+    M.shelves.forEach(function(r) { var on = hit && hit.s === r.id; svg += '<rect class="ps2-shelf' + (on ? ' ps2-shelf-on' : '') + '" x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" fill="' + (on ? '#fdba74' : '#cbd5e1') + '" stroke="' + (on ? '#c2410c' : '#475569') + '" stroke-width="' + (on ? 6 : 3) + '" rx="4"/>'; });
+    M.text.forEach(function(t) { svg += '<text x="' + t.x + '" y="' + t.y + '" font-size="34" font-weight="700" fill="#64748b" text-anchor="middle"' + (t.rot ? ' transform="rotate(' + t.rot + ' ' + t.x + ' ' + t.y + ')"' : '') + '>' + e(t.t) + '</text>'; });
+    M.faces.forEach(function(f) { var r = S[f.s], on = hit === f, pad = 26, x, y;
+      x = f.side === 'l' ? r.x - pad : f.side === 'r' ? r.x + r.w + pad : r.x + 4; y = f.side === 't' ? r.y - 12 : f.side === 'b' ? r.y + r.h + 32 : r.y + r.h - 10;
+      if (f.side === 't' || f.side === 'b') { x = r.x - 6; }
+      if (f.lx) { x = f.lx; y = f.ly; } // a label placed by hand (the small room)
+      var anchor = f.side === 'l' ? 'end' : f.side === 'r' ? 'start' : 'end';
+      if (f.side === 't' || f.side === 'b') { svg += '<text class="ps2-face' + (on ? ' ps2-face-on' : '') + '" x="' + x + '" y="' + y + '" font-size="' + (on ? 44 : 28) + '" font-weight="' + (on ? 900 : 700) + '" fill="' + (on ? '#c2410c' : '#1e293b') + '" text-anchor="end">' + e(f.n) + '</text>'; }
+      else svg += '<text class="ps2-face' + (on ? ' ps2-face-on' : '') + '" x="' + x + '" y="' + y + '" font-size="' + (on ? 44 : 28) + '" font-weight="' + (on ? 900 : 700) + '" fill="' + (on ? '#c2410c' : '#1e293b') + '" text-anchor="' + anchor + '">' + e(f.n) + '</text>';
+      if (on) { // the face itself: a thick line + an arrow pointing at it
+        var x1 = r.x, y1 = r.y, x2 = r.x + r.w, y2 = r.y;
+        if (f.side === 'b') { y1 = y2 = r.y + r.h; } if (f.side === 'l') { x2 = r.x; y2 = r.y + r.h; } if (f.side === 'r') { x1 = x2 = r.x + r.w; y2 = r.y + r.h; }
+        svg += '<line class="ps2-face-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#dc2626" stroke-width="16" stroke-linecap="round"/>';
+        var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, dx = f.side === 'l' ? -1 : f.side === 'r' ? 1 : 0, dy = f.side === 't' ? -1 : f.side === 'b' ? 1 : 0;
+        svg += '<text x="' + (mx + dx * 80) + '" y="' + (my + dy * 80 + 18) + '" font-size="64" text-anchor="middle">' + (dy < 0 ? '⬇' : dy > 0 ? '⬆' : dx < 0 ? '➡' : '⬅') + '</text>';
+      } });
+    svg += '</svg>';
+    return '<div class="ps2-map" style="margin-top:8px;padding:8px;border-radius:10px;border:2px solid ' + (hit ? '#c2410c' : 'var(--border)') + ';background:var(--bg2)">'
+      + '<div style="font-size:13px;font-weight:800;margin-bottom:4px;color:' + (hit ? '#c2410c' : 'var(--text2)') + '">' + (hit ? '🗺 Shelf <span style="font-size:20px">' + e(n) + '</span> — the red side on the map' : n ? '🗺 Shelf ' + e(n) + ' is not on the map yet (basement / other room?) — tell the office' : '🗺 The shelf map') + '</div>' + svg + '</div>';
+  }
+  window.invShelfMapHtml = invShelfMapHtml;
   // 📦 Owner (2026-10-30): "when we scan the box I want the box number, e.g. 25-4-5=25" — the box's part # big, on every step.
   function invPs2BoxHtml(b) { return b ? '<div class="ps2-boxno" style="margin:4px 0;padding:8px 10px;border-radius:10px;border:2px solid var(--accent);background:var(--bg2)"><div style="font-size:11px;font-weight:700;color:var(--text3)">📦 BOX</div>'
     + '<div style="font-size:30px;font-weight:900;font-family:var(--mono);line-height:1.15;color:var(--text);overflow-wrap:anywhere">' + invEsc(b.part) + '</div>' + (b.name ? '<div style="font-size:12px;color:var(--text2)">' + invEsc(b.name) + '</div>' : '') + '</div>' : ''; }
@@ -11759,14 +11810,14 @@ window.invCredLogin = async function() {
         var bx = PS2.box, shelfHtml = function(spots) { return '<div class="ps2-shelfno" style="margin:6px 0;padding:8px 10px;border-radius:10px;border:2px solid var(--green);background:var(--green-bg,#dcfce7)"><div style="font-size:11px;font-weight:700;color:var(--green)">🗄 BRING IT TO SHELF</div>'
           + '<div style="font-size:34px;font-weight:900;font-family:var(--mono);line-height:1.15;color:var(--text)">' + invEsc(invParent(bx.part)) + '</div>'
           + (spots == null ? '<div style="font-size:12px;color:var(--text3)">⏳ looking up where we keep it…</div>' : spots.length ? '<div class="ps2-spots" style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">📍 ' + spots.map(invEsc).join(' · ') + '</div>' : '<div style="font-size:12px;color:var(--text2)">📍 Not on any shelf in SKU Mgr yet</div>') + '</div>'; };
-        if (res) res.innerHTML = invPs2BoxHtml(bx) + shelfHtml(null);
+        if (res) res.innerHTML = invPs2BoxHtml(bx) + shelfHtml(null) + invShelfMapHtml(bx.part);
         _invFetchLookupRaw(bx.part).then(function(d) {
           if (PS2.box !== bx || !res) return;
           var seen = {}, spots = ((d && d.locations) || []).filter(function(l) { return !l.isPlaceholder && invParent(l.partNum) === invParent(bx.part) && (parseFloat(l.cases) || 0) > 0; })
             .map(function(l) { return String(l.location || '').trim(); }).filter(function(l) { if (!l || seen[l]) return false; seen[l] = 1; return true; });
           if (typeof invPullWalkCompare === 'function') spots.sort(invPullWalkCompare);
-          res.innerHTML = invPs2BoxHtml(bx) + shelfHtml(spots.slice(0, 8));
-        }).catch(function() { if (PS2.box === bx && res) res.innerHTML = invPs2BoxHtml(bx) + shelfHtml([]); });
+          res.innerHTML = invPs2BoxHtml(bx) + shelfHtml(spots.slice(0, 8)) + invShelfMapHtml(bx.part);
+        }).catch(function() { if (PS2.box === bx && res) res.innerHTML = invPs2BoxHtml(bx) + shelfHtml([]) + invShelfMapHtml(bx.part); });
       });
     }
     var b = PS2.box, bp = invParent(b.part), code = xfrFrontFix(v), isLoc = xfrIsLoc(code);
@@ -17341,6 +17392,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261030b"></script>
+<script src="xf-access.js?v=20261030c"></script>
 </body>
 </html>
