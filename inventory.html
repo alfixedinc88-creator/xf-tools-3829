@@ -667,9 +667,10 @@ window.invCredLogin = async function() {
       <div id="inv-awdship-hist-out" style="font-size:12px;margin-top:6px">Loading…</div>
     </details>
   </details>
-  <!-- 🗜 Owner (2026-10-30): closed by default too; the closed line says how many labels are on a pallet / not yet. Tap to open and scan. -->
-  <details class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed" ontoggle="if(this.open){var i=document.getElementById('inv-bc-inp');if(i)i.focus();}">
-    <summary style="cursor:pointer;font-weight:800;color:#7c3aed">🔍 Box check — Amazon box labels → PALLET <span id="inv-bc-sum" class="inv-card-sum" style="display:block;font-size:12px;font-weight:600;color:var(--text2)"></span></summary>
+  <!-- 🗜 Owner (2026-10-30): "for Box check I want this part to show, we are going to use it a lot" — the title, the on a pallet / not yet line,
+       📦 Next box and the scan box always show; only the pallets / labels-not-on-a-pallet list and the day's count fold away (tap to open). -->
+  <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
+    <div style="font-weight:800;color:#7c3aed">🔍 Box check — Amazon box labels → PALLET <span id="inv-bc-sum" class="inv-card-sum" style="display:block;font-size:12px;font-weight:600;color:var(--text2)"></span></div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
       <div style="font-size:12px;color:var(--text2)">Scan the Amazon box label, then each of its boxes, then the PALLET (✕ closes any time)</div>
       <button type="button" onclick="invBoxCheckReset()" style="padding:5px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">📦 Next box</button>
@@ -678,11 +679,14 @@ window.invCredLogin = async function() {
     <input id="inv-bc-inp" type="text" inputmode="none" autocomplete="off" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();invBoxCheckScan(this.value);this.value='';}"
       style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;background:var(--bg);color:var(--text)">
     <div id="inv-bc-res" style="margin-top:8px"></div>
+    <details class="inv-bc-more" style="margin-top:8px">
+    <summary style="cursor:pointer;font-weight:700;font-size:13px;color:#7c3aed">🟫 Pallets · which labels are not on a pallet yet · 🖨 PALLET labels</summary>
     <div id="inv-bc-day" style="margin-top:6px;font-size:12px;color:var(--text2)"></div>
     <!-- 📦 Owner (2026-10-27): every Amazon box checked → which pallet it is on (PALLET 1, 2, 3…), how many boxes a pallet has, by who / when -->
     <div id="inv-bc-pallets" style="margin-top:8px;font-size:12px"></div>
     <button type="button" id="inv-bc-plabels" onclick="invPalletLabels()" style="margin-top:6px;padding:6px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">🖨 Print PALLET labels (PALLET 1, 2, 3…)</button>
-  </details>
+    </details>
+  </div>
   <div class="icard" id="inv-stockout-card">
     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="invToggleStockoutList()">
       <div class="icard-label" style="margin-bottom:0">⚠️ Stock Out Reports<span class="ibadge" id="inv-stockout-badge" style="display:none">0</span></div>
@@ -769,8 +773,11 @@ window.invCredLogin = async function() {
       <div id="inv-qa-history-body" style="font-size:12px"></div>
     </div>
   </div>
+  <!-- 🗜 Owner (2026-10-30): "Scan or Search — that can minimize it" — on Stock Out Big Company only (Stock Out Shelving is a locked design and
+       stays exactly as it is): the title folds the card (▸ / ▾), remembered on this device; it starts folded on Big Company. -->
+  <style>#inv-scansearch-card.inv-ss-min > :not(.icard-label):not(style) { display: none !important; }</style>
   <div class="icard" id="inv-scansearch-card">
-    <div class="icard-label">Scan or Search</div>
+    <div class="icard-label">Scan or Search<span id="inv-ss-tog" onclick="invSsToggle()" style="display:none;cursor:pointer;margin-left:8px;color:var(--text3);font-weight:700">▾ minimize</span></div>
     <!-- One box (owner): part # / UPC / product name all go in the same box — no
          "Product Name" / "Location" buttons any more (a spot is looked up on ✅ Checking). -->
     <div id="inv-need-wrap" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
@@ -2753,6 +2760,12 @@ window.invCredLogin = async function() {
     if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
+  // 🗜 Owner (2026-10-30): "Scan or Search — that can minimize it": Big Company only (Shelving is a locked design, never folded); remembered here
+  function invSsMin() { try { return localStorage.getItem('inv_ss_min_co') !== '0'; } catch (e) { return true; } }
+  function invSsApply(dest) { var c = g('inv-scansearch-card'), t = g('inv-ss-tog'); if (!c) return; var co = dest === 'company', m = co && invSsMin();
+    if (c.classList) c.classList[m ? 'add' : 'remove']('inv-ss-min'); if (t) { t.style.display = co ? 'inline' : 'none'; t.textContent = m ? '▸ show' : '▾ minimize'; } }
+  window.invSsApply = invSsApply;
+  window.invSsToggle = function() { var m = !invSsMin(); try { localStorage.setItem('inv_ss_min_co', m ? '1' : '0'); } catch (e) {} invSsApply(invStockOutDest); if (!m) { var i = g('inv-search-inp'); if (i) i.focus(); } };
   // 🗜 the closed card's line (owner 2026-10-30): loading… / N shipments · what is left to grab
   function invAwdSum(html) { var e = g('inv-awdship-sum'); if (e) e.innerHTML = html; }
   // one part #: what each shipment needs, minus what was grabbed for it (oldest shipment first), then the Big Company pick rules
@@ -3264,6 +3277,7 @@ window.invCredLogin = async function() {
       var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
+      if (typeof invSsApply === 'function') invSsApply(dest); // 🗜 Scan or Search folds on Big Company only
       invRenderPullList(); if (typeof invLoadAllPulls === 'function') invLoadAllPulls(); if (typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount(); // 🔀 this tab's own list
       if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); invBcPallets(); /* 📷 the pallets of the latest shipment, at once */ if (aws) window.invAwdShipLoad(); /* 🗜 loads while closed too: the closed line shows it (owner 2026-10-30) */ } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
     }
