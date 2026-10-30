@@ -654,9 +654,11 @@ window.invCredLogin = async function() {
        office saved with the Amazon box labels (AWD Planner); PREVIOUS PACKED boxes left out. Same pick rules and Pull List as Big Company. -->
   <!-- 📦 Owner (2026-10-27): "all the Shipment Builder shipments that are ready, anything need to grab, put it on Stock Out Big Company so they
        can start grabbing right now" — every shipment sent and not ✅ Done, open as soon as Big Company is picked. -->
-  <details class="icard" id="inv-awdship-card" open style="display:none;border:2px solid #1D4ED8" ontoggle="if(this.open&&window.AWDS&&!AWDS.data&&this.style.display!=='none')invAwdShipLoad()">
-    <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 AWD shipments ready — what to grab, by location</summary>
-    <div style="font-size:12px;color:var(--text2);margin:6px 0">Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. 🕕 Every day at 6 PM, whatever is on a Pull List and not grabbed goes back to everyone — the next day, ➕ Put it on your Pull List again. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed. <a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a></div>
+  <!-- 🗜 Owner (2026-10-30): "minimize the info we don't need, so the page is not so much info; if AWD shipments have to load, show that on the
+       front" — closed by default; the closed line says loading / how many shipments and what is left to grab; tap to open. -->
+  <details class="icard" id="inv-awdship-card" style="display:none;border:2px solid #1D4ED8" ontoggle="if(this.open&&window.AWDS&&!AWDS.data&&this.style.display!=='none')invAwdShipLoad()">
+    <summary style="cursor:pointer;font-weight:800;color:#1D4ED8">📦 AWD shipments ready — what to grab, by location <span id="inv-awdship-sum" class="inv-card-sum" style="display:block;font-size:12px;font-weight:600;color:var(--text2)"></span></summary>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0"><a href="#" onclick="invAwdShipLoad(true);return false">↻ Refresh</a> <details class="inv-awdship-help" style="display:inline"><summary style="display:inline;cursor:pointer;color:var(--text3)">ℹ️ how it works</summary><div>Every shipment the office sent from the Shipment Builder (📤) or made the Amazon box labels for, until ✅ Done. 🕕 Every day at 6 PM, whatever is on a Pull List and not grabbed goes back to everyone — the next day, ➕ Put it on your Pull List again. Tap an area (C1…), then <b>➕ Put on my Pull List</b> — grab them all, bring them to the garage, ✓ Grabbed as usual. No scanning needed.</div></details></div>
     <div id="inv-awdship-out" style="font-size:13px">Loading…</div>
     <!-- 🕘 Owner (2026-10-27): "a history, so we can go back and check the previous shipments — only Admin can see it". -->
     <details id="inv-awdship-hist" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:6px" ontoggle="if(this.open)invAwdHistLoad()">
@@ -664,9 +666,11 @@ window.invCredLogin = async function() {
       <div id="inv-awdship-hist-out" style="font-size:12px;margin-top:6px">Loading…</div>
     </details>
   </details>
-  <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="font-weight:800;color:#7c3aed">🔍 Box check — scan the Amazon box label, then each of its boxes, then the PALLET (✕ closes any time)</div>
+  <!-- 🗜 Owner (2026-10-30): closed by default too; the closed line says how many labels are on a pallet / not yet. Tap to open and scan. -->
+  <details class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed" ontoggle="if(this.open){var i=document.getElementById('inv-bc-inp');if(i)i.focus();}">
+    <summary style="cursor:pointer;font-weight:800;color:#7c3aed">🔍 Box check — Amazon box labels → PALLET <span id="inv-bc-sum" class="inv-card-sum" style="display:block;font-size:12px;font-weight:600;color:var(--text2)"></span></summary>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+      <div style="font-size:12px;color:var(--text2)">Scan the Amazon box label, then each of its boxes, then the PALLET (✕ closes any time)</div>
       <button type="button" onclick="invBoxCheckReset()" style="padding:5px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">📦 Next box</button>
     </div>
     <div id="inv-bc-step" style="font-size:14px;font-weight:700;margin:8px 0 6px">1️⃣ Scan the AMAZON BOX LABEL (or a box label)</div>
@@ -677,7 +681,7 @@ window.invCredLogin = async function() {
     <!-- 📦 Owner (2026-10-27): every Amazon box checked → which pallet it is on (PALLET 1, 2, 3…), how many boxes a pallet has, by who / when -->
     <div id="inv-bc-pallets" style="margin-top:8px;font-size:12px"></div>
     <button type="button" id="inv-bc-plabels" onclick="invPalletLabels()" style="margin-top:6px;padding:6px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">🖨 Print PALLET labels (PALLET 1, 2, 3…)</button>
-  </div>
+  </details>
   <div class="icard" id="inv-stockout-card">
     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="invToggleStockoutList()">
       <div class="icard-label" style="margin-bottom:0">⚠️ Stock Out Reports<span class="ibadge" id="inv-stockout-badge" style="display:none">0</span></div>
@@ -2595,7 +2599,9 @@ window.invCredLogin = async function() {
   var BC_NOTPAL = { notYet: ['⬜', 'not scanned yet', 'var(--text2)'], ready: ['✅', 'labeled — NO PALLET scanned', 'var(--green)'], split: ['✂', 'recount / separate', '#ca8a04'],
     rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'], off: ['📤', 'taken OFF a pallet — fix / reprint the label', '#0e7490'] };
   function invBcNotPal(d) {
-    var L = []; ['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'].forEach(function(k) { (d[k] || []).forEach(function(b) { L.push({ b: b, k: k }); }); });
+    var L = [];
+    try { var sm = g('inv-bc-sum'), nn = ['notYet', 'ready', 'split', 'rebag', 'mismatch'].reduce(function(a, k) { return a + (d[k] || []).length; }, 0); // 🗜 the closed card's line (owner 2026-10-30)
+      if (sm) sm.innerHTML = ckE(d.shipment) + ': 🟫 <b>' + (d.onPallets || 0) + '</b> on a pallet · ' + (nn ? '⚠ <b>' + nn + '</b> not yet' : '✅ all on pallets'); } catch (e) {} ['notYet', 'ready', 'split', 'rebag', 'mismatch', 'off'].forEach(function(k) { (d[k] || []).forEach(function(b) { L.push({ b: b, k: k }); }); });
     // every Amazon label — PREVIOUS PACKED too (owner 2026-10-28: they go on our pallets as well)
     var all = d.boxes || 0, on = d.onPallets || 0, nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
     L.sort(function(x, y) { var a = String(x.b.loc || '~'), c = String(y.b.loc || '~'), A = nv(x.b.seq), B = nv(y.b.seq);
@@ -2719,6 +2725,8 @@ window.invCredLogin = async function() {
     if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
+  // 🗜 the closed card's line (owner 2026-10-30): loading… / N shipments · what is left to grab
+  function invAwdSum(html) { var e = g('inv-awdship-sum'); if (e) e.innerHTML = html; }
   // one part #: what each shipment needs, minus what was grabbed for it (oldest shipment first), then the Big Company pick rules
   // 🔒 Owner (2026-10-27, "C4 has 7 labels but the app told our guy to grab 9 cases"): a shipment LOCKED in the AWD Planner is grabbed from
   // exactly its locked spots and cases (what its labels were made from) — never worked out again here. A part # also in a shipment that is
@@ -2805,7 +2813,7 @@ window.invCredLogin = async function() {
     var shown = !!AWDS.data && AWDS.takes && out.innerHTML.indexOf('inv-awdship-st') >= 0;
     if (!AWDS.data && invAwdRestore()) { window.invAwdShipRender(); shown = true; }
     if (!AWDS.data && !AWDS.sharedTried) { // 📲 nothing saved on this phone → the list another phone already worked out
-      AWDS.sharedTried = true; AWDS.busy = true; out.innerHTML = '⏳ Getting the list another phone already worked out…';
+      AWDS.sharedTried = true; AWDS.busy = true; out.innerHTML = '⏳ Getting the list another phone already worked out…'; invAwdSum('⏳ loading…');
       wFetch(W + '/awd/plan-cache').then(function(r) { return r.json(); }).then(function(c) {
         if (c && c.ok && c.payload) { var x = null; try { x = JSON.parse(c.payload); } catch (e) {} if (x && invAwdRestore(x)) { invAwdSave(); AWDS.fromShared = c.by || '?'; } }
       }).catch(function() {}).then(function() { AWDS.busy = false; window.invAwdShipLoad(force); });
@@ -2813,11 +2821,12 @@ window.invCredLogin = async function() {
     }
     AWDS.busy = true; var started = AWDS.addN || 0;
     var fin = function() { AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
-    if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…';
+    if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…'; invAwdSum(shown ? '⏳ checking for changes…' : '⏳ loading the shipments…');
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
       var shipSig = invAwdShipSig(d), ships = d.shipments || [], got = invAwdGot(d); AWDS.locks = d.locks || {}; // 🔒 locked plans
       if (!ships.length) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = {}; AWDS.order = []; AWDS.area = ''; AWDS.added = {}; AWDS.shipSig = shipSig; AWDS.at = new Date().toISOString(); invAwdAssemble(); invAwdSave();
+        invAwdSum('No shipment to grab');
         out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return fin(); }
       var by = {}, prevN = 0;
       ships.forEach(function(sh, si) { sh.prevN = 0;
@@ -2837,6 +2846,7 @@ window.invCredLogin = async function() {
       if (!todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
       var i = 0, doneN = 0, running = 0, many = todo.length === order.length;
       var prog = function() { var t = (many ? 'Working out where to grab… ' : '🔄 updating ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' (grabbed or changed since) — ') + doneN + ' of ' + todo.length + (many ? ' part #s' : '');
+        invAwdSum('⏳ ' + t);
         if (shown) invAwdStatus('⏳ ' + t + (many ? ' — what is done so far is listed; the rest is coming' : ' — the rest of the list stays as saved')); else out.innerHTML = '⏳ ' + t; };
       var pump = function() {
         if (doneN >= todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
@@ -2846,7 +2856,7 @@ window.invCredLogin = async function() {
             prog(); pump(); }); })(todo[i++]); }
       };
       prog(); pump();
-    }).catch(function() { if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
+    }).catch(function() { invAwdSum('<span style="color:var(--red)">📶 could not load — check WiFi</span>'); if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
   };
   function invAwdIsAdmin() { return !!(typeof INV_CRED_USER !== 'undefined' && INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0)); }
   // 🕘 Shipment history (Admin / Owner — the server says no to anyone else): every shipment of the last 90 days — what it needed (📤 sent /
@@ -2964,6 +2974,9 @@ window.invCredLogin = async function() {
   window.invAwdKindBadge = function(k) { var x = INV_AWD_KINDS[k]; return x ? " <span class='inv-awd-kind' data-k='" + k + "' style='background:" + x[2] + ";color:" + x[1] + ";font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;border:1px solid " + x[1] + ";font-family:var(--sans)'>" + x[0] + "</span>" : ''; };
   window.invAwdShipRender = function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
+    (function() { var S = AWDS.ships || [], nd = 0, gr = 0; S.forEach(function(sh) { nd += sh.need || 0; gr += sh.grabbed || 0; });
+      var left = Math.max(0, Math.round((nd - gr) * 10) / 10), busy = AWDS.busy ? ' · ⏳ updating…' : '';
+      invAwdSum(S.length ? S.length + ' shipment' + (S.length === 1 ? '' : 's') + ' · ' + (left > 0 ? '<b>' + left + '</b> case' + (left === 1 ? '' : 's') + ' left to grab' : '✅ everything grabbed') + busy : 'No shipment to grab'); })();
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
     var labBy = invAwdLabelsByArea(); // 🏷 box labels by area (where each label says to grab it)
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
@@ -3087,7 +3100,7 @@ window.invCredLogin = async function() {
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
       invRenderPullList(); if (typeof invLoadAllPulls === 'function') invLoadAllPulls(); if (typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount(); // 🔀 this tab's own list
-      if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); invBcPallets(); /* 📷 the pallets of the latest shipment, at once */ if (aws && aws.open) window.invAwdShipLoad(); } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
+      if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); invBcPallets(); /* 📷 the pallets of the latest shipment, at once */ if (aws) window.invAwdShipLoad(); /* 🗜 loads while closed too: the closed line shows it (owner 2026-10-30) */ } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
     }
     var nh = g('inv-need-help');
     if (nh) nh.textContent = dest === 'company'
