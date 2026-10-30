@@ -11847,5 +11847,47 @@ console.log('\n⚡ Box scans (📥 Put on Shelf, 🔍 Box check) use the quick l
   sq.exec("DELETE FROM master_list WHERE base_sku = '97-7-1'; DELETE FROM upc WHERE base_sku = '97-7-1'");
 }
 
+// Owner (2026-10-30): "under Put on Shelf, when we scan the box I want the box number, e.g. 25-4-5=25".
+console.log('\n📥 Put on Shelf: the box number (part #) big after the box scan, and on the ✅ / ❌ screens');
+{
+  const { readFileSync: rfN } = await import('node:fs');
+  const ih = rfN(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var PS2 = { box: null };'), ih.indexOf('  // What took this part # off its received spot on record'));
+  const els = {}; ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day', 'ps2-hist', 'ps2-hist-date'].forEach(id => { els[id] = { innerHTML: '', textContent: '', value: '', focus() {} }; });
+  const env = { g: id => els[id] || null, W: '', invEsc: v => String(v == null ? '' : v), invFlash() {}, xfrFmtT: v => v, invParent: p => String(p).split('=')[0].toUpperCase(), xfrFrontFix: v => v,
+    xfrIsLoc: v => /^[A-Z][A-Z0-9]*=\d/.test(String(v).toUpperCase()), invBcPart: async c => c === '840000000055' ? { part: '25-4-5=25', name: '1/2 pex tee' } : null,
+    _invFetchLookupRaw: async p => ({ partNum: p, locations: [] }), invPost: async () => ({ json: async () => ({ ok: true }) }), wFetch: async () => ({ json: async () => ({ ok: true, checks: [] }) }),
+    navigator: { vibrate() {} }, window: { speechSynthesis: { cancel() {}, speak() {} } }, SpeechSynthesisUtterance: function() {} };
+  const W = new Function(...Object.keys(env), code + '; return window;')(...Object.values(env));
+  const tick = () => new Promise(r => setImmediate(r)), scan = async v => { W.invPutShelfScan(v); await tick(); await tick(); await tick(); };
+  const big = h => /class="ps2-boxno"[^]*?font-size:30px[^>]*>25-4-5=25<\/div>[^]*?1\/2 pex tee/.test(h);
+  await scan('840000000055'); const a = big(els['ps2-res'].innerHTML);
+  await scan('25-4-5'); const b = big(els['ps2-res'].innerHTML) && /✅ MATCH/.test(els['ps2-res'].innerHTML);
+  await scan('840000000055'); await scan('26-1-1'); const c = big(els['ps2-res'].innerHTML) && /❌ NOT MATCH/.test(els['ps2-res'].innerHTML);
+  check('box UPC scanned → "📦 BOX 25-4-5=25" big (30 px) with its name; still big on ✅ MATCH and on ❌ NOT MATCH', a && b && c, { a, b, c, h: els['ps2-res'].innerHTML.slice(0, 300) });
+}
+
+// Owner (2026-10-30): "under Put on Shelf, when we scan the box I want the shelf number to show up big, so it's easy for them to see where to bring it".
+console.log('\n📥 Put on Shelf: after the box scan, "🗄 BRING IT TO SHELF 25-4-5" big + the spots where SKU Mgr has it');
+{
+  const { readFileSync: rfN2 } = await import('node:fs');
+  const ih = rfN2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var PS2 = { box: null };'), ih.indexOf('  // What took this part # off its received spot on record'));
+  const els = {}; ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day', 'ps2-hist', 'ps2-hist-date'].forEach(id => { els[id] = { innerHTML: '', textContent: '', value: '', focus() {} }; });
+  const env = { g: id => els[id] || null, W: '', invEsc: v => String(v == null ? '' : v), invFlash() {}, xfrFmtT: v => v, invParent: p => String(p).split('=')[0].toUpperCase(), xfrFrontFix: v => v,
+    xfrIsLoc: v => /^[A-Z][A-Z0-9]*=\d/.test(String(v).toUpperCase()), invBcPart: async c => c === '840000000055' ? { part: '25-4-5=25', name: '1/2 pex tee' } : null,
+    _invFetchLookupRaw: async p => ({ partNum: p, locations: [{ partNum: '25-4-5=10', location: 'C3=2-1-1', cases: 4 }, { partNum: '25-4-5=25', location: 'BO=1-2-3', cases: 2 }, { partNum: '25-4-5=25', location: 'BO=1-2-3', cases: 1 },
+      { partNum: '25-4-5=5', location: 'C1=1-1-1', cases: 0 }, { partNum: '26-1-1=5', location: 'C2=1-1-1', cases: 3 }, { partNum: '25-4-5=25', location: 'GARAGE will be here', cases: 1, isPlaceholder: true }] }),
+    invPullWalkCompare: (a, b) => ['BO', '2FL', 'FRONT', 'BSMT', 'PR', 'GARAGE', 'C1', 'C2', 'BARN', 'C3'].indexOf(a.split('=')[0]) - ['BO', '2FL', 'FRONT', 'BSMT', 'PR', 'GARAGE', 'C1', 'C2', 'BARN', 'C3'].indexOf(b.split('=')[0]),
+    invPost: async () => ({ json: async () => ({ ok: true }) }), wFetch: async () => ({ json: async () => ({ ok: true, checks: [] }) }),
+    navigator: { vibrate() {} }, window: { speechSynthesis: { cancel() {}, speak() {} } }, SpeechSynthesisUtterance: function() {} };
+  const W = new Function(...Object.keys(env), code + '; return window;')(...Object.values(env));
+  const tick = () => new Promise(r => setImmediate(r));
+  W.invPutShelfScan('840000000055'); await tick(); await tick(); await tick(); await tick();
+  const h = els['ps2-res'].innerHTML;
+  check('box 25-4-5=25 scanned → "🗄 BRING IT TO SHELF" 25-4-5 big (34 px) under the box number, and "📍 BO=1-2-3 · C3=2-1-1" (spots with stock of that item, walking order, once each; empty spots / placeholders / other items left out)',
+    /class="ps2-shelfno"[^]*?BRING IT TO SHELF[^]*?font-size:34px[^>]*>25-4-5<\/div>/.test(h) && /class="ps2-spots"[^>]*>📍 BO=1-2-3 · C3=2-1-1<\/div>/.test(h) && h.indexOf('ps2-boxno') < h.indexOf('ps2-shelfno'), h.slice(0, 900));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
