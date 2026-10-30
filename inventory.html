@@ -2495,6 +2495,14 @@ window.invCredLogin = async function() {
     if (BXC.codes[k]) return Promise.resolve(BXC.codes[k]);
     return invBcPart(code).then(function(p) { if (p && p.part && !p.box) BXC.codes[k] = { part: String(p.part).toUpperCase(), name: p.name || '' }; return p; });
   }
+  // what this Amazon box's part # is "sold as a whole case of" (Reorder → 🏷 Barcode / vendor for a part #), kept on the phone
+  function invBxsInfo(S, want) {
+    S.info = S.info || {}; if (S.info[want]) return Promise.resolve(S.info[want]);
+    var mem = BXC.caseOf = BXC.caseOf || {}; if (mem[want] !== undefined) return Promise.resolve(S.info[want] = { caseOf: mem[want] });
+    return wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
+      var m = (x && x.caseOf) || {}, c = ''; Object.keys(m).forEach(function(k) { if (invDashFix(k) === want) c = String(m[k]).toUpperCase(); });
+      mem[want] = c; return (S.info[want] = { caseOf: c }); }).catch(function() { return { caseOf: '' }; });
+  }
   var _invBcPalT = null;
   function invBcPalletsSoon() { clearTimeout(_invBcPalT); _invBcPalT = setTimeout(function() { invBcPallets(); }, 1500); } // once after a burst of scans
   // ⚡ scans one right after another: each waits its turn (never two on the same row), none is dropped
@@ -2506,9 +2514,15 @@ window.invCredLogin = async function() {
     if (BXS !== S || S.step === 'pallet') return; var b = S.boxes[S.cur];
     if (!b || !invBxsWaiting(b)) { invBxsNext(); b = S.boxes[S.cur]; if (!b || !invBxsWaiting(b)) { invFlash('Every box is scanned — ➡ scan the PALLET, or ✕', 'warn'); return; } }
     var want = invDashFix(b.part || S.part); // =10-X = =10X (owner 2026-10-30)
-    return invBxsPart(code).then(function(p) {
+    // ⚡ the exact part # needs no extra trip; only a different one asks "is it sold as a whole case of …?" (once, kept on the phone)
+    return invBxsPart(code).then(function(p) { return (p && invDashFix(p.part) !== want ? invBxsInfo(S, want) : Promise.resolve({ caseOf: '' })).then(function(I) { return [p, I]; }); }).then(function(pI) {
       if (BXS !== S) return;
+      var p = pI[0], I = pI[1];
       var got = p ? invDashFix(p.part) : '', ok = got === want, same = !ok && got && got.split('=')[0] === want.split('=')[0];
+      // 📦 Owner (2026-10-30, 26-4-2=1000 / box of 26-4-2=100): Reorder → Barcode / vendor says "Sold as a whole case of 26-4-2=100" —
+      // that box IS the item: no rebag, just the DO NOT SEPARATE label + the Amazon label. Its case count is checked against that case.
+      var wholeCase = !ok && got && I.caseOf && invDashFix(I.caseOf) === got;
+      if (wholeCase) { ok = true; same = false; }
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: b.sscc, product: code, labelPart: want, productPart: got, ok: ok, at: new Date().toISOString() }) })
         .then(function(r) { return r.json(); }).then(function() { clearTimeout(BXC.dayT); BXC.dayT = setTimeout(invBoxCheckDay, 1500); }).catch(function() {});
       var done = function(kind, note, big) {
@@ -2523,16 +2537,19 @@ window.invCredLogin = async function() {
         return done('mismatch', got ? 'scanned ' + got : 'scanned ' + code, invBcBig('var(--red)', '❌ WRONG PRODUCT — don\'t pack it!<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'this is ' + ckE(got) : 'not a part # we know') + ' — Box ' + ckE(b.seq) + ' needs ' + ckE(want) + '. Put it back, scan the right box.</div>')); }
       if (same) return done('rebag', got + ' → ' + want, invBcBig('#ea580c', '🏷 Bring it to the PACKING ROOM — rebag and label it as ' + ckE(want) + '<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ': this is ' + ckE(got) + ' · when it is done: ✓ Fixed</div>'));
       // ✅ PREVIOUS PACKED: packed already — the right item is enough (no case count to check), its Amazon label on → the pallet
+      if (wholeCase && b.prev) return done('ok', 'previous packed · whole case of ' + got, invBcBig('var(--green)', '✅ PREVIOUS PACKED box — a whole case of ' + ckE(got) + ' = ' + ckE(want) + '. Make sure its Amazon label is on<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓ → then the PALLET</div>'));
       if (b.prev) return done('ok', 'previous packed', invBcBig('var(--green)', '✅ PREVIOUS PACKED box — right item. Make sure its Amazon label is on<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓ → then the PALLET</div>'));
-      var boxPcs = (parseFloat(b.units) || 0) * invBcPack(want), eachP = S.each[want];
-      return (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
-        var e = 0; ((x && x.locations) || []).forEach(function(l) { if (invDashFix(l.partNum) === want) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[want] = e; return e; }).catch(function() { return 0; })).then(function(each) {
+      var boxPcs = (parseFloat(b.units) || 0) * invBcPack(want), eachOf = wholeCase ? got : want, eachP = S.each[eachOf];
+      return (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(eachOf)).then(function(r) { return r.json(); }).then(function(x) {
+        var e = 0; ((x && x.locations) || []).forEach(function(l) { if (invDashFix(l.partNum) === eachOf) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[eachOf] = e; return e; }).catch(function() { return 0; })).then(function(each) {
         if (BXS !== S) return;
         if (each > 0 && boxPcs > 0 && Math.abs(each - boxPcs) > 0.001) {
           var many = each < boxPcs, k = many ? boxPcs / each : 0, note = 'Amazon box ' + boxPcs + ' pcs · our case ' + each + ' pcs';
           return done('split', note, invBcBig('#ca8a04', (many ? '📦 Not our box quantity — this Amazon box = ' + (Math.abs(k - Math.round(k)) < 0.001 ? Math.round(k) + ' of our cases' : boxPcs + ' pcs') + ': RECOUNT, or put them together in one box'
             : '✂ Not a whole box — RECOUNT, or SEPARATE the box: take ' + boxPcs + ' pcs out for this Amazon box') + '<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ': ' + note + ' · no new label needed · when it is done: ✓ Fixed</div>'));
         }
+        if (wholeCase) return done('ok', 'whole case of ' + got, invBcBig('var(--green)', '✅ WHOLE CASE — ' + ckE(got) + ' is sold as ' + ckE(want) + ': NO rebag. Put the DO NOT SEPARATE label + the Amazon label on it'
+          + (each ? '' : '<div style="font-size:12px;font-weight:600">(no Ea/Case in SKU Mgr — check it is one case)</div>') + '<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓</div>'));
         done('ok', '', invBcBig('var(--green)', '✅ WHOLE BOX — put the Amazon label on it' + (each ? '' : '<div style="font-size:12px;font-weight:600">(no Ea/Case in SKU Mgr — check it is one box)</div>') + '<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓</div>'));
       });
     });
