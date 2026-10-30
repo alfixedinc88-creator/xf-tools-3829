@@ -2223,7 +2223,8 @@ function awdLocCompare(a, b) { return (awdAreaRank(a) - awdAreaRank(b)) || Strin
 // rebag work: the part # itself → same bag count (just cover the label) → 2 bags into one → cut ONE bigger bag (biggest first) → 3–5 bags into
 // one → many bags / mixed sizes last; then oldest (fewer letters), most stock, walking order. Every choice keeps its "how" and "why".
 const AWD_FBA_LOW_CASES = 2;
-function awdNz(x) { return String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(x) : x).toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
+// 🔤 =10-X = =10X = =10X- (owner 2026-10-17 / 2026-10-30: "24-2-6=10-X: we have boxes of 24-2-6=10X — all the system should know it is the same item")
+function awdNz(x) { return String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(x) : x).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')); }
 function awdBase(x) { return typeof baseSKU_awd === 'function' ? baseSKU_awd(x) : String(x || '').split('=')[0]; }
 var _awdFbaOf = {}; // parent part # → [our Amazon listings' part #s] (from the lookup Stock Out uses)
 async function awdFbaLoad(skus) {
@@ -2243,8 +2244,8 @@ function awdBigBag(T, pn) {
 // rows: [{ r: SKU Mgr row, exact }] → the same rows in Big Company order, each with x.how / x.why / x.tier
 function awdBigRank(sku, rows) {
   const T = awdNz(sku), packOf = x => { const m = /=(\d+)/.exec(x); return m ? parseInt(m[1], 10) : 1; };
-  const ageOf = pn => ((String(pn).split('=')[1] || '').replace(/^\d+/, '').match(/[A-Z]/g) || []).length, pnOf = x => String(x.r.partNum || '').toUpperCase();
-  const fba = {}; (_awdFbaOf[awdBase(T)] || []).forEach(f => { fba[f] = 1; });
+  const ageOf = pn => ((String(pn).split('=')[1] || '').replace(/^\d+/, '').match(/[A-Z]/g) || []).length, pnOf = x => awdNz(x.r.partNum || '');
+  const fba = {}; (_awdFbaOf[awdBase(T)] || []).forEach(f => { fba[awdNz(f)] = 1; });
   const stockOf = {}; rows.forEach(x => { stockOf[pnOf(x)] = (stockOf[pnOf(x)] || 0) + (x.r.casesNum || 0); });
   const keepPack = {}; Object.keys(fba).forEach(f => { if (f !== T && (stockOf[f] || 0) <= AWD_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
   rows.forEach(x => { const pn = pnOf(x), b = awdBigBag(T, pn);
@@ -2653,7 +2654,7 @@ async function awdLabelsDo(file) {
       const pick = l.filter(m => !m.prevKey), plan = pick.length ? awdGrabPlan(l[0].sku, pick.map(m => m.units)) : null;
       if (plan) plans[K] = { plan, pick, sku: l[0].sku };
       pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.kind = (plan.kindOf || [])[k] || ''; m.plan = k === 0 ? plan.summary : ''; }); });
-    const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+    const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')); // =10-X = =10X
     const boxUpc = await awdBoxUpcs([...new Set(metas.map(m => partOf(m.sku)))]);
     const metaAt = (p, i) => metas.find(m => m.p === p && m.i === i);
     const extra = !ge('awd-lbl-bc') || ge('awd-lbl-bc').checked; // ☑ Add the scan barcode + photo
@@ -2722,7 +2723,7 @@ async function awdLabelsDo(file) {
     const byArea = {}; metas.forEach(m => { const a = m.prevKey ? 'PREVIOUS PACKED' : awdKindArea(m); byArea[a] = (byArea[a] || 0) + 1; });
     // 🗺 Every Amazon box kept on the server (SSCC → SKU, box N-k, bags, spot, PREVIOUS PACKED): the phones' Box check reads the box label,
     // and Stock Out Big Company → 📦 Current AWD shipment lists what to grab by location.
-    const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase(), seq: m.seq, units: m.units,
+    const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase().replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')), seq: m.seq, units: m.units,
       loc: m.loc || '', prev: !!m.prevKey, fnsku: m.fnsku || '', upc: tpl.upc || '', name: tpl.label || '' }; });
     // 🔒 Owner (2026-10-27): "after the labels: how many cases to grab where (C1, C2…), and a Lock it button — save everything this shipment
     // wants us to grab, don't let any other Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots".
@@ -3209,7 +3210,7 @@ async function loadWarehouseStock() {
       if (casesNum > 0 && parseFloat(r[15]) > 0) casesNum = Math.max(0, Math.round((casesNum - parseFloat(r[15])) * 1000) / 1000);
       if (!casesNum || casesNum <= 0) continue;  // only in-stock rows
       // Normalize key: strip spaces around '=' so "26-2-1 =2" matches "26-2-1=2"
-      var key = partNum.toLowerCase().replace(/\s*=\s*/g, '=').replace(/-+$/, '');
+      var key = partNum.toLowerCase().replace(/\s*=\s*/g, '=').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); // =10-X = =10X (owner 2026-10-30)
       if (!WH.stock[key]) WH.stock[key] = [];
       WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum, eachPcs: parseFloat(r[9]) || 0 }); // SKU Mgr Ea/Case (pcs)
     }
@@ -3339,7 +3340,7 @@ function baseSKU_awd(partNum) {
 // Returns: { status: 'exact'|'bulk'|'awaiting'|'unknown', whPartNum, cases, casesNum, location }
 function checkWarehouseStock(amazonSKU) {
   if (!WH.loaded) return { status: 'unknown', exactCases: 0, bulkCases: 0 };
-  var norm = normalizeAmazonSKU(amazonSKU);
+  var norm = normalizeAmazonSKU(amazonSKU).replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); // =10-X = =10X (owner 2026-10-30)
   var base = baseSKU_awd(norm);
 
   // Collect exact rows (pre-labeled — variant matches exactly)

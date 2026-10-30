@@ -2299,6 +2299,9 @@ window.invCredLogin = async function() {
   // or both read as the same part # (e.g. the box's outside UPC vs the bag's inside UPC). The label stays until 📦 Next box, so every
   // unit going in can be scanned against it.
   var BXC = { label: null };
+  // 🔤 Owner (2026-10-17 / 2026-10-30, "24-2-6=10-X and 24-2-6=10X are the same item — all the system should know"): dashes after the last "=" and a
+  // trailing "-" are dropped, so =10-X = =10X = =10X- (the same rule as Reorder's reorderDashFix).
+  function invDashFix(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }
   function invBcNorm(c) { c = String(c || '').trim().toUpperCase(); return /^\d+$/.test(c) ? c.replace(/^0+/, '') : c; }
   // 🗺 Owner (2026-10-25): "they scan our Amazon box label, then the box they grabbed; match → next label, not a match → a warning".
   // The big SSCC barcode on an Amazon box label (18 digits, scanned as 00 + 18) → the box the office printed (SKU, box N-k, spot).
@@ -2307,7 +2310,7 @@ window.invCredLogin = async function() {
     var c = String(code || '').trim().toUpperCase(), ss = invBcSscc(c);
     if (ss) return wFetch(W + '/awd/label-map?code=' + ss).then(function(r) { return r.json(); }).then(function(d) {
       var b = d && d.box; if (!b) return null;
-      return { part: String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''), name: b.name || '', box: b };
+      return { part: invDashFix(b.part || b.sku), name: b.name || '', box: b };
     }).catch(function() { return null; });
     // ⚡ Owner (2026-10-30, 📥 Put on Shelf: "it takes a while for the info to show up"): the Amazon-barcode list is only waited for when the
     // code can be an Amazon one (X0… FNSKU / B0… ASIN), and the look-up is the quick one (?lite=1: just the part # + name, no stock work)
@@ -2351,7 +2354,7 @@ window.invCredLogin = async function() {
     var L = BXC.label;
     var same = invBcNorm(L.code) === invBcNorm(v);
     Promise.all([L.info ? Promise.resolve(L.info) : invBcPart(L.code), same ? Promise.resolve(null) : invBcPart(v)]).then(function(ps) {
-      var lp = ps[0], pp = ps[1] || lp, ok = same || !!(lp && ps[1] && lp.part === ps[1].part);
+      var lp = ps[0], pp = ps[1] || lp, ok = same || !!(lp && ps[1] && invDashFix(lp.part) === invDashFix(ps[1].part));
       // same item, another bag count (=100 for an =10 box): only right if this box gets rebagged — said in orange, kept as not a match
       var sameItem = !ok && lp && ps[1] && lp.part.split('=')[0] === ps[1].part.split('=')[0];
       res.innerHTML = '<div style="font-size:13px;margin-bottom:6px">📦 Box label: <b style="font-family:var(--mono)">' + ckE(L.code) + '</b>' + (lp ? ' = <b>' + ckE(lp.part) + '</b>' : '') + '</div>'
@@ -2502,10 +2505,10 @@ window.invCredLogin = async function() {
   function invBxsBox1(S, code) {
     if (BXS !== S || S.step === 'pallet') return; var b = S.boxes[S.cur];
     if (!b || !invBxsWaiting(b)) { invBxsNext(); b = S.boxes[S.cur]; if (!b || !invBxsWaiting(b)) { invFlash('Every box is scanned — ➡ scan the PALLET, or ✕', 'warn'); return; } }
-    var want = String(b.part || S.part).toUpperCase();
+    var want = invDashFix(b.part || S.part); // =10-X = =10X (owner 2026-10-30)
     return invBxsPart(code).then(function(p) {
       if (BXS !== S) return;
-      var got = p ? String(p.part).toUpperCase() : '', ok = got === want, same = !ok && got && got.split('=')[0] === want.split('=')[0];
+      var got = p ? invDashFix(p.part) : '', ok = got === want, same = !ok && got && got.split('=')[0] === want.split('=')[0];
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: b.sscc, product: code, labelPart: want, productPart: got, ok: ok, at: new Date().toISOString() }) })
         .then(function(r) { return r.json(); }).then(function() { clearTimeout(BXC.dayT); BXC.dayT = setTimeout(invBoxCheckDay, 1500); }).catch(function() {});
       var done = function(kind, note, big) {
@@ -2523,7 +2526,7 @@ window.invCredLogin = async function() {
       if (b.prev) return done('ok', 'previous packed', invBcBig('var(--green)', '✅ PREVIOUS PACKED box — right item. Make sure its Amazon label is on<div style="font-size:13px;font-weight:600;margin-top:4px">Box ' + ckE(b.seq) + ' ✓ → then the PALLET</div>'));
       var boxPcs = (parseFloat(b.units) || 0) * invBcPack(want), eachP = S.each[want];
       return (eachP !== undefined ? Promise.resolve(eachP) : wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(want)).then(function(r) { return r.json(); }).then(function(x) {
-        var e = 0; ((x && x.locations) || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === want) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[want] = e; return e; }).catch(function() { return 0; })).then(function(each) {
+        var e = 0; ((x && x.locations) || []).forEach(function(l) { if (invDashFix(l.partNum) === want) e = Math.max(e, parseFloat(l.eachQty) || 0); }); S.each[want] = e; return e; }).catch(function() { return 0; })).then(function(each) {
         if (BXS !== S) return;
         if (each > 0 && boxPcs > 0 && Math.abs(each - boxPcs) > 0.001) {
           var many = each < boxPcs, k = many ? boxPcs / each : 0, note = 'Amazon box ' + boxPcs + ' pcs · our case ' + each + ' pcs';
@@ -2712,13 +2715,14 @@ window.invCredLogin = async function() {
   function invAwdGot(d) { // already grabbed: on the server (sent Stock Outs) + this phone's Pull List not sent yet
     // 📊 kind (owner 2026-10-27: "how many not grabbed yet and how many we grab"): 'grabbed' = a Stock Out sent (any phone) or ✓ Grabbed on
     // this phone; 'list' = on a Pull List (this phone's or another phone's), not grabbed yet — counted apart, never as grabbed.
-    var got = (d.grabbed || []).map(function(x) { return { part: x.part, forPart: x.forPart, cases: x.cases, ships: x.ships, kind: 'grabbed' }; });
+    var DK = function(p) { return String(p || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }; // =10-X = =10X (owner 2026-10-30): old and new records match
+    var got = (d.grabbed || []).map(function(x) { return { part: DK(x.part), forPart: DK(x.forPart), cases: x.cases, ships: x.ships, kind: 'grabbed' }; });
     (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { if (x.awdShipment && x.dest === 'company' && !x.submitted && !x.noneFound)
-      got.push({ part: String(x.partNum).toUpperCase(), forPart: String(x.forPart || x.partNum).toUpperCase(), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean), kind: x.grabbed ? 'grabbed' : 'list' }); });
+      got.push({ part: DK(x.partNum), forPart: DK(x.forPart || x.partNum), cases: parseFloat(x.cases) || 0, ships: String(x.awdShipment).split('|').map(invAwdTag).filter(Boolean), kind: x.grabbed ? 'grabbed' : 'list' }); });
     // 👤 …+ spots on ANOTHER phone's Pull List, not grabbed yet (owner 2026-10-27: "if anyone grabs anything, every other scanner sees it") —
     // this phone's own are counted from its Pull List above, never twice
     var mine = invAwdMyClaims();
-    (d.claims || []).forEach(function(c) { if (!mine[c.id]) got.push({ part: String(c.part).toUpperCase(), forPart: String(c.forPart || c.part).toUpperCase(), cases: c.cases || 0, ships: (c.ships || []).map(invAwdTag).filter(Boolean), kind: 'list' }); });
+    (d.claims || []).forEach(function(c) { if (!mine[c.id]) got.push({ part: DK(c.part), forPart: DK(c.forPart || c.part), cases: c.cases || 0, ships: (c.ships || []).map(invAwdTag).filter(Boolean), kind: 'list' }); });
     got.sort(function(x, y) { return (x.kind === 'list') - (y.kind === 'list'); }); // grabbed first, then what is only on a Pull List
     return got;
   }
@@ -2805,13 +2809,13 @@ window.invCredLogin = async function() {
     var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1, uS = 0, bS = 0;
     sis.forEach(function(si) { uS += o.per[si].units || 0; bS += o.per[si].boxes || 0; });
     var boxPcs = bS > 0 ? Math.round(uS / bS * pack * 1000) / 1000 : 0;
-    sis.forEach(function(si) { var sh = ships[si].shipment, tag = invAwdTag(sh), lines = ((LK[sh] || {}).lines || []).filter(function(x) { return x.forPart === o.part; });
+    sis.forEach(function(si) { var sh = ships[si].shipment, tag = invAwdTag(sh), lines = ((LK[sh] || {}).lines || []).filter(function(x) { return String(x.forPart || '').toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }) === o.part; }); // =10-X = =10X
       var G = []; lines.forEach(function(x) { (x.grabs || []).forEach(function(g) { G.push({ g: g, left: g.n || 0 }); }); });
       var need = G.reduce(function(a, x) { return a + x.left; }, 0); r.need[sh] = need;
       if (!G.length) { r.short.push(o.part + ' (🔒 locked plan has no spot for it)'); return; }
       // grabbed / on a Pull List / taken by another phone for THIS shipment → off its locked spots (the same part # first)
       got.forEach(function(x) { if (x.forPart !== o.part || (x.ships || []).indexOf(tag) < 0) return; var c = x.cases || 0;
-        G.forEach(function(y) { if (!(c > 0) || !(y.left > 0) || String(y.g.part).toUpperCase() !== x.part) return; var u = Math.min(y.left, c); y.left -= u; c -= u;
+        G.forEach(function(y) { if (!(c > 0) || !(y.left > 0) || String(y.g.part).toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }) !== x.part) return; var u = Math.min(y.left, c); y.left -= u; c -= u;
           var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sh] = (kk[sh] || 0) + u; }); });
       var left = 0;
       G.forEach(function(y) { if (!(y.left > 0.001)) return; left += y.left; var g = y.g, row = g.row || {}, part = String(g.part).toUpperCase();
@@ -2832,7 +2836,7 @@ window.invCredLogin = async function() {
       var keep = invPart; invPart = L;
       try {
         var pm = String(o.part).split('=').pop().trim().match(/^(\d+)/), pack = pm ? parseInt(pm[1], 10) || 1 : 1;
-        var eachOf = function(pn) { var e = 0; (L.locations || []).forEach(function(l) { if (String(l.partNum || '').toUpperCase() === pn) e = Math.max(e, parseFloat(l.eachQty) || 0); }); return e; };
+        var eachOf = function(pn) { var K = function(p) { return String(p || '').toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }, e = 0; (L.locations || []).forEach(function(l) { if (K(l.partNum) === K(pn)) e = Math.max(e, parseFloat(l.eachQty) || 0); }); return e; };
         var each = eachOf(o.part), plan;
         // 📦 sold as a whole case of another part # (Reorder 📦): each Amazon unit = 1 whole case, only cases with the right pieces
         var caseTo = L.caseOf && L.caseOf[o.part] ? String(L.caseOf[o.part]).toUpperCase() : null;
@@ -2844,7 +2848,7 @@ window.invCredLogin = async function() {
         // grabbed already → off the oldest shipment first (only the shipments the grab was for)
         var left = {}; sis.forEach(function(si) { left[si] = need[si]; });
         got.forEach(function(x) { if (x.forPart !== o.part) return;
-          var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === caseTo) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
+          var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === String(caseTo).toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); })) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
           x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u;
             var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sname(si)] = (kk[sname(si)] || 0) + u; }); });
         var rest = 0, forShips = []; sis.forEach(function(si) { r.need[sname(si)] = need[si]; r.left[sname(si)] = Math.max(0, left[si]); if (left[si] > 0.001) { rest += left[si]; forShips.push(invAwdTag(sname(si))); } });
@@ -2888,7 +2892,7 @@ window.invCredLogin = async function() {
         out.innerHTML = '<span style="color:var(--text3)">No shipment to grab — in the AWD Planner, 📤 Send it from the Shipment Builder, or upload the Amazon box labels (🏷).</span>' + invAwdDoneHtml(); return fin(); }
       var by = {}, prevN = 0;
       ships.forEach(function(sh, si) { sh.prevN = 0;
-        (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+        (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); // =10-X = =10X (owner 2026-10-30)
           var o = by[P] = by[P] || { part: P, name: b.name || '', per: {} }, q = o.per[si] = o.per[si] || { units: 0, boxes: 0 };
           q.units += parseFloat(b.units) || 0; q.boxes += sh.source === 'send' ? (parseFloat(b.boxes) || 0) : 1; }); });
       // Owner (2026-10-27, "still recalculating"): a part # is worked out again only when ITS need changed (a shipment with it sent / re-sent /
@@ -3011,7 +3015,7 @@ window.invCredLogin = async function() {
   // 🏷 Owner (2026-10-27): "separate it in prelabel or need to label — the bag already has the label on it, like 8-8-8=10: if we have that
   // in our warehouse it already has the label, we don't have to use =10XX or =5 and relabel it". ✓ Prelabel = the spot holds the exact
   // part # the shipment needs (ship the bags as they are); 🏷 need to label = another bag of the same parent (cover the label / rebag).
-  function invAwdPre(t) { return String(t.partNum || '').toUpperCase() === String(t.target || '').toUpperCase(); }
+  function invAwdPre(t) { var K = function(p) { return String(p || '').toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }; return K(t.partNum) === K(t.target); } // =10-X = =10X
   // 🏷 / ✓ / ✂ Owner (2026-10-27): "total 3 — one need label, one full box that has the prelabel (just put the Amazon label on the outside of
   // the box), one has the prelabel but needs an extra step (cut it open and grab what we need, 2 cases for our 10 boxes, wrong quantities)".
   //   label = another bag of the same part (cover the label / rebag) · full = the right part #, ONE of our cases = ONE Amazon box (same pieces),
@@ -3913,13 +3917,15 @@ window.invCredLogin = async function() {
   // Inside the same work: oldest first (fewer letters), then most stock.
   // loc._pick = { tier, score, why, how } for the screen and the Pull List.
   function invRankForCompany(locs, target) {
-    var T = String(target || '').toUpperCase();
+    // 🔤 =10-X = =10X = =10X- (owner 2026-10-30, "24-2-6=10-X: we have boxes of 24-2-6=10X — all the system should know it is the same item")
+    var DK = function(p) { return String(p || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); };
+    var T = DK(target);
     function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
-    function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
+    function pnOf(l) { return DK(l.partNum || invPart.partNum || ''); } // =10-X = =10X when ranking
     function packOf(pn) { var m = /=(\d+)/.exec(pn); return m ? parseInt(m[1], 10) : 1; }
     function ageOf(pn) { var t = pn.split('=')[1] || ''; return (t.replace(/^\d+/, '').match(/[A-Z]/g) || []).length; }
     var P = packOf(T);
-    var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[String(f.part).toUpperCase()] = f; });
+    var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[DK(f.part)] = f; });
     var stockOf = {}; locs.forEach(function(l) { stockOf[pnOf(l)] = (stockOf[pnOf(l)] || 0) + availOf(l); });
     var keepPack = {};
     Object.keys(fba).forEach(function(f) { if (f !== T && (stockOf[f] || 0) <= INV_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
