@@ -5294,6 +5294,16 @@ async function inventoryLookup(url, env) {
   }
   // If not found in UPC sheet, treat the code itself as a part number
   if (!partNum) partNum = code;
+  // ⚡ Owner (2026-10-30, 📥 Put on Shelf: "when we scan the box it takes a while for the info to show up"): ?lite=1 = only "which part # is
+  // this code" (same matching as above, first match wins) + its name — none of the stock / pallets / Amazon / sales work below. Used by the
+  // box scans (📥 Put on Shelf, 🔍 Box check) that only need the part #.
+  if (url.searchParams.get('lite') === '1') {
+    let nm = '';
+    if (env.DB) { const r = await d1First(env, 'SELECT name FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND name IS NOT NULL AND name != \'\' LIMIT 1', [String(partNum).toUpperCase()]).catch(() => null)
+      || await d1First(env, "SELECT name FROM master_list WHERE UPPER(TRIM(sku)) = ? AND name IS NOT NULL AND name != '' LIMIT 1", [parentOf(sku || partNum || '')]).catch(() => null); nm = (r && r.name) || ''; }
+    return cors(new Response(JSON.stringify({ partNum, sku: sku || partNum, name: nm, baseSku: parentOf(sku || partNum || ''), insideUpc, outsideUpc, upcNotLinked, lite: true, locations: [], ...(amazonCode ? { amazonCode } : {}) }),
+      { headers: { 'Content-Type': 'application/json' } }));
+  }
 
   // 2. Read Master_List from D1 (fast) + pending map in parallel
   let mlRows = [], pendingMapLookup = {};
