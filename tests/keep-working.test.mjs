@@ -11781,7 +11781,7 @@ console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / �
   const ih = rfS2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfS2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
   const code = ih.slice(ih.indexOf('  var PS2 = { box: null };'), ih.indexOf('  // What took this part # off its received spot on record'));
   const els = {}, posts = [], said = [], flashes = [], gets = [];
-  const mk = id => els[id] || (els[id] = { innerHTML: '', textContent: '', value: '', focus() {} }); ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day', 'ps2-hist', 'ps2-hist-date'].forEach(mk);
+  const mk = id => els[id] || (els[id] = { innerHTML: '', textContent: '', value: '', focus() {} }); ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day', 'ps2-hist', 'ps2-hist-from', 'ps2-hist-to', 'ps2-hist-who', 'ps2-hist-people'].forEach(mk);
   const parts = { '840000000017': '30-3-4=10X', '840000000024': '30-3-4=5' };
   const hist = [{ started_at: '2026-10-30T15:01:40Z', at: '2026-10-30T15:02:00Z', by_user: 'MG', product_part: '30-3-4=10X', label_part: '31-1-1', ok: 0, note: 'Put on shelf — NOT MATCH' },
     { started_at: '2026-10-30T15:00:10Z', at: '2026-10-30T15:01:00Z', by_user: 'MG', product_part: '30-3-4=10X', label_part: '30-3-4', ok: 1, note: 'Put on shelf' },
@@ -11805,20 +11805,29 @@ console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / �
   await scan('840000000017'); await scan('C2=2-2-2'); const bad2 = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && /SKU Mgr has no 30-3-4 there/.test(els['ps2-res'].innerHTML) && said.length === 2;
   check('shelf first → "scan the BOX first"; box 30-3-4=10X + shelf 30-3-4 → ✅ MATCH (kept); + shelf 31-1-1 → ❌ NOT MATCH, voice "Not match", kept, NO "I checked" — the box stays until the RIGHT shelf is scanned: spot C1=1-1-1 (SKU Mgr has 30-3-4 there) → ✅; C2=2-2-2 (none there) → ❌',
     shelfFirst && step2 && m1 && bad && m2 && bad2, { shelfFirst, step2, m1, bad, m2, bad2, posts: posts.map(p => [p.ok, p.labelPart, p.note]) });
-  els['ps2-hist-date'].value = '2026-10-30'; W.invPutShelfDay(); await tick(); await tick();
+  // Owner (2026-10-30, after): "minimize the History, only Admin level up; search by the name, the date, how many they did that date, how
+  // long for each box, the average for each box" (was: one day, everyone)
+  els['ps2-hist-from'].value = '2026-10-30'; els['ps2-hist-to'].value = '2026-10-30'; els['ps2-hist-who'].value = ''; W.invPutShelfHist(); await tick(); await tick();
   const h = els['ps2-hist'].innerHTML;
-  check('📜 History under Put on Shelf: every Put on Shelf scan of the day picked (?kind=putshelf&day=2026-10-30; not the other box checks): 👷 by person — boxes put away, not a match, first box started, last box finished (MG 1 · 1 · 11:00:10 AM · 11:02:00 AM; AB 1 · 0); 📋 every box newest first: started (box scanned) · finished (shelf scanned) · took (50 sec) · who · box · shelf · ✅ / ❌',
-    gets.some(u => /\/inventory\/box-check\?kind=putshelf&day=2026-10-30$/.test(u)) && /3 scans · <b[^>]*>✅ 2<\/b> boxes put away · <b[^>]*>❌ 1<\/b> not a match/.test(h) && !/9-9-9/.test(h)
-      && /<b>MG<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*>11:00:10 AM<\/td><td[^>]*>11:02:00 AM<\/td>/.test(h) && /<b>AB<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*>0<\/td>/.test(h)
-      && /Started \(box scanned\)/.test(h) && /<td[^>]*>11:00:10 AM<\/td><td[^>]*>11:01:00 AM<\/td><td[^>]*>50 sec<\/td><td[^>]*>MG<\/td>/.test(h) && h.indexOf('31-1-1') < h.indexOf('>30-3-4<'), h.slice(0, 600));
+  check('📜 History (Admin): from / to dates + a name → ?kind=putshelf&from=&to=; on top "✅ 2 boxes put away · ❌ 1 not a match · ⏱ average 70 sec a box" (MG 50 sec, AB 90 sec); 📅 by day and person: MG 1 box · 1 not a match · average 50 sec; AB 1 · 0 · 1.5 min; 📋 every box: date · started · finished · took · who (not the other box checks)',
+    gets.some(u => /\/inventory\/box-check\?kind=putshelf&from=2026-10-30&to=2026-10-30$/.test(u)) && /<b[^>]*>✅ 2<\/b> boxes put away · <b[^>]*>❌ 1<\/b> not a match · ⏱ average <b>70 sec<\/b> a box/.test(h) && !/9-9-9/.test(h)
+      && /<td[^>]*>2026-10-30<\/td><td[^>]*><b>AB<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*>0<\/td><td[^>]*><b>1\.5 min<\/b><\/td>/.test(h)
+      && /<td[^>]*>2026-10-30<\/td><td[^>]*><b>MG<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*><b>50 sec<\/b><\/td>/.test(h)
+      && /Started \(box scanned\)/.test(h) && /<td[^>]*>11:00:10 AM<\/td><td[^>]*>11:01:00 AM<\/td><td[^>]*>50 sec<\/td><td[^>]*>MG<\/td>/.test(h), h.slice(0, 900));
+  els['ps2-hist-who'].value = 'mg'; W.invPutShelfHist(); await tick();
+  const whoQ = gets.some(u => /&who=mg$/.test(u));
   // the server keeps the start time and gives all the Put on Shelf scans of a day (no other box checks)
   const ps1 = await post('/inventory/box-check', { label: '30-3-4', product: '840000000017', labelPart: '30-3-4', productPart: '30-3-4=10X', ok: true, note: 'Put on shelf', startedAt: '2026-10-30T15:00:10.000Z', at: '2026-10-30T15:01:00.000Z' });
   await post('/inventory/box-check', { label: 'L', product: 'P', ok: true, note: 'Grab scan C1', at: '2026-10-30T15:01:30.000Z' });
-  const gs = await get('/inventory/box-check?kind=putshelf&day=2026-10-30');
-  check('…server: POST keeps when the box was scanned (started_at) next to when the shelf was scanned; GET ?kind=putshelf gives only the Put on Shelf scans of that day',
-    ps1.ok && gs.ok && gs.checks.length >= 1 && gs.checks.every(x => /^Put on shelf/.test(x.note)) && gs.checks.some(x => x.started_at === '2026-10-30T15:00:10.000Z' && x.at === '2026-10-30T15:01:00.000Z' && x.product_part === '30-3-4=10X'), gs);
+  const gs = await get('/inventory/box-check?kind=putshelf&day=2026-10-30'), gw = await get('/inventory/box-check?kind=putshelf&from=2026-10-29&to=2026-10-30&who=ts'), gn = await get('/inventory/box-check?kind=putshelf&from=2026-10-30&to=2026-10-30&who=nobody');
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const gp = await (await call('/inventory/box-check?kind=putshelf&day=2026-10-30', { headers: { 'X-Cred-Token': pkT } })).json();
+  check('…server: POST keeps when the box was scanned (started_at) next to when the shelf was scanned; GET ?kind=putshelf gives only the Put on Shelf scans; ?from=&to=&who= (part of the name) + every name for the search box; a picker gets ONLY the day\'s counts (🔒 Admin only), never the scans',
+    ps1.ok && gs.ok && gs.checks.length >= 1 && gs.checks.every(x => /^Put on shelf/.test(x.note)) && gs.checks.some(x => x.started_at === '2026-10-30T15:00:10.000Z' && x.at === '2026-10-30T15:01:00.000Z' && x.product_part === '30-3-4=10X')
+      && gw.ok && gw.from === '2026-10-29' && gw.to === '2026-10-30' && gw.checks.length >= 1 && gw.people.includes('TS') && gn.checks.length === 0 && whoQ
+      && gp.ok && gp.adminOnly === true && gp.checks.length === 0 && gp.right >= 1, { gs: gs.checks.length, gw: [gw.from, gw.to, gw.people], gp });
   check('…the 📥 Put on Shelf tab (after Transfer), its 📜 History card, 🧩 Pages & Tabs check marks; every check through the phone outbox (no WiFi → sent once); "I checked" is gone; nothing moves stock',
-    /<button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab\('putshelf'\)">📥 Put on Shelf<\/button>/.test(ih) && /<div class="ipanel" id="inv-panel-putshelf">/.test(ih) && /<div class="icard" id="ps2-hist-card">/.test(ih)
+    /<button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab\('putshelf'\)">📥 Put on Shelf<\/button>/.test(ih) && /<div class="ipanel" id="inv-panel-putshelf">/.test(ih) && /<details class="icard" id="ps2-hist-card" style="display:none"/.test(ih) /* owner 2026-10-30: closed, Admin only */ && /card\.style\.display = invPs2IsAdmin\(\) \? '' : 'none'/.test(ih)
       && /sel: '#inv-tab-putshelf'/.test(xa) && /sel: '#ps2-hist-card'/.test(xa) && /invPost\(W \+ '\/inventory\/box-check'/.test(code) && /_requestId: 'ps2-'/.test(code) && !/I checked|invPutShelfConfirm/.test(code) && !/inventory\/log|inventory\/transfer/.test(code), null);
 }
 
