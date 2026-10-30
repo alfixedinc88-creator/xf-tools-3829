@@ -11751,12 +11751,13 @@ window.invCredLogin = async function() {
     faces: [
       { n: '4', s: 's4', side: 'b' }, { n: '3', s: 's3', side: 'b' }, { n: '2', s: 's2', side: 'b' }, { n: '5', s: 's5', side: 'r' }, { n: '21', s: 's21', side: 'r' },
       { n: '23', s: 'A', side: 'b' }, { n: '24', s: 'B', side: 't' }, { n: '25', s: 'B', side: 'b' }, { n: '26', s: 'C', side: 't' }, { n: '27', s: 'C', side: 'b' },
-      { n: '28', s: 'D', side: 't' }, { n: '29', s: 'D', side: 'b' }, { n: '30', s: 'F', side: 'l' }, { n: '31', s: 'F', side: 'r' }, { n: '32', s: 's32', side: 'l' },
+      { n: '28', s: 'D', side: 't' }, { n: '29', s: 'D', side: 'b' }, { n: '30', s: 'F', side: 'l', lx: 706, ly: 845 }, { n: '31', s: 'F', side: 'r', lx: 780, ly: 845 }, { n: '32', s: 's32', side: 'l' }, // 30 / 31: next to its own half (owner)
       { n: '201', s: 'E', side: 't' }, { n: '202', s: 'E', side: 'b' }, { n: '34', s: 'R1', side: 'b', lx: 866, ly: 636 }, { n: '33', s: 'R2', side: 't', lx: 866, ly: 746 },
-      { n: '42', s: 'G', side: 'r' } ], // owner (2026-10-30): "the basement (box on the map) is one of our shelves too, number 42"
+      { n: '42', s: 'G', side: 'r', name: 'Basement' } ], // name: said with the number (owner: "42 — write Basement too") // owner (2026-10-30): "the basement (box on the map) is one of our shelves too, number 42"
     other: [ { t: 'box', x: 15, y: 640, w: 80, h: 155, label: 'Packing' }, { t: 'box', x: 15, y: 1020, w: 85, h: 140, label: 'Packing' } ],
     text: [ { x: 470, y: 205, t: 'FRONT OFFICE' }, { x: 200, y: 470, t: 'FRONT', rot: 90 }, { x: 205, y: 1060, t: 'BACK', rot: 90 }, { x: 1110, y: 690, t: 'SMALL ROOM', rot: 90 } ]
   };
+  function invShelfName(no) { var f = INV_SHELF_MAP.faces.filter(function(x) { return x.n === String(no); })[0]; return f && f.name ? f.name : ''; }
   function invShelfNo(part) { var m = /^\s*(\d+)/.exec(String(part || '')); return m ? String(parseInt(m[1], 10)) : ''; }
   // the map (SVG) with the shelf face of this part # lit up; '' part = the whole map
   function invShelfMapHtml(part) {
@@ -11775,6 +11776,8 @@ window.invCredLogin = async function() {
       if (on) { var hx = r.x, hy = r.y, hw = r.w, hh = r.h;
         if (two) { if (hit.side === 'b') { hy = r.y + r.h / 2; hh = r.h / 2; } else if (hit.side === 't') { hh = r.h / 2; } else if (hit.side === 'r') { hx = r.x + r.w / 2; hw = r.w / 2; } else { hw = r.w / 2; } }
         svg += '<rect class="ps2-shelf-on" x="' + hx + '" y="' + hy + '" width="' + hw + '" height="' + hh + '" fill="#f87171" stroke="#c2410c" stroke-width="6" rx="4"/>'; }
+      M.faces.forEach(function(f) { if (f.s === r.id && f.name) { var cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        svg += '<text x="' + cx + '" y="' + cy + '" font-size="26" font-weight="800" fill="#1e293b" text-anchor="middle" dominant-baseline="middle"' + (wide ? '' : ' transform="rotate(90 ' + cx + ' ' + cy + ')"') + '>' + e(f.name.toUpperCase()) + '</text>'; } });
       if (two) svg += wide ? '<line x1="' + r.x + '" y1="' + (r.y + r.h / 2) + '" x2="' + (r.x + r.w) + '" y2="' + (r.y + r.h / 2) + '" stroke="#475569" stroke-width="3"/>'
         : '<line x1="' + (r.x + r.w / 2) + '" y1="' + r.y + '" x2="' + (r.x + r.w / 2) + '" y2="' + (r.y + r.h) + '" stroke="#475569" stroke-width="3"/>';
     });
@@ -11795,7 +11798,7 @@ window.invCredLogin = async function() {
       } });
     svg += '</svg>';
     return '<div class="ps2-map" style="margin-top:8px;padding:8px;border-radius:10px;border:2px solid ' + (hit ? '#c2410c' : 'var(--border)') + ';background:var(--bg2)">'
-      + '<div style="font-size:13px;font-weight:800;margin-bottom:4px;color:' + (hit ? '#c2410c' : 'var(--text2)') + '">' + (hit ? '🗺 Shelf <span style="font-size:20px">' + e(n) + '</span> — the red side on the map' : n ? '🗺 Shelf ' + e(n) + ' is not on the map yet (basement / other room?) — tell the office' : '🗺 The shelf map') + '</div>' + svg + '</div>';
+      + '<div style="font-size:13px;font-weight:800;margin-bottom:4px;color:' + (hit ? '#c2410c' : 'var(--text2)') + '">' + (hit ? '🗺 Shelf <span style="font-size:20px">' + e(n) + '</span>' + (hit.name ? ' <span style="font-size:18px">(' + e(hit.name) + ')</span>' : '') + ' — the red side on the map' : n ? '🗺 Shelf ' + e(n) + ' is not on the map yet (basement / other room?) — tell the office' : '🗺 The shelf map') + '</div>' + svg + '</div>';
   }
   window.invShelfMapHtml = invShelfMapHtml;
   // 📦 Owner (2026-10-30): "when we scan the box I want the box number, e.g. 25-4-5=25" — the box's part # big, on every step.
@@ -11824,7 +11827,7 @@ window.invCredLogin = async function() {
         // 🗄 Owner (2026-10-30): "the shelf number big, so it's easy to see where to bring it" — the shelf labels carry the parent part #;
         // under it, the spots where SKU Mgr already has this item (walking order)
         var bx = PS2.box, shelfHtml = function(spots) { return '<div class="ps2-shelfno" style="margin:6px 0;padding:8px 10px;border-radius:10px;border:2px solid var(--green);background:var(--green-bg,#dcfce7)"><div style="font-size:11px;font-weight:700;color:var(--green)">🗄 BRING IT TO SHELF</div>'
-          + '<div style="font-size:34px;font-weight:900;font-family:var(--mono);line-height:1.15;color:var(--text)">' + invEsc(invParent(bx.part)) + '</div>'
+          + '<div style="font-size:34px;font-weight:900;font-family:var(--mono);line-height:1.15;color:var(--text)">' + invEsc(invParent(bx.part)) + (invShelfName(invShelfNo(bx.part)) ? ' <span class="ps2-shelfname" style="font-size:22px">(' + invEsc(invShelfName(invShelfNo(bx.part))) + ')</span>' : '') + '</div>'
           + (spots == null ? '<div style="font-size:12px;color:var(--text3)">⏳ looking up where we keep it…</div>' : spots.length ? '<div class="ps2-spots" style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">📍 ' + spots.map(invEsc).join(' · ') + '</div>' : '<div style="font-size:12px;color:var(--text2)">📍 Not on any shelf in SKU Mgr yet</div>') + '</div>'; };
         if (res) res.innerHTML = invPs2BoxHtml(bx) + shelfHtml(null) + invShelfMapHtml(bx.part);
         _invFetchLookupRaw(bx.part).then(function(d) {

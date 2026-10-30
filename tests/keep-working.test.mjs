@@ -11922,5 +11922,22 @@ console.log('\n🗺 Shelf map: a 2-number shelf lights only its half; the box by
       && on(h42) === '690,318,58,285' && /🗺 Shelf <span[^>]*>42<\/span>/.test(h42) && map.M.faces.some(f => f.n === '42' && f.s === 'G') && !/Basement/.test(map.html('')), { h202: on(h202), h29: on(h29), h30: on(h30), h42: on(h42) });
 }
 
+// Owner (2026-10-30): "move the 30 and 31 to the front of their own shelving — where that number is can confuse people; and 42 needs to say
+// Basement too, so when 42 pops up they know it is the basement".
+console.log('\n🗺 Shelf map: 30 / 31 next to their own half; 42 says Basement');
+{
+  const { readFileSync: rfM4 } = await import('node:fs');
+  const ih = rfM4(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const map = new Function(ih.slice(ih.indexOf('  var INV_SHELF_MAP = {'), ih.indexOf('  window.invShelfMapHtml = invShelfMapHtml;')) + '; return { html: invShelfMapHtml, M: INV_SHELF_MAP, name: invShelfName };')();
+  const all = map.html(''), h42 = map.html('42-1-1=5');
+  const lbl = n => (all.match(new RegExp('<text class="ps2-face" x="([\\d.]+)" y="([\\d.]+)"[^>]*>' + n + '</text>')) || []).slice(1).map(Number);
+  const F = map.M.shelves.find(r => r.id === 'F'), l30 = lbl(30), l31 = lbl(31);
+  check('30 sits just left of the 30/31 shelf and 31 just right of it, halfway along (not down by 28 / 32); every shelf number is drawn once (32 too); 42 → "Shelf 42 (Basement)", BASEMENT written on the shelf, and "(Basement)" next to the big shelf number after a box scan',
+    l30[0] <= F.x && l30[0] > F.x - 20 && l31[0] >= F.x + F.w && l31[0] < F.x + F.w + 20 && l30[1] > F.y + F.h * 0.4 && l30[1] < F.y + F.h * 0.8 && l31[1] === l30[1]
+      && map.M.faces.every(f => (all.match(new RegExp('>' + f.n + '</text>', 'g')) || []).length === 1)
+      && /🗺 Shelf <span[^>]*>42<\/span> <span[^>]*>\(Basement\)<\/span>/.test(h42) && />BASEMENT<\/text>/.test(all) && map.name('42') === 'Basement' && map.name('23') === ''
+      && /invShelfName\(invShelfNo\(bx\.part\)\) \? ' <span class="ps2-shelfname"/.test(ih), { l30, l31, F });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
