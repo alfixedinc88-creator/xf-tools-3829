@@ -7855,7 +7855,7 @@ window.invCredLogin = async function() {
     var it = invPullList[i]; if (!it) return;
     var U = function(v) { return String(v || '').trim().toUpperCase(); };
     var avail = function(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); };
-    invFlash('Checking other spots…', 'success');
+    invFlash('✗ None Found — finding another spot…', 'success');
     _invFetchLookupRaw(invParent(it.partNum)).then(function(d) {
       var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[U(x.partNum) + '|' + U(x.location)] = (onList[U(x.partNum) + '|' + U(x.location)] || 0) + (parseFloat(x.cases) || 0); });
       var tried = {}; invPullList.forEach(function(x) { if (x.noneFound) tried[U(x.partNum) + '|' + U(x.location)] = 1; });
@@ -7869,14 +7869,10 @@ window.invCredLogin = async function() {
       try { ranked = it.dest === 'company' ? invRankForCompany(locs, it.caseOf || it.forPart || it.partNum) : invPickForShelving(locs); } finally { invPart = keep; }
       var best = ranked[0], k = U(best.partNum) + '|' + U(best.location);
       var left = Math.round((avail(best) - (onList[k] || 0)) * 100) / 100, n = Math.min(parseFloat(it.cases) || 1, left);
-      _invNfAlt = { i: i, loc: best, d: d, n: n };
-      invModal('inv-nfalt-modal', '<div style="font-size:16px;font-weight:800">Not at <span style="font-family:var(--mono)">' + invEsc(it.location) + '</span>?</div>'
-        + '<div style="font-size:13px;margin:6px 0 12px">We still have <b style="font-family:var(--mono)">' + invEsc(best.partNum) + '</b> at <b style="font-family:var(--mono)">' + invEsc(best.location) + '</b> — ' + left + ' case' + (left === 1 ? '' : 's')
-        + (best._pick && best._pick.pallet ? ' <span style="color:var(--purple);font-weight:700">(🚢 on a pallet)</span>' : '') + '.</div>'
-        + '<button style="display:block;width:100%;padding:12px;margin-bottom:8px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;cursor:pointer" onclick="invNoneFoundAlt()">📍 Grab ' + n + ' at ' + invEsc(best.location) + ' instead</button>'
-        + '<button style="display:block;width:100%;padding:11px;margin-bottom:8px;border:1.5px solid var(--red);border-radius:9px;background:var(--red-bg);color:var(--red);font-size:14px;font-weight:800;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\');invNoneFoundNow(' + i + ')">✗ None Found</button>'
-        + '<button style="display:block;width:100%;padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\')">Cancel</button>'
-        + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Either way ' + invEsc(it.location) + ' is logged None Found and goes on 🔍 Audit to double check — its stock is NOT taken off.</div>');
+      // 🚫 Owner (2026-10-30): "after they click None Found, just recommend another spot that has the item — don't ask any questions (the
+      // scanners hide the keyboard)": None Found is logged at once (nothing taken off, the spot goes on 🔍 Audit) and the best other spot
+      // (same Stock Out rules) goes straight on the Pull List — ✕ takes it off if not wanted.
+      _invNfAlt = { i: i, loc: best, d: d, n: n }; window.invNoneFoundAlt();
     }).catch(function() { invNoneFoundNow(i); });
   };
   var _invNfAlt = null;
@@ -7888,11 +7884,12 @@ window.invCredLogin = async function() {
     var add = { key: l.partNum + '|' + l.location, partNum: l.partNum, sku: (a.d && a.d.sku) || l.partNum, name: (a.d && a.d.name) || it.name || '', location: l.location, cases: String(a.n),
       systemCases: l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0), rowIndex: l.rowIndex, isPlaceholder: false, masterRowIndex: l.rowIndex, masterId: l.masterId || null,
       addedAt: new Date().toISOString(), sourceStockoutId: it.sourceStockoutId || null, dest: it.dest || 'shelving', forPart: it.forPart, how: it.how, caseOf: it.caseOf,
+      awdShipment: it.awdShipment || undefined, awdKind: it.awdKind || undefined, amlNote: it.amlNote || undefined,
       scanNote: '[NONE FOUND AT ' + it.location + ' — grabbed here instead]' };
     invNoneFoundNow(a.i, true);
     invPullList.push(add);
     invSavePullList(); invRenderPullList();
-    invFlash('📍 ' + it.location + ' logged None Found — now grab ' + a.n + ' × ' + l.partNum + ' at ' + l.location, 'warn');
+    invFlash('✗ None Found at ' + it.location + ' (stock NOT taken off — on 🔍 Audit) · 📍 now grab ' + a.n + ' × ' + l.partNum + ' at ' + l.location + ' — added to your Pull List', 'warn');
   };
   // None Found (as before): logged and sent to Review; then "what IS here?".
   window.invNoneFoundNow = function(i, skipCount) {
@@ -7907,8 +7904,7 @@ window.invCredLogin = async function() {
     invRenderPullList(); // can re-sort the list — find the item again
     invSubmitOnePullItem(invPullList.indexOf(item)); // submits immediately, same as Grabbed
     if (skipCount) return;
-    invFlash('None Found — sent to 🔍 Audit to double check (stock NOT taken off)', 'warn');
-    invNfCountOpen(item);
+    invFlash('✗ None Found — sent to 🔍 Audit to double check (stock NOT taken off). No other spot has it.', 'warn'); // no questions (owner 2026-10-30)
   };
 
   // ── ✕ next to "Cases needed" / "Part# or barcode": one tap clears both
