@@ -2295,10 +2295,13 @@ window.invCredLogin = async function() {
       var b = d && d.box; if (!b) return null;
       return { part: String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''), name: b.name || '', box: b };
     }).catch(function() { return null; });
-    return invAmzBcLoad(true).then(function(d) {
+    // ⚡ Owner (2026-10-30, 📥 Put on Shelf: "it takes a while for the info to show up"): the Amazon-barcode list is only waited for when the
+    // code can be an Amazon one (X0… FNSKU / B0… ASIN), and the look-up is the quick one (?lite=1: just the part # + name, no stock work)
+    var amz = /^(X0|B0)[0-9A-Z]{8}$/.test(c) ? invAmzBcLoad(true) : Promise.resolve(null);
+    return amz.then(function(d) {
       var hit = d && d.list.filter(function(x) { return String(x.fnsku).toUpperCase() === c; })[0];
       if (hit) return { part: String(hit.part).toUpperCase(), name: hit.name || '' };
-      return wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(c)).then(function(r) { return r.json(); })
+      return wFetch(W + '/inventory/lookup?lite=1&code=' + encodeURIComponent(c)).then(function(r) { return r.json(); })
         .then(function(x) { return x && x.partNum ? { part: String(x.partNum).toUpperCase(), name: x.name || '' } : null; }).catch(function() { return null; });
     });
   }
