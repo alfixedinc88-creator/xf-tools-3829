@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030a/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030b/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11774,37 +11774,52 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has
 // the parent part # there), then scan the shelving column barcode where they put it. Match → all good; not a match → a warning and a voice
 // 'Not match', they need to confirm, then check where they put them".
-console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / ❌ NOT MATCH (voice, buzz, confirm with why), every check kept');
+console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / ❌ NOT MATCH (voice, buzz, scan the right shelf), every check in 📜 History');
 {
+  // Owner (2026-10-30, after): "take that 'I checked' off — there's no error for that; and must have history under Put on Shelf to record everything".
   const { readFileSync: rfS2 } = await import('node:fs');
   const ih = rfS2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfS2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
   const code = ih.slice(ih.indexOf('  var PS2 = { box: null };'), ih.indexOf('  // What took this part # off its received spot on record'));
-  const els = {}, posts = [], said = [], flashes = []; let why = 'new spot for it';
-  const mk = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }); ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day'].forEach(mk);
+  const els = {}, posts = [], said = [], flashes = [], gets = [];
+  const mk = id => els[id] || (els[id] = { innerHTML: '', textContent: '', value: '', focus() {} }); ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day', 'ps2-hist', 'ps2-hist-date'].forEach(mk);
   const parts = { '840000000017': '30-3-4=10X', '840000000024': '30-3-4=5' };
-  const env = { g: id => els[id] || null, W: '', invEsc: v => String(v == null ? '' : v), invFlash: (m, t) => flashes.push(t + ': ' + m), xfrFmtT: v => v, INV_CRED_USER: { displayName: 'MG' },
+  const hist = [{ started_at: '2026-10-30T15:01:40Z', at: '2026-10-30T15:02:00Z', by_user: 'MG', product_part: '30-3-4=10X', label_part: '31-1-1', ok: 0, note: 'Put on shelf — NOT MATCH' },
+    { started_at: '2026-10-30T15:00:10Z', at: '2026-10-30T15:01:00Z', by_user: 'MG', product_part: '30-3-4=10X', label_part: '30-3-4', ok: 1, note: 'Put on shelf' },
+    { started_at: '2026-10-30T14:58:00Z', at: '2026-10-30T14:59:30Z', by_user: 'AB', product_part: '24-5-9=5XX', label_part: 'C1=1-1-1', ok: 1, note: 'Put on shelf' }, { at: '2026-10-30T15:00:00Z', by_user: 'AB', product_part: '9-9-9', label_part: 'X', ok: 1, note: 'Grab scan C1' }];
+  const env = { g: id => els[id] || null, W: '', invEsc: v => String(v == null ? '' : v), invFlash: (m, t) => flashes.push(t + ': ' + m), xfrFmtT: v => v,
     invParent: p => String(p).split('=')[0].toUpperCase(), xfrFrontFix: v => v, xfrIsLoc: v => /^[A-Z][A-Z0-9]*=\d/.test(String(v).toUpperCase()),
     invBcPart: async c => parts[c] ? { part: parts[c], name: 'tee' } : null,
     _invFetchLookupRaw: async p => ({ partNum: p, locations: [{ partNum: '30-3-4=5', location: 'C1=1-1-1' }, { partNum: '30-3-4=10X', location: 'BO=1-2-3' }] }),
-    invPost: async (u, o) => { posts.push(JSON.parse(o.body)); return { json: async () => ({ ok: true }) }; }, wFetch: async () => ({ json: async () => ({ ok: true, checks: [] }) }),
-    prompt: () => why, navigator: { vibrate() {} }, window: { speechSynthesis: { cancel() {}, speak: u => said.push(u.text) } }, SpeechSynthesisUtterance: function(t) { this.text = t; } };
+    invPost: async (u, o) => { posts.push(JSON.parse(o.body)); return { json: async () => ({ ok: true }) }; }, wFetch: async u => { gets.push(u); return { json: async () => ({ ok: true, checks: hist }) }; },
+    navigator: { vibrate() {} }, window: { speechSynthesis: { cancel() {}, speak: u => said.push(u.text) } }, SpeechSynthesisUtterance: function(t) { this.text = t; } };
   const W = new Function(...Object.keys(env), code + '; return window;')(...Object.values(env));
   const tick = () => new Promise(r => setImmediate(r)), scan = async v => { W.invPutShelfScan(v); await tick(); await tick(); await tick(); };
   await scan('C1=1-1-1'); const shelfFirst = flashes.some(f => /That is a SHELF label — scan the BOX first/.test(f));
   await scan('840000000017'); const step2 = /2️⃣ Now scan the SHELF/.test(els['ps2-step'].textContent) && /30-3-4=10X/.test(els['ps2-res'].innerHTML);
-  await scan('30-3-4'); const m1 = /✅ MATCH — put it here/.test(els['ps2-res'].innerHTML) && posts[0].ok === true && posts[0].productPart === '30-3-4=10X' && posts[0].labelPart === '30-3-4' && posts[0].note === 'Put on shelf';
+  await scan('30-3-4'); const m1 = /✅ MATCH — put it here/.test(els['ps2-res'].innerHTML) && posts[0].ok === true && posts[0].productPart === '30-3-4=10X' && posts[0].labelPart === '30-3-4' && posts[0].note === 'Put on shelf'
+    && !isNaN(Date.parse(posts[0].startedAt)) && posts[0].startedAt <= posts[0].at;
   await scan('840000000017'); await scan('31-1-1');
-  const bad = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && said.join() === 'Not match' && posts[1].ok === false && posts[1].note === 'Put on shelf — NOT MATCH' && /🔁 Scan the right shelf/.test(els['ps2-res'].innerHTML) && /✓ I checked — it goes here/.test(els['ps2-res'].innerHTML);
-  await scan('840000000024'); const held = flashes.some(f => /Choose first/.test(f)) && posts.length === 2;
-  W.invPutShelfAgain(); await scan('C1=1-1-1'); const m2 = /✅ MATCH/.test(els['ps2-res'].innerHTML) && posts[2].ok === true && posts[2].labelPart === 'C1=1-1-1';
+  const bad = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && said.join() === 'Not match' && posts[1].ok === false && posts[1].note === 'Put on shelf — NOT MATCH'
+    && /Find the RIGHT shelf for this box/.test(els['ps2-res'].innerHTML) && !/I checked/.test(els['ps2-res'].innerHTML) && /scan the RIGHT shelf/.test(els['ps2-step'].textContent);
+  await scan('C1=1-1-1'); const m2 = /✅ MATCH/.test(els['ps2-res'].innerHTML) && posts[2].ok === true && posts[2].labelPart === 'C1=1-1-1' && posts[2].productPart === '30-3-4=10X';
   await scan('840000000017'); await scan('C2=2-2-2'); const bad2 = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && /SKU Mgr has no 30-3-4 there/.test(els['ps2-res'].innerHTML) && said.length === 2;
-  why = ''; W.invPutShelfConfirm(); const needWhy = flashes.some(f => /Say why/.test(f)) && posts.length === 4;
-  why = 'new spot for it'; W.invPutShelfConfirm(); const conf = posts[4] && posts[4].ok === false && /NOT MATCH — CONFIRMED by MG: new spot for it/.test(posts[4].note) && /1️⃣ Scan the BOX/.test(els['ps2-step'].textContent);
-  check('shelf first → "scan the BOX first"; box 30-3-4=10X + shelf label 30-3-4 → ✅ MATCH (kept); + shelf 31-1-1 → ❌ NOT MATCH, the voice says "Not match", kept; another box before choosing → refused; 🔁 → spot C1=1-1-1 (SKU Mgr has 30-3-4 there) → ✅; spot C2=2-2-2 (none there) → ❌; ✓ I checked needs a why → kept "CONFIRMED by MG: new spot for it"',
-    shelfFirst && step2 && m1 && bad && held && m2 && bad2 && needWhy && conf, { shelfFirst, step2, m1, bad, held, m2, bad2, needWhy, conf, posts: posts.map(p => [p.ok, p.labelPart, p.note]) });
-  check('…a 📥 Put on Shelf tab in Inventory (after Transfer) with its panel, a 🧩 Pages & Tabs check mark; every check goes through the phone outbox (no WiFi → saved, sent once) with the 🔍 Box check records; nothing moves stock',
-    /<button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab\('putshelf'\)">📥 Put on Shelf<\/button>/.test(ih) && /<div class="ipanel" id="inv-panel-putshelf">/.test(ih) && /g\("inv-panel-putshelf"\)\.className/.test(ih)
-      && /sel: '#inv-tab-putshelf'/.test(xa) && /invPost\(W \+ '\/inventory\/box-check'/.test(code) && /_requestId: 'ps2-'/.test(code) && !/inventory\/log|inventory\/transfer/.test(code), null);
+  check('shelf first → "scan the BOX first"; box 30-3-4=10X + shelf 30-3-4 → ✅ MATCH (kept); + shelf 31-1-1 → ❌ NOT MATCH, voice "Not match", kept, NO "I checked" — the box stays until the RIGHT shelf is scanned: spot C1=1-1-1 (SKU Mgr has 30-3-4 there) → ✅; C2=2-2-2 (none there) → ❌',
+    shelfFirst && step2 && m1 && bad && m2 && bad2, { shelfFirst, step2, m1, bad, m2, bad2, posts: posts.map(p => [p.ok, p.labelPart, p.note]) });
+  els['ps2-hist-date'].value = '2026-10-30'; W.invPutShelfDay(); await tick(); await tick();
+  const h = els['ps2-hist'].innerHTML;
+  check('📜 History under Put on Shelf: every Put on Shelf scan of the day picked (?kind=putshelf&day=2026-10-30; not the other box checks): 👷 by person — boxes put away, not a match, first box started, last box finished (MG 1 · 1 · 11:00:10 AM · 11:02:00 AM; AB 1 · 0); 📋 every box newest first: started (box scanned) · finished (shelf scanned) · took (50 sec) · who · box · shelf · ✅ / ❌',
+    gets.some(u => /\/inventory\/box-check\?kind=putshelf&day=2026-10-30$/.test(u)) && /3 scans · <b[^>]*>✅ 2<\/b> boxes put away · <b[^>]*>❌ 1<\/b> not a match/.test(h) && !/9-9-9/.test(h)
+      && /<b>MG<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*>11:00:10 AM<\/td><td[^>]*>11:02:00 AM<\/td>/.test(h) && /<b>AB<\/b><\/td><td[^>]*><b[^>]*>1<\/b><\/td><td[^>]*>0<\/td>/.test(h)
+      && /Started \(box scanned\)/.test(h) && /<td[^>]*>11:00:10 AM<\/td><td[^>]*>11:01:00 AM<\/td><td[^>]*>50 sec<\/td><td[^>]*>MG<\/td>/.test(h) && h.indexOf('31-1-1') < h.indexOf('>30-3-4<'), h.slice(0, 600));
+  // the server keeps the start time and gives all the Put on Shelf scans of a day (no other box checks)
+  const ps1 = await post('/inventory/box-check', { label: '30-3-4', product: '840000000017', labelPart: '30-3-4', productPart: '30-3-4=10X', ok: true, note: 'Put on shelf', startedAt: '2026-10-30T15:00:10.000Z', at: '2026-10-30T15:01:00.000Z' });
+  await post('/inventory/box-check', { label: 'L', product: 'P', ok: true, note: 'Grab scan C1', at: '2026-10-30T15:01:30.000Z' });
+  const gs = await get('/inventory/box-check?kind=putshelf&day=2026-10-30');
+  check('…server: POST keeps when the box was scanned (started_at) next to when the shelf was scanned; GET ?kind=putshelf gives only the Put on Shelf scans of that day',
+    ps1.ok && gs.ok && gs.checks.length >= 1 && gs.checks.every(x => /^Put on shelf/.test(x.note)) && gs.checks.some(x => x.started_at === '2026-10-30T15:00:10.000Z' && x.at === '2026-10-30T15:01:00.000Z' && x.product_part === '30-3-4=10X'), gs);
+  check('…the 📥 Put on Shelf tab (after Transfer), its 📜 History card, 🧩 Pages & Tabs check marks; every check through the phone outbox (no WiFi → sent once); "I checked" is gone; nothing moves stock',
+    /<button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab\('putshelf'\)">📥 Put on Shelf<\/button>/.test(ih) && /<div class="ipanel" id="inv-panel-putshelf">/.test(ih) && /<div class="icard" id="ps2-hist-card">/.test(ih)
+      && /sel: '#inv-tab-putshelf'/.test(xa) && /sel: '#ps2-hist-card'/.test(xa) && /invPost\(W \+ '\/inventory\/box-check'/.test(code) && /_requestId: 'ps2-'/.test(code) && !/I checked|invPutShelfConfirm/.test(code) && !/inventory\/log|inventory\/transfer/.test(code), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

@@ -109,7 +109,8 @@ document.addEventListener('input', function (e) {
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
         { key: 'quickadd', label: 'Quick Add', sel: '#inv-quickadd-card' },
         { key: 'stockinhist', label: '📜 Stock In History', sel: '#inv-quickadd-card span[onclick="invShowStockInHistory()"]' } ] },
-      { key: 'putshelf', label: '📥 Put on Shelf (scan the box, then the shelf)', sel: '#inv-tab-putshelf' },
+      { key: 'putshelf', label: '📥 Put on Shelf (scan the box, then the shelf)', sel: '#inv-tab-putshelf', parts: [
+        { key: 'hist', label: '📜 Put on Shelf — History', sel: '#ps2-hist-card' } ] },
       { key: 'transfer', label: 'Transfer', sel: '#inv-tab-transfer', parts: [
         { key: 'modecode', label: 'SKU / Part# / UPC / Name', sel: '#xfr-mode-code' },
         { key: 'container', label: '🚢 Container here', sel: '#xfr-mode-cont, #xfr-cont-wrap' },
