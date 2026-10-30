@@ -597,6 +597,7 @@ window.invCredLogin = async function() {
   <button class="itab" id="inv-tab-check" onclick="invSwitchTab('check')">✅ Checking</button>
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
+  <button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab('putshelf')">📥 Put on Shelf</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit<span class="ibadge" id="rc-foryou-badge" style="display:none">0</span></button>
   <!-- Owner (2026-10-22): "no more Review, everything is auto approve now — take Review off". Hidden; it comes back only while
        something is waiting for approval (the count on it), so nothing can be stuck where nobody sees it. -->
@@ -1147,6 +1148,20 @@ window.invCredLogin = async function() {
 <!-- ✅ Checking (owner): scan a box UPC / part # / spot label, or type a name — see
      everything: where it is, how many cases, who put it there and when. A spot can be
      counted right here (same as 🔍 Audit), "None found", or "Something else found". -->
+<!-- 📥 Owner (2026-10-30): "one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has the
+     parent part # on it), then scan the shelving column barcode where they put it. Match → all good; not a match → a warning and a voice
+     'Not match', they have to confirm, then check where they put it." A check only — no stock is moved here (Stock In / Transfer do that). -->
+<div class="ipanel" id="inv-panel-putshelf">
+  <div class="icard">
+    <div class="icard-label">📥 Put on Shelf — scan the box, then the shelf</div>
+    <div id="ps2-step" style="font-size:18px;font-weight:800;margin:6px 0">1️⃣ Scan the BOX you are putting away</div>
+    <input id="ps2-inp" type="text" autocomplete="off" inputmode="none" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();invPutShelfScan(this.value);this.value='';}"
+      style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">
+    <div id="ps2-res" style="margin-top:8px"></div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button type="button" onclick="invPutShelfReset()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer">↺ Start over (next box)</button></div>
+    <div id="ps2-day" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
+  </div>
+</div>
 <div class="ipanel" id="inv-panel-check">
   <div class="icard">
     <div class="icard-label">✅ Checking</div>
@@ -2069,6 +2084,8 @@ window.invCredLogin = async function() {
     g("inv-panel-scan").className      = "ipanel" + (scanPanelActive ? " iactive" : "");
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
     g("inv-panel-check").className     = "ipanel" + (tab === "check"    ? " iactive" : "");
+    g("inv-panel-putshelf").className  = "ipanel" + (tab === "putshelf" ? " iactive" : "");
+    g("inv-tab-putshelf").className    = "itab"   + (tab === "putshelf" ? " iactive" : "");
     g("inv-tab-check").className       = "itab"   + (tab === "check"    ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
@@ -2108,6 +2125,7 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
+    if (tab === "putshelf") { invPutShelfReset(); invPutShelfDay(); }
     if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
     if (tab === "audit") { invAuditTallyRender(); ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
@@ -11532,6 +11550,79 @@ window.invCredLogin = async function() {
     // A bare area prefix ("BARN=") is not a spot — the full label has the spot after the "=".
     return (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).some(function(p) { return up.indexOf(p) === 0 && (up.length > p.length || !/=$/.test(p)); }) || /^[A-Z][A-Z0-9]*=\d/.test(up);
   }
+  // 📥 Put on Shelf (owner 2026-10-30): 1️⃣ the box (box / bag UPC, part #, FNSKU, Amazon label) → its part #; 2️⃣ the shelf column label —
+  // the parent part # printed on the shelf (e.g. 30-3-4) or a spot label (C1=1-2-3: right when SKU Mgr has that item there). Same parent →
+  // ✅; otherwise ❌ NOT MATCH (red, buzz, a voice says "Not match") and they choose: 🔁 scan the shelf again, or ✓ I checked — it goes here
+  // (asks why). Every check is kept (who / when / box / shelf / right or wrong / confirmed) with the 🔍 Box check records. No stock moves.
+  var PS2 = { box: null };
+  function invPs2Say(t) { try { if (window.speechSynthesis) { window.speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.rate = 0.95; window.speechSynthesis.speak(u); } } catch (e) {} }
+  function invPs2Buzz() { try { if (navigator.vibrate) navigator.vibrate([400, 120, 400]); } catch (e) {}
+    try { var A = window.AudioContext || window.webkitAudioContext; if (!A) return; var c = new A(), o = c.createOscillator(), gn = c.createGain(); o.type = 'square'; o.frequency.value = 330; gn.gain.value = 0.25; o.connect(gn); gn.connect(c.destination); o.start(); o.stop(c.currentTime + 0.5); } catch (e) {} }
+  function invPs2Rec(shelf, ok, note) {
+    var b = PS2.box || {};
+    invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: shelf.code, product: b.code || '', labelPart: shelf.what, productPart: b.part || '', ok: ok,
+      note: 'Put on shelf' + (note ? ' — ' + note : ''), at: new Date().toISOString(), _requestId: 'ps2-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })
+      .then(function(r) { return r.json(); }).then(function() { invPutShelfDay(); }).catch(function() {});
+  }
+  window.invPutShelfReset = function() { PS2 = { box: null }; var st = g('ps2-step'); if (st) st.textContent = '1️⃣ Scan the BOX you are putting away'; var r = g('ps2-res'); if (r) r.innerHTML = ''; var i = g('ps2-inp'); if (i && i.focus) i.focus(); };
+  window.invPutShelfScan = function(v) {
+    v = String(v || '').trim(); if (!v) return;
+    var st = g('ps2-step'), res = g('ps2-res');
+    if (PS2.wait) { invFlash('Choose first: 🔁 scan the shelf again, or ✓ I checked', 'warn'); return; }
+    if (!PS2.box) {
+      if (xfrIsLoc(xfrFrontFix(v))) { invFlash('That is a SHELF label — scan the BOX first', 'error'); return; }
+      if (res) res.innerHTML = '<div style="color:var(--text3)">⏳ reading the box…</div>';
+      return invBcPart(v).then(function(p) {
+        if (!p) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:800">✗ ' + invEsc(v) + ' — not a box we know. Scan the box label (or the bag).</div>'; return; }
+        PS2.box = { code: v, part: String(p.part).toUpperCase(), name: p.name || '' };
+        if (st) st.textContent = '2️⃣ Now scan the SHELF column label where you put it';
+        if (res) res.innerHTML = '<div style="font-size:15px">📦 Box: <b style="font-family:var(--mono)">' + invEsc(PS2.box.part) + '</b> ' + invEsc(PS2.box.name) + '</div>';
+      });
+    }
+    var b = PS2.box, bp = invParent(b.part), code = xfrFrontFix(v), isLoc = xfrIsLoc(code);
+    var show = function(ok, shelfTxt) {
+      if (ok) { if (res) res.innerHTML = '<div class="ps2-ok" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:var(--green)">✅ MATCH — put it here</div>'
+          + '<div style="font-size:13px;margin-top:6px">📦 ' + invEsc(b.part) + ' → 🗄 ' + invEsc(shelfTxt) + '</div><div style="font-size:12px;color:var(--text3);margin-top:4px">Scan the next box</div>';
+        invPs2Rec({ code: v, what: shelfTxt }, true, ''); PS2 = { box: null }; if (st) st.textContent = '1️⃣ Scan the next BOX'; return; }
+      invPs2Buzz(); invPs2Say('Not match'); PS2.wait = { code: v, what: shelfTxt }; invPs2Rec(PS2.wait, false, 'NOT MATCH'); // kept at once, whatever they do next
+      if (res) res.innerHTML = '<div class="ps2-bad" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:var(--red)">❌ NOT MATCH — check where you put it!</div>'
+        + '<div style="font-size:14px;margin-top:6px">📦 The box is <b style="font-family:var(--mono)">' + invEsc(b.part) + '</b> · 🗄 the shelf is <b style="font-family:var(--mono)">' + invEsc(shelfTxt) + '</b></div>'
+        + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button type="button" class="ps2-again" onclick="invPutShelfAgain()" style="flex:1;min-width:140px;padding:12px;border-radius:9px;border:none;background:var(--accent);color:#fff;font-weight:800;cursor:pointer">🔁 Scan the right shelf</button>'
+        + '<button type="button" class="ps2-confirm" onclick="invPutShelfConfirm()" style="flex:1;min-width:140px;padding:12px;border-radius:9px;border:2px solid var(--red);background:var(--bg);color:var(--red);font-weight:800;cursor:pointer">✓ I checked — it goes here</button></div>';
+      if (st) st.textContent = '⚠ Not a match — choose below';
+    };
+    if (isLoc) { // a spot label: right when SKU Mgr has this item (same parent) at that spot
+      if (res) res.innerHTML = '<div style="color:var(--text3)">⏳ checking ' + invEsc(code) + '…</div>';
+      return _invFetchLookupRaw(b.part).then(function(d) {
+        var at = String(code).toUpperCase(), has = ((d && d.locations) || []).some(function(l) { return String(l.location || '').trim().toUpperCase() === at && invParent(l.partNum) === bp; });
+        show(has, code + (has ? '' : ' (SKU Mgr has no ' + bp + ' there)'));
+      }).catch(function() { if (res) res.innerHTML = '<div style="color:var(--orange);font-weight:800">📶 Could not check ' + invEsc(code) + ' — scan the shelf again</div>'; });
+    }
+    // the parent part # label on the shelf (30-3-4), or any part # / barcode of an item
+    var direct = /^\d+(?:-\d+)+/.test(v) ? invParent(v) : '';
+    (direct ? Promise.resolve(direct) : invBcPart(v).then(function(p) { return p ? invParent(p.part) : ''; })).then(function(sp) {
+      if (!sp) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:800">✗ ' + invEsc(v) + ' — not a shelf label we know. Scan the shelf column label.</div>'; return; }
+      show(sp === bp, sp);
+    });
+  };
+  window.invPutShelfAgain = function() { PS2.wait = null;
+    var st = g('ps2-step'); if (st) st.textContent = '2️⃣ Scan the RIGHT shelf column label'; var r = g('ps2-res'); if (r) r.innerHTML = '<div style="font-size:15px">📦 Box: <b style="font-family:var(--mono)">' + invEsc(PS2.box ? PS2.box.part : '') + '</b></div>'; var i = g('ps2-inp'); if (i && i.focus) i.focus(); };
+  window.invPutShelfConfirm = function() {
+    var w = PS2.wait; if (!w) return;
+    var why = prompt('✓ The box ' + (PS2.box ? PS2.box.part : '') + ' goes on shelf ' + w.what + ' anyway?\n\nWhy? (kept in the record)', ''); if (why === null) return;
+    if (!String(why).trim()) { invFlash('Say why — e.g. "new spot for it", "the shelf label is wrong"', 'error'); return; }
+    PS2.wait = null; invPs2Rec(w, false, 'NOT MATCH — CONFIRMED by ' + ((INV_CRED_USER && INV_CRED_USER.displayName) || '?') + ': ' + String(why).trim().slice(0, 120));
+    invFlash('✓ Kept on record: ' + (PS2.box ? PS2.box.part : '') + ' put on ' + w.what + ' (confirmed)', 'warn'); window.invPutShelfReset();
+  };
+  window.invPutShelfDay = function() {
+    var el = g('ps2-day'); if (!el) return;
+    wFetch(W + '/inventory/box-check').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return; var L = (d.checks || []).filter(function(x) { return /^Put on shelf/.test(x.note || ''); });
+      var ok = L.filter(function(x) { return x.ok; }).length, conf = L.filter(function(x) { return /CONFIRMED/.test(x.note || ''); }), bad = L.length - ok - conf.length;
+      el.innerHTML = 'Today: <b style="color:var(--green)">✅ ' + ok + '</b> matched · <b style="color:var(--red)">❌ ' + bad + '</b> not a match' + (conf.length ? ' · ' + conf.length + ' put there anyway (confirmed)' : '')
+        + (conf.length ? '<div style="margin-top:3px">' + conf.slice(0, 5).map(function(x) { return '⚠ ' + invEsc(xfrFmtT(x.at)) + ' · ' + invEsc(x.by_user) + ' · ' + invEsc(x.product_part) + ' → ' + invEsc(x.label_part) + ' · ' + invEsc(String(x.note || '').replace(/^Put on shelf — /, '')); }).join('<br>') + '</div>' : '');
+    }).catch(function() {});
+  };
   // What took this part # off its received spot on record (not off the pallet): "Stock Out 4 (AB, Oct 6) · Transfer 5 → X (CD, Oct 7)".
   function xfrGoneWhy(l) {
     var g0 = l.recvGone || [], m = l.recvMath;
@@ -17050,6 +17141,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261029b"></script>
+<script src="xf-access.js?v=20261030a"></script>
 </body>
 </html>
