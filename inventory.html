@@ -1170,15 +1170,18 @@ window.invCredLogin = async function() {
     <div id="ps2-map-all"></div>
     <div id="ps2-day" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
   </div>
-  <!-- 📜 Owner (2026-10-30): "must have history under Put on Shelf to record everything down" — every box → shelf check, by day. -->
-  <div class="icard" id="ps2-hist-card">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-      <div class="icard-label" style="margin:0">📜 Put on Shelf — History</div>
-      <div style="display:flex;gap:6px;align-items:center"><input type="date" id="ps2-hist-date" onchange="invPutShelfDay()" style="padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">
-        <button type="button" onclick="invPutShelfDay()" style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer">↻</button></div>
+  <!-- 📜 Owner (2026-10-30): "must have history under Put on Shelf to record everything down" — every box → shelf check.
+       Owner (2026-10-30, after): "minimize the History, only Admin level up can see it; search by the name, the date, how many they did on
+       that date, how long for each box, the average for each box" — closed, Admin / Owner only (the server gives the scans to no one else). -->
+  <details class="icard" id="ps2-hist-card" style="display:none" ontoggle="if(this.open)invPutShelfHist()">
+    <summary style="cursor:pointer;font-weight:800">📜 Put on Shelf — History <span style="font-weight:400;font-size:12px;color:var(--text3)">(Admin only)</span></summary>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px">
+      From <input type="date" id="ps2-hist-from" style="padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px"> to <input type="date" id="ps2-hist-to" style="padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">
+      <input type="text" id="ps2-hist-who" list="ps2-hist-people" placeholder="Name (all)" autocomplete="off" onkeydown="if(event.key==='Enter')invPutShelfHist()" style="width:130px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px"><datalist id="ps2-hist-people"></datalist>
+      <button type="button" onclick="invPutShelfHist()" style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer">🔍 Search</button>
     </div>
     <div id="ps2-hist" style="margin-top:6px;font-size:12px"></div>
-  </div>
+  </details>
 </div>
 <div class="ipanel" id="inv-panel-check">
   <div class="icard">
@@ -11845,34 +11848,54 @@ window.invCredLogin = async function() {
       show(sp === bp, sp);
     });
   };
-  // 📜 History: every Put on Shelf check of the day picked (New York day), newest first — time · who · box → shelf · ✅ / ❌; the totals on top.
+  // The "Today:" line (everyone): the day's ✅ / ❌ counts. The 📜 History card shows to Admin / Owner only.
   window.invPutShelfDay = function() {
-    var el = g('ps2-day'), h = g('ps2-hist'), di = g('ps2-hist-date');
+    var el = g('ps2-day'), today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), card = g('ps2-hist-card');
+    if (card && card.style) card.style.display = invPs2IsAdmin() ? '' : 'none';
+    wFetch(W + '/inventory/box-check?kind=putshelf&day=' + encodeURIComponent(today)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok || !el) return;
+      el.innerHTML = 'Today: <b style="color:var(--green)">✅ ' + (d.right || 0) + '</b> box' + (d.right === 1 ? '' : 'es') + ' put away · <b style="color:var(--red)">❌ ' + (d.wrong || 0) + '</b> not a match';
+    }).catch(function() {});
+    if (card && card.open) window.invPutShelfHist();
+  };
+  function invPs2IsAdmin() { return !!(typeof INV_CRED_USER !== 'undefined' && INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0)); }
+  // ⏱ how long one box took: the box scanned (started_at) → its shelf scanned (at), in seconds (null when not known)
+  function invPs2Sec(x) { var a = Date.parse(x.started_at), b = Date.parse(x.at); return isNaN(a) || isNaN(b) || b < a ? null : Math.round((b - a) / 1000); }
+  function invPs2Dur(sec) { return sec == null ? '—' : sec < 90 ? sec + ' sec' : sec < 5400 ? Math.round(sec / 6) / 10 + ' min' : Math.round(sec / 360) / 10 + ' hr'; }
+  // 📜 Owner (2026-10-30): "search by the name, the date, how many they did on that date, how long for each box, the average for each box".
+  // A box = a ✅ match (its time runs from the box scan to the RIGHT shelf, a ❌ on the way included); ❌ rows are listed, not counted as boxes.
+  window.invPutShelfHist = function() {
+    var h = g('ps2-hist'), fi = g('ps2-hist-from'), ti = g('ps2-hist-to'), wi = g('ps2-hist-who'); if (!h) return;
     var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    if (di && !di.value) di.value = today;
-    var day = (di && di.value) || today;
-    if (h) h.innerHTML = '<span style="color:var(--text3)">⏳ Loading…</span>';
-    wFetch(W + '/inventory/box-check?kind=putshelf&day=' + encodeURIComponent(day)).then(function(r) { return r.json(); }).then(function(d) {
-      if (!d || !d.ok) { if (h) h.innerHTML = '<span style="color:var(--red)">Could not load</span>'; return; }
-      var L = (d.checks || []).filter(function(x) { return /^Put on shelf/.test(x.note || ''); }), ok = L.filter(function(x) { return x.ok; }).length;
-      var tot = '<b style="color:var(--green)">✅ ' + ok + '</b> box' + (ok === 1 ? '' : 'es') + ' put away · <b style="color:var(--red)">❌ ' + (L.length - ok) + '</b> not a match';
-      if (el && day === today) el.innerHTML = 'Today: ' + tot;
-      if (!h) return;
-      if (!L.length) { h.innerHTML = '<span style="color:var(--text3)">Nothing put on a shelf ' + (day === today ? 'today' : 'on ' + invEsc(day)) + '.</span>'; return; }
+    if (fi && !fi.value) fi.value = today; if (ti && !ti.value) ti.value = (fi && fi.value) || today;
+    var from = (fi && fi.value) || today, to = (ti && ti.value) || from, who = String((wi && wi.value) || '').trim();
+    h.innerHTML = '<span style="color:var(--text3)">⏳ Loading…</span>';
+    wFetch(W + '/inventory/box-check?kind=putshelf&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + (who ? '&who=' + encodeURIComponent(who) : '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { h.innerHTML = '<span style="color:var(--red)">Could not load</span>'; return; }
+      if (d.adminOnly) { h.innerHTML = '<span style="color:var(--text3)">🔒 Admin only</span>'; return; }
+      var dl = g('ps2-hist-people'); if (dl) dl.innerHTML = (d.people || []).map(function(p) { return '<option value="' + invEsc(p) + '">'; }).join('');
+      var L = (d.checks || []).filter(function(x) { return /^Put on shelf/.test(x.note || ''); });
+      var span = (d.from || from) === (d.to || to) ? invEsc(d.from || from) : invEsc(d.from || from) + ' → ' + invEsc(d.to || to);
+      if (!L.length) { h.innerHTML = '<span style="color:var(--text3)">Nothing put on a shelf ' + span + (who ? ' by "' + invEsc(who) + '"' : '') + '.</span>'; return; }
       var T = function(v) { try { return v ? new Date(v).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—'; } catch (e) { return v || '—'; } };
-      var took = function(x) { var a = Date.parse(x.started_at), b = Date.parse(x.at); if (isNaN(a) || isNaN(b) || b < a) return '—'; var sec = Math.round((b - a) / 1000); return sec < 90 ? sec + ' sec' : Math.round(sec / 6) / 10 + ' min'; };
-      // 👷 by person: boxes put away (✅), not a match, first box started, last box finished
-      var P = {}; L.forEach(function(x) { var w = x.by_user || '?', p = P[w] = P[w] || { ok: 0, bad: 0, first: '', last: '' }, st = x.started_at || x.at;
-        if (x.ok) p.ok++; else p.bad++; if (!p.first || st < p.first) p.first = st; if (!p.last || x.at > p.last) p.last = x.at; });
+      var Dy = function(v) { try { return new Date(v).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); } catch (e) { return String(v || '').slice(0, 10); } };
+      var avg = function(a) { var s = a.filter(function(v) { return v != null; }); return s.length ? Math.round(s.reduce(function(x, y) { return x + y; }, 0) / s.length) : null; };
+      var ok = L.filter(function(x) { return x.ok; }), allSec = ok.map(invPs2Sec);
+      // 📅 by day + person: boxes put away, not a match, first box started, last box finished, average per box, fastest / slowest
+      var P = {}; L.forEach(function(x) { var k = Dy(x.at) + '|' + (x.by_user || '?'), p = P[k] = P[k] || { day: Dy(x.at), who: x.by_user || '?', ok: 0, bad: 0, first: '', last: '', secs: [] }, st = x.started_at || x.at;
+        if (x.ok) { p.ok++; p.secs.push(invPs2Sec(x)); } else p.bad++; if (!p.first || st < p.first) p.first = st; if (!p.last || x.at > p.last) p.last = x.at; });
       var td = 'style="padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', th = function(a) { return '<tr>' + a.map(function(x) { return '<th ' + td.replace('padding', 'text-align:left;padding') + '>' + x + '</th>'; }).join('') + '</tr>'; };
-      h.innerHTML = '<div style="margin-bottom:4px">' + L.length + ' scan' + (L.length === 1 ? '' : 's') + ' · ' + tot + '</div>'
-        + '<div style="font-weight:800;margin:6px 0 2px">👷 By person</div><div style="overflow-x:auto"><table class="ps2-hist-p" style="border-collapse:collapse">' + th(['Who', 'Boxes put away', 'Not a match', 'First box started', 'Last box finished'])
-        + Object.keys(P).sort().map(function(w) { var p = P[w]; return '<tr><td ' + td + '><b>' + invEsc(w) + '</b></td><td ' + td + '><b style="color:var(--green)">' + p.ok + '</b></td><td ' + td + '>' + (p.bad ? '<b style="color:var(--red)">' + p.bad + '</b>' : '0') + '</td><td ' + td + '>' + invEsc(T(p.first)) + '</td><td ' + td + '>' + invEsc(T(p.last)) + '</td></tr>'; }).join('') + '</table></div>'
-        + '<div style="font-weight:800;margin:8px 0 2px">📋 Every box (newest first)</div><div style="overflow-x:auto"><table class="ps2-hist-t" style="border-collapse:collapse;width:100%">' + th(['Started (box scanned)', 'Finished (shelf scanned)', 'Took', 'Who', 'Box', 'Shelf', ''])
-        + L.map(function(x) { return '<tr' + (x.ok ? '' : ' style="background:var(--red-bg,#fdf0ee)"') + '><td ' + td + '>' + invEsc(T(x.started_at)) + '</td><td ' + td + '>' + invEsc(T(x.at)) + '</td><td ' + td + '>' + invEsc(took(x)) + '</td><td ' + td + '>' + invEsc(x.by_user || '') + '</td>'
+      var mm = function(a) { var s = a.filter(function(v) { return v != null; }); return s.length ? invPs2Dur(Math.min.apply(null, s)) + ' / ' + invPs2Dur(Math.max.apply(null, s)) : '—'; };
+      h.innerHTML = '<div class="ps2-hist-sum" style="margin-bottom:4px;font-size:13px">' + span + (who ? ' · 👷 ' + invEsc(who) : '') + ': <b style="color:var(--green)">✅ ' + ok.length + '</b> box' + (ok.length === 1 ? '' : 'es') + ' put away · <b style="color:var(--red)">❌ ' + (L.length - ok.length) + '</b> not a match · ⏱ average <b>' + invPs2Dur(avg(allSec)) + '</b> a box</div>'
+        + '<div style="font-weight:800;margin:6px 0 2px">📅 By day and person</div><div style="overflow-x:auto"><table class="ps2-hist-p" style="border-collapse:collapse">' + th(['Date', 'Who', 'Boxes put away', 'Not a match', 'Average a box', 'Fastest / slowest', 'First box started', 'Last box finished'])
+        + Object.keys(P).sort(function(a, b) { return P[b].day.localeCompare(P[a].day) || P[a].who.localeCompare(P[b].who); }).map(function(k) { var p = P[k];
+          return '<tr><td ' + td + '>' + invEsc(p.day) + '</td><td ' + td + '><b>' + invEsc(p.who) + '</b></td><td ' + td + '><b style="color:var(--green)">' + p.ok + '</b></td><td ' + td + '>' + (p.bad ? '<b style="color:var(--red)">' + p.bad + '</b>' : '0') + '</td>'
+            + '<td ' + td + '><b>' + invEsc(invPs2Dur(avg(p.secs))) + '</b></td><td ' + td + '>' + invEsc(mm(p.secs)) + '</td><td ' + td + '>' + invEsc(T(p.first)) + '</td><td ' + td + '>' + invEsc(T(p.last)) + '</td></tr>'; }).join('') + '</table></div>'
+        + '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:800">📋 Every box (newest first) — ' + L.length + ' scan' + (L.length === 1 ? '' : 's') + '</summary><div style="overflow-x:auto"><table class="ps2-hist-t" style="border-collapse:collapse;width:100%">' + th(['Date', 'Started (box scanned)', 'Finished (shelf scanned)', 'Took', 'Who', 'Box', 'Shelf', ''])
+        + L.map(function(x) { return '<tr' + (x.ok ? '' : ' style="background:var(--red-bg,#fdf0ee)"') + '><td ' + td + '>' + invEsc(Dy(x.at)) + '</td><td ' + td + '>' + invEsc(T(x.started_at)) + '</td><td ' + td + '>' + invEsc(T(x.at)) + '</td><td ' + td + '>' + invEsc(invPs2Dur(invPs2Sec(x))) + '</td><td ' + td + '>' + invEsc(x.by_user || '') + '</td>'
           + '<td ' + td + '><b style="font-family:var(--mono)">' + invEsc(x.product_part || x.product) + '</b></td><td ' + td + '><span style="font-family:var(--mono)">' + invEsc(x.label_part || x.label) + '</span></td>'
-          + '<td ' + td + '>' + (x.ok ? '<span style="color:var(--green);font-weight:700">✅ match</span>' : '<span style="color:var(--red);font-weight:700">❌ NOT MATCH</span>') + '</td></tr>'; }).join('') + '</table></div>';
-    }).catch(function() { if (h) h.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
+          + '<td ' + td + '>' + (x.ok ? '<span style="color:var(--green);font-weight:700">✅ match</span>' : '<span style="color:var(--red);font-weight:700">❌ NOT MATCH</span>') + '</td></tr>'; }).join('') + '</table></div></details>';
+    }).catch(function() { h.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
   // What took this part # off its received spot on record (not off the pallet): "Stock Out 4 (AB, Oct 6) · Transfer 5 → X (CD, Oct 7)".
   function xfrGoneWhy(l) {
