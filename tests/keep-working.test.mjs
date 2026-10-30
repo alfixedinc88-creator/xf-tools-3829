@@ -11621,6 +11621,11 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
     ['psNostockTick', 'psNostockBoxTap', 'psNostockTyped'].forEach(k => { delete globalThis[k]; });
   }
   check('…Escape closes the pad; the Picking scan box does not steal it while it is open', /if \(_psNumPad\)\s+\{ psNumPadClose\(\); return; \}/.test(ps) && /!typingElsewhere && !_psNumPad\) inp\.focus\(\)/.test(ps), null);
+  // Owner (2026-10-30, photo of the Picking PC): the 5-column grid squeezed one item card to ~100px and ⚠ No Stock spilled out.
+  const pickGrid = /\n#ps-pick-product-items, #ps-pick-product-more \{ grid-template-columns:repeat\(auto-fill, minmax\(150px, 168px\)\); \}/.test(ps)
+    && /\n#packship-app #ps-pick-product-items, #packship-app #ps-pick-product-more \{ grid-template-columns:repeat\(auto-fill, minmax\(150px, 168px\)\); \}/.test(ps);
+  const order = ps.indexOf('#ps-pick-product-items, #ps-pick-product-more { grid-template-columns:repeat(auto-fill') < ps.indexOf('  #ps-scan-product-items, #ps-pick-product-items { grid-template-columns:repeat(2, 1fr); }');
+  check('Picking item cards are never squeezed: 150–168px each, more items go on the next row (phone: 2 columns as before; Packing unchanged)', pickGrid && order, null);
   delete globalThis._psPickStockoutCtx; delete globalThis.__psSel;
   ['psNumPad', 'psNumPadKey', 'psNumPadClose', 'psNumPadOk', 'psNumPadOpen', 'psNostockPad', 'psSubmitNoStock'].forEach(k => { delete globalThis[k]; });
 
