@@ -11822,5 +11822,21 @@ console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / �
       && /sel: '#inv-tab-putshelf'/.test(xa) && /sel: '#ps2-hist-card'/.test(xa) && /invPost\(W \+ '\/inventory\/box-check'/.test(code) && /_requestId: 'ps2-'/.test(code) && !/I checked|invPutShelfConfirm/.test(code) && !/inventory\/log|inventory\/transfer/.test(code), null);
 }
 
+// Owner (2026-10-30): "📥 Put on Shelf — when we scan the box it takes a while for the info to show up". The box scan waited for the Amazon
+// barcode list AND the full stock look-up (pallets, Amazon listings, sales…) just to learn the part #.
+console.log('\n⚡ Box scans (📥 Put on Shelf, 🔍 Box check) use the quick look-up: same part # as the full one, no stock work');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('97-7-1','97-7-1','lite tee','97-7-1=10','C1=1-1-1',3,100)").run();
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('97-7-1=10','97-7-1','840097700010','10840097700017')").run();
+  const cmp = async c => { const f = await get('/inventory/lookup?code=' + encodeURIComponent(c)), l = await get('/inventory/lookup?lite=1&code=' + encodeURIComponent(c)); return { f: f.partNum, l: l.partNum, ln: l.name, lite: l.lite, fl: (f.locations || []).length, ll: (l.locations || []).length }; };
+  const a = await cmp('840097700010'), b = await cmp('10840097700017'), c = await cmp('97-7-1=10'), d = await cmp('NOPE-1');
+  const { readFileSync: rfL } = await import('node:fs');
+  const ih = rfL(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('lite look-up = the same part # as the full one (bag UPC, box UPC, part #, an unknown code), with the name, and no stock rows; the box scan uses ?lite=1 and only waits for the Amazon-barcode list for X0… / B0… codes',
+    a.f === '97-7-1=10' && a.l === a.f && a.ln === 'lite tee' && a.lite === true && a.ll === 0 && a.fl >= 1 && b.l === b.f && b.f === '97-7-1=10' && c.l === c.f && d.l === d.f
+      && /'\/inventory\/lookup\?lite=1&code=' \+ encodeURIComponent\(c\)/.test(ih) && /\/\^\(X0\|B0\)\[0-9A-Z\]\{8\}\$\/\.test\(c\) \? invAmzBcLoad\(true\) : Promise\.resolve\(null\)/.test(ih), { a, b, c, d });
+  sq.exec("DELETE FROM master_list WHERE base_sku = '97-7-1'; DELETE FROM upc WHERE base_sku = '97-7-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
