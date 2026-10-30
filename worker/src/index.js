@@ -1383,9 +1383,22 @@ async function inventoryBoxCheck(request, url, env, session) {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const r = nyDateRangeUTC(day);
     // ?kind=putshelf → only the Put on Shelf checks, every one of the day (no cut-off)
-    const rows = url.searchParams.get('kind') === 'putshelf'
-      ? await d1All(env, "SELECT * FROM box_check_log WHERE at >= ? AND at < ? AND note LIKE 'Put on shelf%' ORDER BY id DESC LIMIT 20000", [r.start, r.end])
-      : await d1All(env, 'SELECT * FROM box_check_log WHERE at >= ? AND at < ? ORDER BY id DESC LIMIT 500', [r.start, r.end]);
+    if (url.searchParams.get('kind') === 'putshelf') {
+      // 📜 Owner (2026-10-30): "the History only Admin level up can see; search by the name, the date, how many they did on that date, how long
+      // each box took, the average for each box". Everyone gets the day's counts (the "Today:" line); the scans themselves, Admin / Owner only.
+      // ?from=&to= (New York days, up to 93) and ?who= (part of the name) — and every name in those days for the search box.
+      const roles = (session && session.roles) || [], adm = roles.includes('admin') || roles.includes('owner'), D = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '';
+      let from = D(url.searchParams.get('from')) || day, to = D(url.searchParams.get('to')) || from; if (to < from) [from, to] = [to, from];
+      if ((Date.parse(to) - Date.parse(from)) / 86400000 > 92) from = new Date(Date.parse(to) - 92 * 86400000).toISOString().slice(0, 10);
+      const R = { start: nyDateRangeUTC(from).start, end: nyDateRangeUTC(to).end }, who = String(url.searchParams.get('who') || '').trim().slice(0, 40);
+      const cnt = await d1First(env, "SELECT SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS r, SUM(CASE WHEN ok = 1 THEN 0 ELSE 1 END) AS w FROM box_check_log WHERE at >= ? AND at < ? AND note LIKE 'Put on shelf%'", [r.start, r.end]) || {};
+      if (!adm) return J({ ok: true, day, adminOnly: true, checks: [], right: cnt.r || 0, wrong: cnt.w || 0 });
+      const rows = await d1All(env, "SELECT * FROM box_check_log WHERE at >= ? AND at < ? AND note LIKE 'Put on shelf%'" + (who ? ' AND UPPER(by_user) LIKE ?' : '') + ' ORDER BY id DESC LIMIT 20000',
+        who ? [R.start, R.end, '%' + who.toUpperCase() + '%'] : [R.start, R.end]);
+      const people = (await d1All(env, "SELECT DISTINCT by_user FROM box_check_log WHERE at >= ? AND at < ? AND note LIKE 'Put on shelf%' ORDER BY by_user", [R.start, R.end])).map(x => x.by_user).filter(Boolean);
+      return J({ ok: true, day, from, to, who, people, checks: rows, right: cnt.r || 0, wrong: cnt.w || 0 });
+    }
+    const rows = await d1All(env, 'SELECT * FROM box_check_log WHERE at >= ? AND at < ? ORDER BY id DESC LIMIT 500', [r.start, r.end]);
     return J({ ok: true, day, checks: rows, right: rows.filter(x => x.ok).length, wrong: rows.filter(x => !x.ok).length });
   }
   const b = await request.json().catch(() => ({}));
