@@ -11889,5 +11889,34 @@ console.log('\n📥 Put on Shelf: after the box scan, "🗄 BRING IT TO SHELF 25
     /class="ps2-shelfno"[^]*?BRING IT TO SHELF[^]*?font-size:34px[^>]*>25-4-5<\/div>/.test(h) && /class="ps2-spots"[^>]*>📍 BO=1-2-3 · C3=2-1-1<\/div>/.test(h) && h.indexOf('ps2-boxno') < h.indexOf('ps2-shelfno'), h.slice(0, 900));
 }
 
+// Owner (2026-10-30, photo): "Box check — 24-2-6=10-X: we do have boxes of 24-2-6=10X, all the system should know it was the same item, but
+// Stock Out Big Company still lets us rebag — check, fix all that". Rule (owner 2026-10-17): dashes after the last "=" don't count.
+console.log('\n🔤 =10-X = =10X everywhere in the AWD flow: Box check, Stock Out Big Company, the AWD Planner plan');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('94-2-6','94-2-6','dash tee','94-2-6=10X','C1=1-1-1',4,100), ('94-2-6','94-2-6','dash tee','94-2-6=5','C1=1-1-2',4,100)").run();
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('94-2-6=10X','94-2-6','840094260010','10840094260017')").run();
+  await post('/awd/label-map', { shipment: 'STAR-DASH1', labels: [{ sscc: '301952611628559001', sku: '94-2-6=10-X-', part: '94-2-6=10-X', seq: '1-1', units: 10, loc: 'C1=1-1-1' }] });
+  const { readFileSync: rfD } = await import('node:fs');
+  const ih = rfD(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ah = rfD(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var BXC = { label: null };'), ih.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gD = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} });
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gD, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  const wait = () => new Promise(r => setTimeout(r, 150));
+  B.invBoxCheckScan('00301952611628559001'); for (let i = 0; i < 20 && !/inv-bxs-row/.test(gD('inv-bc-res').innerHTML); i++) await wait();
+  B.invBoxCheckScan('840094260010'); for (let i = 0; i < 20 && !/inv-bc-next/.test(gD('inv-bc-res').innerHTML); i++) await wait();
+  const r1 = gD('inv-bc-res').innerHTML;
+  // Stock Out Big Company ranking: 94-2-6=10X is THE part # asked for (=10-X), not "rebag"
+  const fnI = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const rank = new Function('invPart', 'invOnPallet', 'invFifoBoxSize', 'INV_FBA_LOW_CASES', fnI('invRankForCompany') + '; return invRankForCompany;')({ partNum: '94-2-6', fbaParts: [{ part: '94-2-6=10-X' }] }, () => false, () => 0, 2);
+  const R = rank([{ partNum: '94-2-6=5', location: 'BO=1', cases: 9 }, { partNum: '94-2-6=10X', location: 'C5=1', cases: 1 }], '94-2-6=10-X');
+  check('Box check: the Amazon label 94-2-6=10-X- + a box of 94-2-6=10X (its UPC) → ✅ WHOLE BOX (the same item), NOT "🏷 Bring it to the PACKING ROOM — rebag"; Stock Out Big Company: 94-2-6=10X is the exact part # for =10-X (first, no rebag); the AWD Planner and the shipment list read =10-X as =10X too',
+    /✅ WHOLE BOX — put the Amazon label on it/.test(r1) && !/PACKING ROOM/.test(r1) && R[0].partNum === '94-2-6=10X' && R[0]._pick.tier === -1 && R[0]._pick.how === '' && /The exact part #/.test(R[0]._pick.why)
+      && /function awdNz\(x\) \{[^\n]*\.replace\(\/=\(\[\^=\]\*\)\$\/, \(m, t\) => '=' \+ t\.replace\(\/-\+\/g, ''\)\)/.test(ah) && /var key = partNum\.toLowerCase\(\)[^\n]*t\.replace\(\/-\+\/g, ''\)/.test(ah)
+      && /var P = String\(b\.part \|\| b\.sku\)[^\n]*t\.replace\(\/-\+\/g, ''\)/.test(ih) && /forPart: DK\(x\.forPart\)/.test(ih), { r1: r1.slice(-400), R: R.map(l => [l.partNum, l._pick.tier, l._pick.how]) });
+  sq.exec("DELETE FROM master_list WHERE base_sku = '94-2-6'; DELETE FROM upc WHERE base_sku = '94-2-6'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-DASH1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-DASH1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
