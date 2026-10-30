@@ -103,7 +103,8 @@ document.addEventListener('input', function (e) {
         { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' },
         { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' },
-        { key: 'notpallet', label: '…⚠ Labels not on a pallet yet (which ones)', sel: '.inv-bc-notpal' } ] },
+        { key: 'notpallet', label: '…⚠ Labels not on a pallet yet (which ones)', sel: '.inv-bc-notpal' },
+        { key: 'palsec', label: '…🟫 Pallets section (relabel / recount totals + each PALLET)', sel: '.inv-bc-pals' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
         { key: 'quickadd', label: 'Quick Add', sel: '#inv-quickadd-card' },
