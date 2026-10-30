@@ -11936,6 +11936,35 @@ console.log('\n🔤 =10-X = =10X everywhere in the AWD flow: Box check, Stock Ou
   sq.exec("DELETE FROM master_list WHERE base_sku = '94-2-6'; DELETE FROM upc WHERE base_sku = '94-2-6'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-DASH1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-DASH1'");
 }
 
+// Owner (2026-10-30, photos: 26-4-2=1000's Amazon box, a case of 26-4-2=100 with "DO NOT SEPARATE", the phone saying "Bring it to the
+// PACKING ROOM — rebag and label it as 26-4-2=1000"): "for Stock Out Big Company we use it as a whole box — we just put the Do not separate
+// label … check the whole case one, we put it in Reorder → Barcode / vendor for a part #" (Sold as a whole case of 26-4-2=100).
+console.log('\n📦 Box check: a part # "sold as a whole case of" another (Reorder) → that case is the right box (no rebag)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('96-4-2','96-4-2','jclamp','96-4-2=100','2FL=2-2-8',9,1000)").run();
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('96-4-2=100','96-4-2','840096420100','10840096420107')").run();
+  await get('/inventory/lookup?code=96-4-2=100'); // tables ready
+  sq.prepare("INSERT OR REPLACE INTO reorder_case_of (part, target, by_user, at) VALUES ('96-4-2=1000', '96-4-2=100', 'TS', '2026-10-30')").run();
+  await post('/awd/label-map', { shipment: 'STAR-CASE1', labels: [{ sscc: '301952611628559101', sku: '96-4-2=1000-', part: '96-4-2=1000', seq: '1-1', units: 1, loc: '2FL=2-2-8' },
+    { sscc: '301952611628559102', sku: '96-4-2=1000-', part: '96-4-2=1000', seq: '1-2', units: 1, loc: '2FL=2-2-8' }] });
+  const { readFileSync: rfC } = await import('node:fs');
+  const ih = rfC(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var BXC = { label: null };'), ih.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gC = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} });
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gC, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  const wait = () => new Promise(r => setTimeout(r, 150));
+  B.invBoxCheckScan('00301952611628559101'); for (let i = 0; i < 20 && !/inv-bxs-row/.test(gC('inv-bc-res').innerHTML); i++) await wait();
+  B.invBoxCheckScan('10840096420107'); for (let i = 0; i < 20 && !/inv-bc-next|PACKING ROOM/.test(gC('inv-bc-res').innerHTML); i++) await wait();
+  const r1 = gC('inv-bc-res').innerHTML;
+  const kept = sq.prepare("SELECT kind, note FROM awd_box_scan WHERE sscc = '301952611628559101' ORDER BY id DESC LIMIT 1").get() || {};
+  check('Amazon box of 96-4-2=1000 (Reorder: sold as a whole case of 96-4-2=100) + the 96-4-2=100 case scanned → "✅ WHOLE CASE … NO rebag. Put the DO NOT SEPARATE label + the Amazon label on it" (not "PACKING ROOM — rebag"); kept as ok (not a relabel), "whole case of 96-4-2=100"',
+    /✅ WHOLE CASE — 96-4-2=100 is sold as 96-4-2=1000: NO rebag\. Put the DO NOT SEPARATE label \+ the Amazon label on it/.test(r1) && !/PACKING ROOM/.test(r1) && kept.kind === 'ok' && /whole case of 96-4-2=100/.test(kept.note || ''), { r1: r1.slice(-500), kept });
+  sq.prepare("DELETE FROM reorder_case_of WHERE part = '96-4-2=1000'").run();
+  sq.exec("DELETE FROM master_list WHERE base_sku = '96-4-2'; DELETE FROM upc WHERE base_sku = '96-4-2'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-CASE1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-CASE1'");
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
