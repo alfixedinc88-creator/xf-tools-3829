@@ -10384,7 +10384,7 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
       && /class="inv-awdship-done"[^>]*data-s="STAR-SEND2"/.test(c7.h) && sum(c7.A, 'PR') === 1, { d1, d2, nDone, h6: c6.h.slice(-400) });
   check('…a Stock Out from the card says which shipment(s) it was for in its notes ([AWD: name]) — that is how the card knows it was grabbed; the card opens by itself on Big Company',
     /if \(item\.awdShipment && \(item\.dest \|\| invStockOutDest\) === 'company'\) destTag \+= '\[AWD: ' \+ item\.awdShipment \+ '\] ';/.test(ih) && /it\.awdShipment = \(t\.ships \|\| \[\]\)\.join\(' \| '\)/.test(ih)
-      && /id="inv-awdship-card" open /.test(ih) && /if \(aws && aws\.open\) window\.invAwdShipLoad\(\);/.test(ih), null);
+      && /id="inv-awdship-card" style=/.test(ih) /* owner 2026-10-30: closed, still loads */ && /if \(aws\) window\.invAwdShipLoad\(\);/.test(ih), null);
   check('…📤 Send this shipment to Stock Out Big Company button in the Builder (asks first; says sent / not sent), 🧩 check mark; the card reads /awd/ship-send',
     /onclick="awdSendToStockOut\(\)">📤 Send this shipment to Stock Out Big Company<\/button>/.test(ah) && /if \(!confirm\('📤 Send "'/.test(ah) && /✗ Not sent: /.test(ah)
       && /sel: '#awd-send-so'/.test(rfS(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')) && /wFetch\(W \+ '\/awd\/ship-send\?open=1'\)/.test(ih), null);
@@ -11679,6 +11679,19 @@ console.log('\n📷 A barcode in a Pull List cases box is never taken as cases; 
   check('a barcode typed / scanned into a cases box (2810097204621810) → refused, the 2 cases stay, said; 3 → taken. A line saved as 2.81e+24 cases → the scan box shows "⚠ ? cases", says the cases are wrong, won\'t count scans; cases typed 1 → "0 of 1 box" → one scan → grabbed',
     refused && ok3 && asks && blocked && fixed && done, { refused, ok3, asks, blocked, fixed, done, flashes });
   ['invTogglePullCheck', 'invPullScanOpen', 'invPullScanClose', 'invPullScanBox', 'invPullScanSkip', 'invPullScanCases', 'invUpdatePullCases'].forEach(k => { delete globalThis[k]; });
+}
+
+// Owner (2026-10-30): "Stock Out Big Company — the AWD shipments ready and Box check: minimize the info we don't need, so the page is not so
+// much info; for AWD shipments ready, if they have to load, that can show on the front".
+console.log('\n🗜 Stock Out Big Company: AWD shipments ready + Box check closed by default, their status on the closed line');
+{
+  const { readFileSync: rfM } = await import('node:fs');
+  const ih = rfM(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const tagA = (ih.match(/<details class="icard" id="inv-awdship-card"[^>]*>/) || [''])[0], tagB = (ih.match(/<details class="icard" id="inv-boxcheck-card"[^>]*>/) || [''])[0];
+  check('both cards are <details> with no "open" (closed); each closed line has its status (#inv-awdship-sum / #inv-bc-sum); the long how-to is behind ℹ️; ↻ Refresh stays; the AWD list still loads on Big Company while closed and says ⏳ loading / N shipments · cases left to grab',
+    !!tagA && !/\sopen[\s>]/.test(tagA) && !!tagB && !/\sopen[\s>]/.test(tagB) && /id="inv-awdship-sum"/.test(ih) && /id="inv-bc-sum"/.test(ih) && /ℹ️ how it works/.test(ih) && /invAwdShipLoad\(true\);return false">↻ Refresh/.test(ih)
+      && /if \(aws\) window\.invAwdShipLoad\(\);/.test(ih) && /invAwdSum\(shown \? '⏳ checking for changes…' : '⏳ loading the shipments…'\)/.test(ih) && /' left to grab'/.test(ih) && /'<\/b> on a pallet · '/.test(ih)
+      && /id="inv-bc-inp"/.test(ih) && /id="inv-bc-pallets"/.test(ih) && /id="inv-bc-plabels"/.test(ih), { tagA, tagB });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
