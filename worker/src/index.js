@@ -1376,10 +1376,16 @@ async function inventoryBoxCheck(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS box_check_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, label TEXT, product TEXT,
     label_part TEXT, product_part TEXT, ok INTEGER, note TEXT)`).run();
+  // 📥 Put on Shelf (owner 2026-10-30: "history: what time they start the box and when they finish, by who, how many boxes — all the record"):
+  // when the box was scanned (started_at) next to when its shelf was scanned (at).
+  await env.DB.prepare('ALTER TABLE box_check_log ADD COLUMN started_at TEXT').run().catch(() => {});
   if (request.method === 'GET') {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const r = nyDateRangeUTC(day);
-    const rows = await d1All(env, 'SELECT * FROM box_check_log WHERE at >= ? AND at < ? ORDER BY id DESC LIMIT 500', [r.start, r.end]);
+    // ?kind=putshelf → only the Put on Shelf checks, every one of the day (no cut-off)
+    const rows = url.searchParams.get('kind') === 'putshelf'
+      ? await d1All(env, "SELECT * FROM box_check_log WHERE at >= ? AND at < ? AND note LIKE 'Put on shelf%' ORDER BY id DESC LIMIT 20000", [r.start, r.end])
+      : await d1All(env, 'SELECT * FROM box_check_log WHERE at >= ? AND at < ? ORDER BY id DESC LIMIT 500', [r.start, r.end]);
     return J({ ok: true, day, checks: rows, right: rows.filter(x => x.ok).length, wrong: rows.filter(x => !x.ok).length });
   }
   const b = await request.json().catch(() => ({}));
@@ -1388,8 +1394,9 @@ async function inventoryBoxCheck(request, url, env, session) {
   const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 60);
   if (!t(b.label) || !t(b.product)) return J({ ok: false, error: 'label and product needed' }, 400);
   const by = t((session && (session.displayName || session.username)) || '?', 40), at = b.at && !isNaN(Date.parse(b.at)) ? new Date(b.at).toISOString() : new Date().toISOString();
-  const ins = await env.DB.prepare('INSERT INTO box_check_log (at, by_user, label, product, label_part, product_part, ok, note) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(at, by, t(b.label), t(b.product), t(b.labelPart), t(b.productPart), b.ok ? 1 : 0, t(b.note, 200)).run();
+  const startedAt = b.startedAt && !isNaN(Date.parse(b.startedAt)) ? new Date(b.startedAt).toISOString() : null;
+  const ins = await env.DB.prepare('INSERT INTO box_check_log (at, by_user, label, product, label_part, product_part, ok, note, started_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(at, by, t(b.label), t(b.product), t(b.labelPart), t(b.productPart), b.ok ? 1 : 0, t(b.note, 200), startedAt).run();
   if (session && session.userId && !b.ok) await logUserActivity(env, session.userId, 'box_check_wrong', { label: t(b.label), product: t(b.product), labelPart: t(b.labelPart), productPart: t(b.productPart) }).catch(() => {});
   const res = { ok: true, id: ins.meta.last_row_id, by, at };
   if (rid) await recordRequestResult(env, rid, res);

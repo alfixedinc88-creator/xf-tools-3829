@@ -1168,6 +1168,15 @@ window.invCredLogin = async function() {
     <div style="display:flex;gap:6px;margin-top:8px"><button type="button" onclick="invPutShelfReset()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer">↺ Start over (next box)</button></div>
     <div id="ps2-day" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
   </div>
+  <!-- 📜 Owner (2026-10-30): "must have history under Put on Shelf to record everything down" — every box → shelf check, by day. -->
+  <div class="icard" id="ps2-hist-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <div class="icard-label" style="margin:0">📜 Put on Shelf — History</div>
+      <div style="display:flex;gap:6px;align-items:center"><input type="date" id="ps2-hist-date" onchange="invPutShelfDay()" style="padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px">
+        <button type="button" onclick="invPutShelfDay()" style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer">↻</button></div>
+    </div>
+    <div id="ps2-hist" style="margin-top:6px;font-size:12px"></div>
+  </div>
 </div>
 <div class="ipanel" id="inv-panel-check">
   <div class="icard">
@@ -2609,8 +2618,15 @@ window.invCredLogin = async function() {
       var panel = function(title, list, color, open) { return '<details class="inv-bc-pallet"' + (open ? ' open' : '') + ' style="margin-top:6px;border:2px solid ' + color + ';border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:var(--text)">' + title + '</summary>' + tiles(list, color) + '</details>'; };
       var parts = function(l) { var m = {}; l.forEach(function(b) { m[b.part] = 1; }); return Object.keys(m).length; };
       el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + d.boxes + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(' + d.prev + ' of them PREVIOUS PACKED — scanned onto a pallet too)</span>' : '') + '</div>'
-        + invBcNotPal(d) + fixRow
+        + invBcNotPal(d)
+        // 🗂 Owner (2026-10-30): "separate out into two separate sections, we can open whatever one we want" — the labels not on a
+        // pallet yet, and the pallets (relabel / recount totals + each PALLET): each opens / closes by itself, remembered on this computer.
+        + '<details class="inv-bc-pals"' + (invBcOpen('pals') ? ' open' : '') + ' ontoggle="invBcOpenSet(\'pals\', this.open)" style="margin-top:6px;border:2px solid var(--green);border-radius:10px;padding:6px 8px;background:var(--bg2)">'
+        + '<summary style="cursor:pointer;font-weight:800;color:var(--green)">🟫 Pallets — ' + d.pallets.length + ' pallet' + (d.pallets.length === 1 ? '' : 's') + ' · ' + (d.onPallets || 0) + ' Amazon box' + ((d.onPallets || 0) === 1 ? '' : 'es') + ' on them'
+        + ' <span style="font-weight:600;color:var(--text2)">· 🏷 ' + ((fx.relabel || {}).all || 0) + ' to relabel · ✂ ' + ((fx.recount || {}).all || 0) + ' to recount</span></summary>'
+        + fixRow
         + d.pallets.map(function(p) { return panel('🟫 PALLET ' + p.pallet + ' — ' + p.boxes.length + ' Amazon box' + (p.boxes.length === 1 ? '' : 'es') + csTxt(p.boxes) + ' · ' + parts(p.boxes) + ' part #' + (parts(p.boxes) === 1 ? '' : 's') + palFix(p), p.boxes, 'var(--green)', d.pallets.length <= 3); }).join('')
+        + '</details>'
         + (unsent ? '<div class="inv-bc-unsent" style="margin-top:6px;color:#b45309;font-weight:700">📶 ' + unsent + ' box scan' + (unsent === 1 ? '' : 's') + ' on THIS phone not sent yet — they count when WiFi is back</div>' : '')
         + ((d.ready || []).length ? panel('<span style="color:var(--green)">✅ ' + d.ready.length + ' labeled, waiting for a pallet</span>', d.ready, 'var(--green)', true)
           + '<button type="button" class="inv-bc-bulk" onclick="invBcBulkPallet()" style="margin-top:4px;width:100%;padding:10px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">🟫 Put these ' + d.ready.length + ' on a PALLET — then scan the PALLET label</button>' : '')
@@ -2626,6 +2642,9 @@ window.invCredLogin = async function() {
   // here with why (not scanned yet / labeled, no pallet / recount / packing room / not a match); ON + NOT ON = all labels, always.
   var BC_NOTPAL = { notYet: ['⬜', 'not scanned yet', 'var(--text2)'], ready: ['✅', 'labeled — NO PALLET scanned', 'var(--green)'], split: ['✂', 'recount / separate', '#ca8a04'],
     rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'], off: ['📤', 'taken OFF a pallet — fix / reprint the label', '#0e7490'] };
+  // 🗂 each Box check section open / closed as the person left it (this computer), closed at first (owner 2026-10-30)
+  function invBcOpen(k) { try { return localStorage.getItem('xf_bc_open_' + k) === '1'; } catch (e) { return false; } }
+  window.invBcOpenSet = function(k, on) { try { localStorage.setItem('xf_bc_open_' + k, on ? '1' : '0'); } catch (e) {} };
   function invBcNotPal(d) {
     var L = [];
     try { var sm = g('inv-bc-sum'), nn = ['notYet', 'ready', 'split', 'rebag', 'mismatch'].reduce(function(a, k) { return a + (d[k] || []).length; }, 0); // 🗜 the closed card's line (owner 2026-10-30)
@@ -2637,7 +2656,7 @@ window.invCredLogin = async function() {
     var tile = function(n, t, bg) { return '<div style="flex:1;min-width:120px;padding:8px;border-radius:10px;background:' + bg + ';color:#fff;text-align:center"><div style="font-size:24px;font-weight:900">' + n + '</div><div style="font-size:12px;font-weight:700">' + t + '</div></div>'; };
     return '<div class="inv-bc-tot" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + tile(on, '🟫 labels ON a pallet', 'var(--green)') + tile(L.length, '⚠ NOT on a pallet yet', L.length ? '#d97706' : 'var(--text3)') + tile(all, '📦 labels in all', '#7c3aed') + '</div>'
       + (on + L.length !== all ? '<div style="color:var(--red);font-weight:700;margin-top:4px">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' — tell the office</div>' : '')
-      + (L.length ? '<details class="inv-bc-notpal" open style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
+      + (L.length ? '<details class="inv-bc-notpal"' + (invBcOpen('notpal') ? ' open' : '') + ' ontoggle="invBcOpenSet(\'notpal\', this.open)" style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
         + L.map(function(x) { var T = BC_NOTPAL[x.k];
           return '<div class="inv-bc-np" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span>' + T[0] + '</span><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b>' + (x.b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>'
             + (x.b.loc ? ' <span style="color:var(--text3)">· ' + ckE(x.b.loc) + '</span>' : '') + ' <span style="color:' + T[2] + ';font-weight:700">· ' + T[1] + '</span>'
@@ -11709,8 +11728,8 @@ window.invCredLogin = async function() {
   }
   // 📥 Put on Shelf (owner 2026-10-30): 1️⃣ the box (box / bag UPC, part #, FNSKU, Amazon label) → its part #; 2️⃣ the shelf column label —
   // the parent part # printed on the shelf (e.g. 30-3-4) or a spot label (C1=1-2-3: right when SKU Mgr has that item there). Same parent →
-  // ✅; otherwise ❌ NOT MATCH (red, buzz, a voice says "Not match") and they choose: 🔁 scan the shelf again, or ✓ I checked — it goes here
-  // (asks why). Every check is kept (who / when / box / shelf / right or wrong / confirmed) with the 🔍 Box check records. No stock moves.
+  // ✅; otherwise ❌ NOT MATCH (red, buzz, a voice says "Not match") and they have to scan the RIGHT shelf (owner 2026-10-30: "take the 'I
+  // checked' off"). Every check is kept (who / when / box / shelf / right or wrong) with the 🔍 Box check records → 📜 History. No stock moves.
   var PS2 = { box: null };
   function invPs2Say(t) { try { if (window.speechSynthesis) { window.speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.rate = 0.95; window.speechSynthesis.speak(u); } } catch (e) {} }
   function invPs2Buzz() { try { if (navigator.vibrate) navigator.vibrate([400, 120, 400]); } catch (e) {}
@@ -11718,20 +11737,19 @@ window.invCredLogin = async function() {
   function invPs2Rec(shelf, ok, note) {
     var b = PS2.box || {};
     invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: shelf.code, product: b.code || '', labelPart: shelf.what, productPart: b.part || '', ok: ok,
-      note: 'Put on shelf' + (note ? ' — ' + note : ''), at: new Date().toISOString(), _requestId: 'ps2-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })
+      note: 'Put on shelf' + (note ? ' — ' + note : ''), at: new Date().toISOString(), startedAt: b.at || '', _requestId: 'ps2-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })
       .then(function(r) { return r.json(); }).then(function() { invPutShelfDay(); }).catch(function() {});
   }
   window.invPutShelfReset = function() { PS2 = { box: null }; var st = g('ps2-step'); if (st) st.textContent = '1️⃣ Scan the BOX you are putting away'; var r = g('ps2-res'); if (r) r.innerHTML = ''; var i = g('ps2-inp'); if (i && i.focus) i.focus(); };
   window.invPutShelfScan = function(v) {
     v = String(v || '').trim(); if (!v) return;
     var st = g('ps2-step'), res = g('ps2-res');
-    if (PS2.wait) { invFlash('Choose first: 🔁 scan the shelf again, or ✓ I checked', 'warn'); return; }
     if (!PS2.box) {
       if (xfrIsLoc(xfrFrontFix(v))) { invFlash('That is a SHELF label — scan the BOX first', 'error'); return; }
       if (res) res.innerHTML = '<div style="color:var(--text3)">⏳ reading the box…</div>';
       return invBcPart(v).then(function(p) {
         if (!p) { if (res) res.innerHTML = '<div style="color:var(--red);font-weight:800">✗ ' + invEsc(v) + ' — not a box we know. Scan the box label (or the bag).</div>'; return; }
-        PS2.box = { code: v, part: String(p.part).toUpperCase(), name: p.name || '' };
+        PS2.box = { code: v, part: String(p.part).toUpperCase(), name: p.name || '', at: new Date().toISOString() }; // ⏱ started: the box scanned
         if (st) st.textContent = '2️⃣ Now scan the SHELF column label where you put it';
         if (res) res.innerHTML = '<div style="font-size:15px">📦 Box: <b style="font-family:var(--mono)">' + invEsc(PS2.box.part) + '</b> ' + invEsc(PS2.box.name) + '</div>';
       });
@@ -11741,12 +11759,11 @@ window.invCredLogin = async function() {
       if (ok) { if (res) res.innerHTML = '<div class="ps2-ok" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:var(--green)">✅ MATCH — put it here</div>'
           + '<div style="font-size:13px;margin-top:6px">📦 ' + invEsc(b.part) + ' → 🗄 ' + invEsc(shelfTxt) + '</div><div style="font-size:12px;color:var(--text3);margin-top:4px">Scan the next box</div>';
         invPs2Rec({ code: v, what: shelfTxt }, true, ''); PS2 = { box: null }; if (st) st.textContent = '1️⃣ Scan the next BOX'; return; }
-      invPs2Buzz(); invPs2Say('Not match'); PS2.wait = { code: v, what: shelfTxt }; invPs2Rec(PS2.wait, false, 'NOT MATCH'); // kept at once, whatever they do next
+      invPs2Buzz(); invPs2Say('Not match'); invPs2Rec({ code: v, what: shelfTxt }, false, 'NOT MATCH'); // kept at once; the box stays — scan the RIGHT shelf
       if (res) res.innerHTML = '<div class="ps2-bad" style="padding:16px;border-radius:12px;font-size:22px;font-weight:900;text-align:center;color:#fff;background:var(--red)">❌ NOT MATCH — check where you put it!</div>'
         + '<div style="font-size:14px;margin-top:6px">📦 The box is <b style="font-family:var(--mono)">' + invEsc(b.part) + '</b> · 🗄 the shelf is <b style="font-family:var(--mono)">' + invEsc(shelfTxt) + '</b></div>'
-        + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button type="button" class="ps2-again" onclick="invPutShelfAgain()" style="flex:1;min-width:140px;padding:12px;border-radius:9px;border:none;background:var(--accent);color:#fff;font-weight:800;cursor:pointer">🔁 Scan the right shelf</button>'
-        + '<button type="button" class="ps2-confirm" onclick="invPutShelfConfirm()" style="flex:1;min-width:140px;padding:12px;border-radius:9px;border:2px solid var(--red);background:var(--bg);color:var(--red);font-weight:800;cursor:pointer">✓ I checked — it goes here</button></div>';
-      if (st) st.textContent = '⚠ Not a match — choose below';
+        + '<div style="font-size:15px;font-weight:800;margin-top:8px;color:var(--red)">👉 Find the RIGHT shelf for this box and scan its label</div>';
+      if (st) st.textContent = '⚠ Not a match — scan the RIGHT shelf for this box';
     };
     if (isLoc) { // a spot label: right when SKU Mgr has this item (same parent) at that spot
       if (res) res.innerHTML = '<div style="color:var(--text3)">⏳ checking ' + invEsc(code) + '…</div>';
@@ -11762,23 +11779,34 @@ window.invCredLogin = async function() {
       show(sp === bp, sp);
     });
   };
-  window.invPutShelfAgain = function() { PS2.wait = null;
-    var st = g('ps2-step'); if (st) st.textContent = '2️⃣ Scan the RIGHT shelf column label'; var r = g('ps2-res'); if (r) r.innerHTML = '<div style="font-size:15px">📦 Box: <b style="font-family:var(--mono)">' + invEsc(PS2.box ? PS2.box.part : '') + '</b></div>'; var i = g('ps2-inp'); if (i && i.focus) i.focus(); };
-  window.invPutShelfConfirm = function() {
-    var w = PS2.wait; if (!w) return;
-    var why = prompt('✓ The box ' + (PS2.box ? PS2.box.part : '') + ' goes on shelf ' + w.what + ' anyway?\n\nWhy? (kept in the record)', ''); if (why === null) return;
-    if (!String(why).trim()) { invFlash('Say why — e.g. "new spot for it", "the shelf label is wrong"', 'error'); return; }
-    PS2.wait = null; invPs2Rec(w, false, 'NOT MATCH — CONFIRMED by ' + ((INV_CRED_USER && INV_CRED_USER.displayName) || '?') + ': ' + String(why).trim().slice(0, 120));
-    invFlash('✓ Kept on record: ' + (PS2.box ? PS2.box.part : '') + ' put on ' + w.what + ' (confirmed)', 'warn'); window.invPutShelfReset();
-  };
+  // 📜 History: every Put on Shelf check of the day picked (New York day), newest first — time · who · box → shelf · ✅ / ❌; the totals on top.
   window.invPutShelfDay = function() {
-    var el = g('ps2-day'); if (!el) return;
-    wFetch(W + '/inventory/box-check').then(function(r) { return r.json(); }).then(function(d) {
-      if (!d || !d.ok) return; var L = (d.checks || []).filter(function(x) { return /^Put on shelf/.test(x.note || ''); });
-      var ok = L.filter(function(x) { return x.ok; }).length, conf = L.filter(function(x) { return /CONFIRMED/.test(x.note || ''); }), bad = L.length - ok - conf.length;
-      el.innerHTML = 'Today: <b style="color:var(--green)">✅ ' + ok + '</b> matched · <b style="color:var(--red)">❌ ' + bad + '</b> not a match' + (conf.length ? ' · ' + conf.length + ' put there anyway (confirmed)' : '')
-        + (conf.length ? '<div style="margin-top:3px">' + conf.slice(0, 5).map(function(x) { return '⚠ ' + invEsc(xfrFmtT(x.at)) + ' · ' + invEsc(x.by_user) + ' · ' + invEsc(x.product_part) + ' → ' + invEsc(x.label_part) + ' · ' + invEsc(String(x.note || '').replace(/^Put on shelf — /, '')); }).join('<br>') + '</div>' : '');
-    }).catch(function() {});
+    var el = g('ps2-day'), h = g('ps2-hist'), di = g('ps2-hist-date');
+    var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    if (di && !di.value) di.value = today;
+    var day = (di && di.value) || today;
+    if (h) h.innerHTML = '<span style="color:var(--text3)">⏳ Loading…</span>';
+    wFetch(W + '/inventory/box-check?kind=putshelf&day=' + encodeURIComponent(day)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { if (h) h.innerHTML = '<span style="color:var(--red)">Could not load</span>'; return; }
+      var L = (d.checks || []).filter(function(x) { return /^Put on shelf/.test(x.note || ''); }), ok = L.filter(function(x) { return x.ok; }).length;
+      var tot = '<b style="color:var(--green)">✅ ' + ok + '</b> box' + (ok === 1 ? '' : 'es') + ' put away · <b style="color:var(--red)">❌ ' + (L.length - ok) + '</b> not a match';
+      if (el && day === today) el.innerHTML = 'Today: ' + tot;
+      if (!h) return;
+      if (!L.length) { h.innerHTML = '<span style="color:var(--text3)">Nothing put on a shelf ' + (day === today ? 'today' : 'on ' + invEsc(day)) + '.</span>'; return; }
+      var T = function(v) { try { return v ? new Date(v).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—'; } catch (e) { return v || '—'; } };
+      var took = function(x) { var a = Date.parse(x.started_at), b = Date.parse(x.at); if (isNaN(a) || isNaN(b) || b < a) return '—'; var sec = Math.round((b - a) / 1000); return sec < 90 ? sec + ' sec' : Math.round(sec / 6) / 10 + ' min'; };
+      // 👷 by person: boxes put away (✅), not a match, first box started, last box finished
+      var P = {}; L.forEach(function(x) { var w = x.by_user || '?', p = P[w] = P[w] || { ok: 0, bad: 0, first: '', last: '' }, st = x.started_at || x.at;
+        if (x.ok) p.ok++; else p.bad++; if (!p.first || st < p.first) p.first = st; if (!p.last || x.at > p.last) p.last = x.at; });
+      var td = 'style="padding:3px 6px;border-bottom:1px solid var(--border);white-space:nowrap"', th = function(a) { return '<tr>' + a.map(function(x) { return '<th ' + td.replace('padding', 'text-align:left;padding') + '>' + x + '</th>'; }).join('') + '</tr>'; };
+      h.innerHTML = '<div style="margin-bottom:4px">' + L.length + ' scan' + (L.length === 1 ? '' : 's') + ' · ' + tot + '</div>'
+        + '<div style="font-weight:800;margin:6px 0 2px">👷 By person</div><div style="overflow-x:auto"><table class="ps2-hist-p" style="border-collapse:collapse">' + th(['Who', 'Boxes put away', 'Not a match', 'First box started', 'Last box finished'])
+        + Object.keys(P).sort().map(function(w) { var p = P[w]; return '<tr><td ' + td + '><b>' + invEsc(w) + '</b></td><td ' + td + '><b style="color:var(--green)">' + p.ok + '</b></td><td ' + td + '>' + (p.bad ? '<b style="color:var(--red)">' + p.bad + '</b>' : '0') + '</td><td ' + td + '>' + invEsc(T(p.first)) + '</td><td ' + td + '>' + invEsc(T(p.last)) + '</td></tr>'; }).join('') + '</table></div>'
+        + '<div style="font-weight:800;margin:8px 0 2px">📋 Every box (newest first)</div><div style="overflow-x:auto"><table class="ps2-hist-t" style="border-collapse:collapse;width:100%">' + th(['Started (box scanned)', 'Finished (shelf scanned)', 'Took', 'Who', 'Box', 'Shelf', ''])
+        + L.map(function(x) { return '<tr' + (x.ok ? '' : ' style="background:var(--red-bg,#fdf0ee)"') + '><td ' + td + '>' + invEsc(T(x.started_at)) + '</td><td ' + td + '>' + invEsc(T(x.at)) + '</td><td ' + td + '>' + invEsc(took(x)) + '</td><td ' + td + '>' + invEsc(x.by_user || '') + '</td>'
+          + '<td ' + td + '><b style="font-family:var(--mono)">' + invEsc(x.product_part || x.product) + '</b></td><td ' + td + '><span style="font-family:var(--mono)">' + invEsc(x.label_part || x.label) + '</span></td>'
+          + '<td ' + td + '>' + (x.ok ? '<span style="color:var(--green);font-weight:700">✅ match</span>' : '<span style="color:var(--red);font-weight:700">❌ NOT MATCH</span>') + '</td></tr>'; }).join('') + '</table></div>';
+    }).catch(function() { if (h) h.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; });
   };
   // What took this part # off its received spot on record (not off the pallet): "Stock Out 4 (AB, Oct 6) · Transfer 5 → X (CD, Oct 7)".
   function xfrGoneWhy(l) {
@@ -17298,6 +17326,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261030a"></script>
+<script src="xf-access.js?v=20261030b"></script>
 </body>
 </html>
