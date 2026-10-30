@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030b/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030c/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11887,6 +11887,24 @@ console.log('\n📥 Put on Shelf: after the box scan, "🗄 BRING IT TO SHELF 25
   const h = els['ps2-res'].innerHTML;
   check('box 25-4-5=25 scanned → "🗄 BRING IT TO SHELF" 25-4-5 big (34 px) under the box number, and "📍 BO=1-2-3 · C3=2-1-1" (spots with stock of that item, walking order, once each; empty spots / placeholders / other items left out)',
     /class="ps2-shelfno"[^]*?BRING IT TO SHELF[^]*?font-size:34px[^>]*>25-4-5<\/div>/.test(h) && /class="ps2-spots"[^>]*>📍 BO=1-2-3 · C3=2-1-1<\/div>/.test(h) && h.indexOf('ps2-boxno') < h.indexOf('ps2-shelfno'), h.slice(0, 900));
+}
+
+// Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
+// where to put it — easy for the new people".
+console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
+{
+  const { readFileSync: rfM2 } = await import('node:fs');
+  const ih = rfM2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfM2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const map = new Function(ih.slice(ih.indexOf('  var INV_SHELF_MAP = {'), ih.indexOf('  window.invShelfMapHtml = invShelfMapHtml;')) + '; return { html: invShelfMapHtml, M: INV_SHELF_MAP };')();
+  const h202 = map.html('202-4-5=10'), h24 = map.html('24-1-1=5'), h9 = map.html('9-3-1'), all = map.html('');
+  const nums = map.M.faces.map(f => f.n).join(',');
+  check('every shelf number on the owner\'s map is there (2 3 4 5 21 23–34 201 202), each on its own shelf side; 202-4-5=10 → shelf 202 lit (the long back shelf, its bottom side: a red line + arrow, "🗺 Shelf 202 — the red side"); 24-1-1=5 → shelf 24 (top of the 24/25 shelf); 9-3-1 → "Shelf 9 is not on the map yet — tell the office"; the whole map with nothing lit',
+    ['2', '3', '4', '5', '21', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '201', '202'].every(n => nums.split(',').includes(n)) && new Set(map.M.faces.map(f => f.n)).size === map.M.faces.length
+      && /🗺 Shelf <span[^>]*>202<\/span> — the red side/.test(h202) && (h202.match(/ps2-shelf-on/g) || []).length === 1 && /class="ps2-face-line" x1="345" y1="1165" x2="860" y2="1165"/.test(h202)
+      && /class="ps2-face-line" x1="355" y1="535" x2="670" y2="535"/.test(h24) && /Shelf 9 is not on the map yet/.test(h9) && !/ps2-shelf-on/.test(h9) && !/ps2-shelf-on/.test(all) && /🗺 The shelf map/.test(all),
+    { nums, h: h202.slice(0, 200) });
+  check('…shown in 📥 Put on Shelf right after the box scan (under BRING IT TO SHELF), and "🗺 Show the shelf map" opens the whole map any time; 🧩 Pages & Tabs check mark',
+    (ih.match(/\+ invShelfMapHtml\(bx\.part\)/g) || []).length === 3 && /id="ps2-map-btn" onclick="[^"]*invShelfMapHtml\(''\)/.test(ih) && /sel: '\.ps2-map, #ps2-map-btn'/.test(xa), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
