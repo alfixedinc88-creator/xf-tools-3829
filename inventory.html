@@ -2599,8 +2599,15 @@ window.invCredLogin = async function() {
       var panel = function(title, list, color, open) { return '<details class="inv-bc-pallet"' + (open ? ' open' : '') + ' style="margin-top:6px;border:2px solid ' + color + ';border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:var(--text)">' + title + '</summary>' + tiles(list, color) + '</details>'; };
       var parts = function(l) { var m = {}; l.forEach(function(b) { m[b.part] = 1; }); return Object.keys(m).length; };
       el.innerHTML = '<div style="font-weight:800;color:#7c3aed">📦 ' + ckE(d.shipment) + ': ' + d.onPallets + ' of ' + d.boxes + ' boxes on pallets' + (d.prev ? ' <span style="font-weight:400;color:var(--text3)">(' + d.prev + ' of them PREVIOUS PACKED — scanned onto a pallet too)</span>' : '') + '</div>'
-        + invBcNotPal(d) + fixRow
+        + invBcNotPal(d)
+        // 🗂 Owner (2026-10-30): "separate out into two separate sections, we can open whatever one we want" — the labels not on a
+        // pallet yet, and the pallets (relabel / recount totals + each PALLET): each opens / closes by itself, remembered on this computer.
+        + '<details class="inv-bc-pals"' + (invBcOpen('pals') ? ' open' : '') + ' ontoggle="invBcOpenSet(\'pals\', this.open)" style="margin-top:6px;border:2px solid var(--green);border-radius:10px;padding:6px 8px;background:var(--bg2)">'
+        + '<summary style="cursor:pointer;font-weight:800;color:var(--green)">🟫 Pallets — ' + d.pallets.length + ' pallet' + (d.pallets.length === 1 ? '' : 's') + ' · ' + (d.onPallets || 0) + ' Amazon box' + ((d.onPallets || 0) === 1 ? '' : 'es') + ' on them'
+        + ' <span style="font-weight:600;color:var(--text2)">· 🏷 ' + ((fx.relabel || {}).all || 0) + ' to relabel · ✂ ' + ((fx.recount || {}).all || 0) + ' to recount</span></summary>'
+        + fixRow
         + d.pallets.map(function(p) { return panel('🟫 PALLET ' + p.pallet + ' — ' + p.boxes.length + ' Amazon box' + (p.boxes.length === 1 ? '' : 'es') + csTxt(p.boxes) + ' · ' + parts(p.boxes) + ' part #' + (parts(p.boxes) === 1 ? '' : 's') + palFix(p), p.boxes, 'var(--green)', d.pallets.length <= 3); }).join('')
+        + '</details>'
         + (unsent ? '<div class="inv-bc-unsent" style="margin-top:6px;color:#b45309;font-weight:700">📶 ' + unsent + ' box scan' + (unsent === 1 ? '' : 's') + ' on THIS phone not sent yet — they count when WiFi is back</div>' : '')
         + ((d.ready || []).length ? panel('<span style="color:var(--green)">✅ ' + d.ready.length + ' labeled, waiting for a pallet</span>', d.ready, 'var(--green)', true)
           + '<button type="button" class="inv-bc-bulk" onclick="invBcBulkPallet()" style="margin-top:4px;width:100%;padding:10px;border-radius:9px;border:none;background:var(--green);color:#fff;font-weight:800;cursor:pointer">🟫 Put these ' + d.ready.length + ' on a PALLET — then scan the PALLET label</button>' : '')
@@ -2616,6 +2623,9 @@ window.invCredLogin = async function() {
   // here with why (not scanned yet / labeled, no pallet / recount / packing room / not a match); ON + NOT ON = all labels, always.
   var BC_NOTPAL = { notYet: ['⬜', 'not scanned yet', 'var(--text2)'], ready: ['✅', 'labeled — NO PALLET scanned', 'var(--green)'], split: ['✂', 'recount / separate', '#ca8a04'],
     rebag: ['🏷', 'in the packing room', '#ea580c'], mismatch: ['❌', 'not a match', 'var(--red)'], off: ['📤', 'taken OFF a pallet — fix / reprint the label', '#0e7490'] };
+  // 🗂 each Box check section open / closed as the person left it (this computer), closed at first (owner 2026-10-30)
+  function invBcOpen(k) { try { return localStorage.getItem('xf_bc_open_' + k) === '1'; } catch (e) { return false; } }
+  window.invBcOpenSet = function(k, on) { try { localStorage.setItem('xf_bc_open_' + k, on ? '1' : '0'); } catch (e) {} };
   function invBcNotPal(d) {
     var L = [];
     try { var sm = g('inv-bc-sum'), nn = ['notYet', 'ready', 'split', 'rebag', 'mismatch'].reduce(function(a, k) { return a + (d[k] || []).length; }, 0); // 🗜 the closed card's line (owner 2026-10-30)
@@ -2627,7 +2637,7 @@ window.invCredLogin = async function() {
     var tile = function(n, t, bg) { return '<div style="flex:1;min-width:120px;padding:8px;border-radius:10px;background:' + bg + ';color:#fff;text-align:center"><div style="font-size:24px;font-weight:900">' + n + '</div><div style="font-size:12px;font-weight:700">' + t + '</div></div>'; };
     return '<div class="inv-bc-tot" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + tile(on, '🟫 labels ON a pallet', 'var(--green)') + tile(L.length, '⚠ NOT on a pallet yet', L.length ? '#d97706' : 'var(--text3)') + tile(all, '📦 labels in all', '#7c3aed') + '</div>'
       + (on + L.length !== all ? '<div style="color:var(--red);font-weight:700;margin-top:4px">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' — tell the office</div>' : '')
-      + (L.length ? '<details class="inv-bc-notpal" open style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
+      + (L.length ? '<details class="inv-bc-notpal"' + (invBcOpen('notpal') ? ' open' : '') + ' ontoggle="invBcOpenSet(\'notpal\', this.open)" style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
         + L.map(function(x) { var T = BC_NOTPAL[x.k];
           return '<div class="inv-bc-np" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><span>' + T[0] + '</span><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b>' + (x.b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>'
             + (x.b.loc ? ' <span style="color:var(--text3)">· ' + ckE(x.b.loc) + '</span>' : '') + ' <span style="color:' + T[2] + ';font-weight:700">· ' + T[1] + '</span>'
