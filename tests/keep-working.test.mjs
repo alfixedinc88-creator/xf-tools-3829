@@ -7831,7 +7831,7 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261029b/.test(R(f))), null);
+  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030a/.test(R(f))), null);
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -11749,6 +11749,42 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
   check('Scan or Search (Stock Out): an Amazon label opens this, everything else is looked up as before', /if \(invMode === 'out' && window\.invAmlIsLabel && window\.invAmlIsLabel\(code\)\) \{ window\.invAmlOpen\(code\); return; \}/.test(ihA), null);
   ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd'].forEach(k => { delete globalThis[k]; });
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AML1'");
+}
+
+// Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has
+// the parent part # there), then scan the shelving column barcode where they put it. Match → all good; not a match → a warning and a voice
+// 'Not match', they need to confirm, then check where they put them".
+console.log('\n📥 Put on Shelf: scan the box, then the shelf — ✅ match / ❌ NOT MATCH (voice, buzz, confirm with why), every check kept');
+{
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const ih = rfS2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xa = rfS2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var PS2 = { box: null };'), ih.indexOf('  // What took this part # off its received spot on record'));
+  const els = {}, posts = [], said = [], flashes = []; let why = 'new spot for it';
+  const mk = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} }); ['ps2-step', 'ps2-res', 'ps2-inp', 'ps2-day'].forEach(mk);
+  const parts = { '840000000017': '30-3-4=10X', '840000000024': '30-3-4=5' };
+  const env = { g: id => els[id] || null, W: '', invEsc: v => String(v == null ? '' : v), invFlash: (m, t) => flashes.push(t + ': ' + m), xfrFmtT: v => v, INV_CRED_USER: { displayName: 'MG' },
+    invParent: p => String(p).split('=')[0].toUpperCase(), xfrFrontFix: v => v, xfrIsLoc: v => /^[A-Z][A-Z0-9]*=\d/.test(String(v).toUpperCase()),
+    invBcPart: async c => parts[c] ? { part: parts[c], name: 'tee' } : null,
+    _invFetchLookupRaw: async p => ({ partNum: p, locations: [{ partNum: '30-3-4=5', location: 'C1=1-1-1' }, { partNum: '30-3-4=10X', location: 'BO=1-2-3' }] }),
+    invPost: async (u, o) => { posts.push(JSON.parse(o.body)); return { json: async () => ({ ok: true }) }; }, wFetch: async () => ({ json: async () => ({ ok: true, checks: [] }) }),
+    prompt: () => why, navigator: { vibrate() {} }, window: { speechSynthesis: { cancel() {}, speak: u => said.push(u.text) } }, SpeechSynthesisUtterance: function(t) { this.text = t; } };
+  const W = new Function(...Object.keys(env), code + '; return window;')(...Object.values(env));
+  const tick = () => new Promise(r => setImmediate(r)), scan = async v => { W.invPutShelfScan(v); await tick(); await tick(); await tick(); };
+  await scan('C1=1-1-1'); const shelfFirst = flashes.some(f => /That is a SHELF label — scan the BOX first/.test(f));
+  await scan('840000000017'); const step2 = /2️⃣ Now scan the SHELF/.test(els['ps2-step'].textContent) && /30-3-4=10X/.test(els['ps2-res'].innerHTML);
+  await scan('30-3-4'); const m1 = /✅ MATCH — put it here/.test(els['ps2-res'].innerHTML) && posts[0].ok === true && posts[0].productPart === '30-3-4=10X' && posts[0].labelPart === '30-3-4' && posts[0].note === 'Put on shelf';
+  await scan('840000000017'); await scan('31-1-1');
+  const bad = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && said.join() === 'Not match' && posts[1].ok === false && posts[1].note === 'Put on shelf — NOT MATCH' && /🔁 Scan the right shelf/.test(els['ps2-res'].innerHTML) && /✓ I checked — it goes here/.test(els['ps2-res'].innerHTML);
+  await scan('840000000024'); const held = flashes.some(f => /Choose first/.test(f)) && posts.length === 2;
+  W.invPutShelfAgain(); await scan('C1=1-1-1'); const m2 = /✅ MATCH/.test(els['ps2-res'].innerHTML) && posts[2].ok === true && posts[2].labelPart === 'C1=1-1-1';
+  await scan('840000000017'); await scan('C2=2-2-2'); const bad2 = /❌ NOT MATCH/.test(els['ps2-res'].innerHTML) && /SKU Mgr has no 30-3-4 there/.test(els['ps2-res'].innerHTML) && said.length === 2;
+  why = ''; W.invPutShelfConfirm(); const needWhy = flashes.some(f => /Say why/.test(f)) && posts.length === 4;
+  why = 'new spot for it'; W.invPutShelfConfirm(); const conf = posts[4] && posts[4].ok === false && /NOT MATCH — CONFIRMED by MG: new spot for it/.test(posts[4].note) && /1️⃣ Scan the BOX/.test(els['ps2-step'].textContent);
+  check('shelf first → "scan the BOX first"; box 30-3-4=10X + shelf label 30-3-4 → ✅ MATCH (kept); + shelf 31-1-1 → ❌ NOT MATCH, the voice says "Not match", kept; another box before choosing → refused; 🔁 → spot C1=1-1-1 (SKU Mgr has 30-3-4 there) → ✅; spot C2=2-2-2 (none there) → ❌; ✓ I checked needs a why → kept "CONFIRMED by MG: new spot for it"',
+    shelfFirst && step2 && m1 && bad && held && m2 && bad2 && needWhy && conf, { shelfFirst, step2, m1, bad, held, m2, bad2, needWhy, conf, posts: posts.map(p => [p.ok, p.labelPart, p.note]) });
+  check('…a 📥 Put on Shelf tab in Inventory (after Transfer) with its panel, a 🧩 Pages & Tabs check mark; every check goes through the phone outbox (no WiFi → saved, sent once) with the 🔍 Box check records; nothing moves stock',
+    /<button class="itab" id="inv-tab-putshelf" onclick="invSwitchTab\('putshelf'\)">📥 Put on Shelf<\/button>/.test(ih) && /<div class="ipanel" id="inv-panel-putshelf">/.test(ih) && /g\("inv-panel-putshelf"\)\.className/.test(ih)
+      && /sel: '#inv-tab-putshelf'/.test(xa) && /invPost\(W \+ '\/inventory\/box-check'/.test(code) && /_requestId: 'ps2-'/.test(code) && !/inventory\/log|inventory\/transfer/.test(code), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
