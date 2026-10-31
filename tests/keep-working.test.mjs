@@ -12197,6 +12197,27 @@ console.log('\n🔗 Labels saved before the "&" fix (SKU cut to 28-2-3) are put 
   sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SYX5QCC'; DELETE FROM awd_lock WHERE shipment='STAR-SYX5QCC'; DELETE FROM amazon_fba_inventory WHERE sku IN ('28-2-3&4=4XX-','28-2-3=1W.1C','77-7-7=10')");
 }
 
+// Owner (2026-10-31, photo "SKU: 26-2-3 =10" saved as 26-2-3 → 26 pcs a bag): "I can't reload — if I reload, all the items we grabbed before
+// will have issues". The same FNSKU repair puts the cut SKU right, and what was grabbed for the cut part # counts for the right one.
+console.log('\n🔤 Labels cut at a space before "=" (26-2-3 =10 → 26-2-3) put right by their FNSKU — no re-upload; earlier grabs still count');
+{
+  sq.exec(`CREATE TABLE IF NOT EXISTS amazon_fba_inventory (sku TEXT PRIMARY KEY, fnsku TEXT, asin TEXT, product_name TEXT, afn_listing_exists TEXT, mfn_listing_exists TEXT, updated_at TEXT)`);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, afn_listing_exists) VALUES ('96-2-3 =10','X00SILL010','B0C6LNCY1N','Yes'), ('96-2-3=2','X00SILL002','B0SILL0002','Yes')").run();
+  await get('/awd/label-map?code=201952611628559000');
+  const ins = sq.prepare('INSERT OR REPLACE INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, at, by_user) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  const T0 = new Date().toISOString();
+  ins.run('201952611628557903', 'STAR-SPACE1', '96-2-3', '96-2-3', '2-2', 5, 'BARN=15-1-9', 0, 'B0C6LNCY1N', T0, 'TS'); // Box 198: cut at " ="
+  ins.run('201952611628557904', 'STAR-SPACE1', '96-2-3', '96-2-3', '2-1', 5, 'BARN=15-1-9', 0, 'B0C6LNCY1N', T0, 'TS');
+  // grabbed BEFORE the fix, for the cut part # "96-2-3"
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status) VALUES (?, 'OUT', '96-2-3=10', 'BARN=15-1-9', 1, 'MG', '[BIG COMPANY for 96-2-3] [AWD: STAR-SPACE1]', 'Approved')").run(T0);
+  const b = await get('/awd/label-map?code=00201952611628557903');
+  const open = await get('/awd/ship-send?open=1'), sh = (open.shipments || []).find(x => x.shipment === 'STAR-SPACE1') || {}, gr = (open.grabbed || []).filter(x => (x.ships || []).includes('STAR-SPACE1'));
+  check('Box 198 saved as "96-2-3" (label "SKU: 96-2-3 =10", FNSKU B0C6LNCY1N) → read as 96-2-3=10, both boxes; the shipment list says 96-2-3=10; the case grabbed earlier "for 96-2-3" now counts for 96-2-3=10 (nothing grabbed is lost or asked again); the =2 listing is never picked',
+    b.box && b.box.part === '96-2-3=10' && (sh.lines || []).every(x => x.part === '96-2-3=10') && (sh.lines || []).length === 2 && gr.length === 1 && gr[0].forPart === '96-2-3=10'
+      && sq.prepare("SELECT COUNT(*) n FROM awd_label_fix_log WHERE shipment='STAR-SPACE1' AND old_part='96-2-3' AND new_part='96-2-3=10' AND why LIKE '%space before%'").get().n === 2, { box: b.box, lines: sh.lines, gr });
+  sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SPACE1'; DELETE FROM awd_label_fix_log WHERE shipment='STAR-SPACE1'; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SPACE1]%'; DELETE FROM amazon_fba_inventory WHERE sku IN ('96-2-3 =10','96-2-3=2')");
+}
+
 // Owner (2026-10-31): "UPC Barcodes → Saved Shipment: connect it to the AWD Planner, I want it to update automatically, no more manually".
 console.log('\n🔗 AWD Planner → UPC Barcodes Saved Shipment, by itself (export / 📤 send / 🏷 labels)');
 {

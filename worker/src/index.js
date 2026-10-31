@@ -1441,15 +1441,18 @@ async function awdLabelAmpRepair(env) {
       }
     }
     const fixes = [];
-    rows.forEach(r => { const pre = U(r.sku) + '&', c = [...(byF[U(r.fnsku)] || [])].filter(k => awdPartOf(k).startsWith(pre));
-      const parts = [...new Set(c.map(awdPartOf))]; if (parts.length === 1) fixes.push({ r, sku: c[0], part: parts[0] }); });
+    // 🔤 …and the same for a SKU cut at a space before "=" (owner 2026-10-31, photo "SKU: 26-2-3 =10" saved as "26-2-3" → 26 pcs a bag): "I can't
+    // reload — the items we grabbed before would have issues". The FNSKU's listing whose SKU is the cut part + "=…" (exactly one) puts it right.
+    rows.forEach(r => { for (const [cut, why1] of [['&', ''], ['=', 'SKU was cut at the space before "=" when the labels were read — put right from the FNSKU on the label']]) {
+      const pre = U(r.sku) + cut, c = [...(byF[U(r.fnsku)] || [])].filter(k => awdPartOf(k).startsWith(pre));
+      const parts = [...new Set(c.map(awdPartOf))]; if (parts.length === 1) { fixes.push({ r, sku: c[0], part: parts[0], why: why1 }); break; } } });
     if (!fixes.length) return;
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_label_fix_log (id INTEGER PRIMARY KEY AUTOINCREMENT, sscc TEXT, shipment TEXT, old_sku TEXT, new_sku TEXT, old_part TEXT, new_part TEXT, why TEXT, at TEXT, by_user TEXT)').run();
     const now = new Date().toISOString(), why = 'SKU was cut at "&" when the labels were read — put right from the FNSKU on the label';
     const st = []; fixes.forEach(f => {
       st.push(env.DB.prepare('UPDATE awd_label_map SET sku = ?, part = ? WHERE sscc = ? AND sku = ?').bind(f.sku, f.part, f.r.sscc, f.r.sku));
       st.push(env.DB.prepare('INSERT INTO awd_label_fix_log (sscc, shipment, old_sku, new_sku, old_part, new_part, why, at, by_user) VALUES (?,?,?,?,?,?,?,?,?)')
-        .bind(f.r.sscc, f.r.shipment, f.r.sku, f.sku, f.r.part || '', f.part, why, now, 'auto-fix')); });
+        .bind(f.r.sscc, f.r.shipment, f.r.sku, f.sku, f.r.part || '', f.part, f.why || why, now, 'auto-fix')); });
     for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
     // 🔒 a locked plan for the cut part # (it held the wrong item's spots) → that line goes, if no label of the shipment still has that part #
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked', unlocked_at TEXT, unlocked_by TEXT)`).run();
@@ -1541,11 +1544,15 @@ async function awdShipOpen(env, url) {
     const d = last[x.shipment]; // ✅ Done stays done unless the shipment is sent / labelled again afterwards
     if (d && d.action === 'done' && String(d.at) >= String(x.at)) done.push({ shipment: x.shipment, at: d.at, by: d.by_user }); else open.push(x);
   });
-  const grabbed = [];
+  const grabbed = [], fixTo = {}; // 🔤 shipment tag | cut part # → the part # its labels were put right to (awd_label_fix_log)
+  ((await env.DB.prepare("SELECT shipment, old_part, new_part FROM awd_label_fix_log WHERE COALESCE(new_part, '') != '' AND COALESCE(old_part, '') != ''").all().catch(() => ({ results: [] }))).results || [])
+    .forEach(x => { fixTo[AWD_TAG_NAME(x.shipment) + '|' + U(x.old_part)] = U(x.new_part); });
   ((await env.DB.prepare(`SELECT part_num, cases, notes, status FROM inventory_log WHERE type = 'OUT' AND notes LIKE '%[AWD:%' AND COALESCE(status, '') != 'Rejected' AND timestamp >= ?`).bind(since).all().catch(() => ({ results: [] }))).results || []).forEach(r => {
     const m = /\[AWD:([^\]]*)\]/.exec(r.notes || ''), f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(r.notes || '');
     if (!m || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
-    grabbed.push({ part: U(r.part_num), forPart: f ? U(f[1]) : U(r.part_num), cases: parseFloat(r.cases) || 0, ships: m[1].split('|').map(AWD_TAG_NAME).filter(Boolean), status: r.status || '' });
+    const ships = m[1].split('|').map(AWD_TAG_NAME).filter(Boolean); let fp = f ? U(f[1]) : U(r.part_num);
+    for (const t of ships) { const to = fixTo[t + '|' + fp]; if (to) { fp = to; break; } } // 🔤 grabbed for a cut part # (before the label fix) → counts for the right one
+    grabbed.push({ part: U(r.part_num), forPart: fp, cases: parseFloat(r.cases) || 0, ships, status: r.status || '' });
   });
   // 🔒 the locked plans of the open shipments (the phones grab exactly these), each spot with its SKU Mgr row (to put it on a Pull List)
   const locks = {};
