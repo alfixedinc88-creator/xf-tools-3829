@@ -3762,4 +3762,9 @@ XFLang.add({
   "(Mon–Fri {}, Saturday {}) are kept and print on the next business day from 12:00 midnight — Friday evening → Saturday, Saturday afternoon/evening and all of Sunday → Monday. They show on top of the label list with 🖨 Print them now anyway.": "(lun–vie {}, sábado {}) se guardan y se imprimen el siguiente día hábil desde las 12:00 de la medianoche — viernes en la noche → sábado, sábado en la tarde/noche y todo el domingo → lunes. Salen arriba de la lista de etiquetas con 🖨 Imprimirlas ahora de todos modos."
 });
 
+// ── Inventory → Box check: 🅰 the bags need Amazon's barcode (2026-10-31)
+XFLang.add({
+  "The BAGS also need AMAZON's barcode (FNSKU {}) — not our UPC": "Las BOLSAS también necesitan el código de barras de AMAZON (FNSKU {}) — no nuestro UPC"
+});
+
 XFLang._ready();

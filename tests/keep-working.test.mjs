@@ -12412,5 +12412,30 @@ console.log('\n🅰 UPC Barcodes: Amazon\'s label decided by the shipment\'s own
     /2-3-4=2XX<div[^>]*>ASIN B07OURUPC1</.test(h) && /62-1-1=10<div[^>]*>ASIN B07DLFVPB3</.test(h), h.slice(0, 1500));
 }
 
+
+// Owner (2026-10-31): "make sure this shipment only B07DLFVPB3 and B06XQD2LH4 show in 'make sure its Amazon label is on'". "Amazon label"
+// there is the Amazon BOX label every box needs; the BAGS need Amazon's barcode only where the box label's FNSKU is X00… (the shipment's own
+// listing, from Amazon's label file) — B0… (= the ASIN, e.g. 24-4-4=2X- B0CDQKCZ47) = our UPC, nothing said.
+console.log('\n🅰 Box check: "the BAGS also need Amazon\'s barcode" only where the Amazon box label\'s FNSKU is X00…');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('87-1-1','bag a','87-1-1=10','GARAGE',9,100), ('87-2-2','bag b','87-2-2=2X','GARAGE',9,100)").run();
+  const bx = (ss, part, seq, fnsku) => ({ sscc: ss, sku: part + '-', part, seq, units: 10, loc: '', prev: true, fnsku });
+  await post('/awd/label-map', { shipment: 'STAR-FNSKU', labels: [bx('301952611628559001', '87-1-1=10', '1-1', 'X00TEST0001'), bx('301952611628559011', '87-2-2=2X', '2-1', 'B0CDQKCZ47')] });
+  const ihF = require0('node:fs').readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ihF.slice(ihF.indexOf('  var BXC = { label: null };'), ihF.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gX = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} });
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gX, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  const scan = async (label, part) => { B.invBoxCheckScan(label); for (let i = 0; i < 20 && !/inv-bxs-row/.test(gX('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
+    B.invBoxCheckScan(part); for (let i = 0; i < 20 && !/PREVIOUS PACKED box — right item/.test(gX('inv-bc-res').innerHTML); i++) await new Promise(r => setTimeout(r, 100));
+    const h = gX('inv-bc-res').innerHTML; B.invBoxCheckReset(); await new Promise(r => setTimeout(r, 200)); return h; };
+  const hX = await scan('00301952611628559001', '87-1-1=10'), hB = await scan('00301952611628559011', '87-2-2=2X');
+  check('box label FNSKU X00TEST0001 → ✅ right item + "🅰 The BAGS also need AMAZON\'s barcode (FNSKU X00TEST0001) — not our UPC"; FNSKU B0CDQKCZ47 (= ASIN, our UPC) → ✅ right item, NO bag-barcode line',
+    /PREVIOUS PACKED box — right item/.test(hX) && /🅰 The BAGS also need AMAZON's barcode \(FNSKU X00TEST0001\) — not our UPC/.test(hX)
+      && /PREVIOUS PACKED box — right item/.test(hB) && !/BAGS also need AMAZON/.test(hB), { hX: hX.slice(0, 600), hB: hB.slice(0, 600) });
+  sq.exec("DELETE FROM master_list WHERE name IN ('bag a','bag b'); DELETE FROM awd_box_scan WHERE shipment = 'STAR-FNSKU'; DELETE FROM awd_label_map WHERE shipment = 'STAR-FNSKU'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

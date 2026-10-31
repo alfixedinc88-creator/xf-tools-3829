@@ -2398,7 +2398,7 @@ window.invCredLogin = async function() {
         var boxes = d.boxes.slice(), prev = boxes.filter(function(x) { return x.prev; }).length, ss = invBcSscc(code), k = 0;
         boxes.forEach(function(x, i) { if (x.sscc === ss) k = i; });
         if (!boxes.length) { if (res) res.innerHTML = '<div style="font-weight:700">⚠ No Amazon boxes saved for ' + ckE(b.sku) + '</div>'; return; }
-        BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', boxes: boxes, prev: prev, cur: k, step: 'scan', each: BXC.each, q: Promise.resolve() };
+        BXS = { ship: d.shipment, sku: b.sku || b.part, part: String(b.part || '').toUpperCase(), name: b.name || '', fnsku: String(b.fnsku || '').trim().toUpperCase(), boxes: boxes, prev: prev, cur: k, step: 'scan', each: BXC.each, q: Promise.resolve() };
         var hit = -1; boxes.forEach(function(x, i) { if (x.sscc === ss) hit = i; });
         var wasPrev = false;
         if (hit >= 0 && !invBxsWaiting(boxes[hit]) && typeof invBxsDup === 'function') return invBxsDup(BXS, hit); // ⚠ this box was scanned already
@@ -2406,6 +2406,13 @@ window.invCredLogin = async function() {
       });
     }).catch(function(e) { if (res) res.innerHTML = '<div style="color:var(--red)">📶 Could not load this SKU\'s boxes (' + ckE(e && e.message || 'no WiFi?') + ') — scan the label again</div>'; });
   };
+  // 🅰 Owner (2026-10-31): "this shipment only B07DLFVPB3 and B06XQD2LH4 need Amazon's barcode". The FNSKU on the shipment's own Amazon
+  // box label decides: X00… = the BAGS need Amazon's barcode (said on every ✅ box of it); B0… (= the ASIN) = our UPC is fine (nothing said).
+  // "Amazon label" on these screens is the Amazon BOX label (Box 2-2), which every box needs.
+  function invBxsBag(S) {
+    return S && /^X0/.test(S.fnsku || '') ? '<div style="margin-top:8px;padding:8px;border-radius:8px;background:#fff7ed;color:#b45309;font-size:15px;font-weight:900">🅰 The BAGS also need AMAZON\'s barcode (FNSKU '
+      + ckE(S.fnsku) + ') — not our UPC</div>' : '';
+  }
   function invBxsWaiting(b) { return !b.kind || b.kind === 'mismatch' || b.kind === 'off'; } // 📤 taken off a pallet → scan it again
   var BXS_TXT = { '': ['⬜', 'scan this box', 'var(--text3)'], ok: ['✅', 'whole box — Amazon label on, waiting for a pallet', 'var(--green)'], pallet: ['🟫', 'on PALLET', 'var(--green)'],
     split: ['✂', 'recount, or separate the box', '#ca8a04'], rebag: ['🏷', 'in the packing room — rebag + label', '#ea580c'], mismatch: ['❌', 'not a match — scan the right box', 'var(--red)'],
@@ -2526,6 +2533,7 @@ window.invCredLogin = async function() {
       invPost(W + '/inventory/box-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: b.sscc, product: code, labelPart: want, productPart: got, ok: ok, at: new Date().toISOString() }) })
         .then(function(r) { return r.json(); }).then(function() { clearTimeout(BXC.dayT); BXC.dayT = setTimeout(invBoxCheckDay, 1500); }).catch(function() {});
       var done = function(kind, note, big) {
+        if (kind === 'ok' && big && /<\/div>$/.test(big)) big = big.slice(0, -6) + invBxsBag(S) + '</div>'; // 🅰 Amazon's bag barcode, only where its FNSKU is X00…
         b.kind = kind; b.note = note || ''; b.by = invBxsMe(); b.at = new Date().toISOString();
         invBcKeep(b.sscc, { shipment: S.ship, seq: b.seq, part: want }, kind, { productPart: got, note: note || '' }).then(function() { invBcPalletsSoon(); });
         if (kind !== 'mismatch') invBxsNext();
