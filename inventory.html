@@ -3045,15 +3045,19 @@ window.invCredLogin = async function() {
   }
   // the Amazon box labels of the shipments on the list, by area of the spot on each label (PREVIOUS PACKED apart) — the AWD Planner's count
   function invAwdLabelsByArea() {
-    var by = {}; ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels') return;
-      (sh.lines || []).forEach(function(b) { var a = b.prev ? 'PREVIOUS PACKED' : /not on our shelves/i.test(b.loc || '') ? '⚠ not on our shelves' : invAwdArea(b.loc); by[a] = (by[a] || 0) + 1; }); });
+    // ✓ packed (owner 2026-10-31: "21 box labels · 15 already packed · 6 to go"): the labels already checked in Box check, by area
+    var by = {}, pk = AWDS.labPacked = {}; ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels') return;
+      (sh.lines || []).forEach(function(b) { var a = b.prev ? 'PREVIOUS PACKED' : /not on our shelves/i.test(b.loc || '') ? '⚠ not on our shelves' : invAwdArea(b.loc); by[a] = (by[a] || 0) + 1; if (b.packed) pk[a] = (pk[a] || 0) + 1; }); });
     return by;
   }
   function invAwdLabelsLine(by) {
     var K = Object.keys(by); if (!K.length) return '';
     K.sort(function(a, b) { return (a === 'PREVIOUS PACKED' ? -1 : b === 'PREVIOUS PACKED' ? 1 : /^⚠/.test(a) ? 1 : /^⚠/.test(b) ? -1 : invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b)); });
     var tot = K.reduce(function(s, a) { return s + by[a]; }, 0);
-    return '<div class="inv-awdship-labline" style="font-size:12px;color:#1D4ED8;margin:2px 0 6px">🏷 ' + tot + ' box labels by area: ' + K.map(function(a) { return '<b>' + ckE(a) + '</b> ' + by[a]; }).join(' · ')
+    var P = AWDS.labPacked || {}, ptot = K.reduce(function(s, a) { return s + (P[a] || 0); }, 0);
+    return '<div class="inv-awdship-labline" style="font-size:12px;color:#1D4ED8;margin:2px 0 6px">🏷 ' + tot + ' box labels by area'
+      + (ptot ? ' <span style="color:var(--green);font-weight:700">(✓ ' + ptot + ' already packed · ' + (tot - ptot) + ' to go)</span>' : '') + ': '
+      + K.map(function(a) { return '<b>' + ckE(a) + '</b> ' + by[a] + (P[a] ? ' <span style="color:var(--green)">(✓ ' + P[a] + ')</span>' : ''); }).join(' · ')
       + ' <span style="color:var(--text3)">(the buttons: what to grab off the shelf — one case can fill several boxes)</span></div>';
   }
   function invAwdDoneHtml() {
@@ -3132,7 +3136,8 @@ window.invCredLogin = async function() {
           var nBox = labBy[a] || 0; // 🏷 the Amazon box labels this area is for (= the AWD Planner's "Print just one area")
           return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
             + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs'
-            + (nBox ? '<br><span class="inv-awdship-boxes" style="color:#1D4ED8;font-weight:700">for ' + nBox + ' box label' + (nBox === 1 ? '' : 's') + '</span>' : '')
+            + (nBox ? '<br><span class="inv-awdship-boxes" style="color:#1D4ED8;font-weight:700">for ' + nBox + ' box label' + (nBox === 1 ? '' : 's') + '</span>'
+              + ((AWDS.labPacked || {})[a] ? '<br><span class="inv-awdship-packedn" style="font-size:11px;font-weight:700"><span style="color:var(--green)">✓ ' + AWDS.labPacked[a] + ' already packed</span> · <span style="color:#b45309">' + Math.max(0, nBox - AWDS.labPacked[a]) + ' to go</span></span>' : '') : '')
             + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab || nExt ? (nLab ? '🏷 ' + nLab + ' to label' : '') + (nExt ? (nLab ? ' · ' : '') + '✂ ' + nExt + ' extra step' : '') + (nLab + nExt < areas[a].length ? ' · ✓ ' + (areas[a].length - nLab - nExt) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
     if (AWDS.area && areas[AWDS.area]) {
       var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });

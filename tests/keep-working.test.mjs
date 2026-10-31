@@ -12127,6 +12127,9 @@ console.log('\n📦 AWD shipments ready: boxes already packed in Box check come 
   await post('/awd/box-pallet', { sscc: '301952611628559403', kind: 'rebag', shipment: 'STAR-PACK1', seq: '1-3', part: '65-5-5=10', productPart: '65-5-5=5' });
   const s4 = await state();
   const row = (x, need, left, take, packed) => x.need === need && x.left === left && x.take === take && x.packed === packed;
+  // Owner (2026-10-31): "for 21 box labels — show 21 box labels · 15 already packed · 6 to go" → C1 (the labels' spot) and the line by area
+  check('…the area button: "for 3 box labels" + "✓ 1 already packed · 2 to go" (Box 1-1 on the pallet); the labels line by area says C1 3 (✓ 1)',
+    /for 3 box labels<\/span><br><span class="inv-awdship-packedn"[^>]*><span[^>]*>✓ 1 already packed<\/span> · <span[^>]*>2 to go/.test(s1.html) && /<b>C1<\/b> 3 <span[^>]*>\(✓ 1\)/.test(s1.html) && /\(✓ 1 already packed · 2 to go\)/.test(s1.html), s1.html.slice(0, 1500));
   check('3 Amazon boxes of 65-5-5=10 (1 case each) need 3 cases: nothing packed → 3 to grab; Box 1-1 on PALLET 1 (no Stock Out) → 2 left, the 1 shown as "📦 counted from Box check … no Stock Out, SKU Mgr still counts them: 65-5-5=10 1 cs"',
     row(s0, 3, 3, 3, 0) && row(s1, 3, 2, 2, 1) && /counted from Box check/.test(s1.html) && /SKU Mgr still counts them: <b[^>]*>65-5-5=10<\/b> 1 cs/.test(s1.html), { s0: { ...s0, html: '' }, s1: { ...s1, html: s1.html.slice(0, 300) } });
   check('…then 1 case grabbed on the app (Stock Out) for it → still 2 left (grabbed 1 and packed 1 are the SAME box: the more of the two, never both) and no "no Stock Out" warning',
