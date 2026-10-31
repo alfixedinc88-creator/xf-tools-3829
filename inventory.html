@@ -2891,18 +2891,22 @@ window.invCredLogin = async function() {
   window.invAwdShipLoad = function(force) {
     var out = g('inv-awdship-out'); if (!out) return;
     var hs = g('inv-awdship-hist'); if (hs) hs.style.display = invAwdIsAdmin() ? '' : 'none'; // 🕘 Admin / Owner only
+    // ⏳ Owner (2026-10-31, photo: "it keeps saying updating"): a check stuck for 2 minutes (an answer that never came) is let go, so the
+    // card can't hang on "⏳ updating…" forever — the next load starts again.
+    if (AWDS.busy && AWDS.busyAt && Date.now() - AWDS.busyAt > (AWDS.stuckMs || 120000)) { AWDS.busy = false; AWDS.gen = (AWDS.gen || 0) + 1; }
     if (AWDS.busy) { AWDS.again = AWDS.again || !!force; return; }
     var shown = !!AWDS.data && AWDS.takes && out.innerHTML.indexOf('inv-awdship-st') >= 0;
     if (!AWDS.data && invAwdRestore()) { window.invAwdShipRender(); shown = true; }
     if (!AWDS.data && !AWDS.sharedTried) { // 📲 nothing saved on this phone → the list another phone already worked out
-      AWDS.sharedTried = true; AWDS.busy = true; out.innerHTML = '⏳ Getting the list another phone already worked out…'; invAwdSum('⏳ loading…');
+      var g0 = AWDS.gen = (AWDS.gen || 0) + 1; AWDS.sharedTried = true; AWDS.busy = true; AWDS.busyAt = Date.now(); out.innerHTML = '⏳ Getting the list another phone already worked out…'; invAwdSum('⏳ loading…');
       wFetch(W + '/awd/plan-cache').then(function(r) { return r.json(); }).then(function(c) {
         if (c && c.ok && c.payload) { var x = null; try { x = JSON.parse(c.payload); } catch (e) {} if (x && invAwdRestore(x)) { invAwdSave(); AWDS.fromShared = c.by || '?'; } }
-      }).catch(function() {}).then(function() { AWDS.busy = false; window.invAwdShipLoad(force); });
+      }).catch(function() {}).then(function() { if (g0 !== AWDS.gen) return; AWDS.busy = false; window.invAwdShipLoad(force); });
       return;
     }
-    AWDS.busy = true; var started = AWDS.addN || 0;
-    var fin = function() { AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
+    AWDS.busy = true; AWDS.busyAt = Date.now(); var started = AWDS.addN || 0, gen = AWDS.gen = (AWDS.gen || 0) + 1;
+    setTimeout(function() { if (AWDS.busy && gen === AWDS.gen) window.invAwdShipLoad(); }, (AWDS.stuckMs || 120000) + 5000); // ⏳ still stuck after 2 min → let go and start again
+    var fin = function() { if (gen !== AWDS.gen) return; AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
     if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…'; invAwdSum(shown ? '⏳ checking for changes…' : '⏳ loading the shipments…');
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
@@ -2930,12 +2934,20 @@ window.invCredLogin = async function() {
       var prog = function() { var t = (many ? 'Working out where to grab… ' : '🔄 updating ' + todo.length + ' part #' + (todo.length === 1 ? '' : 's') + ' (grabbed or changed since) — ') + doneN + ' of ' + todo.length + (many ? ' part #s' : '');
         invAwdSum('⏳ ' + t);
         if (shown) invAwdStatus('⏳ ' + t + (many ? ' — what is done so far is listed; the rest is coming' : ' — the rest of the list stays as saved')); else out.innerHTML = '⏳ ' + t; };
+      // ⏳ each part # gets 30 s; one that errors or never answers is marked (worked out again next time) — it never stops the rest
+      var oneP = function(P) {
+        var fail = function(why) { return { takes: [], short: [P + ' (' + why + ' — ↻ Refresh)'], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {}, err: true }; };
+        return Promise.race([Promise.resolve().then(function() { return invAwdPlanPart(by[P], ships, got); }).catch(function(e) { return fail('could not work it out: ' + ((e && e.message) || 'error')); }),
+          new Promise(function(res) { setTimeout(function() { res(fail('no answer in 30 s — check WiFi')); }, AWDS.partMs || 30000); })]);
+      };
       var pump = function() {
-        if (doneN >= todo.length) { commit(true); window.invAwdShipRender(); return fin(); }
+        if (gen !== AWDS.gen) return; // let go (stuck) — a newer load is running
+        if (doneN >= todo.length) { try { commit(true); window.invAwdShipRender(); } catch (e) { console.warn('[AWD] render', e); } return fin(); }
         while (running < 4 && i < todo.length) { (function(P) { running++;
-          invAwdPlanPart(by[P], ships, got).then(function(r) { r.gotKey = invAwdGotKey(got, P); r.needKey = needKey(P); parts[P] = r; running--; doneN++;
-            if (doneN < todo.length && doneN % 8 === 0) { commit(false); window.invAwdShipRender(); shown = true; } // 💾 saved so far, and on screen
-            prog(); pump(); }); })(todo[i++]); }
+          oneP(P).then(function(r) { try { r.gotKey = invAwdGotKey(got, P); r.needKey = needKey(P); parts[P] = r;
+              if (doneN + 1 < todo.length && (doneN + 1) % 8 === 0) { commit(false); window.invAwdShipRender(); shown = true; } // 💾 saved so far, and on screen
+            } catch (e) { console.warn('[AWD] part', P, e); }
+            running--; doneN++; try { prog(); } catch (e) {} pump(); }); })(todo[i++]); }
       };
       prog(); pump();
     }).catch(function() { invAwdSum('<span style="color:var(--red)">📶 could not load — check WiFi</span>'); if (shown) invAwdStatus('<span style="color:var(--red)">📶 Could not check for changes — showing the saved list</span>'); else out.innerHTML = '<span style="color:var(--red)">📶 Could not load — check WiFi</span>'; fin(); });
