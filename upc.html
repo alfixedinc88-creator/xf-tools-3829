@@ -4821,12 +4821,55 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
   if (missing) header += ' &nbsp;·&nbsp; <span style="color:#C52A1A">' + missing + ' SKU' + (missing !== 1 ? 's' : '') + ' missing UPC</span>';
   header += '</div>';
 
-  loadJsBarcode(function() {
-    var body = (mode === 'sheet') ? upcRenderSheet(allMatches) : upcRenderCards(allMatches);
-    document.getElementById('upc-results').innerHTML = header + body;
-    upcDrawBarcodes();
+  document.getElementById('upc-results').innerHTML = header + '<div style="font-size:12px;color:var(--text3);padding:6px 0">Checking our UPC list and Amazon labels…</div>';
+  // 🅰 Owner (2026-10-31): "after we load it we still see some with no barcode, and some of them use the Amazon label — let them print the
+  // Amazon label too". Each part # read the same way everywhere (spaces / dashes after "=" don't count: "25-4-2 =5" = 25-4-2=5,
+  // "23-2-1=20-X" = 23-2-1=20X) and looked up in our UPC list; a listing that needs Amazon's barcode (FNSKU X00…) gets 🅰 Print Amazon label.
+  upcEnrichMatches(allMatches).then(function() {
+    var f2 = allMatches.filter(function(m) { return m.upc; }).length, amz = allMatches.filter(function(m) { return m.fnsku; }).length, none = allMatches.filter(function(m) { return !m.upc && !m.fnsku; }).length;
+    var header2 = '<div style="background:#F9FAFB;border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text3)">'
+      + '<strong style="color:var(--text)">' + sourceName + '</strong> &nbsp;·&nbsp; ' + f2 + ' barcode' + (f2 !== 1 ? 's' : '') + ' ready to print'
+      + (amz ? ' &nbsp;·&nbsp; <span style="color:#b45309">🅰 ' + amz + ' use Amazon\'s label</span>' : '')
+      + (none ? ' &nbsp;·&nbsp; <span style="color:#C52A1A">' + none + ' SKU' + (none !== 1 ? 's' : '') + ' with no barcode on file</span>' : '') + '</div>';
+    loadJsBarcode(function() {
+      var body = (mode === 'sheet') ? upcRenderSheet(allMatches) : upcRenderCards(allMatches);
+      document.getElementById('upc-results').innerHTML = header2 + body;
+      upcDrawBarcodes();
+    });
   });
 }
+// our UPC from the D1 list for the ones the old lists missed + Amazon's barcode (X00… FNSKU) for listings that need it
+var _upcAmzP = null;
+function upcEnrichMatches(list) {
+  if (!_upcAmzP) _upcAmzP = wFetch(UPC_W + '/inventory/amazon-barcode').then(function(r) { return r.json(); }).catch(function() { _upcAmzP = null; return {}; });
+  return _upcAmzP.then(function(am) {
+    var by = {}; ((am && am.list) || []).forEach(function(x) { var f = String(x.fnsku || '').toUpperCase(); if (!/^X0/.test(f)) return;
+      [x.sku, x.part].forEach(function(k) { k = upcPartKey(k); if (k && !by[k]) by[k] = { fnsku: f, name: x.name || '' }; }); });
+    return Promise.all(list.map(function(m) {
+      var k = upcPartKey(m.partNum), a = by[k]; if (a) { m.fnsku = a.fnsku; m.amzName = a.name; }
+      if (m.upc) return null;
+      return wFetch(UPC_W + '/inventory/upc-d1-lookup?q=' + encodeURIComponent(k)).then(function(r) { return r.json(); }).then(function(d) {
+        var row = ((d && d.results) || []).filter(function(r) { var u = String(r.insideUpc || '').replace(/\D/g, ''); return upcPartKey(r.sku) === k && /^\d{12}$/.test(u); })[0];
+        if (row) m.upc = String(row.insideUpc).replace(/\D/g, '');
+      }).catch(function() {});
+    }));
+  });
+}
+// 🅰 one row's Amazon label: how many (the box next to the button), printed 2×1 like the AWD box card; kept in the record
+function upcAmzBtnHtml(m) {
+  return '<span style="white-space:nowrap"><input type="number" min="1" max="500" value="1" style="width:52px;padding:3px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;text-align:center"> '
+    + '<button class="btn btn-sm" style="font-size:11px;background:#fff7ed;border:1.5px solid #d97706;color:#b45309;font-weight:700" data-fnsku="' + upcEsc(m.fnsku) + '" data-name="' + upcEsc(m.amzName || '') + '" data-pn="' + upcEsc(m.partNum) + '" onclick="upcPrintAmzFromBtn(this)">🅰 Print Amazon label</button></span>';
+}
+window.upcPrintAmzFromBtn = function(btn) {
+  var q = btn.parentNode.querySelector('input'), n = Math.min(Math.max(parseInt(q && q.value, 10) || 1, 1), 500);
+  var fn = btn.getAttribute('data-fnsku'), name = btn.getAttribute('data-name'), pn = btn.getAttribute('data-pn');
+  loadJsBarcode(function() {
+    var labels = []; for (var i = 0; i < n; i++) labels.push(upcFnskuSvg(fn, name));
+    upcPrintLabels(labels);
+    wFetch(UPC_W + '/awd/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'bag_print', detail: { part: pn, what: 'Amazon barcode ' + fn, qty: n, from: 'shipment list' } }) }).catch(function() {});
+  });
+};
 
 // Build barcode card HTML
 function upcRenderCards(matches) {
@@ -4839,9 +4882,10 @@ function upcRenderCards(matches) {
       out += '<svg id="' + bcId + '" data-upc="' + m.upc + '" style="width:100%;margin:10px 0"></svg>';
       out += '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);margin-bottom:14px">' + m.upc + '</div>';
       out += '<button class="btn btn-primary" style="width:100%;font-size:12px" onclick="upcPrint(\'' + bcId + '\',\'' + m.partNum.replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\',\'' + m.upc + '\')">&#128424; Print Label</button>';
-    } else {
+    } else if (!m.fnsku) {
       out += '<div style="padding:24px 0;color:var(--text3);font-size:12px">&#128683; No UPC-A on file</div>';
     }
+    if (m.fnsku) out += '<div style="margin-top:8px;font-size:11px;color:#b45309">🅰 Amazon\'s label: <b style="font-family:var(--mono)">' + upcEsc(m.fnsku) + '</b></div><div style="margin-top:4px">' + upcAmzBtnHtml(m) + '</div>';
     out += '</div>';
   });
   out += '</div>';
@@ -5121,7 +5165,8 @@ function upcLoadSaved() {
 // ── SHEET VIEW — compact table for uploaded shipments ──
 function upcRenderSheet(matches) {
   var withUPC = matches.filter(function(m) { return m.upc; });
-  var noUPC   = matches.filter(function(m) { return !m.upc; });
+  var amzOnly = matches.filter(function(m) { return !m.upc && m.fnsku; }); // 🅰 Amazon's label only (owner 2026-10-31)
+  var noUPC   = matches.filter(function(m) { return !m.upc && !m.fnsku; });
 
   var out = '<div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;overflow:hidden;">';
   out += '<table style="width:100%;border-collapse:collapse;">';
@@ -5140,6 +5185,13 @@ function upcRenderSheet(matches) {
     out += '<td style="padding:8px 16px;font-size:11px;font-family:var(--mono);color:var(--text3)">' + m.upc + '</td>';
     out += '<td style="padding:8px;text-align:center"><button class="btn btn-sm btn-primary" data-bcid="' + bcId + '" data-upc="' + m.upc + '" data-pn="' + m.partNum + '" onclick="upcPrintFromBtn(this)">&#128424;</button></td>';
     out += '</tr>';
+    if (m.fnsku) out += '<tr class="upc-amz-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb"><td style="padding:4px 16px;font-size:11px;color:#b45309">↳ 🅰 also Amazon\'s label</td><td colspan="2" style="padding:4px 16px;font-size:11px;font-family:var(--mono);color:#b45309">' + upcEsc(m.fnsku) + '</td><td style="padding:4px 8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
+  });
+  amzOnly.forEach(function(m) {
+    out += '<tr class="upc-amz-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb">';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + upcEsc(m.partNum) + '</td>';
+    out += '<td colspan="2" style="padding:8px 16px;font-size:11px;color:#b45309">🅰 Uses Amazon\'s label (no our UPC) — FNSKU <b style="font-family:var(--mono)">' + upcEsc(m.fnsku) + '</b></td>';
+    out += '<td style="padding:8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
   });
 
   if (noUPC.length) {

@@ -2448,7 +2448,8 @@ function awdActTxt(r) {
     case 'lock': return '🔒 Locked <b>' + h(d.shipment) + '</b> — ' + h(d.cases) + ' cases at ' + h(d.spots) + ' spots held';
     case 'unlock': return '🔓 Unlocked <b>' + h(d.shipment) + '</b>';
     case 'label_reprint': return '🖨 Reprinted ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + ' of ' + h(d.shipment || '?') + ' (not on a pallet yet): Box ' + L(d.boxes);
-    case 'bag_print': return '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' for Box ' + h(d.box) + ' (' + h(d.part) + ') of ' + h(d.shipment || '?') + ' — from its Amazon label (UPC Barcodes)';
+    case 'bag_print': return d.box ? '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' for Box ' + h(d.box) + ' (' + h(d.part) + ') of ' + h(d.shipment || '?') + ' — from its Amazon label (UPC Barcodes)'
+      : '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' (' + h(d.part) + ') — from the shipment list (UPC Barcodes)';
     case 'labels_bring_back': return '↩ Brought back the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels)';
     case 'label_map': return '🏷 Made the box labels of <b>' + h(d.shipment || '?') + '</b> (' + h(d.boxes) + ' boxes)';
     case 'ship_send': return '📤 Sent <b>' + h(d.shipment) + '</b> to Stock Out Big Company (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';
