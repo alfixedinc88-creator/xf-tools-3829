@@ -12081,5 +12081,40 @@ console.log('\n✗ None Found (both tabs): no questions — logged (nothing take
       && flashes.some(f => /stock NOT taken off/.test(f) && /C1=9-4-1/.test(f)), { modals, counts, list, flashes });
 }
 
+console.log('\n🔗 "&" part #s (a hot & cold set, 28-2-3&4) are their own item everywhere — never read as 28-2-3');
+{
+  // Owner (2026-10-31, AWD label photo "SKU: 28-2-3&4=4XX-" → "GRAB … 28-2-3=1W.1C"): "why we need 28-2-3&4=4XX, that's 3/4 push fit ball valve hot
+  // and cold, but our system only tell our grabber to grab the 28-2-3, only the cold … please check all make sure everything is right and fix".
+  const { readFileSync: rfB } = await import('node:fs');
+  const ah = rfB(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const L = new Function('S', ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('async function awdLabelsDo(file) {')) + '; return { awdLabelSkus, awdLabelMatch };')({ shipment: { '28-2-3&4=4XX-': {} } });
+  const got = L.awdLabelSkus([{ y: 10, text: 'AWD Box 257 of 324 28 lbs' }, { y: 20, text: 'SKU: 28-2-3&4=4XX- Units: 10' }, { y: 30, text: 'FNSKU: B0D1ZPTQ1H' }]);
+  check('AWD Planner reads the label SKU whole: "SKU: 28-2-3&4=4XX- Units: 10" → 28-2-3&4=4XX- (was 28-2-3), and matches the Shipment Builder row',
+    got.length === 1 && got[0].sku === '28-2-3&4=4XX-' && L.awdLabelMatch(got[0].sku) === '28-2-3&4=4XX-', got);
+  const wsCode = ah.slice(ah.indexOf('function normalizeAmazonSKU(sku) {'), ah.indexOf('// ── BOX COUNT FROM SHIPMENT BUILDER ──'));
+  const WH = { loaded: true, stock: {
+    '28-2-3=1w.1c': [{ partNum: '28-2-3=1W.1C', location: 'BARN=9-1-5', casesNum: 4, eachPcs: 28 }], '28-2-3=5w.1c': [{ partNum: '28-2-3=5W.1C', location: 'BARN=9-1-5', casesNum: 2, eachPcs: 25 }],
+    '28-2-4=1w.1c': [{ partNum: '28-2-4=1W.1C', location: 'BARN=9-1-6', casesNum: 3, eachPcs: 28 }],
+    '28-2-3&4=4xx': [{ partNum: '28-2-3&4=4XX', location: 'C2=3-1-1', casesNum: 2, eachPcs: 40 }], '28-2-3&4=1': [{ partNum: '28-2-3&4=1', location: 'C2=3-1-2', casesNum: 5, eachPcs: 100 }] } };
+  const ws = new Function('WH', wsCode + '; return checkWarehouseStock;')(WH)('28-2-3&4=4XX-');
+  const parts = ws.rows.map(r => r.partNum).sort();
+  check('…the grab plan looks only at 28-2-3&4 (exact 28-2-3&4=4XX, same set 28-2-3&4=1) — never 28-2-3 (cold) or 28-2-4 alone',
+    ws.exactRows.length === 1 && ws.exactRows[0].partNum === '28-2-3&4=4XX' && parts.join(',') === '28-2-3&4=1,28-2-3&4=4XX', parts);
+  const wsCold = new Function('WH', wsCode + '; return checkWarehouseStock;')(WH)('28-2-3=1W.1C');
+  check('…and 28-2-3 (cold) still finds only 28-2-3 rows, not the set', wsCold.rows.every(r => /^28-2-3=/.test(r.partNum)) && wsCold.rows.length === 2, wsCold.rows.map(r => r.partNum));
+
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('28-2-3','28-2-3','3/4 PB cold','28-2-3=1W.1C','BARN=9-1-5',4,28), ('28-2-3&4','28-2-3&4','3/4 PB hot & cold','28-2-3&4=4XX','C2=3-1-1',2,40)").run();
+  const lk = await get('/inventory/lookup?code=' + encodeURIComponent('28-2-3&4=4XX'));
+  const lkParts = [...new Set((lk.locations || []).map(l => l.partNum))];
+  check('Stock Out lookup of 28-2-3&4=4XX → the set only (C2=3-1-1), not the cold 28-2-3', lk.partNum && /^28-2-3&4/.test(lk.partNum) && lkParts.length && lkParts.every(p => /^28-2-3&4=/.test(p)), { pn: lk.partNum, lkParts });
+  const sc = await post('/ship/stock-check', { items: [{ sku: '28-2-3&4=4XX', bin: '28-2-3&4' }, { sku: '28-2-3=1W.1C', bin: '28-2-3' }] });
+  check('Pack & Ship stock check: bin 28-2-3&4 is read as the set (its 2 cases), 28-2-3 as the cold one (its 4) — not mixed',
+    sc.results && sc.results[0] && !sc.results[0].noStockFound && sc.results[1] && !sc.results[1].noStockFound, sc.results);
+  const wk = rfB(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the Pack & Ship photo for a line takes 28-2-3&4 as its parent (own photo, not the cold one\'s)', (wk.match(/\/\^\\d\+\(-\\d\+\)\+\(&\\d\+\)\?\(=\|\$\)\/\.test\(sku\) \? sku\.split\('='\)\[0\]/g) || []).length === 4
+    && /function _psIsFamilyCode\(b\) \{ return \/\^\[A-Z0-9\]\+\(-\[A-Z0-9\]\+\)\+\(&\[A-Z0-9\]\+\)\?\$\//.test(wk), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('28-2-3','28-2-3&4')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
