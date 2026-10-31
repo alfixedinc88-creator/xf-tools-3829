@@ -83,6 +83,7 @@ document.addEventListener('input', function (e) {
       { key: 'search', label: '🔍 Search by SKU or UPC', sel: '#upc-app div:has(> div > #upc-search-inp)' },
       { key: 'upload', label: '📂 Upload Exported Shipment', sel: '#upc-app div:has(> #upc-drop-zone)' },
       { key: 'saved', label: 'Saved shipment banner', sel: '#upc-saved-banner' },
+      { key: 'awdopen', label: '📦 AWD shipments ready (live from the AWD Planner)', sel: '#upc-awdopen-card' },
       { key: 'live', label: 'Live shipment banner', sel: '#upc-shipment-banner' },
       { key: 'verify', label: '📷 Scan & Verify', sel: '#upc-scan-bar' },
       { key: 'awdmatch', label: '🔁 AWD Label ↔ Box UPC Check', sel: '#upc-app div:has(> #awd-match-status)' } ] },

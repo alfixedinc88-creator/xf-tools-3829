@@ -7844,7 +7844,9 @@ console.log('\n📴 Offline mode step 1: pages open with no internet, last saved
     /if \(pageOutbox\) throw new Error\('Network unavailable'\);/.test(sw) && /parsed\._requestId = requestId;/.test(sw) && /'\/inventory\/log',\s*'\/inventory\/transfer',/.test(sw), null);
   check('📴 bar on every page while offline (English + 中文), with how many are saved on this device (Inventory outbox + Print Log scans + other saved entries); gone when back, and the saved ones are sent',
     /el\.id = 'xf-offline-bar'/.test(xa) && /没有网络/.test(xa) && /k\.indexOf\('xf_inv_outbox_'\) === 0 \|\| k === 'ps_pl_queue'/.test(xa) && /postMessage\(\{ type: 'ONLINE', token: localStorage\.getItem\('xf_cred_token'\) \|\| '' \}\)/.test(xa) && /d\.type === 'XF_NET'/.test(xa), null);
-  check('every page loads the new xf-access.js / xf-signout.js', htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).every(f => /xf-access\.js\?v=20261030c/.test(R(f))), null);
+  { // the same xf-access.js on every page, this version (20261030c, the 📴 offline bar) or newer — a later bump must not fail this
+    const vs = htmls.filter(f => /xf-access\.js\?v=/.test(R(f))).map(f => (R(f).match(/xf-access\.js\?v=(\w+)/) || [])[1]);
+    check('every page loads the new xf-access.js / xf-signout.js', vs.length > 0 && vs.every(v => v === vs[0]) && vs[0] >= '20261030c', vs); }
 }
 
 // Owner (2026-10-19): "we only have 4 scanners and 6 people — someone signs out and in on the same scanner" (with no internet).
@@ -12348,6 +12350,30 @@ console.log('\n🚫 Sold Out: Walmart "no item found for sku" → finds Walmart\
     && lg && lg.ok === 1 && /Walmart SKU 30-3-6=25x \(sheet says 30-3-6=25X\)/.test(lg.detail), { st, puts, lg });
   globalThis.fetch = realFetch;
   sq.exec("DELETE FROM listing_titles WHERE listing_id = '30-3-6=25x'; DELETE FROM listing_qty_log WHERE listing_id = '5456012100'");
+}
+
+
+// Owner (2026-10-31): "the Saved Shipment still shows the old shipment" — UPC Barcodes lists every AWD shipment ready (live, the
+// same list as Stock Out Big Company), newest first, each with Load Barcodes → its SKUs (no export / upload step needed).
+console.log('\n📦 UPC Barcodes: AWD shipments ready, live from the AWD Planner (newest first, Load Barcodes)');
+{
+  const uh = require0('node:fs').readFileSync(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const code = uh.slice(uh.indexOf('async function upcLoadAwdOpen()'), uh.indexOf('async function upcAutoLoadSavedShipment()'));
+  const els = { 'upc-awdopen-card': { style: {} }, 'upc-awdopen-list': { innerHTML: '' } }, rendered = [];
+  const g = { window: {}, document: { getElementById: id => els[id] || null }, console,
+    wFetch: async u => ({ json: async () => /\/awd\/ship-send\?open=1$/.test(u) ? { ok: true, shipments: [
+      { shipment: 'OLD-1', source: 'send', at: '2026-10-29T15:00:00Z', by: 'MG', lines: [{ sku: '30-3-4=10X', part: '30-3-4=10X' }] },
+      { shipment: 'NEW-2', source: 'labels', at: '2026-10-31T16:00:00Z', by: 'TS', lines: [{ sku: '27-3-1=5XX' }, { sku: '27-3-1=5XX' }, { sku: '925-4-2 =5' }, { part: '61-1-1=10' }] } ] } : {} }),
+    upcRenderFromSkuList: (skus, name, mode) => rendered.push({ skus, name, mode }) };
+  const api = new Function(...Object.keys(g), code + '; return { upcLoadAwdOpen };')(...Object.values(g));
+  await api.upcLoadAwdOpen();
+  const h = els['upc-awdopen-list'].innerHTML;
+  g.window.upcLoadAwdOpenShip(0);
+  check('the card shows (newest first: NEW-2 "newest", 🏷 labels made, 3 SKUs, then OLD-1); Load Barcodes on NEW-2 → its SKUs once each, named "AWD NEW-2"',
+    els['upc-awdopen-card'].style.display === 'block' && h.indexOf('NEW-2') < h.indexOf('OLD-1') && /NEW-2<\/b> <span[^>]*>newest/.test(h) && /3 SKUs · 🏷 Amazon box labels made/.test(h)
+      && rendered.length === 1 && rendered[0].name === 'AWD NEW-2' && rendered[0].skus.join() === '27-3-1=5XX,925-4-2 =5,61-1-1=10', { h: h.slice(0, 400), rendered });
+  check('…loaded when the page opens (next to Saved Shipment, which stays as it was) and has a 🧩 Pages & Tabs check mark',
+    /upcAutoLoadSavedShipment\(\);\n  upcLoadAwdOpen\(\);/.test(uh) && /id="upc-saved-banner"/.test(uh) && /sel: '#upc-awdopen-card'/.test(require0('node:fs').readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
