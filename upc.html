@@ -346,6 +346,14 @@ body {
       </div>
     </div>
 
+    <!-- 📦 Owner (2026-10-31): "the Saved Shipment still shows the old shipment" — every AWD shipment ready (not ✅ Done), live from
+         the AWD Planner (the same list as Stock Out Big Company → AWD shipments ready), newest first: tap Load Barcodes on the one you
+         are working on. No export / upload step needed. -->
+    <div id="upc-awdopen-card" style="background:#EFF6FF;border:1.5px solid #93C5FD;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:none;">
+      <div style="font-size:13px;font-weight:700;color:#1E3A8A">📦 AWD shipments ready <span style="font-weight:400;opacity:.8">— live from the AWD Planner, newest first</span></div>
+      <div id="upc-awdopen-list" style="margin-top:6px"></div>
+    </div>
+
     <!-- Live shipment banner (only if SKUs are in current builder) -->
     <div id="upc-shipment-banner" style="background:#EEF2FD;border:1.5px solid #C7D7FD;border-radius:12px;padding:14px 20px;margin-bottom:20px;display:none;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
@@ -4130,7 +4138,7 @@ function awdHandleScan(raw) {
 
 </div>
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261030c"></script>
+<script src="xf-access.js?v=20261031u"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
@@ -4315,9 +4323,44 @@ function upcOnLaunch() {
   upcCheckShipment();
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
+  upcLoadAwdOpen();
   // Ensure FNSKU map is loaded for AWD Label Match feature
   if (!AWD_DB.loaded) loadAWDPlannerDB();
 }
+
+// 📦 AWD shipments ready (not ✅ Done), live — /awd/ship-send?open=1, the list Stock Out Big Company uses. Each one: its Amazon SKUs →
+// the same barcode list as Saved Shipment → Load Barcodes (our UPC, or 🅰 Print Amazon label). Owner 2026-10-31.
+async function upcLoadAwdOpen() {
+  var card = document.getElementById('upc-awdopen-card'), box = document.getElementById('upc-awdopen-list');
+  if (!card || !box) return;
+  try {
+    var res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/ship-send?open=1');
+    var d = await res.json();
+    var L = ((d && d.shipments) || []).slice().sort(function(a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
+    window._upcAwdOpen = L;
+    if (!L.length) { card.style.display = 'none'; return; }
+    var esc = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+    box.innerHTML = L.map(function(sh, i) {
+      var n = upcAwdOpenSkus(sh).length;
+      var when = sh.at ? new Date(sh.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:6px 0;border-top:' + (i ? '1px solid #BFDBFE' : 'none') + '">'
+        + '<div style="font-size:12px;color:#1E3A8A"><b>' + esc(sh.shipment) + '</b>' + (i === 0 ? ' <span style="background:#1D4ED8;color:#fff;border-radius:6px;padding:1px 6px;font-size:11px">newest</span>' : '')
+        + '<div style="opacity:.8">' + n + ' SKUs · ' + (sh.source === 'labels' ? '🏷 Amazon box labels made' : '📤 sent to Stock Out') + (when ? ' · ' + esc(when) : '') + (sh.by ? ' · ' + esc(sh.by) : '') + '</div></div>'
+        + '<button class="btn btn-success" style="font-size:12px" onclick="upcLoadAwdOpenShip(' + i + ')">Load Barcodes</button></div>';
+    }).join('');
+    card.style.display = 'block';
+  } catch (e) { console.log('[UPC] AWD shipments ready not loaded:', e.message); }
+}
+function upcAwdOpenSkus(sh) {
+  var seen = {}, out = [];
+  ((sh && sh.lines) || []).forEach(function(x) { var k = String(x.sku || x.part || '').trim(); if (k && !seen[k.toUpperCase()]) { seen[k.toUpperCase()] = 1; out.push(k); } });
+  return out;
+}
+window.upcLoadAwdOpenShip = function(i) {
+  var sh = (window._upcAwdOpen || [])[i]; if (!sh) return;
+  var skus = upcAwdOpenSkus(sh); if (!skus.length) return;
+  upcRenderFromSkuList(skus, 'AWD ' + sh.shipment, 'sheet');
+};
 
 async function upcAutoLoadSavedShipment() {
   try {
