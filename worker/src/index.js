@@ -1840,7 +1840,8 @@ async function awdBoxUpc(url, env) {
 // GET ?prints=<shipment> — who printed which area of those box labels (everyone signed in: the 🖨 buttons say "printed").
 // GET ?tab=builder&days=N — everything done in the Shipment Builder (Admin / Owner only).
 const AWD_BUILDER_ACTS = ['builder_add', 'builder_remove', 'builder_qty', 'builder_clear', 'builder_add_all', 'builder_remove_all', 'make_template',
-  'label_print', 'labels_bring_back', 'label_reprint', 'lock', 'unlock'];
+  // 📦 bag_print: UPC Barcodes → an AWD box's bag UPC / Amazon barcode printed from its Amazon label (owner 2026-10-31)
+  'label_print', 'labels_bring_back', 'bag_print', 'label_reprint', 'lock', 'unlock'];
 const AWD_BUILDER_LOGGED = AWD_BUILDER_ACTS.map(a => 'awd_' + a).concat(['awd_label_map', 'awd_ship_send', 'awd_shipment_export', 'awd_prep_fix']);
 async function awdActivity(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
