@@ -12010,6 +12010,43 @@ console.log('\n📦 UPC Barcodes: scan an AWD box\'s Amazon label → print its 
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-UPCBOX1'; DELETE FROM upc WHERE base_sku = '97-1-1'");
 }
 
+// Owner (2026-10-31, screenshot of UPC Barcodes → Saved Shipment → Load Barcodes): "after we load it we still see something there not with
+// barcode, and some of it it was using amazon label, I want they be able to print it out with Amazon label too".
+console.log('\n🅰 UPC Barcodes shipment list: part #s with spaces / dashes found in our UPC list; Amazon-label listings get 🅰 Print Amazon label');
+{
+  await get('/inventory/amazon-barcode');
+  const now = new Date().toISOString();
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('923-2-1=20-X', 'X00AMZ2321', 'B0AMZ02321', 'not-our-brand valve 20 pack', 'Yes', now);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('905-2-2=10XX', 'X00AMZ0522', 'B0AMZ00522', 'brass tee 10 pack', 'Yes', now);
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('925-4-2=5','925-4-2','840925420051','10840925420058')").run();
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const uh = rfS2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const fnU = n => { const a = uh.indexOf('function ' + n + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
+  const code = uh.slice(uh.indexOf('function upcRenderFromSkuList('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
+    + uh.slice(uh.indexOf('var UPC_W = '), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
+  const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {}, textContent: '' });
+  const printed = { n: 0, html: '' }, made = [];
+  const doc = { getElementById: id => id === 'upc-print-container' ? null : el(id), createElementNS: () => { const at = {}; return { setAttribute: (k, v) => { at[k] = v; }, getAttribute: k => at[k], outerHTML: '<svg/>', innerHTML: '<rect/>' }; },
+    createElement: () => ({ style: {}, set innerHTML(v) { printed.html = v; } }), body: { appendChild() {} } };
+  const wF = (u, o) => call(String(u).replace('https://xfitting-lookup.alfixedinc88.workers.dev', ''), o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const lookup = q => q === '905-2-2=10XX' ? [{ partNum: '905-2-2=10XX', upc: '840428933067' }] : [];
+  const U = new Function('wFetch', 'document', 'window', 'loadJsBarcode', 'JsBarcode', 'setTimeout', 'upcLookup', 'upcShowScanBar', 'upcDrawBarcodes',
+    code + '; return { render: upcRenderFromSkuList, amz: window.upcPrintAmzFromBtn };')(wF, doc, { print() { printed.n++; } }, cb => cb(),
+    (sv, v, o) => { made.push([v, o.format]); sv.setAttribute('width', 200); sv.setAttribute('height', 80); }, f => f(), lookup, () => {}, () => {});
+  U.render(['905-2-2=10XX', '925-4-2 =5', '923-2-1=20-X', '929-9-9=10'], 'Saved Shipment', 'sheet');
+  for (let i = 0; i < 30 && !/upc-amz-row|No UPC-A/.test(el('upc-results').innerHTML); i++) await new Promise(r => setTimeout(r, 50));
+  const h = el('upc-results').innerHTML;
+  check('Load Barcodes: "925-4-2 =5" (a space) → found in our UPC list (840925420051); "923-2-1=20-X" uses Amazon\'s label → 🅰 Print Amazon label (X00AMZ2321) instead of "No UPC-A"; 905-2-2=10XX has our UPC AND Amazon\'s label → both; 929-9-9=10 → still "No UPC-A on file"; the top line counts them',
+    /data-upc="840925420051"/.test(h) && /🅰 Uses Amazon's label \(no our UPC\) — FNSKU <b[^>]*>X00AMZ2321/.test(h) && /data-fnsku="X00AMZ2321"/.test(h) && /data-fnsku="X00AMZ0522"/.test(h) && /data-upc="840428933067"/.test(h)
+      && (h.match(/No UPC-A on file/g) || []).length === 1 && /929-9-9=10/.test(h) && /2 barcodes ready to print/.test(h) && /🅰 2 use Amazon's label/.test(h) && /1 SKU with no barcode on file/.test(h), h.slice(0, 1500));
+  const btn = { getAttribute: k => ({ 'data-fnsku': 'X00AMZ2321', 'data-name': 'not-our-brand valve 20 pack', 'data-pn': '923-2-1=20-X' })[k], parentNode: { querySelector: () => ({ value: '3' }) } };
+  U.amz(btn); await new Promise(r => setTimeout(r, 300));
+  const rec = sq.prepare("SELECT metadata FROM user_activity_log WHERE action_type = 'awd_bag_print' ORDER BY id DESC LIMIT 1").get() || {};
+  check('…🅰 Print Amazon label with 3 → 3 labels (Code 128 X00AMZ2321 + FNSKU + name + New), one print; kept (who / when / part # / 3)',
+    printed.n === 1 && (printed.html.match(/X00AMZ2321<\/text>/g) || []).length === 3 && made.filter(m => m[0] === 'X00AMZ2321' && m[1] === 'CODE128').length === 3 && /"qty":3/.test(rec.metadata || '') && /923-2-1=20-X/.test(rec.metadata || ''), { n: printed.n, rec });
+  sq.exec("DELETE FROM amazon_fba_inventory WHERE sku IN ('923-2-1=20-X','905-2-2=10XX'); DELETE FROM upc WHERE base_sku = '925-4-2'");
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
