@@ -2811,7 +2811,10 @@ window.invCredLogin = async function() {
   // exactly its locked spots and cases (what its labels were made from) — never worked out again here. A part # also in a shipment that is
   // not locked: that part is worked out as before, on what is not held.
   function invAwdPlanPart(o, ships, got) {
-    var LK = AWDS.locks || {}, sis = Object.keys(o.per).map(Number), locked = sis.filter(function(si) { return LK[ships[si].shipment]; }), rest = sis.filter(function(si) { return !LK[ships[si].shipment]; });
+    // 🔒 a locked shipment whose lock has no line for this part # (e.g. the label was read wrong when it was locked — "&" cut, owner 2026-10-31)
+    // → this part # is worked out by the normal rules, not "locked plan has no spot".
+    var LK = AWDS.locks || {}, sis = Object.keys(o.per).map(Number), inLock = function(si) { var L = LK[ships[si].shipment]; return !!L && ((L.lines || []).some(function(x) { return x.forPart === o.part; })); };
+    var locked = sis.filter(inLock), rest = sis.filter(function(si) { return !inLock(si); });
     if (!locked.length) return invAwdPlanPartCalc(o, ships, got);
     var lr = invAwdFromLock(o, ships, got, locked);
     if (!rest.length) return Promise.resolve(lr);
