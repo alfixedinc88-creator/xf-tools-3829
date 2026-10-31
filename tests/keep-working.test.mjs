@@ -8665,6 +8665,10 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
 {
   const { readFileSync: rfQ } = await import('node:fs');
   const ah = rfQ(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = rfQ(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  // 🕒 The clock is held at 2026-10-20 for this block: the made-up sales (one every 30 days) put 2 sales in one calendar month on some days
+  // (e.g. 2026-10-31 → October 2025 had 2), which made the month look unusual and the check fail for a date reason only.
+  const RealDate = Date, FIXED_NOW = RealDate.parse('2026-10-20T15:00:00Z');
+  globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(FIXED_NOW); } static now() { return FIXED_NOW; } };
   const ago = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
   sq.prepare("INSERT OR REPLACE INTO awd_auto (k, v) VALUES ('fbaBase', ?)").run(JSON.stringify([['28-2-2=10X', 'B0TQ000001', 'XQ1', 'pex tee 10 pack', 'NewItem', 20, 0, 0, 20, '', 0, 0, 0, '', '', '', '', 0]]));
@@ -8692,6 +8696,7 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
   const h1 = lib(S, { months: 1 }, (r, k) => r[k], v => parseFloat(v) || 0, fnum, x => String(x == null ? '' : x), x => String(x))(d);
   check('…pick 1 month → 33 needed, Amazon has 40 → "nothing to ship — Amazon has enough"', /need <b>33<\/b>/.test(h1) && /nothing to ship — Amazon has enough/.test(h1), null);
   check('…tab + 🧩 Pages & Tabs check mark; months 1 / 2 / 3 / 4 / 6 or any number', /id="tab-asin"/.test(ah) && /id="page-asin"/.test(ah) && /\[1, 2, 3, 4, 6\]/.test(ah) && /key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin'/.test(xa), null);
+  globalThis.Date = RealDate; // 🕒 the real clock again
   sq.exec("DELETE FROM amazon_sales_weekly WHERE sku LIKE '28-2-2%'; DELETE FROM master_list WHERE base_sku = '28-2-2'; DELETE FROM awd_auto");
 }
 
@@ -11963,6 +11968,46 @@ console.log('\n📦 Box check: a part # "sold as a whole case of" another (Reord
     /✅ WHOLE CASE — 96-4-2=100 is sold as 96-4-2=1000: NO rebag\. Put the DO NOT SEPARATE label \+ the Amazon label on it/.test(r1) && !/PACKING ROOM/.test(r1) && kept.kind === 'ok' && /whole case of 96-4-2=100/.test(kept.note || ''), { r1: r1.slice(-500), kept });
   sq.prepare("DELETE FROM reorder_case_of WHERE part = '96-4-2=1000'").run();
   sq.exec("DELETE FROM master_list WHERE base_sku = '96-4-2'; DELETE FROM upc WHERE base_sku = '96-4-2'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-CASE1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-CASE1'");
+}
+
+// Owner (2026-10-31): "for the AWD shipment, check out the UPC Barcodes — if we need to print the upc bag barcode for some reason we can just
+// scan the Amazon label then we can start to print it out, and same thing for the Amazon barcode too".
+console.log('\n📦 UPC Barcodes: scan an AWD box\'s Amazon label → print its bag UPC / Amazon barcode (as many as its bags), kept in the record');
+{
+  await post('/awd/label-map', { shipment: 'STAR-UPCBOX1', labels: [
+    { sscc: '301952611628559201', sku: '97-1-1=10-', part: '97-1-1=10', seq: '2-1', units: 5, loc: 'C1=1-1-1', fnsku: 'X00TEST9711', name: '1/2 pex elbow 10 pack' },
+    { sscc: '301952611628559202', sku: '97-2-2=5-', part: '97-2-2=5', seq: '3-1', units: 2, loc: 'C1=1-1-2', fnsku: 'B0TESTASIN', name: 'tee 5 pack' }] });
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('97-1-1=10','97-1-1','840097110105','10840097110102')").run();
+  const { readFileSync: rfU2 } = await import('node:fs');
+  const uh = rfU2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const code = uh.slice(uh.indexOf('// ── 📦 AWD box → its bag UPC'), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
+  const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {} });
+  const made = [], printed = { n: 0, html: '' };
+  const doc = { getElementById: id => id === 'upc-print-container' ? null : el(id), createElementNS: () => { const at = {}; return { setAttribute: (k, v) => { at[k] = v; }, getAttribute: k => at[k], get outerHTML() { return '<svg data-l="1"></svg>'; }, innerHTML: '<rect/>' }; },
+    createElement: () => ({ style: {}, set innerHTML(v) { printed.html = v; } }), body: { appendChild() {} } };
+  const win = { print() { printed.n++; } };
+  const wF = (u, o) => call(String(u).replace('https://xfitting-lookup.alfixedinc88.workers.dev', ''), o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const U = new Function('wFetch', 'document', 'window', 'loadJsBarcode', 'JsBarcode', 'setTimeout', code + '; return window;')(wF, doc, win, cb => cb(), (sv, v, o) => { made.push([v, o.format]); sv.setAttribute('width', 200); sv.setAttribute('height', 80); }, f => f());
+  await U.upcAwdBox('00301952611628559201'); const h1 = el('upc-awdbox-out').innerHTML;
+  check('scan the Amazon label of Box 2-1 → 97-1-1=10, STAR-UPCBOX1, 5 bags in this box; 🏷 bag UPC 840097110105 (5 to print) and 🅰 Amazon barcode X00TEST9711 (5 to print)',
+    /97-1-1=10/.test(h1) && /Box 2-1 · STAR-UPCBOX1/.test(h1) && /<b>5 bags<\/b> in this box/.test(h1) && /840097110105/.test(h1) && /Print bag UPC/.test(h1) && /X00TEST9711 — Amazon's label goes on every unit/.test(h1) && /Print Amazon barcode/.test(h1)
+      && (h1.match(/type="number" min="1" max="500" value="5"/g) || []).length === 2, h1.slice(0, 600));
+  U.upcAwdPrint('fnsku'); await new Promise(r => setTimeout(r, 300));
+  const rec = sq.prepare("SELECT metadata FROM user_activity_log WHERE action_type = 'awd_bag_print' ORDER BY id DESC LIMIT 1").get() || {};
+  check('…🖨 Print Amazon barcode → 5 labels (Code 128 of X00TEST9711, with the FNSKU, name, "New"), one print; kept: who / when / Box 2-1 / 97-1-1=10 / 5',
+    printed.n === 1 && (printed.html.match(/X00TEST9711<\/text>/g) || []).length === 5 && /New<\/text>/.test(printed.html) && made.filter(m => m[0] === 'X00TEST9711' && m[1] === 'CODE128').length === 5
+      && /"box":"2-1"/.test(rec.metadata || '') && /"qty":5/.test(rec.metadata || '') && /Amazon barcode X00TEST9711/.test(rec.metadata || ''), { n: printed.n, rec });
+  made.length = 0; U.upcAwdPrint('upc'); await new Promise(r => setTimeout(r, 100));
+  check('…🖨 Print bag UPC → 5 UPC-A labels of 840097110105', made.filter(m => m[0] === '840097110105' && m[1] === 'UPC').length === 5 && printed.n === 2, made);
+  await U.upcAwdBox('301952611628559202'); const h2 = el('upc-awdbox-out').innerHTML;
+  await U.upcAwdBox('12345'); const h3 = el('upc-awdbox-out').innerHTML;
+  await U.upcAwdBox('009999999999999999999'); const h4 = el('upc-awdbox-out').innerHTML;
+  check('…a listing that ships with our UPC (B0…) → "no Amazon barcode needed"; no bag UPC on file → says where to add it; not an Amazon label / not ours → said',
+    /ships with our UPC/.test(h2) && !/Print Amazon barcode/.test(h2) && /No inside \(bag\) UPC on file for 97-2-2=5/.test(h2) && /not an Amazon box label/.test(h3) && /Not one of our Amazon box labels/.test(h4), { h2, h3, h4 });
+  const awh = rfU2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), aj = rfU2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('…on the page (top of UPC Barcodes), in 🧩 Pages & Tabs, and each print shows in the AWD Shipment Builder history',
+    /id="upc-awdbox-card"/.test(uh) && /onkeydown="if\(event\.key==='Enter'\)\{event\.preventDefault\(\);upcAwdBox\(this\.value\)\}"/.test(uh) && /sel: '#upc-awdbox-card'/.test(aj) && /case 'bag_print'/.test(awh), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-UPCBOX1'; DELETE FROM upc WHERE base_sku = '97-1-1'");
 }
 
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map

@@ -77,6 +77,7 @@ document.addEventListener('input', function (e) {
         { key: 'planner', label: 'Planner Settings', sel: '#page-settings > div > .card > :not(.card)' },
         { key: 'discontinued', label: 'Discontinued SKUs', sel: '#page-settings .card .card:has(#disc-panel)' } ] }] },
     { key: 'upc', file: 'upc.html', name: '🏷️ UPC Barcodes', needs: 'Ops / Mobile / Mgmt', card: card('upc.html'), tabs: [], parts: [
+      { key: 'awdbox', label: '📦 AWD box — scan the Amazon label → print its bag UPC / Amazon barcode', sel: '#upc-awdbox-card' },
       { key: 'dns', label: '🚫 Do Not Separate', sel: '#upc-app button[onclick="upcShowDNS()"]' },
       { key: 'typeprint', label: '⌨️ Type & Print a UPC', sel: '#upc-app div:has(> #upc-manual-error)' },
       { key: 'search', label: '🔍 Search by SKU or UPC', sel: '#upc-app div:has(> div > #upc-search-inp)' },
