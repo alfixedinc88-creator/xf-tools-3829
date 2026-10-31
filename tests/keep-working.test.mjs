@@ -12376,5 +12376,38 @@ console.log('\n📦 UPC Barcodes: AWD shipments ready, live from the AWD Planner
     /upcAutoLoadSavedShipment\(\);\n  upcLoadAwdOpen\(\);/.test(uh) && /id="upc-saved-banner"/.test(uh) && /sel: '#upc-awdopen-card'/.test(require0('node:fs').readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
 }
 
+
+// Owner (2026-10-31): "can each listing have the ASIN with it? On the Amazon web site we only need B07DLFVPB3 and B06XQD2LH4 for
+// Amazon's barcode, the rest don't need it, but our app says 23 use Amazon's label". The shipment's OWN Amazon SKU decides (not any
+// listing of the same part #), and every row shows its ASIN.
+console.log('\n🅰 UPC Barcodes: Amazon\'s label decided by the shipment\'s own Amazon listing; every row shows its ASIN');
+{
+  await get('/inventory/amazon-barcode');
+  const now = new Date().toISOString();
+  const ins = sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)");
+  ins.run('2-3-4=2XX', 'B07OURUPC1', 'B07OURUPC1', 'tee 2 pack', 'Yes', now);            // this shipment's listing: our UPC (FNSKU = ASIN)
+  ins.run('2-3-4=2XX-OLD', 'X00OLD0234', 'B0OLD00234', 'tee 2 pack old', 'Yes', now);      // an old listing of the same part #: Amazon's barcode
+  ins.run('62-1-1=10', 'X00DLFVPB3', 'B07DLFVPB3', 'valve 10 pack', 'Yes', now);           // needs Amazon's barcode
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('2-3-4=2XX-OLD', '2-3-4=2XX')").run();
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('2-3-4=2XX','2-3-4','840428912024','10840428912021')").run();
+  const uh = require0('node:fs').readFileSync(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const fnU = n => { const a = uh.indexOf('function ' + n + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
+  const code = uh.slice(uh.indexOf('function upcRenderFromSkuList('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
+    + uh.slice(uh.indexOf('var UPC_W = '), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
+  const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {}, textContent: '' });
+  const doc = { getElementById: id => el(id), createElementNS: () => ({ setAttribute() {}, getAttribute() {} }), createElement: () => ({ style: {} }), body: { appendChild() {} } };
+  const wF = (u, o) => call(String(u).replace('https://xfitting-lookup.alfixedinc88.workers.dev', ''), o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const lookup = q => q === '2-3-4=2XX' ? [{ partNum: '2-3-4=2XX', upc: '840428912024' }] : [];
+  const U = new Function('wFetch', 'document', 'window', 'loadJsBarcode', 'JsBarcode', 'setTimeout', 'upcLookup', 'upcShowScanBar', 'upcDrawBarcodes',
+    code + '; return { render: upcRenderFromSkuList };')(wF, doc, {}, cb => cb(), () => {}, f => f(), lookup, () => {}, () => {});
+  U.render(['2-3-4=2XX', '62-1-1=10'], 'AWD STAR-TEST', 'sheet');
+  for (let i = 0; i < 40 && !/upc-amz-row|No UPC-A/.test(el('upc-results').innerHTML); i++) await new Promise(r => setTimeout(r, 50));
+  const h = el('upc-results').innerHTML;
+  check('2-3-4=2XX (its own listing uses our UPC) → our UPC only, NOT 🅰 even though an old listing of the same part # has Amazon\'s barcode; 62-1-1=10 → 🅰 Amazon label (X00DLFVPB3); top line "🅰 1 use Amazon\'s label"',
+    /data-upc="840428912024"/.test(h) && !/X00OLD0234/.test(h) && /data-fnsku="X00DLFVPB3"/.test(h) && /🅰 1 use Amazon's label/.test(h), h.slice(0, 1500));
+  check('…every row shows its ASIN: 2-3-4=2XX → ASIN B07OURUPC1 (not the old listing\'s), 62-1-1=10 → ASIN B07DLFVPB3',
+    /2-3-4=2XX<div[^>]*>ASIN B07OURUPC1</.test(h) && /62-1-1=10<div[^>]*>ASIN B07DLFVPB3</.test(h), h.slice(0, 1500));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

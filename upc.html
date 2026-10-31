@@ -4836,15 +4836,17 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
   var seen = new Set();
   skus.forEach(function(sku) {
     var matches = upcLookup(sku);
+    // 🅰 each row keeps the shipment's own Amazon SKU(s) it came from — Amazon's barcode is decided by THAT listing (owner 2026-10-31)
     if (matches.length) {
       matches.forEach(function(m) {
         var key = m.partNum + '|' + m.upc;
-        if (!seen.has(key)) { seen.add(key); allMatches.push(m); }
+        if (!seen.has(key)) { seen.add(key); allMatches.push(Object.assign({}, m, { shipSkus: [sku] })); }
+        else allMatches.forEach(function(x) { if (x.partNum + '|' + x.upc === key && x.shipSkus.indexOf(sku) < 0) x.shipSkus.push(sku); });
       });
     } else {
       // Show SKU card with no UPC found
       var key = sku + '|none';
-      if (!seen.has(key)) { seen.add(key); allMatches.push({ partNum: sku, upc: null }); }
+      if (!seen.has(key)) { seen.add(key); allMatches.push({ partNum: sku, upc: null, shipSkus: [sku] }); }
     }
   });
 
@@ -4881,15 +4883,31 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
     });
   });
 }
+// The ASIN(s) of a row's Amazon listing, and its Amazon SKU when not the same as the part # (owner 2026-10-31: "each listing with its ASIN").
+function upcAsinHtml(m) {
+  var a = (m.asins || []), sk = (m.shipSkus || []).filter(function(x) { return upcPartKey(x) !== upcPartKey(m.partNum); });
+  if (!a.length && !sk.length) return '';
+  return '<div style="font-size:10px;font-weight:400;color:var(--text3);margin-top:2px">' + (a.length ? 'ASIN ' + a.map(upcEsc).join(', ') : 'ASIN —')
+    + (sk.length ? ' · Amazon SKU ' + sk.map(upcEsc).join(', ') : '') + '</div>';
+}
 // our UPC from the D1 list for the ones the old lists missed + Amazon's barcode (X00… FNSKU) for listings that need it
 var _upcAmzP = null;
 function upcEnrichMatches(list) {
   if (!_upcAmzP) _upcAmzP = wFetch(UPC_W + '/inventory/amazon-barcode').then(function(r) { return r.json(); }).catch(function() { _upcAmzP = null; return {}; });
   return _upcAmzP.then(function(am) {
-    var by = {}; ((am && am.list) || []).forEach(function(x) { var f = String(x.fnsku || '').toUpperCase(); if (!/^X0/.test(f)) return;
-      [x.sku, x.part].forEach(function(k) { k = upcPartKey(k); if (k && !by[k]) by[k] = { fnsku: f, name: x.name || '' }; }); });
+    // 🅰 Owner (2026-10-31): "on Amazon only B07DLFVPB3 and B06XQD2LH4 need Amazon's barcode, but the app says 23". It used to mark a row
+    // when ANY Amazon listing of that part # had an X0… FNSKU (an old / other listing of the same part # counted). Now: the shipment's
+    // OWN Amazon SKU decides (X0… = Amazon's barcode, ASIN = our UPC); only a SKU Amazon's data doesn't have falls back to the part #,
+    // and then only when every listing of that part # needs Amazon's barcode. Every row shows its ASIN.
+    var bySku = {}, byPart = {};
+    ((am && am.list) || []).forEach(function(x) { var f = String(x.fnsku || '').toUpperCase(), e = { fnsku: f, asin: String(x.asin || '').toUpperCase(), name: x.name || '', amz: /^X0/.test(f) };
+      var ks = upcPartKey(x.sku), kp = upcPartKey(x.part); if (ks && !bySku[ks]) bySku[ks] = e; if (kp) (byPart[kp] = byPart[kp] || []).push(e); });
     return Promise.all(list.map(function(m) {
-      var k = upcPartKey(m.partNum), a = by[k]; if (a) { m.fnsku = a.fnsku; m.amzName = a.name; }
+      var k = upcPartKey(m.partNum), own = (m.shipSkus || [m.partNum]).map(function(s) { return bySku[upcPartKey(s)]; }).filter(Boolean);
+      var use = own.length ? own : (byPart[k] || []), amz = use.filter(function(e) { return e.amz; });
+      var a = own.length ? amz[0] : (use.length && amz.length === use.length ? amz[0] : null);
+      if (a) { m.fnsku = a.fnsku; m.amzName = a.name; }
+      m.asins = use.map(function(e) { return e.asin; }).filter(function(x, i, arr) { return x && arr.indexOf(x) === i; });
       if (m.upc) return null;
       return wFetch(UPC_W + '/inventory/upc-d1-lookup?q=' + encodeURIComponent(k)).then(function(r) { return r.json(); }).then(function(d) {
         var row = ((d && d.results) || []).filter(function(r) { var u = String(r.insideUpc || '').replace(/\D/g, ''); return upcPartKey(r.sku) === k && /^\d{12}$/.test(u); })[0];
@@ -5223,7 +5241,7 @@ function upcRenderSheet(matches) {
   withUPC.forEach(function(m, i) {
     var bcId = 'bc-sh-' + i + '-' + Math.random().toString(36).slice(2,5);
     out += '<tr style="border-bottom:1px solid #F3F4F6">';
-    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + m.partNum + '</td>';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + m.partNum + upcAsinHtml(m) + '</td>';
     out += '<td style="padding:4px 16px;text-align:center"><svg id="' + bcId + '" data-upc="' + m.upc + '" style="height:40px;width:auto;max-width:180px"></svg></td>';
     out += '<td style="padding:8px 16px;font-size:11px;font-family:var(--mono);color:var(--text3)">' + m.upc + '</td>';
     out += '<td style="padding:8px;text-align:center"><button class="btn btn-sm btn-primary" data-bcid="' + bcId + '" data-upc="' + m.upc + '" data-pn="' + m.partNum + '" onclick="upcPrintFromBtn(this)">&#128424;</button></td>';
@@ -5232,7 +5250,7 @@ function upcRenderSheet(matches) {
   });
   amzOnly.forEach(function(m) {
     out += '<tr class="upc-amz-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb">';
-    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + upcEsc(m.partNum) + '</td>';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + upcEsc(m.partNum) + upcAsinHtml(m) + '</td>';
     out += '<td colspan="2" style="padding:8px 16px;font-size:11px;color:#b45309">🅰 Uses Amazon\'s label (no our UPC) — FNSKU <b style="font-family:var(--mono)">' + upcEsc(m.fnsku) + '</b></td>';
     out += '<td style="padding:8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
   });
@@ -5240,7 +5258,7 @@ function upcRenderSheet(matches) {
   if (noUPC.length) {
     noUPC.forEach(function(m) {
       out += '<tr style="border-bottom:1px solid #F3F4F6;opacity:.5">';
-      out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--text)">' + m.partNum + '</td>';
+      out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--text)">' + m.partNum + upcAsinHtml(m) + '</td>';
       out += '<td style="padding:8px 16px;text-align:center;font-size:11px;color:var(--text3)" colspan="3">No UPC-A on file</td>';
       out += '</tr>';
     });
