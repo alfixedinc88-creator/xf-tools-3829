@@ -33996,17 +33996,72 @@ async function _soAmazon(env, it, qty) {
     detail: `FBM ${done.join(', ')}${done.length ? ' — Amazon can take up to 15 min to show it' : ''}${skipped.length ? ` · FBA skipped: ${skipped.join(', ')}` : ''}` };
 }
 
+// Walmart answers "no item found for sku" when the SKU we ask for isn't
+// exactly its SKU (the WalmartSKU sheet copy can differ in capitals or be
+// out of date, and Sold Out search sends it in capitals). Owner 2026-10-31:
+// "why Walmart showing grey?". So the real SKU is found the way Walmart
+// knows it: the sheet SKU first, then Listing Watch's copy of Walmart's own
+// list (same SKU in other capitals, or the same listing ID), then the
+// Walmart item ID on the sheet. Returns { sku, inv } or { error }.
+function _soWmHeaders(token, json) {
+  const h = { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace', 'Accept': 'application/json' };
+  if (json) h['Content-Type'] = 'application/json';
+  return h;
+}
+async function _soWmInventory(token, sku) {
+  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(sku)}`, { headers: _soWmHeaders(token) });
+  const d = await r.json().catch(() => ({}));
+  const notFound = !r.ok && /CONTENT_NOT_FOUND|no item found/i.test(JSON.stringify(d));
+  return { ok: r.ok, d, notFound, error: r.ok ? null : JSON.stringify(d.errors || d).slice(0, 200) };
+}
+async function _soWalmartResolve(env, it) {
+  const sheetSku = String(it.sku || '').trim();
+  if (!sheetSku) return { error: 'No Walmart SKU on the WalmartSKU sheet row' };
+  const token = await getWalmartToken(env);
+  const tried = [];
+  const attempt = async sku => {
+    if (!sku || tried.some(t => t === sku)) return null;
+    tried.push(sku);
+    const inv = await _soWmInventory(token, sku);
+    if (inv.ok) return { sku, inv: inv.d, token };
+    if (!inv.notFound) return { error: inv.error, token };
+    return null;
+  };
+  let hit = await attempt(sheetSku);
+  if (hit) return hit;
+  // Listing Watch keeps Walmart's own SKUs (exact capitals) in listing_titles.
+  const lid = String(it.listingId || '').trim();
+  const rows = await d1All(env, `SELECT sku FROM listing_titles WHERE LOWER(platform) = 'walmart' AND (UPPER(sku) = UPPER(?) OR listing_id = ?) LIMIT 5`, [sheetSku, lid]).catch(() => []);
+  for (const r of rows) { hit = await attempt(String(r.sku || '').trim()); if (hit) return hit; }
+  // The Walmart item ID on the sheet → the SKU Walmart has for it.
+  if (/^\d{6,}$/.test(lid)) {
+    const r = await fetch(`https://marketplace.walmartapis.com/v3/items/${encodeURIComponent(lid)}?productIdType=ITEM_ID`, { headers: _soWmHeaders(token) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    const list = d.ItemResponse || d.itemResponse || (d.sku ? [d] : []);
+    for (const x of (Array.isArray(list) ? list : [list])) { hit = await attempt(String((x && x.sku) || '').trim()); if (hit) return hit; }
+  }
+  return { notFound: true, error: `Walmart has no listing with SKU ${sheetSku}${lid && lid !== sheetSku ? ` (item ${lid})` : ''} — tried ${tried.join(', ')}. Check the SKU on the WalmartSKU sheet matches Walmart Seller Center exactly.` };
+}
+
+async function _soWmPut(token, sku, qty) {
+  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(sku)}`, {
+    method: 'PUT',
+    headers: _soWmHeaders(token, true),
+    body: JSON.stringify({ sku, quantity: { unit: 'EACH', amount: qty } }),
+  });
+  const d = await r.json().catch(() => ({}));
+  return { ok: r.ok, notFound: !r.ok && /CONTENT_NOT_FOUND|no item found/i.test(JSON.stringify(d)), error: r.ok ? null : JSON.stringify(d.errors || d).slice(0, 300) };
+}
 async function _soWalmart(env, it, qty) {
   if (!it.sku) return { ok: false, error: 'No Walmart SKU on the WalmartSKU sheet row' };
   const token = await getWalmartToken(env);
-  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(it.sku)}`, {
-    method: 'PUT',
-    headers: { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace',
-      'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sku: it.sku, quantity: { unit: 'EACH', amount: qty } }),
-  });
-  const d = await r.json().catch(() => ({}));
-  return { ok: r.ok, error: r.ok ? null : JSON.stringify(d.errors || d).slice(0, 300) };
+  // The sheet SKU first, exactly as always; only when Walmart doesn't know it, find Walmart's own SKU.
+  const first = await _soWmPut(token, it.sku, qty);
+  if (first.ok || !first.notFound) return { ok: first.ok, error: first.error };
+  const w = await _soWalmartResolve(env, it);
+  if (!w.sku) return { ok: false, error: w.error || first.error };
+  const again = await _soWmPut(w.token, w.sku, qty);
+  return { ok: again.ok, error: again.error, detail: again.ok ? `Walmart SKU ${w.sku} (sheet says ${it.sku})` : undefined };
 }
 
 // Find the Shopify variant(s) for a Sold Out row. Shopify's search can miss
@@ -34161,15 +34216,11 @@ async function _soQtyAmazon(env, it) {
 }
 
 async function _soQtyWalmart(env, it) {
-  if (!it.sku) return { error: 'No Walmart SKU on the sheet row' };
-  const token = await getWalmartToken(env);
-  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(it.sku)}`, {
-    headers: { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace', 'Accept': 'application/json' },
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) return { error: JSON.stringify(d.errors || d).slice(0, 200) };
-  const amt = ((d.quantity || {}).amount);
-  return amt == null ? { error: 'Walmart returned no quantity' } : { qty: amt, detail: '' };
+  const w = await _soWalmartResolve(env, it);
+  if (!w.sku) return { error: w.error };
+  const amt = ((w.inv.quantity || {}).amount);
+  const note = w.sku !== String(it.sku || '').trim() ? `Walmart SKU ${w.sku} (sheet says ${it.sku})` : '';
+  return amt == null ? { error: 'Walmart returned no quantity' } : { qty: amt, detail: note };
 }
 
 async function _soQtyShopify(env, it) {
