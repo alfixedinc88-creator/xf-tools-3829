@@ -229,6 +229,9 @@ body {
    same 5-then-7 layout — since they share the .ps-scan-product-item(s)
    classes but have their own element IDs. */
 #ps-scan-product-items, #ps-pick-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
+/* Picking (owner 2026-10-30, photo of the Picking PC): on a smaller screen the 5 columns squeezed one item card to ~100px and the
+   ⚠ No Stock box spilled out of it. Picking cards stay 150–168px; more items than fit go on the next row. (Packing unchanged.) */
+#ps-pick-product-items, #ps-pick-product-more { grid-template-columns:repeat(auto-fill, minmax(150px, 168px)); }
 .ps-scan-product-info { width:100%; min-width:0; }
 /* ⚠ No Stock block in the Picking item card (owner 2026-10-29: "want it to look nicer") */
 .ps-nostock-box { margin-top:8px; border:2px solid var(--red); background:var(--red-bg); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:7px; text-align:center; }
@@ -614,6 +617,7 @@ body {
    own independent grid/row-count. Picking tab mirrors these via its own
    #ps-pick-product-items/#ps-pick-product-more IDs. */
 #packship-app #ps-scan-product-items, #packship-app #ps-pick-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
+#packship-app #ps-pick-product-items, #packship-app #ps-pick-product-more { grid-template-columns:repeat(auto-fill, minmax(150px, 168px)); } /* Picking cards never squeezed (owner 2026-10-30) */
 #packship-app .ps-scan-product-info { width:100%; min-width:0; }
 #packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 #packship-app .ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }

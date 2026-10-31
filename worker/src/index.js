@@ -1419,10 +1419,59 @@ async function inventoryBoxCheck(request, url, env, session) {
 // match → a warning"; "Stock Out Big Company: what we need for the current shipment, by location, without scanning". When the office
 // makes the box labels (AWD Planner), every Amazon box is kept: its SSCC (the big barcode), SKU / part #, box N-k, bags, the spot it is
 // grabbed from, and whether it was PREVIOUS PACKED. POST { shipment, labels:[…] } · GET ?code=SSCC (one box) · GET ?latest=1 (newest shipment).
+// 🔗 Owner (2026-10-31): "I can't reupload, we almost done this shipment … I just want to make sure when we put on the pallet this
+// 28-2-3&4=4XX will match the 28-2-3&4=4XX". Labels uploaded before the "&" fix were saved with the SKU cut at "&" (28-2-3&4=4XX- → "28-2-3").
+// Each such label is put right from the FNSKU printed on it: the Amazon listing with that FNSKU whose SKU is the cut part + "&…" (exactly one,
+// else left alone — a real 28-2-3 is never touched). Only sku / part change: the shipment, box scans, pallets and grabs stay. Every change is
+// kept in awd_label_fix_log (who = auto-fix, when, old → new). A 🔒 lock line for the cut part # (cold spots held by mistake) is dropped, kept
+// in the same log. Runs before labels are read (one small query: labels with no "=" in the SKU and an FNSKU; nothing to do = no writes).
+const awdPartOf = sku => String(sku || '').trim().replace(/\s*=\s*/g, '=').replace(/-+$/, '').toUpperCase().replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, ''));
+async function awdLabelAmpRepair(env) {
+  if (!env.DB) return;
+  try {
+    const U = x => String(x || '').trim().toUpperCase();
+    const rows = (await env.DB.prepare("SELECT sscc, shipment, sku, part, fnsku FROM awd_label_map WHERE sku NOT LIKE '%=%' AND COALESCE(fnsku, '') != ''").all()).results || [];
+    if (!rows.length) return;
+    const fns = [...new Set(rows.map(r => U(r.fnsku)))], byF = {};
+    for (let i = 0; i < fns.length; i += 50) {
+      const q = fns.slice(i, i + 50), ph = q.map(() => '?').join(',');
+      for (const tb of ['amazon_fba_inventory', 'amazon_barcode_live']) { // the FNSKU on the label, or the ASIN when Amazon uses it as the FNSKU (B0…)
+        const got = ((await env.DB.prepare(`SELECT sku, fnsku, asin FROM ${tb} WHERE UPPER(fnsku) IN (${ph}) OR UPPER(asin) IN (${ph})`).bind(...q, ...q).all().catch(() => ({ results: [] }))).results) || [];
+        got.forEach(x => [U(x.fnsku), U(x.asin)].forEach(k => { if (k && fns.indexOf(k) >= 0) (byF[k] = byF[k] || new Set()).add(String(x.sku || '').trim()); }));
+      }
+    }
+    const fixes = [];
+    rows.forEach(r => { const pre = U(r.sku) + '&', c = [...(byF[U(r.fnsku)] || [])].filter(k => awdPartOf(k).startsWith(pre));
+      const parts = [...new Set(c.map(awdPartOf))]; if (parts.length === 1) fixes.push({ r, sku: c[0], part: parts[0] }); });
+    if (!fixes.length) return;
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_label_fix_log (id INTEGER PRIMARY KEY AUTOINCREMENT, sscc TEXT, shipment TEXT, old_sku TEXT, new_sku TEXT, old_part TEXT, new_part TEXT, why TEXT, at TEXT, by_user TEXT)').run();
+    const now = new Date().toISOString(), why = 'SKU was cut at "&" when the labels were read — put right from the FNSKU on the label';
+    const st = []; fixes.forEach(f => {
+      st.push(env.DB.prepare('UPDATE awd_label_map SET sku = ?, part = ? WHERE sscc = ? AND sku = ?').bind(f.sku, f.part, f.r.sscc, f.r.sku));
+      st.push(env.DB.prepare('INSERT INTO awd_label_fix_log (sscc, shipment, old_sku, new_sku, old_part, new_part, why, at, by_user) VALUES (?,?,?,?,?,?,?,?,?)')
+        .bind(f.r.sscc, f.r.shipment, f.r.sku, f.sku, f.r.part || '', f.part, why, now, 'auto-fix')); });
+    for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+    // 🔒 a locked plan for the cut part # (it held the wrong item's spots) → that line goes, if no label of the shipment still has that part #
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked', unlocked_at TEXT, unlocked_by TEXT)`).run();
+    for (const sh of [...new Set(fixes.map(f => f.r.shipment))]) {
+      const lk = await env.DB.prepare("SELECT lines FROM awd_lock WHERE shipment = ? AND status = 'locked'").bind(sh).first(); if (!lk) continue;
+      let lines = []; try { lines = JSON.parse(lk.lines || '[]'); } catch (_) {}
+      const still = new Set((((await env.DB.prepare('SELECT part, sku FROM awd_label_map WHERE shipment = ?').bind(sh).all()).results) || []).map(x => U(x.part || x.sku)));
+      const cut = new Set(fixes.filter(f => f.r.shipment === sh).map(f => U(f.r.part || f.r.sku)).filter(p => !still.has(p)));
+      const keep = lines.filter(x => !cut.has(U(x.forPart)));
+      if (keep.length === lines.length) continue;
+      await env.DB.prepare('UPDATE awd_lock SET lines = ? WHERE shipment = ?').bind(JSON.stringify(keep), sh).run();
+      await env.DB.prepare('INSERT INTO awd_label_fix_log (sscc, shipment, old_sku, new_sku, old_part, new_part, why, at, by_user) VALUES (?,?,?,?,?,?,?,?,?)')
+        .bind('🔒 lock', sh, '', '', [...cut].join(', '), '', 'locked plan line for the cut part # dropped (it held the wrong item\'s spots)', now, 'auto-fix').run();
+      _awdHeldCache = null;
+    }
+  } catch (e) { console.error('[awd] & label fix:', e.message); }
+}
 async function awdLabelMap(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
     prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  await awdLabelAmpRepair(env);
   const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), S18 = c => { const d = String(c || '').replace(/\D/g, ''); return d.length >= 18 ? d.slice(-18) : ''; };
   if (request.method === 'POST') {
     const b = await request.json().catch(() => ({}));
@@ -1465,6 +1514,7 @@ async function awdShipOpen(env, url) {
   const days = 14, since = new Date(Date.now() - days * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
     prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  await awdLabelAmpRepair(env); // 🔗 labels cut at "&" put right first
   const sends = {};
   ((await env.DB.prepare('SELECT * FROM awd_ship_send WHERE at >= ? ORDER BY id').bind(since).all()).results || []).forEach(r => {
     let lines = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {}
@@ -1840,7 +1890,8 @@ async function awdBoxUpc(url, env) {
 // GET ?prints=<shipment> — who printed which area of those box labels (everyone signed in: the 🖨 buttons say "printed").
 // GET ?tab=builder&days=N — everything done in the Shipment Builder (Admin / Owner only).
 const AWD_BUILDER_ACTS = ['builder_add', 'builder_remove', 'builder_qty', 'builder_clear', 'builder_add_all', 'builder_remove_all', 'make_template',
-  'label_print', 'labels_bring_back', 'label_reprint', 'lock', 'unlock'];
+  // 📦 bag_print: UPC Barcodes → an AWD box's bag UPC / Amazon barcode printed from its Amazon label (owner 2026-10-31)
+  'label_print', 'labels_bring_back', 'bag_print', 'label_reprint', 'lock', 'unlock'];
 const AWD_BUILDER_LOGGED = AWD_BUILDER_ACTS.map(a => 'awd_' + a).concat(['awd_label_map', 'awd_ship_send', 'awd_shipment_export', 'awd_prep_fix']);
 async function awdActivity(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
@@ -4693,7 +4744,7 @@ async function productPhotoDailyRefresh(env, days) {
     for (const o of li) {
       if (!o || !o.i || !/^https?:\/\//i.test(String(o.i))) continue;
       const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
       if (base && !newest[base]) newest[base] = String(o.i).trim();
     }
   }
@@ -4718,7 +4769,7 @@ async function productPhotoDailyRefresh(env, days) {
 // gets our photo for the line's parent part # in `i` (Veeqo's kept in `vi`); a part # we have no photo for keeps Veeqo's.
 function shipPhotoBase(li) {
   const sku = String((li && li.s) || '').trim().toUpperCase(), bin = String((li && li.b) || '').trim().toUpperCase();
-  return /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+  return /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
 }
 async function shipPhotoResponse(request, env, res) {
   try {
@@ -4872,7 +4923,7 @@ async function productPhotoBackfill(env, days) {
     for (const o of li) {
       if (!o || !o.i) continue;
       const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
       if (base && !found[base]) found[base] = o.i;
     }
   }
@@ -4922,7 +4973,7 @@ async function productPhotoSyncVeeqo(request, env) {
     for (const sb of (p.sellables || [])) {
       const img = sb.image_url || sb.main_image_src || pImg; if (!img) continue;
       const sku = String(sb.sku_code || '').trim().toUpperCase(), loc = String(((sb.stock_entries || [])[0] || {}).location || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(loc) ? loc : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(loc) ? loc : '');
       if (base && !found[base]) found[base] = img;
     }
   }
@@ -24764,7 +24815,7 @@ async function _psCheckStockLevel(env, bin, sku) {
 // A bin code like "3-3-2" / "23-2-3" / "BARN-1": at least one dash, only
 // letters/digits between — never a bare number like "10" (see the base_sku
 // collision described above _psCheckStockLevel).
-function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+$/.test(b || ''); }
+function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+(&[A-Z0-9]+)?$/.test(b || ''); } // 28-2-3&4 (hot & cold set) is a family too (owner 2026-10-31)
 // Every master_list row in a bin code's part-number family — same match
 // Inventory's search uses (inventoryLookup): part_num / sku equal to the
 // code or starting with "<code>=", or base_sku equal to it.
@@ -28026,7 +28077,7 @@ async function veeqoExtractLineItems(env, order, allocation) {
     const found = {};
     for (const o of out) {
       if (!o.i) continue;
-      const fromSku = /^\d+(-\d+)+(=|$)/.test(o.s) ? o.s.split('=')[0] : '';
+      const fromSku = /^\d+(-\d+)+(&\d+)?(=|$)/.test(o.s) ? o.s.split('=')[0] : '';
       const fromBin = String(o._binSrc).startsWith('veeqo') && _psIsFamilyCode(String(o.b).toUpperCase()) ? o.b : '';
       const base = String(fromSku || fromBin).trim().toUpperCase();
       if (base && !found[base]) found[base] = o.i;

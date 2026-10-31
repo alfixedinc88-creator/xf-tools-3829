@@ -1996,9 +1996,11 @@ function awdLoadPdfjs() {
 // FNSKU. lines = [{ y, text }] top → bottom (y = 0 at the top). → [{ sku, y }]
 function awdLabelSkus(lines) {
   // A SKU Amazon has with a space after "-" / "=" ("SKU: 26-4- 2=1000 Units: 1", owner 2026-10-25) is read whole: 26-4-2=1000.
+  // 🔗 "&" is part of a SKU (owner 2026-10-31: "28-2-3&4=4XX — 3/4 push fit ball valve hot AND cold, but the grabber was told 28-2-3, the
+  // cold one only"): the "&" stopped the SKU, so 28-2-3&4=4XX- was read as 28-2-3 (and "28" as the bag count).
   // …and a space BEFORE the "=" (owner 2026-10-31, photo "SKU: 26-2-3 =10 Units: 5": it was read as 26-2-3 → "5 bags × 26 pcs = 130 pcs" and the
   // template of a pack of 1) is read whole too: 26-2-3=10.
-  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*((?:[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*(?:[-=]\s+|\s+=\s*)(?!UNITS|QTY)[0-9A-Z=][0-9A-Z=\-\/\.\(\)#]*)|[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*)/gi;
+  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*((?:[0-9A-Z][0-9A-Z=\-\/\.\(\)#&]*(?:[-=]\s+|\s+=\s*)(?!UNITS|QTY)[0-9A-Z=][0-9A-Z=\-\/\.\(\)#&]*)|[0-9A-Z][0-9A-Z=\-\/\.\(\)#&]*)/gi;
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].text + ' ' + ((lines[i + 1] && /^\s*(SINGLE\s+SKU|SKU)\s*:?\s*$/i.test(lines[i].text)) ? lines[i + 1].text : '');
     let m; re.lastIndex = 0;
@@ -2448,6 +2450,8 @@ function awdActTxt(r) {
     case 'lock': return '🔒 Locked <b>' + h(d.shipment) + '</b> — ' + h(d.cases) + ' cases at ' + h(d.spots) + ' spots held';
     case 'unlock': return '🔓 Unlocked <b>' + h(d.shipment) + '</b>';
     case 'label_reprint': return '🖨 Reprinted ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + ' of ' + h(d.shipment || '?') + ' (not on a pallet yet): Box ' + L(d.boxes);
+    case 'bag_print': return d.box ? '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' for Box ' + h(d.box) + ' (' + h(d.part) + ') of ' + h(d.shipment || '?') + ' — from its Amazon label (UPC Barcodes)'
+      : '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' (' + h(d.part) + ') — from the shipment list (UPC Barcodes)';
     case 'labels_bring_back': return '↩ Brought back the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels)';
     case 'label_map': return '🏷 Made the box labels of <b>' + h(d.shipment || '?') + '</b> (' + h(d.boxes) + ' boxes)';
     case 'ship_send': return '📤 Sent <b>' + h(d.shipment) + '</b> to Stock Out Big Company (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';

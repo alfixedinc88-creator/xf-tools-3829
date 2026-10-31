@@ -8665,6 +8665,10 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
 {
   const { readFileSync: rfQ } = await import('node:fs');
   const ah = rfQ(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = rfQ(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  // 🕒 The clock is held at 2026-10-20 for this block: the made-up sales (one every 30 days) put 2 sales in one calendar month on some days
+  // (e.g. 2026-10-31 → October 2025 had 2), which made the month look unusual and the check fail for a date reason only.
+  const RealDate = Date, FIXED_NOW = RealDate.parse('2026-10-20T15:00:00Z');
+  globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(FIXED_NOW); } static now() { return FIXED_NOW; } };
   const ago = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
   sq.prepare("INSERT OR REPLACE INTO awd_auto (k, v) VALUES ('fbaBase', ?)").run(JSON.stringify([['28-2-2=10X', 'B0TQ000001', 'XQ1', 'pex tee 10 pack', 'NewItem', 20, 0, 0, 20, '', 0, 0, 0, '', '', '', '', 0]]));
@@ -8695,6 +8699,7 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
   const h1 = lib(S, { months: 1 }, (r, k) => r[k], v => parseFloat(v) || 0, fnum, x => String(x == null ? '' : x), x => String(x))(d);
   check('…pick 1 month → 33 needed, Amazon has 40 → "nothing to ship — Amazon has enough"', /need <b>33<\/b>/.test(h1) && /nothing to ship — Amazon has enough/.test(h1), null);
   check('…tab + 🧩 Pages & Tabs check mark; months 1 / 2 / 3 / 4 / 6 or any number', /id="tab-asin"/.test(ah) && /id="page-asin"/.test(ah) && /\[1, 2, 3, 4, 6\]/.test(ah) && /key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin'/.test(xa), null);
+  globalThis.Date = RealDate; // 🕒 the real clock again
   sq.exec("DELETE FROM amazon_sales_weekly WHERE sku LIKE '28-2-2%'; DELETE FROM master_list WHERE base_sku = '28-2-2'; DELETE FROM awd_auto");
 }
 
@@ -11628,6 +11633,11 @@ console.log('\n🔢 Picking "No Stock" cases + Pull List cases: our own number p
     ['psNostockTick', 'psNostockBoxTap', 'psNostockTyped'].forEach(k => { delete globalThis[k]; });
   }
   check('…Escape closes the pad; the Picking scan box does not steal it while it is open', /if \(_psNumPad\)\s+\{ psNumPadClose\(\); return; \}/.test(ps) && /!typingElsewhere && !_psNumPad\) inp\.focus\(\)/.test(ps), null);
+  // Owner (2026-10-30, photo of the Picking PC): the 5-column grid squeezed one item card to ~100px and ⚠ No Stock spilled out.
+  const pickGrid = /\n#ps-pick-product-items, #ps-pick-product-more \{ grid-template-columns:repeat\(auto-fill, minmax\(150px, 168px\)\); \}/.test(ps)
+    && /\n#packship-app #ps-pick-product-items, #packship-app #ps-pick-product-more \{ grid-template-columns:repeat\(auto-fill, minmax\(150px, 168px\)\); \}/.test(ps);
+  const order = ps.indexOf('#ps-pick-product-items, #ps-pick-product-more { grid-template-columns:repeat(auto-fill') < ps.indexOf('  #ps-scan-product-items, #ps-pick-product-items { grid-template-columns:repeat(2, 1fr); }');
+  check('Picking item cards are never squeezed: 150–168px each, more items go on the next row (phone: 2 columns as before; Packing unchanged)', pickGrid && order, null);
   delete globalThis._psPickStockoutCtx; delete globalThis.__psSel;
   ['psNumPad', 'psNumPadKey', 'psNumPadClose', 'psNumPadOk', 'psNumPadOpen', 'psNostockPad', 'psSubmitNoStock'].forEach(k => { delete globalThis[k]; });
 
@@ -11938,6 +11948,112 @@ console.log('\n🔤 =10-X = =10X everywhere in the AWD flow: Box check, Stock Ou
   sq.exec("DELETE FROM master_list WHERE base_sku = '94-2-6'; DELETE FROM upc WHERE base_sku = '94-2-6'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-DASH1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-DASH1'");
 }
 
+// Owner (2026-10-30, photos: 26-4-2=1000's Amazon box, a case of 26-4-2=100 with "DO NOT SEPARATE", the phone saying "Bring it to the
+// PACKING ROOM — rebag and label it as 26-4-2=1000"): "for Stock Out Big Company we use it as a whole box — we just put the Do not separate
+// label … check the whole case one, we put it in Reorder → Barcode / vendor for a part #" (Sold as a whole case of 26-4-2=100).
+console.log('\n📦 Box check: a part # "sold as a whole case of" another (Reorder) → that case is the right box (no rebag)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('96-4-2','96-4-2','jclamp','96-4-2=100','2FL=2-2-8',9,1000)").run();
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('96-4-2=100','96-4-2','840096420100','10840096420107')").run();
+  await get('/inventory/lookup?code=96-4-2=100'); // tables ready
+  sq.prepare("INSERT OR REPLACE INTO reorder_case_of (part, target, by_user, at) VALUES ('96-4-2=1000', '96-4-2=100', 'TS', '2026-10-30')").run();
+  await post('/awd/label-map', { shipment: 'STAR-CASE1', labels: [{ sscc: '301952611628559101', sku: '96-4-2=1000-', part: '96-4-2=1000', seq: '1-1', units: 1, loc: '2FL=2-2-8' },
+    { sscc: '301952611628559102', sku: '96-4-2=1000-', part: '96-4-2=1000', seq: '1-2', units: 1, loc: '2FL=2-2-8' }] });
+  const { readFileSync: rfC } = await import('node:fs');
+  const ih = rfC(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const code = ih.slice(ih.indexOf('  var BXC = { label: null };'), ih.indexOf('  window.invBoxCheckDay = function() {'));
+  const els = {}, gC = id => els[id] || (els[id] = { innerHTML: '', textContent: '', focus() {} });
+  const wF = (u, o) => call(u, o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const B = new Function('g', 'wFetch', 'W', 'invAmzBcLoad', 'invPost', 'ckE', 'invBoxCheckDay', 'navigator', 'window', 'invFlash', 'xfrFmtT', 'invMe', code + '; return window;')(
+    gC, wF, '', async () => ({ list: [] }), (u, o) => call(u, { method: 'POST', headers: H, body: o.body }), v => String(v == null ? '' : v), () => {}, {}, {}, () => {}, v => String(v || ''), () => 'TS');
+  const wait = () => new Promise(r => setTimeout(r, 150));
+  B.invBoxCheckScan('00301952611628559101'); for (let i = 0; i < 20 && !/inv-bxs-row/.test(gC('inv-bc-res').innerHTML); i++) await wait();
+  B.invBoxCheckScan('10840096420107'); for (let i = 0; i < 20 && !/inv-bc-next|PACKING ROOM/.test(gC('inv-bc-res').innerHTML); i++) await wait();
+  const r1 = gC('inv-bc-res').innerHTML;
+  const kept = sq.prepare("SELECT kind, note FROM awd_box_scan WHERE sscc = '301952611628559101' ORDER BY id DESC LIMIT 1").get() || {};
+  check('Amazon box of 96-4-2=1000 (Reorder: sold as a whole case of 96-4-2=100) + the 96-4-2=100 case scanned → "✅ WHOLE CASE … NO rebag. Put the DO NOT SEPARATE label + the Amazon label on it" (not "PACKING ROOM — rebag"); kept as ok (not a relabel), "whole case of 96-4-2=100"',
+    /✅ WHOLE CASE — 96-4-2=100 is sold as 96-4-2=1000: NO rebag\. Put the DO NOT SEPARATE label \+ the Amazon label on it/.test(r1) && !/PACKING ROOM/.test(r1) && kept.kind === 'ok' && /whole case of 96-4-2=100/.test(kept.note || ''), { r1: r1.slice(-500), kept });
+  sq.prepare("DELETE FROM reorder_case_of WHERE part = '96-4-2=1000'").run();
+  sq.exec("DELETE FROM master_list WHERE base_sku = '96-4-2'; DELETE FROM upc WHERE base_sku = '96-4-2'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-CASE1'; DELETE FROM awd_label_map WHERE shipment = 'STAR-CASE1'");
+}
+
+// Owner (2026-10-31): "for the AWD shipment, check out the UPC Barcodes — if we need to print the upc bag barcode for some reason we can just
+// scan the Amazon label then we can start to print it out, and same thing for the Amazon barcode too".
+console.log('\n📦 UPC Barcodes: scan an AWD box\'s Amazon label → print its bag UPC / Amazon barcode (as many as its bags), kept in the record');
+{
+  await post('/awd/label-map', { shipment: 'STAR-UPCBOX1', labels: [
+    { sscc: '301952611628559201', sku: '97-1-1=10-', part: '97-1-1=10', seq: '2-1', units: 5, loc: 'C1=1-1-1', fnsku: 'X00TEST9711', name: '1/2 pex elbow 10 pack' },
+    { sscc: '301952611628559202', sku: '97-2-2=5-', part: '97-2-2=5', seq: '3-1', units: 2, loc: 'C1=1-1-2', fnsku: 'B0TESTASIN', name: 'tee 5 pack' }] });
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('97-1-1=10','97-1-1','840097110105','10840097110102')").run();
+  const { readFileSync: rfU2 } = await import('node:fs');
+  const uh = rfU2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const code = uh.slice(uh.indexOf('// ── 📦 AWD box → its bag UPC'), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
+  const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {} });
+  const made = [], printed = { n: 0, html: '' };
+  const doc = { getElementById: id => id === 'upc-print-container' ? null : el(id), createElementNS: () => { const at = {}; return { setAttribute: (k, v) => { at[k] = v; }, getAttribute: k => at[k], get outerHTML() { return '<svg data-l="1"></svg>'; }, innerHTML: '<rect/>' }; },
+    createElement: () => ({ style: {}, set innerHTML(v) { printed.html = v; } }), body: { appendChild() {} } };
+  const win = { print() { printed.n++; } };
+  const wF = (u, o) => call(String(u).replace('https://xfitting-lookup.alfixedinc88.workers.dev', ''), o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const U = new Function('wFetch', 'document', 'window', 'loadJsBarcode', 'JsBarcode', 'setTimeout', code + '; return window;')(wF, doc, win, cb => cb(), (sv, v, o) => { made.push([v, o.format]); sv.setAttribute('width', 200); sv.setAttribute('height', 80); }, f => f());
+  await U.upcAwdBox('00301952611628559201'); const h1 = el('upc-awdbox-out').innerHTML;
+  check('scan the Amazon label of Box 2-1 → 97-1-1=10, STAR-UPCBOX1, 5 bags in this box; 🏷 bag UPC 840097110105 (5 to print) and 🅰 Amazon barcode X00TEST9711 (5 to print)',
+    /97-1-1=10/.test(h1) && /Box 2-1 · STAR-UPCBOX1/.test(h1) && /<b>5 bags<\/b> in this box/.test(h1) && /840097110105/.test(h1) && /Print bag UPC/.test(h1) && /X00TEST9711 — Amazon's label goes on every unit/.test(h1) && /Print Amazon barcode/.test(h1)
+      && (h1.match(/type="number" min="1" max="500" value="5"/g) || []).length === 2, h1.slice(0, 600));
+  U.upcAwdPrint('fnsku'); await new Promise(r => setTimeout(r, 300));
+  const rec = sq.prepare("SELECT metadata FROM user_activity_log WHERE action_type = 'awd_bag_print' ORDER BY id DESC LIMIT 1").get() || {};
+  check('…🖨 Print Amazon barcode → 5 labels (Code 128 of X00TEST9711, with the FNSKU, name, "New"), one print; kept: who / when / Box 2-1 / 97-1-1=10 / 5',
+    printed.n === 1 && (printed.html.match(/X00TEST9711<\/text>/g) || []).length === 5 && /New<\/text>/.test(printed.html) && made.filter(m => m[0] === 'X00TEST9711' && m[1] === 'CODE128').length === 5
+      && /"box":"2-1"/.test(rec.metadata || '') && /"qty":5/.test(rec.metadata || '') && /Amazon barcode X00TEST9711/.test(rec.metadata || ''), { n: printed.n, rec });
+  made.length = 0; U.upcAwdPrint('upc'); await new Promise(r => setTimeout(r, 100));
+  check('…🖨 Print bag UPC → 5 UPC-A labels of 840097110105', made.filter(m => m[0] === '840097110105' && m[1] === 'UPC').length === 5 && printed.n === 2, made);
+  await U.upcAwdBox('301952611628559202'); const h2 = el('upc-awdbox-out').innerHTML;
+  await U.upcAwdBox('12345'); const h3 = el('upc-awdbox-out').innerHTML;
+  await U.upcAwdBox('009999999999999999999'); const h4 = el('upc-awdbox-out').innerHTML;
+  check('…a listing that ships with our UPC (B0…) → "no Amazon barcode needed"; no bag UPC on file → says where to add it; not an Amazon label / not ours → said',
+    /ships with our UPC/.test(h2) && !/Print Amazon barcode/.test(h2) && /No inside \(bag\) UPC on file for 97-2-2=5/.test(h2) && /not an Amazon box label/.test(h3) && /Not one of our Amazon box labels/.test(h4), { h2, h3, h4 });
+  const awh = rfU2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), aj = rfU2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('…on the page (top of UPC Barcodes), in 🧩 Pages & Tabs, and each print shows in the AWD Shipment Builder history',
+    /id="upc-awdbox-card"/.test(uh) && /onkeydown="if\(event\.key==='Enter'\)\{event\.preventDefault\(\);upcAwdBox\(this\.value\)\}"/.test(uh) && /sel: '#upc-awdbox-card'/.test(aj) && /case 'bag_print'/.test(awh), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-UPCBOX1'; DELETE FROM upc WHERE base_sku = '97-1-1'");
+}
+
+// Owner (2026-10-31, screenshot of UPC Barcodes → Saved Shipment → Load Barcodes): "after we load it we still see something there not with
+// barcode, and some of it it was using amazon label, I want they be able to print it out with Amazon label too".
+console.log('\n🅰 UPC Barcodes shipment list: part #s with spaces / dashes found in our UPC list; Amazon-label listings get 🅰 Print Amazon label');
+{
+  await get('/inventory/amazon-barcode');
+  const now = new Date().toISOString();
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('923-2-1=20-X', 'X00AMZ2321', 'B0AMZ02321', 'not-our-brand valve 20 pack', 'Yes', now);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('905-2-2=10XX', 'X00AMZ0522', 'B0AMZ00522', 'brass tee 10 pack', 'Yes', now);
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('925-4-2=5','925-4-2','840925420051','10840925420058')").run();
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const uh = rfS2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const fnU = n => { const a = uh.indexOf('function ' + n + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
+  const code = uh.slice(uh.indexOf('function upcRenderFromSkuList('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
+    + uh.slice(uh.indexOf('var UPC_W = '), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
+  const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {}, textContent: '' });
+  const printed = { n: 0, html: '' }, made = [];
+  const doc = { getElementById: id => id === 'upc-print-container' ? null : el(id), createElementNS: () => { const at = {}; return { setAttribute: (k, v) => { at[k] = v; }, getAttribute: k => at[k], outerHTML: '<svg/>', innerHTML: '<rect/>' }; },
+    createElement: () => ({ style: {}, set innerHTML(v) { printed.html = v; } }), body: { appendChild() {} } };
+  const wF = (u, o) => call(String(u).replace('https://xfitting-lookup.alfixedinc88.workers.dev', ''), o && o.method ? { method: o.method, headers: H, body: o.body } : { headers: H });
+  const lookup = q => q === '905-2-2=10XX' ? [{ partNum: '905-2-2=10XX', upc: '840428933067' }] : [];
+  const U = new Function('wFetch', 'document', 'window', 'loadJsBarcode', 'JsBarcode', 'setTimeout', 'upcLookup', 'upcShowScanBar', 'upcDrawBarcodes',
+    code + '; return { render: upcRenderFromSkuList, amz: window.upcPrintAmzFromBtn };')(wF, doc, { print() { printed.n++; } }, cb => cb(),
+    (sv, v, o) => { made.push([v, o.format]); sv.setAttribute('width', 200); sv.setAttribute('height', 80); }, f => f(), lookup, () => {}, () => {});
+  U.render(['905-2-2=10XX', '925-4-2 =5', '923-2-1=20-X', '929-9-9=10'], 'Saved Shipment', 'sheet');
+  for (let i = 0; i < 30 && !/upc-amz-row|No UPC-A/.test(el('upc-results').innerHTML); i++) await new Promise(r => setTimeout(r, 50));
+  const h = el('upc-results').innerHTML;
+  check('Load Barcodes: "925-4-2 =5" (a space) → found in our UPC list (840925420051); "923-2-1=20-X" uses Amazon\'s label → 🅰 Print Amazon label (X00AMZ2321) instead of "No UPC-A"; 905-2-2=10XX has our UPC AND Amazon\'s label → both; 929-9-9=10 → still "No UPC-A on file"; the top line counts them',
+    /data-upc="840925420051"/.test(h) && /🅰 Uses Amazon's label \(no our UPC\) — FNSKU <b[^>]*>X00AMZ2321/.test(h) && /data-fnsku="X00AMZ2321"/.test(h) && /data-fnsku="X00AMZ0522"/.test(h) && /data-upc="840428933067"/.test(h)
+      && (h.match(/No UPC-A on file/g) || []).length === 1 && /929-9-9=10/.test(h) && /2 barcodes ready to print/.test(h) && /🅰 2 use Amazon's label/.test(h) && /1 SKU with no barcode on file/.test(h), h.slice(0, 1500));
+  const btn = { getAttribute: k => ({ 'data-fnsku': 'X00AMZ2321', 'data-name': 'not-our-brand valve 20 pack', 'data-pn': '923-2-1=20-X' })[k], parentNode: { querySelector: () => ({ value: '3' }) } };
+  U.amz(btn); await new Promise(r => setTimeout(r, 300));
+  const rec = sq.prepare("SELECT metadata FROM user_activity_log WHERE action_type = 'awd_bag_print' ORDER BY id DESC LIMIT 1").get() || {};
+  check('…🅰 Print Amazon label with 3 → 3 labels (Code 128 X00AMZ2321 + FNSKU + name + New), one print; kept (who / when / part # / 3)',
+    printed.n === 1 && (printed.html.match(/X00AMZ2321<\/text>/g) || []).length === 3 && made.filter(m => m[0] === 'X00AMZ2321' && m[1] === 'CODE128').length === 3 && /"qty":3/.test(rec.metadata || '') && /923-2-1=20-X/.test(rec.metadata || ''), { n: printed.n, rec });
+  sq.exec("DELETE FROM amazon_fba_inventory WHERE sku IN ('923-2-1=20-X','905-2-2=10XX'); DELETE FROM upc WHERE base_sku = '925-4-2'");
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
@@ -12007,6 +12123,78 @@ console.log('\n✗ None Found (both tabs): no questions — logged (nothing take
   check('✗ None Found on Big Company → NO question / pop-up, NO "what IS here?" count; GARAGE logged None Found (0 cases, sent at once); the next spot C1=9-4-1 (same part #) is put on the Pull List with the same 2 cases and the AWD shipment tag; the message says stock NOT taken off',
     !modals.length && !counts.length && list[0].noneFound === true && list[0].cases === 0 && list[0].wanted === 2 && subs.length === 1 && alt.location === 'C1=9-4-1' && alt.cases === '2' && alt.awdShipment === 'STAR-1'
       && flashes.some(f => /stock NOT taken off/.test(f) && /C1=9-4-1/.test(f)), { modals, counts, list, flashes });
+}
+
+console.log('\n🔗 "&" part #s (a hot & cold set, 28-2-3&4) are their own item everywhere — never read as 28-2-3');
+{
+  // Owner (2026-10-31, AWD label photo "SKU: 28-2-3&4=4XX-" → "GRAB … 28-2-3=1W.1C"): "why we need 28-2-3&4=4XX, that's 3/4 push fit ball valve hot
+  // and cold, but our system only tell our grabber to grab the 28-2-3, only the cold … please check all make sure everything is right and fix".
+  const { readFileSync: rfB } = await import('node:fs');
+  const ah = rfB(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const L = new Function('S', ah.slice(ah.indexOf('function awdLabelSkus(lines) {'), ah.indexOf('async function awdLabelsDo(file) {')) + '; return { awdLabelSkus, awdLabelMatch };')({ shipment: { '28-2-3&4=4XX-': {} } });
+  const got = L.awdLabelSkus([{ y: 10, text: 'AWD Box 257 of 324 28 lbs' }, { y: 20, text: 'SKU: 28-2-3&4=4XX- Units: 10' }, { y: 30, text: 'FNSKU: B0D1ZPTQ1H' }]);
+  check('AWD Planner reads the label SKU whole: "SKU: 28-2-3&4=4XX- Units: 10" → 28-2-3&4=4XX- (was 28-2-3), and matches the Shipment Builder row',
+    got.length === 1 && got[0].sku === '28-2-3&4=4XX-' && L.awdLabelMatch(got[0].sku) === '28-2-3&4=4XX-', got);
+  const wsCode = ah.slice(ah.indexOf('function normalizeAmazonSKU(sku) {'), ah.indexOf('// ── BOX COUNT FROM SHIPMENT BUILDER ──'));
+  const WH = { loaded: true, stock: {
+    '28-2-3=1w.1c': [{ partNum: '28-2-3=1W.1C', location: 'BARN=9-1-5', casesNum: 4, eachPcs: 28 }], '28-2-3=5w.1c': [{ partNum: '28-2-3=5W.1C', location: 'BARN=9-1-5', casesNum: 2, eachPcs: 25 }],
+    '28-2-4=1w.1c': [{ partNum: '28-2-4=1W.1C', location: 'BARN=9-1-6', casesNum: 3, eachPcs: 28 }],
+    '28-2-3&4=4xx': [{ partNum: '28-2-3&4=4XX', location: 'C2=3-1-1', casesNum: 2, eachPcs: 40 }], '28-2-3&4=1': [{ partNum: '28-2-3&4=1', location: 'C2=3-1-2', casesNum: 5, eachPcs: 100 }] } };
+  const ws = new Function('WH', wsCode + '; return checkWarehouseStock;')(WH)('28-2-3&4=4XX-');
+  const parts = ws.rows.map(r => r.partNum).sort();
+  check('…the grab plan looks only at 28-2-3&4 (exact 28-2-3&4=4XX, same set 28-2-3&4=1) — never 28-2-3 (cold) or 28-2-4 alone',
+    ws.exactRows.length === 1 && ws.exactRows[0].partNum === '28-2-3&4=4XX' && parts.join(',') === '28-2-3&4=1,28-2-3&4=4XX', parts);
+  const wsCold = new Function('WH', wsCode + '; return checkWarehouseStock;')(WH)('28-2-3=1W.1C');
+  check('…and 28-2-3 (cold) still finds only 28-2-3 rows, not the set', wsCold.rows.every(r => /^28-2-3=/.test(r.partNum)) && wsCold.rows.length === 2, wsCold.rows.map(r => r.partNum));
+
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('28-2-3','28-2-3','3/4 PB cold','28-2-3=1W.1C','BARN=9-1-5',4,28), ('28-2-3&4','28-2-3&4','3/4 PB hot & cold','28-2-3&4=4XX','C2=3-1-1',2,40)").run();
+  const lk = await get('/inventory/lookup?code=' + encodeURIComponent('28-2-3&4=4XX'));
+  const lkParts = [...new Set((lk.locations || []).map(l => l.partNum))];
+  check('Stock Out lookup of 28-2-3&4=4XX → the set only (C2=3-1-1), not the cold 28-2-3', lk.partNum && /^28-2-3&4/.test(lk.partNum) && lkParts.length && lkParts.every(p => /^28-2-3&4=/.test(p)), { pn: lk.partNum, lkParts });
+  const sc = await post('/ship/stock-check', { items: [{ sku: '28-2-3&4=4XX', bin: '28-2-3&4' }, { sku: '28-2-3=1W.1C', bin: '28-2-3' }] });
+  check('Pack & Ship stock check: bin 28-2-3&4 is read as the set (its 2 cases), 28-2-3 as the cold one (its 4) — not mixed',
+    sc.results && sc.results[0] && !sc.results[0].noStockFound && sc.results[1] && !sc.results[1].noStockFound, sc.results);
+  const wk = rfB(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the Pack & Ship photo for a line takes 28-2-3&4 as its parent (own photo, not the cold one\'s)', (wk.match(/\/\^\\d\+\(-\\d\+\)\+\(&\\d\+\)\?\(=\|\$\)\/\.test\(sku\) \? sku\.split\('='\)\[0\]/g) || []).length === 4
+    && /function _psIsFamilyCode\(b\) \{ return \/\^\[A-Z0-9\]\+\(-\[A-Z0-9\]\+\)\+\(&\[A-Z0-9\]\+\)\?\$\//.test(wk), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('28-2-3','28-2-3&4')");
+}
+
+console.log('\n🔗 Labels saved before the "&" fix (SKU cut to 28-2-3) are put right by their FNSKU — no re-upload, nothing grabbed / scanned lost');
+{
+  // Owner (2026-10-31): "I can't reupload, we almost done this shipment … I just want to make sure when we try to put on the pallet will this
+  // 28-2-3&4=4XX match the 28-2-3&4=4XX".
+  sq.exec(`CREATE TABLE IF NOT EXISTS amazon_fba_inventory (sku TEXT PRIMARY KEY, fnsku TEXT, asin TEXT, product_name TEXT, afn_listing_exists TEXT, mfn_listing_exists TEXT, updated_at TEXT)`);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, afn_listing_exists) VALUES ('28-2-3&4=4XX-','X00SETHC01','B0D1ZPTQ1H','Yes'), ('28-2-3=1W.1C','X00COLD001','B0COLD0001','Yes'), ('77-7-7=10','X00OTHER01','B0OTHER001','Yes')").run();
+  await get('/awd/label-map?code=201952611628559000'); // the table exists
+  const ins = sq.prepare('INSERT OR REPLACE INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, at, by_user) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  const T0 = new Date().toISOString();
+  ins.run('201952611628559310', 'STAR-SYX5QCC', '28-2-3', '28-2-3', '2-1', 10, 'BARN=9-1-5', 0, 'B0D1ZPTQ1H', T0, 'TS'); // Box 257: cut at "&"
+  ins.run('201952611628559311', 'STAR-SYX5QCC', '28-2-3', '28-2-3', '2-2', 10, 'BARN=9-1-5', 0, 'B0D1ZPTQ1H', T0, 'TS');
+  ins.run('201952611628559312', 'STAR-SYX5QCC', '28-2-3=1W.1C', '28-2-3=1W.1C', '1-1', 5, 'BARN=9-1-5', 0, 'X00COLD001', T0, 'TS'); // a real cold one
+  ins.run('201952611628559313', 'STAR-SYX5QCC', '77-7', '77-7', '1-1', 5, '', 0, 'X00OTHER01', T0, 'TS'); // no "&" listing for it → left alone
+  sq.exec("CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked', unlocked_at TEXT, unlocked_by TEXT)");
+  sq.prepare("INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status) VALUES ('STAR-SYX5QCC', ?, 'TS', ?, 'locked')").run(T0, JSON.stringify([
+    { forPart: '28-2-3', sku: '28-2-3', grabs: [{ loc: 'BARN=9-1-5', part: '28-2-3=1W.1C', n: 4 }] }, { forPart: '28-2-3=1W.1C', sku: '28-2-3=1W.1C', grabs: [{ loc: 'BARN=9-1-5', part: '28-2-3=1W.1C', n: 1 }] }]));
+  const b = await get('/awd/label-map?code=00201952611628559310');
+  const r2 = sq.prepare("SELECT sku, part FROM awd_label_map WHERE sscc='201952611628559311'").get(), cold = sq.prepare("SELECT sku, part FROM awd_label_map WHERE sscc='201952611628559312'").get();
+  const other = sq.prepare("SELECT sku FROM awd_label_map WHERE sscc='201952611628559313'").get();
+  check('scan the OLD printed label (Box 257, saved as "28-2-3") → it reads 28-2-3&4=4XX (its label FNSKU B0D1ZPTQ1H is the listing\'s ASIN); the other box of it too',
+    b.box && b.box.part === '28-2-3&4=4XX' && b.box.sku === '28-2-3&4=4XX-' && r2.part === '28-2-3&4=4XX', { box: b.box, r2 });
+  check('…the real cold 28-2-3=1W.1C box is not touched, and a cut SKU with no "&" listing for its FNSKU is left as it was (never a guess)', cold.part === '28-2-3=1W.1C' && other.sku === '77-7', { cold, other });
+  const lg = sq.prepare("SELECT sscc, old_part, new_part, by_user FROM awd_label_fix_log WHERE shipment='STAR-SYX5QCC' ORDER BY id").all();
+  check('…kept on record: each box old → new (28-2-3 → 28-2-3&4=4XX, auto-fix, when), shipment / box / units unchanged',
+    lg.filter(x => x.old_part === '28-2-3' && x.new_part === '28-2-3&4=4XX' && x.by_user === 'auto-fix').length === 2
+      && sq.prepare("SELECT shipment, seq, units FROM awd_label_map WHERE sscc='201952611628559310'").get().seq === '2-1', lg);
+  const lk = JSON.parse(sq.prepare("SELECT lines FROM awd_lock WHERE shipment='STAR-SYX5QCC'").get().lines);
+  check('…🔒 the lock line for the cut "28-2-3" (cold spots held by mistake) is dropped and logged; the real cold line stays',
+    lk.length === 1 && lk[0].forPart === '28-2-3=1W.1C' && lg.some(x => x.sscc === '🔒 lock' && x.old_part === '28-2-3'), { lk, lg });
+  await get('/awd/label-map?code=00201952611628559310');
+  check('…running again changes nothing (no new log lines)', sq.prepare("SELECT COUNT(*) n FROM awd_label_fix_log WHERE shipment='STAR-SYX5QCC'").get().n === lg.length, null);
+  const ihL = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Stock Out Big Company: a locked shipment with no lock line for a part # (28-2-3&4=4XX now) works it out by the normal rules, not "🔒 no spot"',
+    /var locked = sis\.filter\(inLock\), rest = sis\.filter\(function\(si\) \{ return !inLock\(si\); \}\);/.test(ihL), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SYX5QCC'; DELETE FROM awd_lock WHERE shipment='STAR-SYX5QCC'; DELETE FROM amazon_fba_inventory WHERE sku IN ('28-2-3&4=4XX-','28-2-3=1W.1C','77-7-7=10')");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
