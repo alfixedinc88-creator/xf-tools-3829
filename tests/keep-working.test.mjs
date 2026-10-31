@@ -12054,6 +12054,37 @@ console.log('\n🅰 UPC Barcodes shipment list: part #s with spaces / dashes fou
   sq.exec("DELETE FROM amazon_fba_inventory WHERE sku IN ('923-2-1=20-X','905-2-2=10XX'); DELETE FROM upc WHERE base_sku = '925-4-2'");
 }
 
+// Owner (2026-10-31, photo): "under the Stock Out Big Company it keeps saying updating" — one part # whose look-up never answered (or
+// errored) left the card on "⏳ updating…" for good. Now each part # gets 30 s, an error never stops the rest, and a load stuck 2 min is let go.
+console.log('\n⏳ Stock Out Big Company → AWD shipments ready: one look-up that never answers can\'t leave it "updating…" forever');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('63-3-3','hang tee','63-3-3=10','C1=6-3-3',4,100), ('64-4-4','ok tee','64-4-4=10','C2=6-4-4',4,100)").run();
+  await post('/awd/label-map', { shipment: 'STAR-HANG1', labels: [{ sscc: '301952611628559301', sku: '63-3-3=10-', part: '63-3-3=10', seq: '1-1', units: 10, loc: 'C1=6-3-3' }, { sscc: '301952611628559302', sku: '64-4-4=10-', part: '64-4-4=10', seq: '2-1', units: 10, loc: 'C2=6-4-4' }] });
+  const { readFileSync: rfH2 } = await import('node:fs');
+  const ih = rfH2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} });
+  const env3 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => /^63-3-3/.test(c) ? new Promise(() => {}) : get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+    invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {},
+    invPost: (u, o) => call(u, { method: 'POST', headers: H, body: o.body }) };
+  const run = new Function(...Object.keys(env3), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+    function invAddToPullList() {}
+    ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+    return { AWDS, load: window.invAwdShipLoad };`)(...Object.values(env3), []);
+  run.AWDS.partMs = 300; run.AWDS.sharedTried = true;
+  run.load(); for (let i = 0; i < 80 && run.AWDS.busy; i++) await new Promise(r => setTimeout(r, 50));
+  const h = g('inv-awdship-out').innerHTML, p63 = (run.AWDS.parts || {})['63-3-3=10'] || {}, p64 = (run.AWDS.parts || {})['64-4-4=10'] || {};
+  check('63-3-3=10\'s look-up never answers → after its time it is marked "no answer — check WiFi — ↻ Refresh" (worked out again next time); 64-4-4=10 and the rest are worked out; the card is done (not "updating…")',
+    !run.AWDS.busy && p63.err && /63-3-3=10 \(no answer in 30 s — check WiFi — ↻ Refresh\)/.test((p63.short || []).join()) && !p64.err && (p64.takes || []).length > 0 && /inv-awdship-area|inv-awdship-st/.test(h), { busy: run.AWDS.busy, p63, p64: { err: p64.err, takes: (p64.takes || []).length } });
+  // a load stuck (busy for longer than allowed) is let go by the next load
+  run.AWDS.busy = true; run.AWDS.busyAt = Date.now() - 10000; run.AWDS.stuckMs = 5000;
+  run.load(); const startedAgain = run.AWDS.busy && Date.now() - run.AWDS.busyAt < 2000;
+  for (let i = 0; i < 80 && run.AWDS.busy; i++) await new Promise(r => setTimeout(r, 50));
+  check('…a load stuck longer than allowed is let go: the next one starts again and finishes', startedAgain && !run.AWDS.busy, { busy: run.AWDS.busy });
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('63-3-3','64-4-4'); DELETE FROM awd_label_map WHERE shipment = 'STAR-HANG1'");
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
