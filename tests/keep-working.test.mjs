@@ -12082,6 +12082,12 @@ console.log('\n⏳ Stock Out Big Company → AWD shipments ready: one look-up th
   run.load(); const startedAgain = run.AWDS.busy && Date.now() - run.AWDS.busyAt < 2000;
   for (let i = 0; i < 80 && run.AWDS.busy; i++) await new Promise(r => setTimeout(r, 50));
   check('…a load stuck longer than allowed is let go: the next one starts again and finishes', startedAgain && !run.AWDS.busy, { busy: run.AWDS.busy });
+  // Owner (2026-10-31, photo again: "still seeing updating…"): the list was drawn while the check was still busy, and the top line was never
+  // drawn again after it finished. A check with nothing new to work out → the line no longer says "updating".
+  run.load(); const during = g('inv-awdship-sum').innerHTML; for (let i = 0; i < 80 && run.AWDS.busy; i++) await new Promise(r => setTimeout(r, 50));
+  const sumNow = g('inv-awdship-sum').innerHTML;
+  check('…after a check ends (even one with nothing new), the top line shows "N shipment · N cases left to grab" WITHOUT "⏳ updating…"',
+    !run.AWDS.busy && /shipment/.test(sumNow) && /left to grab|everything grabbed/.test(sumNow) && !/updating/.test(sumNow) && /function invAwdSumLine\(\)/.test(ih), { during, sumNow });
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('63-3-3','64-4-4'); DELETE FROM awd_label_map WHERE shipment = 'STAR-HANG1'");
 }
 
