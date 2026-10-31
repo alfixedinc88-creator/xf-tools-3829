@@ -12091,6 +12091,49 @@ console.log('\n⏳ Stock Out Big Company → AWD shipments ready: one look-up th
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('63-3-3','64-4-4'); DELETE FROM awd_label_map WHERE shipment = 'STAR-HANG1'");
 }
 
+// Owner (2026-10-31, screenshot: "1 shipment · 156 cases left to grab", "we have now scanned all the labels and put them on our pallet"):
+// "if we put it in our pallet, take it off from the need to grab listing, so we don't double grab it".
+console.log('\n📦 AWD shipments ready: boxes already packed in Box check come off what is left to grab — never counted twice');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('65-5-5','pack tee','65-5-5=10','C1=6-5-5',6,100)").run();
+  const lb = (ss, seq) => ({ sscc: ss, sku: '65-5-5=10-', part: '65-5-5=10', seq, units: 10, loc: 'C1=6-5-5' }); // 10 bags × 10 = 100 pcs = 1 of our cases a box
+  await post('/awd/label-map', { shipment: 'STAR-PACK1', labels: [lb('301952611628559401', '1-1'), lb('301952611628559402', '1-2'), lb('301952611628559403', '1-3')] });
+  const { readFileSync: rfP2 } = await import('node:fs');
+  const ih = rfP2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const block = ih.slice(ih.indexOf('  var AWDS = { data: null'), ih.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  const mk = () => { const els = {}, g = id => els[id] || (els[id] = { innerHTML: '', style: {} });
+    const env4 = { g, W: '', wFetch: u => call(u, { headers: H }), _invFetchLookupRaw: c => get('/inventory/lookup?code=' + encodeURIComponent(c)), ckE: v => String(v == null ? '' : v), xfrFmtT: v => String(v || ''),
+      invFlash() {}, invPullItemKey: (p, l) => String(p).toUpperCase() + '|' + l.location, invSavePullList() {}, invRenderPullList() {}, invTagBoxSize() {}, window: {},
+      invPost: (u, o) => call(u, { method: 'POST', headers: H, body: o.body }) };
+    const run = new Function(...Object.keys(env4), 'invPullList', `var invPart = null, invStockOutDest = 'company', invPullListPendingCases = null, invPullListPendingCasesInputEl = null, _invPendingStockoutSourceId = null, INV_FBA_LOW_CASES = 2;
+      function invAddToPullList() {}
+      ${fn('invFifoBoxSize')}${fn('invOnPallet')}${fn('invRankForCompany')}${fn('invPlanCompanyPull')}${block}
+      return { AWDS, load: window.invAwdShipLoad };`)(...Object.values(env4), []);
+    run.AWDS.sharedTried = true; return { run, g }; };
+  const state = async () => { const { run, g } = mk(); run.load(true); for (let i = 0; i < 80 && run.AWDS.busy; i++) await new Promise(r => setTimeout(r, 50));
+    const r = (run.AWDS.parts || {})['65-5-5=10'] || {}, sh = (run.AWDS.ships || []).find(x => x.shipment === 'STAR-PACK1') || {};
+    return { left: Math.round((sh.left || 0) * 100) / 100, need: sh.need, take: Math.round(((r.takes || []).reduce((a, t) => a + t.cases, 0)) * 100) / 100, packed: Math.round((((r.packed || {})['STAR-PACK1']) || 0) * 100) / 100, html: g('inv-awdship-out').innerHTML }; };
+  const s0 = await state();
+  await post('/awd/box-pallet', { sscc: '301952611628559401', kind: 'pallet', pallet: 1, shipment: 'STAR-PACK1', seq: '1-1', part: '65-5-5=10', productPart: '65-5-5=10' });
+  const s1 = await state();
+  const so = (n, st) => post('/inventory/log', { type: 'OUT', partNum: '65-5-5=10', sku: '65-5-5', location: 'C1=6-5-5', cases: n, initials: 'MG', notes: '[BIG COMPANY for 65-5-5=10] [AWD: STAR-PACK1]' });
+  await so(1); const s2 = await state();
+  await post('/awd/box-pallet', { sscc: '301952611628559402', kind: 'mismatch', shipment: 'STAR-PACK1', seq: '1-2', part: '65-5-5=10', productPart: '99-9-9=1' });
+  const s3 = await state();
+  await post('/awd/box-pallet', { sscc: '301952611628559402', kind: 'ok', shipment: 'STAR-PACK1', seq: '1-2', part: '65-5-5=10', productPart: '65-5-5=10' });
+  await post('/awd/box-pallet', { sscc: '301952611628559403', kind: 'rebag', shipment: 'STAR-PACK1', seq: '1-3', part: '65-5-5=10', productPart: '65-5-5=5' });
+  const s4 = await state();
+  const row = (x, need, left, take, packed) => x.need === need && x.left === left && x.take === take && x.packed === packed;
+  check('3 Amazon boxes of 65-5-5=10 (1 case each) need 3 cases: nothing packed → 3 to grab; Box 1-1 on PALLET 1 (no Stock Out) → 2 left, the 1 shown as "📦 counted from Box check … no Stock Out, SKU Mgr still counts them: 65-5-5=10 1 cs"',
+    row(s0, 3, 3, 3, 0) && row(s1, 3, 2, 2, 1) && /counted from Box check/.test(s1.html) && /SKU Mgr still counts them: <b[^>]*>65-5-5=10<\/b> 1 cs/.test(s1.html), { s0: { ...s0, html: '' }, s1: { ...s1, html: s1.html.slice(0, 300) } });
+  check('…then 1 case grabbed on the app (Stock Out) for it → still 2 left (grabbed 1 and packed 1 are the SAME box: the more of the two, never both) and no "no Stock Out" warning',
+    row(s2, 3, 2, 2, 0) && !/counted from Box check/.test(s2.html), { ...s2, html: '' });
+  check('…Box 1-2 scanned as ❌ not a match → not packed (still 2 left); then Box 1-2 ✅ labeled + Box 1-3 sent to the packing room (right item, rebag) → 0 left, nothing to grab, 2 counted from Box check',
+    row(s3, 3, 2, 2, 0) && row(s4, 3, 0, 0, 2), { s3: { ...s3, html: '' }, s4: { ...s4, html: '' } });
+  sq.exec("DELETE FROM master_list WHERE base_sku = '65-5-5'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PACK1'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PACK1'"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-PACK1]%'").run();
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');

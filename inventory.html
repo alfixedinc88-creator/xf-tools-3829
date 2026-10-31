@@ -2786,16 +2786,25 @@ window.invCredLogin = async function() {
   }
   // the per-part # results → the list on screen (picks, short, no size, all grabbed, each shipment's % grabbed)
   function invAwdAssemble() {
-    var takes = [], short = [], noSize = [], allGot = [], need = {}, left = {}, gr = {}, ol = {}, T = { need: 0, grabbed: 0, list: 0, parts: 0, partsGrabbed: 0 };
+    var takes = [], short = [], noSize = [], allGot = [], need = {}, left = {}, gr = {}, ol = {}, T = { need: 0, grabbed: 0, list: 0, parts: 0, partsGrabbed: 0, packed: 0 }, packedNoOut = [];
     (AWDS.order || []).forEach(function(P) { var r = AWDS.parts[P]; if (!r) return;
       var rn = 0, rg = 0, rl = 0; Object.keys(r.need || {}).forEach(function(n) { rn += r.need[n] || 0; rg += (r.grabbed || {})[n] || 0; rl += (r.onList || {})[n] || 0;
         gr[n] = (gr[n] || 0) + ((r.grabbed || {})[n] || 0); ol[n] = (ol[n] || 0) + ((r.onList || {})[n] || 0); });
       if (rn > 0) { T.need += rn; T.grabbed += rg; T.list += rl; T.parts++; if (rn - rg < 0.001) T.partsGrabbed++; }
+      var pkN = 0; Object.keys(r.packed || {}).forEach(function(n) { pkN += r.packed[n] || 0; }); if (pkN > 0.0005) { T.packed += pkN; packedNoOut.push({ part: P, cases: Math.round(pkN * 100) / 100 }); }
       r.takes.forEach(function(t) { takes.push(t); }); (r.short || []).forEach(function(x) { short.push(x); }); (r.noSize || []).forEach(function(x) { if (noSize.indexOf(x) < 0) noSize.push(x); });
       if (r.allGot) allGot.push(P); Object.keys(r.need || {}).forEach(function(n) { need[n] = (need[n] || 0) + r.need[n]; left[n] = (left[n] || 0) + Math.max(0, r.left[n] || 0); }); });
     (AWDS.ships || []).forEach(function(sh) { sh.need = need[sh.shipment] || 0; sh.left = left[sh.shipment] || 0; sh.grabbed = gr[sh.shipment] || 0; sh.onList = ol[sh.shipment] || 0; });
-    AWDS.tot = T; AWDS.takes = takes; AWDS.short = short; AWDS.noSize = noSize; AWDS.allGot = allGot;
+    AWDS.tot = T; AWDS.packedNoOut = packedNoOut; AWDS.takes = takes; AWDS.short = short; AWDS.noSize = noSize; AWDS.allGot = allGot;
     if (AWDS.area && !takes.some(function(t) { return t.area === AWDS.area; })) AWDS.area = '';
+  }
+  // 📦 packed in Box check with no ✓ Grabbed on the app: off the list to grab, but no Stock Out was logged → SKU Mgr still counts them. Said in
+  // orange with each part #, so the office can find where it came from (the Pull List cleared at 6 PM, grabbed without the app…) and fix it.
+  function invAwdPackedHtml(T, r1) {
+    var L = AWDS.packedNoOut || []; if (!(T.packed > 0.001) || !L.length) return '';
+    return '<div class="inv-awdship-packed" style="margin-top:4px;font-size:12px;font-weight:600;color:#b45309;line-height:1.4">📦 ' + r1(T.packed) + ' case' + (r1(T.packed) === 1 ? '' : 's')
+      + ' counted from Box check (boxes already packed / on a pallet) — off the list, never grabbed twice.<br>⚠ No ✓ Grabbed (Stock Out) on the app for them, so SKU Mgr still counts them: '
+      + L.map(function(x) { return '<b style="font-family:var(--mono)">' + ckE(x.part) + '</b> ' + x.cases + ' cs'; }).join(' · ') + ' — check History / Pull Lists</div>';
   }
   function invAwdStatus(txt) { var st = g('inv-awdship-st'); if (st) st.innerHTML = txt; }
   // 🗜 Owner (2026-10-30): "Scan or Search — that can minimize it": Big Company only (Shelving is a locked design, never folded); remembered here
@@ -2837,6 +2846,11 @@ window.invCredLogin = async function() {
       got.forEach(function(x) { if (x.forPart !== o.part || (x.ships || []).indexOf(tag) < 0) return; var c = x.cases || 0;
         G.forEach(function(y) { if (!(c > 0) || !(y.left > 0) || String(y.g.part).toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }) !== x.part) return; var u = Math.min(y.left, c); y.left -= u; c -= u;
           var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sh] = (kk[sh] || 0) + u; }); });
+      // 📦 boxes already checked in Box check → off the locked spots too (the more of grabbed and packed, never both)
+      (function() { var q = o.per[si] || {}; if (!(q.units > 0) || !(q.pu > 0)) return;
+        var now = G.reduce(function(a, y) { return a + Math.max(0, y.left); }, 0), pk = need * Math.min(1, q.pu / q.units), ex = Math.min(now, Math.max(0, pk - (need - now)));
+        if (!(ex > 0.0005)) return; r.packed = r.packed || {}; r.packed[sh] = (r.packed[sh] || 0) + ex; r.grabbed[sh] = (r.grabbed[sh] || 0) + ex;
+        G.forEach(function(y) { if (!(ex > 0) || !(y.left > 0)) return; var u = Math.min(y.left, ex); y.left -= u; ex -= u; }); })();
       var left = 0;
       G.forEach(function(y) { if (!(y.left > 0.001)) return; left += y.left; var g = y.g, row = g.row || {}, part = String(g.part).toUpperCase();
         var how = g.caseOf ? 'a whole case of ' + g.caseOf + ' — ship the case as it is' : !g.exact ? 'of ' + part + ' — ' + (g.how || 'rebag') : g.pcs > 0 && g.used < g.n * g.pcs - 0.001 ? 'take ' + g.used + ' pcs, rest stays' : '';
@@ -2848,6 +2862,15 @@ window.invCredLogin = async function() {
       r.left[sh] = left; });
     r.allGot = !r.takes.length && !r.short.length;
     return r;
+  }
+  // 📦 Owner (2026-10-31): boxes already checked in Box check (on a pallet / labeled / packing room / recount) are off the shelf already —
+  // they come off what is left to grab. Never counted twice: what is covered = the MORE of (grabbed + on a Pull List) and (packed), not both
+  // added. Packed beyond what was grabbed on the app is said apart (r.packed): no Stock Out for it, so SKU Mgr still counts those cases.
+  function invAwdPackedOff(o, sis, need, left, r, sname) {
+    r.packed = r.packed || {};
+    sis.forEach(function(si) { var q = o.per[si] || {}, nm = sname(si); if (!(q.units > 0) || !(q.pu > 0)) return;
+      var pk = need[si] * Math.min(1, q.pu / q.units), covered = need[si] - left[si], ex = Math.min(Math.max(0, left[si]), Math.max(0, pk - covered));
+      if (!(ex > 0.0005)) return; left[si] -= ex; r.grabbed[nm] = (r.grabbed[nm] || 0) + ex; r.packed[nm] = (r.packed[nm] || 0) + ex; });
   }
   function invAwdPlanPartCalc(o, ships, got) {
     var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {} }, sname = function(si) { return ships[si].shipment; };
@@ -2871,6 +2894,7 @@ window.invCredLogin = async function() {
           var e = eachOf(x.part), c = x.part === o.part || (caseTo && x.part === String(caseTo).toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); })) || !(e > 0 && each > 0) ? x.cases : x.cases * e / each;
           x.ships.forEach(function(tg) { var si = tagOf[tg]; if (si === undefined || !(left[si] > 0) || !(c > 0)) return; var u = Math.min(left[si], c); left[si] -= u; c -= u;
             var kk = x.kind === 'list' ? r.onList : r.grabbed; kk[sname(si)] = (kk[sname(si)] || 0) + u; }); });
+        invAwdPackedOff(o, sis, need, left, r, sname);
         var rest = 0, forShips = []; sis.forEach(function(si) { r.need[sname(si)] = need[si]; r.left[sname(si)] = Math.max(0, left[si]); if (left[si] > 0.001) { rest += left[si]; forShips.push(invAwdTag(sname(si))); } });
         if (!(rest > 0.001)) { r.allGot = true; return r; }
         rest = Math.round(rest * 1000) / 1000;
@@ -2918,13 +2942,14 @@ window.invCredLogin = async function() {
       var by = {}, prevN = 0;
       ships.forEach(function(sh, si) { sh.prevN = 0;
         (sh.lines || []).forEach(function(b) { if (b.prev) { prevN++; sh.prevN++; return; } var P = String(b.part || b.sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); // =10-X = =10X (owner 2026-10-30)
-          var o = by[P] = by[P] || { part: P, name: b.name || '', per: {} }, q = o.per[si] = o.per[si] || { units: 0, boxes: 0 };
-          q.units += parseFloat(b.units) || 0; q.boxes += sh.source === 'send' ? (parseFloat(b.boxes) || 0) : 1; }); });
+          var o = by[P] = by[P] || { part: P, name: b.name || '', per: {} }, q = o.per[si] = o.per[si] || { units: 0, boxes: 0, pu: 0 };
+          q.units += parseFloat(b.units) || 0; q.boxes += sh.source === 'send' ? (parseFloat(b.boxes) || 0) : 1;
+          if (b.packed) q.pu += parseFloat(b.units) || 0; }); }); // 📦 units in boxes already checked in Box check (owner 2026-10-31)
       // Owner (2026-10-27, "still recalculating"): a part # is worked out again only when ITS need changed (a shipment with it sent / re-sent /
       // labelled / ✅ Done) or something was grabbed for it — or ↻ Refresh. A new shipment = only its part #s. 4 at a time; saved every few
       // part #s, so leaving the page half way keeps what was done (the next visit goes on from there), and the list shows while it works.
       var order = Object.keys(by), all = !!force || !AWDS.parts;
-      var needKey = function(P) { var o = by[P]; return JSON.stringify(Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }).map(function(si) { return [ships[si].shipment, o.per[si].units, o.per[si].boxes, (AWDS.locks[ships[si].shipment] || {}).at || '']; })); }; // 🔒 locked / unlocked → worked out again
+      var needKey = function(P) { var o = by[P]; return JSON.stringify(Object.keys(o.per).map(Number).sort(function(x, y) { return x - y; }).map(function(si) { return [ships[si].shipment, o.per[si].units, o.per[si].boxes, (AWDS.locks[ships[si].shipment] || {}).at || '', o.per[si].pu || 0]; })); }; // 🔒 locked / unlocked → worked out again
       var todo = all ? order : order.filter(function(P) { var r = AWDS.parts[P]; return !r || r.err || r.gotKey !== invAwdGotKey(got, P) || r.needKey !== needKey(P); });
       var parts = {}; if (!all) order.forEach(function(P) { if (AWDS.parts[P]) parts[P] = AWDS.parts[P]; });
       var commit = function(final) { AWDS.data = d; AWDS.ships = ships; AWDS.doneList = d.done || []; AWDS.parts = parts; AWDS.order = order; AWDS.prevN = prevN; AWDS.shipSig = shipSig;
@@ -3131,11 +3156,11 @@ window.invCredLogin = async function() {
     if (T && T.need > 0) {
       var notYet = Math.max(0, T.need - T.grabbed), toList = Math.max(0, notYet - T.list), all = notYet < 0.001;
       h = h.replace('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">', (all
-        ? '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:10px 12px;border-radius:10px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;font-size:16px">✅ Everything grabbed — ' + r1(T.grabbed) + ' cases · ' + T.parts + ' part #' + (T.parts === 1 ? '' : 's') + '</div>'
+        ? '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:10px 12px;border-radius:10px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;font-size:16px">✅ Everything grabbed — ' + r1(T.grabbed) + ' cases · ' + T.parts + ' part #' + (T.parts === 1 ? '' : 's') + invAwdPackedHtml(T, r1) + '</div>'
         : '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:8px 10px;border-radius:10px;border:1.5px solid #1D4ED8;font-size:13px;line-height:1.6">'
           + '<b style="color:var(--green)">✅ Grabbed ' + r1(T.grabbed) + ' of ' + r1(T.need) + ' cases</b> (' + Math.round(T.grabbed / T.need * 100) + '%) · <b>' + T.partsGrabbed + ' of ' + T.parts + ' part #s</b> all grabbed'
           + '<br><b style="color:var(--red)">⏳ Not grabbed yet: ' + r1(notYet) + ' cases</b>'
-          + (T.list > 0.001 ? ' — <span style="color:#b45309">📝 ' + r1(T.list) + ' on a Pull List</span>' : '') + (toList > 0.001 ? ' · ' + r1(toList) + ' not on a list yet' : '') + '</div>')
+          + (T.list > 0.001 ? ' — <span style="color:#b45309">📝 ' + r1(T.list) + ' on a Pull List</span>' : '') + (toList > 0.001 ? ' · ' + r1(toList) + ' not on a list yet' : '') + invAwdPackedHtml(T, r1) + '</div>')
         + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">');
     } else if (!AWDS.takes.length) h += '<div style="color:var(--green);font-weight:700;margin-top:6px">✓ Nothing left to grab</div>';
     out.innerHTML = h + invAwdDoneHtml();
