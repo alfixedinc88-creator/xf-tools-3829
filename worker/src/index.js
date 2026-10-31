@@ -4694,7 +4694,7 @@ async function productPhotoDailyRefresh(env, days) {
     for (const o of li) {
       if (!o || !o.i || !/^https?:\/\//i.test(String(o.i))) continue;
       const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
       if (base && !newest[base]) newest[base] = String(o.i).trim();
     }
   }
@@ -4719,7 +4719,7 @@ async function productPhotoDailyRefresh(env, days) {
 // gets our photo for the line's parent part # in `i` (Veeqo's kept in `vi`); a part # we have no photo for keeps Veeqo's.
 function shipPhotoBase(li) {
   const sku = String((li && li.s) || '').trim().toUpperCase(), bin = String((li && li.b) || '').trim().toUpperCase();
-  return /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+  return /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
 }
 async function shipPhotoResponse(request, env, res) {
   try {
@@ -4873,7 +4873,7 @@ async function productPhotoBackfill(env, days) {
     for (const o of li) {
       if (!o || !o.i) continue;
       const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
       if (base && !found[base]) found[base] = o.i;
     }
   }
@@ -4923,7 +4923,7 @@ async function productPhotoSyncVeeqo(request, env) {
     for (const sb of (p.sellables || [])) {
       const img = sb.image_url || sb.main_image_src || pImg; if (!img) continue;
       const sku = String(sb.sku_code || '').trim().toUpperCase(), loc = String(((sb.stock_entries || [])[0] || {}).location || '').trim().toUpperCase();
-      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(loc) ? loc : '');
+      const base = /^\d+(-\d+)+(&\d+)?(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(loc) ? loc : '');
       if (base && !found[base]) found[base] = img;
     }
   }
@@ -24765,7 +24765,7 @@ async function _psCheckStockLevel(env, bin, sku) {
 // A bin code like "3-3-2" / "23-2-3" / "BARN-1": at least one dash, only
 // letters/digits between — never a bare number like "10" (see the base_sku
 // collision described above _psCheckStockLevel).
-function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+$/.test(b || ''); }
+function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+(&[A-Z0-9]+)?$/.test(b || ''); } // 28-2-3&4 (hot & cold set) is a family too (owner 2026-10-31)
 // Every master_list row in a bin code's part-number family — same match
 // Inventory's search uses (inventoryLookup): part_num / sku equal to the
 // code or starting with "<code>=", or base_sku equal to it.
@@ -28027,7 +28027,7 @@ async function veeqoExtractLineItems(env, order, allocation) {
     const found = {};
     for (const o of out) {
       if (!o.i) continue;
-      const fromSku = /^\d+(-\d+)+(=|$)/.test(o.s) ? o.s.split('=')[0] : '';
+      const fromSku = /^\d+(-\d+)+(&\d+)?(=|$)/.test(o.s) ? o.s.split('=')[0] : '';
       const fromBin = String(o._binSrc).startsWith('veeqo') && _psIsFamilyCode(String(o.b).toUpperCase()) ? o.b : '';
       const base = String(fromSku || fromBin).trim().toUpperCase();
       if (base && !found[base]) found[base] = o.i;

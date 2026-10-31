@@ -1996,7 +1996,9 @@ function awdLoadPdfjs() {
 // FNSKU. lines = [{ y, text }] top → bottom (y = 0 at the top). → [{ sku, y }]
 function awdLabelSkus(lines) {
   // A SKU Amazon has with a space after "-" / "=" ("SKU: 26-4- 2=1000 Units: 1", owner 2026-10-25) is read whole: 26-4-2=1000.
-  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*((?:[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*[-=]\s+(?!UNITS|QTY)[0-9A-Z=][0-9A-Z=\-\/\.\(\)#]*)|[0-9A-Z][0-9A-Z=\-\/\.\(\)#]*)/gi;
+  // 🔗 "&" is part of a SKU (owner 2026-10-31: "28-2-3&4=4XX — 3/4 push fit ball valve hot AND cold, but the grabber was told 28-2-3, the
+  // cold one only"): the "&" stopped the SKU, so 28-2-3&4=4XX- was read as 28-2-3 (and "28" as the bag count).
+  const out = [], re = /(?:^|[^A-Z])(?:SINGLE\s+SKU|SKU)\s*:?\s*((?:[0-9A-Z][0-9A-Z=\-\/\.\(\)#&]*[-=]\s+(?!UNITS|QTY)[0-9A-Z=][0-9A-Z=\-\/\.\(\)#&]*)|[0-9A-Z][0-9A-Z=\-\/\.\(\)#&]*)/gi;
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].text + ' ' + ((lines[i + 1] && /^\s*(SINGLE\s+SKU|SKU)\s*:?\s*$/i.test(lines[i].text)) ? lines[i + 1].text : '');
     let m; re.lastIndex = 0;
