@@ -12153,5 +12153,42 @@ console.log('\n🔗 "&" part #s (a hot & cold set, 28-2-3&4) are their own item 
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('28-2-3','28-2-3&4')");
 }
 
+console.log('\n🔗 Labels saved before the "&" fix (SKU cut to 28-2-3) are put right by their FNSKU — no re-upload, nothing grabbed / scanned lost');
+{
+  // Owner (2026-10-31): "I can't reupload, we almost done this shipment … I just want to make sure when we try to put on the pallet will this
+  // 28-2-3&4=4XX match the 28-2-3&4=4XX".
+  sq.exec(`CREATE TABLE IF NOT EXISTS amazon_fba_inventory (sku TEXT PRIMARY KEY, fnsku TEXT, asin TEXT, product_name TEXT, afn_listing_exists TEXT, mfn_listing_exists TEXT, updated_at TEXT)`);
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, afn_listing_exists) VALUES ('28-2-3&4=4XX-','X00SETHC01','B0D1ZPTQ1H','Yes'), ('28-2-3=1W.1C','X00COLD001','B0COLD0001','Yes'), ('77-7-7=10','X00OTHER01','B0OTHER001','Yes')").run();
+  await get('/awd/label-map?code=201952611628559000'); // the table exists
+  const ins = sq.prepare('INSERT OR REPLACE INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, at, by_user) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  const T0 = new Date().toISOString();
+  ins.run('201952611628559310', 'STAR-SYX5QCC', '28-2-3', '28-2-3', '2-1', 10, 'BARN=9-1-5', 0, 'B0D1ZPTQ1H', T0, 'TS'); // Box 257: cut at "&"
+  ins.run('201952611628559311', 'STAR-SYX5QCC', '28-2-3', '28-2-3', '2-2', 10, 'BARN=9-1-5', 0, 'B0D1ZPTQ1H', T0, 'TS');
+  ins.run('201952611628559312', 'STAR-SYX5QCC', '28-2-3=1W.1C', '28-2-3=1W.1C', '1-1', 5, 'BARN=9-1-5', 0, 'X00COLD001', T0, 'TS'); // a real cold one
+  ins.run('201952611628559313', 'STAR-SYX5QCC', '77-7', '77-7', '1-1', 5, '', 0, 'X00OTHER01', T0, 'TS'); // no "&" listing for it → left alone
+  sq.exec("CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked', unlocked_at TEXT, unlocked_by TEXT)");
+  sq.prepare("INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status) VALUES ('STAR-SYX5QCC', ?, 'TS', ?, 'locked')").run(T0, JSON.stringify([
+    { forPart: '28-2-3', sku: '28-2-3', grabs: [{ loc: 'BARN=9-1-5', part: '28-2-3=1W.1C', n: 4 }] }, { forPart: '28-2-3=1W.1C', sku: '28-2-3=1W.1C', grabs: [{ loc: 'BARN=9-1-5', part: '28-2-3=1W.1C', n: 1 }] }]));
+  const b = await get('/awd/label-map?code=00201952611628559310');
+  const r2 = sq.prepare("SELECT sku, part FROM awd_label_map WHERE sscc='201952611628559311'").get(), cold = sq.prepare("SELECT sku, part FROM awd_label_map WHERE sscc='201952611628559312'").get();
+  const other = sq.prepare("SELECT sku FROM awd_label_map WHERE sscc='201952611628559313'").get();
+  check('scan the OLD printed label (Box 257, saved as "28-2-3") → it reads 28-2-3&4=4XX (its label FNSKU B0D1ZPTQ1H is the listing\'s ASIN); the other box of it too',
+    b.box && b.box.part === '28-2-3&4=4XX' && b.box.sku === '28-2-3&4=4XX-' && r2.part === '28-2-3&4=4XX', { box: b.box, r2 });
+  check('…the real cold 28-2-3=1W.1C box is not touched, and a cut SKU with no "&" listing for its FNSKU is left as it was (never a guess)', cold.part === '28-2-3=1W.1C' && other.sku === '77-7', { cold, other });
+  const lg = sq.prepare("SELECT sscc, old_part, new_part, by_user FROM awd_label_fix_log WHERE shipment='STAR-SYX5QCC' ORDER BY id").all();
+  check('…kept on record: each box old → new (28-2-3 → 28-2-3&4=4XX, auto-fix, when), shipment / box / units unchanged',
+    lg.filter(x => x.old_part === '28-2-3' && x.new_part === '28-2-3&4=4XX' && x.by_user === 'auto-fix').length === 2
+      && sq.prepare("SELECT shipment, seq, units FROM awd_label_map WHERE sscc='201952611628559310'").get().seq === '2-1', lg);
+  const lk = JSON.parse(sq.prepare("SELECT lines FROM awd_lock WHERE shipment='STAR-SYX5QCC'").get().lines);
+  check('…🔒 the lock line for the cut "28-2-3" (cold spots held by mistake) is dropped and logged; the real cold line stays',
+    lk.length === 1 && lk[0].forPart === '28-2-3=1W.1C' && lg.some(x => x.sscc === '🔒 lock' && x.old_part === '28-2-3'), { lk, lg });
+  await get('/awd/label-map?code=00201952611628559310');
+  check('…running again changes nothing (no new log lines)', sq.prepare("SELECT COUNT(*) n FROM awd_label_fix_log WHERE shipment='STAR-SYX5QCC'").get().n === lg.length, null);
+  const ihL = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Stock Out Big Company: a locked shipment with no lock line for a part # (28-2-3&4=4XX now) works it out by the normal rules, not "🔒 no spot"',
+    /var locked = sis\.filter\(inLock\), rest = sis\.filter\(function\(si\) \{ return !inLock\(si\); \}\);/.test(ihL), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SYX5QCC'; DELETE FROM awd_lock WHERE shipment='STAR-SYX5QCC'; DELETE FROM amazon_fba_inventory WHERE sku IN ('28-2-3&4=4XX-','28-2-3=1W.1C','77-7-7=10')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
