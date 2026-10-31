@@ -12267,5 +12267,39 @@ console.log('\n🔗 AWD Planner → UPC Barcodes Saved Shipment, by itself (expo
       && /\?sheet=UPC_Shipment'\);/.test(uh), { body, info: els['upc-saved-info'].textContent });
 }
 
+// Owner (2026-10-31): Sold Out, Walmart rows grey "Now: ?" — Walmart said "There is no item found for sku" (the
+// sheet SKU isn't exactly Walmart's SKU). Now Walmart's own SKU is found (Listing Watch's copy / the Walmart item ID).
+console.log('\n🚫 Sold Out: Walmart "no item found for sku" → finds Walmart\'s own SKU instead of a grey "Now: ?"');
+{
+  const realFetch = globalThis.fetch, puts = [];
+  const WM = { '30-3-6=25x': 7, 'XF-30-3-6-10X': 4 };          // the SKUs Walmart really has
+  const NF = { errors: [{ code: 'CONTENT_NOT_FOUND.GMP_INVENTORY_API', field: 'inventory', description: 'There is no item found for sku query parameter provided in the request.' }] };
+  globalThis.fetch = async (u, o = {}) => { u = String(u); const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('marketplace.walmartapis.com/v3/token')) return J({ access_token: 'wm', expires_in: 900 });
+    if (u.includes('marketplace.walmartapis.com/v3/items/5464218835')) return J({ ItemResponse: [{ sku: 'XF-30-3-6-10X' }] });
+    if (u.includes('marketplace.walmartapis.com/v3/inventory?sku=')) {
+      const sku = decodeURIComponent(u.split('sku=')[1]);
+      if (!(sku in WM)) return J(NF, 404);
+      if (o.method === 'PUT') { puts.push({ sku, amount: JSON.parse(o.body).quantity.amount }); WM[sku] = JSON.parse(o.body).quantity.amount; return J({ sku }); }
+      return J({ sku, quantity: { unit: 'EACH', amount: WM[sku] } });
+    }
+    return realFetch(u, o); };
+  sq.prepare("INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at, qty) VALUES ('Walmart', '30-3-6=25x', '30-3-6=25x', '25 Piece', ?, 7)").run(new Date().toISOString());
+  const q = await post('/inventory/soldout/qty', { items: [
+    { platform: 'Walmart', listingId: '5456012100', sku: '30-3-6=25X' },   // other capitals on the sheet → Listing Watch's copy
+    { platform: 'Walmart', listingId: '5464218835', sku: '30-3-6=10X' },   // sheet SKU unknown → the Walmart item ID → its SKU
+    { platform: 'Walmart', listingId: '5335431202', sku: '30-3-6=5X' } ] }); // nowhere → says so plainly
+  const r = q.results || [];
+  check('=25X (Walmart has "30-3-6=25x") → Now: 7, says which Walmart SKU', r[0] && r[0].qty === 7 && /Walmart SKU 30-3-6=25x/.test(r[0].detail), r[0]);
+  check('=10X (Walmart item 5464218835 = SKU XF-30-3-6-10X) → Now: 4', r[1] && r[1].qty === 4 && /XF-30-3-6-10X/.test(r[1].detail), r[1]);
+  check('=5X Walmart doesn\'t have → a plain message (which SKUs were tried, check the WalmartSKU sheet), not Walmart\'s raw error', r[2] && r[2].qty == null && /Walmart has no listing with SKU 30-3-6=5X \(item 5335431202\)/.test(r[2].error) && /WalmartSKU sheet/.test(r[2].error), r[2]);
+  const st = await post('/inventory/soldout/set-qty', { quantity: 0, by: 'TS', items: [{ platform: 'Walmart', listingId: '5456012100', sku: '30-3-6=25X', title: '25 Piece' }] });
+  const lg = sq.prepare("SELECT ok, detail FROM listing_qty_log WHERE listing_id = '5456012100' ORDER BY id DESC LIMIT 1").get();
+  check('Set to 0 → tried the sheet SKU first (as always), then set Walmart\'s "30-3-6=25x" to 0; the record says which SKU', st.ok && puts.map(p => p.sku).join(',') === '30-3-6=25x' && WM['30-3-6=25x'] === 0
+    && lg && lg.ok === 1 && /Walmart SKU 30-3-6=25x \(sheet says 30-3-6=25X\)/.test(lg.detail), { st, puts, lg });
+  globalThis.fetch = realFetch;
+  sq.exec("DELETE FROM listing_titles WHERE listing_id = '30-3-6=25x'; DELETE FROM listing_qty_log WHERE listing_id = '5456012100'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
