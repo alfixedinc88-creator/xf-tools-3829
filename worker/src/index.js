@@ -1426,6 +1426,25 @@ async function inventoryBoxCheck(request, url, env, session) {
 // kept in awd_label_fix_log (who = auto-fix, when, old → new). A 🔒 lock line for the cut part # (cold spots held by mistake) is dropped, kept
 // in the same log. Runs before labels are read (one small query: labels with no "=" in the SKU and an FNSKU; nothing to do = no writes).
 const awdPartOf = sku => String(sku || '').trim().replace(/\s*=\s*/g, '=').replace(/-+$/, '').toUpperCase().replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, ''));
+// Amazon's SKUs in an AWD inbound shipment (STAR-…) → { shipment: [sku…] }. Kept 6 h (30 min after an error), at most 3 shipments a call.
+const _awdShipSkuCache = {};
+async function awdShipmentSkus(env, shipments) {
+  const out = {}, now = Date.now();
+  let token = null, asked = 0;
+  for (const sh of shipments) {
+    const c = _awdShipSkuCache[sh];
+    if (c && now - c.at < (c.err ? 30 * 60e3 : 6 * 3600e3)) { out[sh] = c.skus; continue; }
+    if (!/^STAR-/i.test(sh) || asked >= 3) continue;
+    asked++;
+    try {
+      token = token || await getAmazonToken(env);
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inboundShipments/${encodeURIComponent(sh)}?skuQuantities=SHOW`);
+      const skus = (d.shipmentSkuQuantities || d.skuQuantities || []).map(x => String(x.sku || '').trim()).filter(Boolean);
+      _awdShipSkuCache[sh] = { at: now, skus }; out[sh] = skus;
+    } catch (e) { _awdShipSkuCache[sh] = { at: now, skus: [], err: true }; out[sh] = []; }
+  }
+  return out;
+}
 async function awdLabelAmpRepair(env) {
   if (!env.DB) return;
   try {
@@ -1446,6 +1465,19 @@ async function awdLabelAmpRepair(env) {
     rows.forEach(r => { for (const [cut, why1] of [['&', ''], ['=', 'SKU was cut at the space before "=" when the labels were read — put right from the FNSKU on the label']]) {
       const pre = U(r.sku) + cut, c = [...(byF[U(r.fnsku)] || [])].filter(k => awdPartOf(k).startsWith(pre));
       const parts = [...new Set(c.map(awdPartOf))]; if (parts.length === 1) { fixes.push({ r, sku: c[0], part: parts[0], why: why1 }); break; } } });
+    // 📦 …and when the FNSKU can't tell (owner 2026-10-31, photo "SKU: 27-1-6 =10", FNSKU B0B9KXBYMK = the ASIN, shared by the
+    // =10 / =10X listings → left cut as "27-1-6" and the Box check said "rebag and label it as 27-1-6"): Amazon's own list of SKUs
+    // in that shipment decides — exactly one SKU there that is the cut part + "=…" / "&…", and no SKU that IS the cut part.
+    const done = new Set(fixes.map(f => f.r.sscc)), left = rows.filter(r => !done.has(r.sscc));
+    if (left.length) {
+      const skusOf = await awdShipmentSkus(env, [...new Set(left.map(r => String(r.shipment || '').trim()).filter(Boolean))]);
+      left.forEach(r => { const list = skusOf[String(r.shipment || '').trim()]; if (!list || !list.length) return;
+        if (list.some(k => awdPartOf(k) === U(r.sku))) return; // a real part # with no "=" in this shipment → never touched
+        for (const cut of ['=', '&']) {
+          const c = list.filter(k => awdPartOf(k).startsWith(U(r.sku) + cut)), parts = [...new Set(c.map(awdPartOf))];
+          if (parts.length === 1) { fixes.push({ r, sku: c[0], part: parts[0], why: `SKU was cut at the space before "${cut}" when the labels were read — put right from Amazon's list of SKUs in shipment ${r.shipment}` }); break; }
+        } });
+    }
     if (!fixes.length) return;
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_label_fix_log (id INTEGER PRIMARY KEY AUTOINCREMENT, sscc TEXT, shipment TEXT, old_sku TEXT, new_sku TEXT, old_part TEXT, new_part TEXT, why TEXT, at TEXT, by_user TEXT)').run();
     const now = new Date().toISOString(), why = 'SKU was cut at "&" when the labels were read — put right from the FNSKU on the label';
@@ -1611,6 +1643,7 @@ async function awdBoxPallet(request, url, env, session) {
     let openBox = null;
     const openQ = t(url.searchParams.get('open'), 24).replace(/\D/g, '').slice(-18);
     if (openQ) {
+      await awdLabelAmpRepair(env); // 🔗 a label saved with its SKU cut is put right before the Box check reads it
       openBox = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(openQ).first().catch(() => null);
       if (!openBox) return J({ ok: true, box: null });
       sh = openBox.shipment;
