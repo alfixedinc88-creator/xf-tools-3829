@@ -8673,7 +8673,10 @@ console.log('\n🔎 AWD planner → ASIN Lookup: where every unit is, sales 30 /
   sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
   sq.prepare("INSERT OR REPLACE INTO awd_auto (k, v) VALUES ('fbaBase', ?)").run(JSON.stringify([['28-2-2=10X', 'B0TQ000001', 'XQ1', 'pex tee 10 pack', 'NewItem', 20, 0, 0, 20, '', 0, 0, 0, '', '', '', '', 0]]));
   // a sale every 30 days for 13 months: 30 sets each, one spike of 150 sets 65 days ago (another seller out of stock?)
-  for (let k = 0; k <= 13; k++) sq.prepare('INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES (?,?,?,?)').run('28-2-2=10X', ago(k * 30 + 5), k === 2 ? 150 : 30, 'B0TQ000001');
+  // (2026-10-31: on the 31st the 13th and 14th sales — 365 / 395 days ago — fell in the same month (Oct 31 + Oct 1) and the check failed for the
+  // date, not the code: the 14th sale goes a few days further back, to the month before, as on every other day.)
+  const dOf = k => { let n = k * 30 + 5; if (k === 13) while (ago(n).slice(0, 7) === ago(365).slice(0, 7)) n++; return ago(n); };
+  for (let k = 0; k <= 13; k++) sq.prepare('INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES (?,?,?,?)').run('28-2-2=10X', dOf(k), k === 2 ? 150 : 30, 'B0TQ000001');
   sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('28-2-2','tee','28-2-2=10X','C1=1-1-1',2,100), ('28-2-2','tee','28-2-2=2','C1=1-1-2',1,50)").run();
   const d = await get('/awd/asin-info?q=b0tq000001');
   check('search the ASIN → its FBA SKU 28-2-2=10X; sold 30 d 30 · 90 d 210 · 6 mo 300 · 12 mo 510 sets (× 10 = pieces)',
@@ -9381,6 +9384,10 @@ console.log('\n🏷 Shipment Builder: ✅ Make template for a short row + our te
   check('the SKU is read off each label: AWD "SKU: 31-6-1=2XX-" (never the FNSKU), FBA "Single SKU / 30-3-6=2X-"; a mixed box has none; "30-3-6=2X-" matches the builder\'s 30-3-6=2X',
     JSON.stringify(awd.map(x => x.sku)) === '["31-6-1=2XX-"]' && JSON.stringify(fba.map(x => x.sku)) === '["30-3-6=2X-"]' && !mixed.length
       && L.awdLabelMatch('31-6-1=2XX-') === '31-6-1=2XX-' && L.awdLabelMatch('30-3-6=2X-') === '30-3-6=2X', { awd, fba, mixed });
+  // Owner (2026-10-31, photo): "SKU: 26-2-3 =10 Units: 5" (a space BEFORE "=") was read as 26-2-3 → "5 bags × 26 pcs = 130 pcs", a pack-of-1 template
+  const sp = ['SKU: 26-2-3 =10 Units: 5', 'SKU: 26-2-3 = 10 Units: 5', 'SKU: 26-4- 2=1000 Units: 1', 'SKU: 26-2-3=10 Units: 5', 'SKU: 31-6-1=2XX- Units: 25'].map(t => (L.awdLabelSkus([{ y: 1, text: t }])[0] || {}).sku);
+  check('…a SKU with a space before "=" on the label ("SKU: 26-2-3 =10 Units: 5") is read whole: 26-2-3=10 (pack 10 → 5 bags × 10 pcs = 50 pcs), never 26-2-3 (pack "26"); "= 10", "26-4- 2=1000" and the normal ones still read right',
+    JSON.stringify(sp) === '["26-2-3=10","26-2-3=10","26-4-2=1000","26-2-3=10","31-6-1=2XX-"]', sp);
   // a 60 × 40 px "label": all white except a black band (a barcode) on rows 0–19 → the empty spot is below it
   const W = 60, H = 40, px = new Uint8ClampedArray(W * H * 4).fill(255);
   for (let y = 0; y < 20; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; px[i] = px[i + 1] = px[i + 2] = 0; }
