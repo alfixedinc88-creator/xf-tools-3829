@@ -2906,7 +2906,8 @@ window.invCredLogin = async function() {
     }
     AWDS.busy = true; AWDS.busyAt = Date.now(); var started = AWDS.addN || 0, gen = AWDS.gen = (AWDS.gen || 0) + 1;
     setTimeout(function() { if (AWDS.busy && gen === AWDS.gen) window.invAwdShipLoad(); }, (AWDS.stuckMs || 120000) + 5000); // ⏳ still stuck after 2 min → let go and start again
-    var fin = function() { if (gen !== AWDS.gen) return; AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); } };
+    var fin = function() { if (gen !== AWDS.gen) return; AWDS.busy = false; if (AWDS.again || (AWDS.addN || 0) !== started) { var f = AWDS.again; AWDS.again = false; window.invAwdShipLoad(f); }
+      else if (AWDS.ships && AWDS.ships.length) invAwdSumLine(); }; // ✓ done → the top line again, without "updating"
     if (shown) invAwdStatus('⏳ checking for changes…'); else out.innerHTML = '⏳ Reading the shipments…'; invAwdSum(shown ? '⏳ checking for changes…' : '⏳ loading the shipments…');
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'no answer');
@@ -3066,11 +3067,17 @@ window.invCredLogin = async function() {
   }
   var INV_AWD_KINDS = { label: ['🏷 NEED TO LABEL', '#b45309', '#fef3c7'], full: ['✓ PRELABEL · FULL CASE', 'var(--green)', 'var(--green-bg,#dcfce7)'], extra: ['✂ PRELABEL · EXTRA STEP', '#c2410c', '#ffedd5'] };
   window.invAwdKindBadge = function(k) { var x = INV_AWD_KINDS[k]; return x ? " <span class='inv-awd-kind' data-k='" + k + "' style='background:" + x[2] + ";color:" + x[1] + ";font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;border:1px solid " + x[1] + ";font-family:var(--sans)'>" + x[0] + "</span>" : ''; };
+  // the card's top line: shipments · cases left · ⏳ updating… while a check runs. Owner (2026-10-31, photo, "still seeing updating"): the list
+  // was drawn while the check was still busy and nothing drew the line again after it finished — so it is drawn again when the check ends.
+  function invAwdSumLine() {
+    if (!AWDS.data) return;
+    var S = AWDS.ships || [], nd = 0, gr = 0; S.forEach(function(sh) { nd += sh.need || 0; gr += sh.grabbed || 0; });
+    var left = Math.max(0, Math.round((nd - gr) * 10) / 10), busy = AWDS.busy ? ' · ⏳ updating…' : '';
+    invAwdSum(S.length ? S.length + ' shipment' + (S.length === 1 ? '' : 's') + ' · ' + (left > 0 ? '<b>' + left + '</b> case' + (left === 1 ? '' : 's') + ' left to grab' : '✅ everything grabbed') + busy : 'No shipment to grab');
+  }
   window.invAwdShipRender = function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
-    (function() { var S = AWDS.ships || [], nd = 0, gr = 0; S.forEach(function(sh) { nd += sh.need || 0; gr += sh.grabbed || 0; });
-      var left = Math.max(0, Math.round((nd - gr) * 10) / 10), busy = AWDS.busy ? ' · ⏳ updating…' : '';
-      invAwdSum(S.length ? S.length + ' shipment' + (S.length === 1 ? '' : 's') + ' · ' + (left > 0 ? '<b>' + left + '</b> case' + (left === 1 ? '' : 's') + ' left to grab' : '✅ everything grabbed') + busy : 'No shipment to grab'); })();
+    invAwdSumLine();
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
     var labBy = invAwdLabelsByArea(); // 🏷 box labels by area (where each label says to grab it)
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
