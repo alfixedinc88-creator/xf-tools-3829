@@ -2742,6 +2742,7 @@ async function awdLabelsDo(file) {
       mapNote = d && d.ok ? '<div style="color:#15803D">📱 ' + d.saved + ' boxes of ' + (d.shipment || 'this shipment') + ' saved — the phones can scan these labels (🔍 Box check) and see what to grab (Stock Out Big Company → 📦 Current AWD shipment)</div>' : '<div style="color:#DC2626">⚠ Boxes not saved for the phones: ' + ((d && d.error) || 'error') + '</div>';
     } catch (e) { mapNote = '<div style="color:#DC2626">⚠ Boxes not saved for the phones (no WiFi?) — upload the labels again</div>'; }
     window.AWD_LBL_GROUPS = groups; // 🖨 by area afterwards (awdPrintArea)
+    (typeof awdUpcSync === 'function') && awdUpcSync(shipId, metas.map(m => m.sku), 'Amazon box labels made'); // 🔗 → UPC Barcodes Saved Shipment (owner 2026-10-31)
     if (!awdPrintPages(pages, 'Box labels with our template')) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
     window.AWD_LBL_SHIP = shipId; (typeof awdAct === 'function') && awdAct('label_print', { shipment: shipId, area: 'All', labels: pages.length, made: true }); // 🖨 the first print, right after making them
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
@@ -4011,8 +4012,25 @@ async function awdSendToStockOut() {
     const d = await (await wFetch(W + '/awd/ship-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipment: name, lines }) })).json();
     if (!d || !d.ok) throw new Error((d && d.error) || 'not sent');
     if (out) out.innerHTML = '<span style="color:#15803D">✅ Sent ' + d.skus + ' SKUs · ' + d.units + ' units' + (d.boxes ? ' · ' + d.boxes + ' boxes' : '') + ' — on Stock Out Big Company → 📦 AWD shipments ready (' + h(d.by || '') + ', ' + h(awdHistWhen(d.at)) + ')</span>';
-    awd_planner_toast('📤 Sent to Stock Out Big Company');
+    awd_planner_toast('📤 Sent to Stock Out Big Company'); (typeof awdUpcSync === 'function') && awdUpcSync(name, lines.map(x => x.sku), 'sent to Stock Out'); // 🔗 → UPC Barcodes
   } catch (e) { if (out) out.innerHTML = '<span style="color:#DC2626">✗ Not sent: ' + h(e.message) + ' — try again</span>'; }
+}
+// 🔗 Owner (2026-10-31): "connect the UPC Barcodes Saved Shipment to the AWD Planner — automatically, no more uploading it by hand". Every time
+// a shipment is ⬇ exported for Amazon, 📤 sent to Stock Out Big Company or gets its 🏷 Amazon box labels, its SKUs become the Saved Shipment
+// on UPC Barcodes (the same list a file upload there made), named with the shipment, what was done, when and who.
+async function awdUpcSync(shipment, skus, what) {
+  try {
+    const L = [...new Set((skus || []).map(x => String(x || '').trim()).filter(Boolean))]; if (!L.length) return false;
+    const who = (typeof AWD_CRED_USER !== 'undefined' && AWD_CRED_USER && AWD_CRED_USER.displayName) || '';
+    const when = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const label = 'AWD ' + (shipment || 'shipment') + ' · ' + what + ' · ' + when + (who ? ' · ' + who : '');
+    const r = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [['sku', label]].concat(L.map(x => [x, ''])) }) });
+    if (r && r.ok === false) throw new Error('HTTP ' + r.status);
+    if (typeof window !== 'undefined') { window._upcSavedSkus = L; window._upcSavedLabel = label; } // this page's own UPC Barcodes tab sees it at once
+    const b = typeof document !== 'undefined' ? ge('upc-saved-banner') : null, inf = b ? ge('upc-saved-info') : null; if (b && inf) { b.style.display = 'flex'; inf.textContent = L.length + ' SKUs · uploaded as: ' + label; }
+    return true;
+  } catch (e) { console.error('[AWD → UPC Barcodes]', e); try { awd_planner_toast('⚠ UPC Barcodes Saved Shipment not updated — check WiFi', 'error'); } catch (_) {} return false; }
 }
 function awdHistSave(name, format, items) {
   const list = items.map(([sku, i]) => {
@@ -4136,6 +4154,7 @@ function exportShipment(format) {
   const allRows = [...headerRows, ...dataRows];
   const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
   awdHistSave(name, format, items); // 🕘 kept in History (when, who, what)
+  (typeof awdUpcSync === 'function') && awdUpcSync(name, items.map(([sku]) => sku), 'exported for Amazon'); // 🔗 → UPC Barcodes Saved Shipment (owner 2026-10-31)
 
   if (format === 'txt') {
     // Tab-delimited TXT matching Amazon AWD template format

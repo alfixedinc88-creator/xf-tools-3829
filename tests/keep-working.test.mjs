@@ -12197,5 +12197,23 @@ console.log('\n🔗 Labels saved before the "&" fix (SKU cut to 28-2-3) are put 
   sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SYX5QCC'; DELETE FROM awd_lock WHERE shipment='STAR-SYX5QCC'; DELETE FROM amazon_fba_inventory WHERE sku IN ('28-2-3&4=4XX-','28-2-3=1W.1C','77-7-7=10')");
 }
 
+// Owner (2026-10-31): "UPC Barcodes → Saved Shipment: connect it to the AWD Planner, I want it to update automatically, no more manually".
+console.log('\n🔗 AWD Planner → UPC Barcodes Saved Shipment, by itself (export / 📤 send / 🏷 labels)');
+{
+  const { readFileSync: rfU } = await import('node:fs');
+  const ah = rfU(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), uh = rfU(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const a0 = ah.indexOf('async function awdUpcSync('), fnS = ah.slice(a0, ah.indexOf('\n}\n', a0) + 2);
+  const puts = [], els = { 'upc-saved-banner': { style: {} }, 'upc-saved-info': { textContent: '' } };
+  const sync = new Function('wFetch', 'AWD_CRED_USER', 'ge', 'awd_planner_toast', 'window', 'document', fnS + '; return awdUpcSync;')(
+    async (u, o) => { puts.push({ u, o }); return { ok: true }; }, { displayName: 'Mg' }, id => els[id], () => {}, {}, {});
+  const ok = await sync('STAR-ABC1', ['26-2-3=10', '28-2-3&4=4XX-', '26-2-3=10', ''], 'Amazon box labels made');
+  const body = puts[0] && JSON.parse(puts[0].o.body), head = body && body.values[0];
+  check('each AWD shipment step writes UPC Barcodes\' Saved Shipment (the UPC_Shipment list UPC Barcodes loads): its SKUs once each, named "AWD STAR-ABC1 · Amazon box labels made · <when> · Mg"; ⬇ export, 📤 send and 🏷 labels all do it',
+    ok === true && puts.length === 1 && /sheet=UPC_Shipment$/.test(puts[0].u) && puts[0].o.method === 'PUT' && head[0] === 'sku' && /^AWD STAR-ABC1 · Amazon box labels made · .+ · Mg$/.test(head[1])
+      && JSON.stringify(body.values.slice(1).map(r => r[0])) === '["26-2-3=10","28-2-3&4=4XX-"]' && /2 SKUs · uploaded as: AWD STAR-ABC1/.test(els['upc-saved-info'].textContent)
+      && /awdUpcSync\(name, items\.map\(\(\[sku\]\) => sku\), 'exported for Amazon'\)/.test(ah) && /awdUpcSync\(name, lines\.map\(x => x\.sku\), 'sent to Stock Out'\)/.test(ah) && /awdUpcSync\(shipId, metas\.map\(m => m\.sku\), 'Amazon box labels made'\)/.test(ah)
+      && /\?sheet=UPC_Shipment'\);/.test(uh), { body, info: els['upc-saved-info'].textContent });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
