@@ -12437,5 +12437,77 @@ console.log('\n🅰 Box check: "the BAGS also need Amazon\'s barcode" only where
   sq.exec("DELETE FROM master_list WHERE name IN ('bag a','bag b'); DELETE FROM awd_box_scan WHERE shipment = 'STAR-FNSKU'; DELETE FROM awd_label_map WHERE shipment = 'STAR-FNSKU'");
 }
 
+// Owner (2026-11-02): "hiring an office guy — customer messages, account health, feedback, returns, cancellations on Amazon / eBay / Walmart /
+// Shopify / Gmail; keep eyes on it with all the history: when he does each message, how long each takes, search it back". "Do what you can
+// first, turn the ones you can't grey."
+console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when not connected, who / when / how long for each');
+{
+  const keys = ['EBAY_REFRESH_TOKEN', 'EBAY_CLIENT_ID', 'EBAY_CLIENT_SECRET', 'AMAZON_REFRESH_TOKEN', 'AMAZON_CLIENT_ID', 'AMAZON_CLIENT_SECRET', 'WALMART_CLIENT_ID', 'WALMART_CLIENT_SECRET', 'SHOPIFY_STORE_DOMAIN', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'];
+  const saved = {}; keys.forEach(k => { saved[k] = env[k]; delete env[k]; });
+  const p0 = await post('/office/pull', { force: true }), i0 = await get('/office/items');
+  check('no channel keys → every source says "not connected" (the page shows it ⚪ grey), nothing breaks, the list is empty',
+    p0.ok && i0.ok && i0.items.length === 0 && i0.srcs.length >= 12 && i0.srcs.every(x => !x.ok && /not connected/.test(x.error)), i0.srcs.slice(0, 3));
+  // channels answer (fake): an open + a closed eBay return, a Shopify cancellation, Walmart says 403, Amazon makes its reports
+  keys.forEach(k => { env[k] = 'k'; }); env.SHOPIFY_STORE_DOMAIN = 'shop.example.com';
+  const realF = globalThis.fetch; let amzRep = 0;
+  const T1 = new Date(Date.now() - 30 * 3600000).toISOString();
+  globalThis.fetch = async (u, o) => { u = String(u); const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('identity/v1/oauth2/token')) return /analytics/.test(String(o && o.body)) ? J({ error: 'invalid_scope' }, 400) : J({ access_token: 'e', expires_in: 7200 });
+    if (u.includes('return/search')) return J({ members: [{ returnId: 'R1', state: 'RETURN_REQUESTED', buyerLoginName: 'bob', orderId: '11-111', creationInfo: { reason: 'DEFECTIVE_ITEM', creationDate: { value: T1 }, comments: { content: 'leaks' } } },
+      { returnId: 'R0', state: 'CLOSED', buyerLoginName: 'al', creationInfo: { creationDate: { value: T1 } } }] });
+    if (u.includes('cancellation/search')) return J({ cancellations: [] });
+    if (u.includes('inquiry/search') || u.includes('casemanagement/search')) return J({ members: [] });
+    if (u.includes('ws/api.dll')) return new Response('<GetFeedbackResponse><Ack>Success</Ack></GetFeedbackResponse>');
+    if (u.includes('api.amazon.com/auth')) return J({ access_token: 'a', expires_in: 3600 });
+    if (u.includes('/reports/2021-06-30/reports/')) return J({ processingStatus: 'DONE', reportDocumentId: 'D-' + u.split('/').pop() });
+    if (u.includes('/reports/2021-06-30/reports')) return J({ reportId: 'RP' + (++amzRep) });
+    if (u.includes('/reports/2021-06-30/documents/')) return J({ url: 'https://doc.example/' + u.split('/').pop() });
+    if (u.startsWith('https://doc.example/')) return new Response(u.includes('RP1') ? 'date\trating\tcomments\tyour response\torder id\n10/30/26\t2\tslow\t\t111-2223333-4444444\n10/30/26\t5\tgreat\t\t111-0000000-0000000\n' : u.includes('RP3') ? JSON.stringify({ performanceMetrics: [{ lateShipmentRate: { rate: 0.01, status: 'GOOD', targetValue: 0.04 } }] }) : 'order id\n');
+    if (u.includes('walmartapis.com/v3/token')) return J({ access_token: 'w', expires_in: 900 });
+    if (u.includes('walmartapis.com')) return J({ errors: [{ code: 'UNAUTHORIZED' }] }, 403);
+    if (u.includes('/admin/oauth/access_token')) return J({ access_token: 's', expires_in: 3600 });
+    if (u.includes('/admin/api/2024-10/orders.json')) return J({ orders: [{ id: 77, name: '#1077', cancelled_at: T1, cancel_reason: 'customer', financial_status: 'refunded', refunds: [], customer: { first_name: 'Ann', last_name: 'Lee' } }] });
+    return realF(u, o); };
+  await post('/office/pull', { force: true }); await post('/office/pull', { force: true }); // 1st asks Amazon for its reports, 2nd reads them
+  const i1 = await get('/office/items'), S = {}; i1.srcs.forEach(x => { S[x.src] = x; });
+  const ret = i1.items.find(x => x.src === 'ebay_return'), shp = i1.items.find(x => x.src === 'shop_order'), fb = i1.items.filter(x => x.src === 'amz_feedback');
+  check('eBay: the open return (DEFECTIVE ITEM, bob, order 11-111, "leaks") is on the list, due 72 h after it came in — the CLOSED one is not; Shopify: the cancelled #1077 (Ann Lee); Amazon: only the 2★ feedback (not the 5★); Walmart 403 → ⚠ said with why; eBay health without the analytics permission → said',
+    ret && /defective item/.test(ret.title) && ret.order_no === '11-111' && ret.detail === 'leaks' && Math.abs(Date.parse(ret.due_at) - Date.parse(T1) - 72 * 3600000) < 2000 && !i1.items.some(x => x.ext_id === 'R0')
+      && shp && shp.order_no === '#1077' && shp.customer === 'Ann Lee' && shp.kind === 'cancel' && fb.length === 1 && /2★/.test(fb[0].title)
+      && !S.wm_return.ok && /Walmart 403/.test(S.wm_return.error) && !S.ebay_health.ok && /analytics/.test(S.ebay_health.error) && S.amz_health.ok && S.amz_health.data && S.amz_health.data.metrics['Late shipment rate'].status === 'GOOD', { items: i1.items.map(x => [x.src, x.title]), wm: S.wm_return, eh: S.ebay_health });
+  // the office person: opens it, writes what was done, ✓ Done → time kept; the same tap twice is kept once
+  sq.prepare("UPDATE office_item SET opened_at = ? WHERE id = ?").run(new Date(Date.now() - 300000).toISOString(), ret.id); // opened 5 min ago
+  const dn = await post('/office/act', { id: ret.id, action: 'done', note: 'refund sent, label emailed', _requestId: 'of-done-1' }), dn2 = await post('/office/act', { id: ret.id, action: 'done', _requestId: 'of-done-1' });
+  const r1 = sq.prepare('SELECT * FROM office_item WHERE id = ?').get(ret.id);
+  check('✓ Done: who (TS), when, the note; "took" = opened → done (5 min); the same tap sent twice kept once; off the to-do list',
+    dn.ok && dn.took >= 295 && dn.took <= 320 && r1.status === 'done' && r1.done_by === 'TS' && r1.note === 'refund sent, label emailed' && r1.done_how === 'done here'
+      && sq.prepare("SELECT COUNT(*) n FROM office_log WHERE item_id = ? AND action = 'done'").get(ret.id).n === 1 && !(await get('/office/items')).items.some(x => x.id === ret.id), { dn, dn2, r1 });
+  // a channel we can't read (Amazon buyer messages): "📝 I'm handling one" → timed like the rest
+  const mn = await post('/office/manual', { channel: 'Amazon', kind: 'message', ref: '111-9999999-0000000', title: 'Amazon Buyer messages — 111-9999999-0000000', _requestId: 'of-man-1' });
+  await post('/office/act', { id: mn.id, action: 'done', _requestId: 'of-done-2' });
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const st = await get('/office/stats?from=' + today + '&to=' + today), lg = await get('/office/log?from=' + today + '&to=' + today + '&q=11-111');
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await (await call('/office/stats', { headers: { 'X-Cred-Token': pkT } })).json(), pkItems = await (await call('/office/items', { headers: { 'X-Cred-Token': pkT } })).json();
+  const me = (st.rows || []).find(r => r.who === 'TS') || {};
+  check('🕘 History (Admin): per day and person — TS done 2 (eBay 1, Amazon 1), average work time; search "11-111" finds every action on that return (came in / done); a picker can use the to-do list but NOT the history (Admin only)',
+    st.ok && me.done === 2 && me.channels.eBay === 1 && me.channels.Amazon === 1 && me.avgWorkSec != null && lg.ok && ['new', 'done'].every(a => lg.rows.some(r => r.action === a && r.order_no === '11-111'))
+      && pk.ok === false && /Admin only/.test(pk.error) && pkItems.ok, { me, acts: lg.rows.map(r => r.action), pk });
+  // reopened here, then closed on eBay → done by itself, "closed on eBay", kept on record
+  await post('/office/act', { id: ret.id, action: 'reopen', _requestId: 'of-re-1' });
+  const f2 = globalThis.fetch;
+  globalThis.fetch = async (u, o) => (String(u).includes('return/search') ? new Response(JSON.stringify({ members: [{ returnId: 'R1', state: 'CLOSED', creationInfo: { creationDate: { value: T1 } } }] }), { headers: { 'Content-Type': 'application/json' } }) : f2(u, o));
+  await post('/office/pull', { force: true }); globalThis.fetch = f2;
+  const r2 = sq.prepare('SELECT status, done_how FROM office_item WHERE id = ?').get(ret.id);
+  check('…reopened, then closed on eBay → done by itself ("closed on eBay"), kept in the history', r2.status === 'done' && r2.done_how === 'closed on eBay'
+    && sq.prepare("SELECT COUNT(*) n FROM office_log WHERE item_id = ? AND action = 'closed'").get(ret.id).n === 1, r2);
+  const ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../office.html', import.meta.url)), 'utf8'), sw = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../sw.js', import.meta.url)), 'utf8');
+  check('…the page: ⚪ grey cards for what no app can read yet (Amazon buyer messages / Voice of the Customer / reviews, Walmart / Shopify messages, Gmail info@) with a link + 📝; a 🧑‍💼 Office card on the home page; works offline (OFFLINE_PAGES)',
+    /Amazon gives apps no way to read buyer messages/.test(ih) && /Voice of the Customer/.test(ih) && /info@xfitting\.com/.test(ih) && /📝 I\\'m handling one/.test(ih) && /'office\.html'/.test(sw)
+      && /onclick="window\.location\.href='office\.html'"/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8')), null);
+  globalThis.fetch = realF; keys.forEach(k => { if (saved[k] === undefined) delete env[k]; else env[k] = saved[k]; });
+  sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

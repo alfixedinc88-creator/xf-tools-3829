@@ -10855,6 +10855,8 @@ const _app = {
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
+    // 🧑‍💼 Office (owner 2026-11-02): every channel's messages / returns / cancellations / feedback / account health, and who handled each, how fast
+    if (url.pathname.startsWith('/office/')) return await officeRoute(request, url, env, session);
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
     if (url.pathname === '/awd/lock' && (method === 'GET' || method === 'POST')) return await awdLock(request, url, env, session);
@@ -11672,6 +11674,8 @@ const _app = {
     const dow = now.getUTCDay();
     // Every 30 min: auto-fetch eBay messages
     ctx.waitUntil(cronFetchEbayMessages(env));
+    // 🧑‍💼 Office: every hour, read the channels' messages / returns / cancellations / feedback / account health into the to-do list
+    if (min < 30) ctx.waitUntil(officePull(env, true).catch(e => console.error('[office pull]', e.message)));
     // 🛡 Audit: anything not matching the Audit number is set to it (History [AUDIT FIX], with why)
     ctx.waitUntil(recountAutoFix(env, null).catch(e => console.error('[recount auto-fix cron]', e.message)));
     // Weekly Amazon sales pull: Monday 11am UTC — CORRECTED from an
@@ -26253,6 +26257,310 @@ async function shipStatusUpload(request, env) {
       status: 500, headers: { 'Content-Type': 'application/json' }
     }));
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🧑‍💼 OFFICE  —  /office/*
+// Owner (2026-11-02): "we're hiring an office guy to reply to customer messages, keep our account health, reply to / take off feedback…
+// Amazon, eBay, Walmart, Shopify, Gmail info@ — set it up so we can keep eyes on it, with all the history: when he does each message, how
+// long each one takes him, and we can search it back". "Do what you can do first, turn the ones you can't do grey, I'll fix them later."
+// One to-do list for every channel (office_item): each thing to handle (a message, a return, a cancellation, a case, a bad feedback…),
+// pulled from the channel by itself, with when it came in, when it is due, who opened it, who finished it and how long it took. Every
+// action is kept (office_log). A channel that can't be read (no API / no permission yet) says why (office_src) — the page shows it grey.
+// GET  /office/items?status=open|done|all&channel=&q=&from=&to=&who=   the list + each source's state
+// POST /office/pull {force}            read the channels now (also every hour from the timer)
+// POST /office/act {id, action: open|done|reopen|note, note, _requestId}
+// POST /office/manual {channel, kind, ref, note, _requestId}   a task done on a channel we can't read (Amazon messages, Gmail…)
+// GET  /office/stats?from=&to=&who=    per person per day: done, average time a task, average reply time   (Admin / Owner)
+// GET  /office/log?from=&to=&who=&q=   every action                                                         (Admin / Owner)
+// ═══════════════════════════════════════════════════════════════════════════
+const OFFICE_DUE_H = { message: 24, return: 72, cancel: 72, case: 72, inquiry: 72, feedback: 48, refund: 72, task: 24 };
+async function officeTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS office_item (id INTEGER PRIMARY KEY AUTOINCREMENT, src TEXT, ext_id TEXT, channel TEXT, kind TEXT, title TEXT,
+    detail TEXT, order_no TEXT, customer TEXT, url TEXT, received_at TEXT, due_at TEXT, status TEXT DEFAULT 'open', ext_status TEXT, opened_at TEXT, opened_by TEXT,
+    done_at TEXT, done_by TEXT, done_how TEXT, note TEXT, updated_at TEXT, UNIQUE(src, ext_id))`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS office_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, item_id INTEGER, src TEXT, action TEXT, detail TEXT, took_sec REAL)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS office_src (src TEXT PRIMARY KEY, at TEXT, ok INTEGER, n INTEGER, error TEXT, data TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS office_rep (type TEXT PRIMARY KEY, report_id TEXT, at TEXT, status TEXT, error TEXT)').run();
+}
+const officeIso = v => { const t = Date.parse(v || ''); return isNaN(t) ? '' : new Date(t).toISOString(); };
+const officeDue = (kind, at) => { const t = Date.parse(at || ''); return isNaN(t) ? '' : new Date(t + (OFFICE_DUE_H[kind] || 48) * 3600000).toISOString(); };
+// one item from a channel: new → open; known → its text / channel state refreshed; closed on the channel and still open here → done ("closed on …")
+async function officeUpsert(env, it) {
+  const now = new Date().toISOString(), t = (v, n) => String(v == null ? '' : v).slice(0, n || 200);
+  const ex = await env.DB.prepare('SELECT id, status FROM office_item WHERE src = ? AND ext_id = ?').bind(it.src, t(it.ext_id, 120)).first();
+  if (!ex) {
+    if (it.closed) return 0; // already finished on the channel before we ever saw it — nothing to do
+    const r = await env.DB.prepare(`INSERT INTO office_item (src, ext_id, channel, kind, title, detail, order_no, customer, url, received_at, due_at, status, ext_status, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?,?)`).bind(it.src, t(it.ext_id, 120), it.channel, it.kind, t(it.title, 300), t(it.detail, 2000), t(it.order_no, 80), t(it.customer, 120),
+      t(it.url, 500), officeIso(it.received_at) || now, it.due_at || officeDue(it.kind, it.received_at || now), t(it.ext_status, 80), now).run();
+    await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, 'system', r.meta.last_row_id, it.src, 'new', t(it.title, 300)).run();
+    return 1;
+  }
+  await env.DB.prepare('UPDATE office_item SET title = ?, detail = ?, ext_status = ?, updated_at = ? WHERE id = ?').bind(t(it.title, 300), t(it.detail, 2000), t(it.ext_status, 80), now, ex.id).run();
+  if (it.closed && ex.status === 'open') {
+    const at = officeIso(it.closed_at) || now;
+    await env.DB.prepare("UPDATE office_item SET status = 'done', done_at = ?, done_by = ?, done_how = ? WHERE id = ?").bind(at, t(it.closed_by || it.channel, 40), 'closed on ' + it.channel, ex.id).run();
+    await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, t(it.closed_by || 'system', 40), ex.id, it.src, 'closed', 'closed on ' + it.channel + (it.ext_status ? ' (' + t(it.ext_status, 60) + ')' : '')).run();
+  }
+  return 0;
+}
+async function officeSrcSet(env, src, ok, n, error, data) {
+  await env.DB.prepare('INSERT OR REPLACE INTO office_src (src, at, ok, n, error, data) VALUES (?,?,?,?,?,?)')
+    .bind(src, new Date().toISOString(), ok ? 1 : 0, n || 0, String(error || '').slice(0, 500), data ? JSON.stringify(data).slice(0, 20000) : null).run();
+}
+const officeSince = days => new Date(Date.now() - days * 86400000).toISOString();
+// ── eBay ───────────────────────────────────────────────────────────────────
+async function officeEbayPO(env, path) { // Post-Order API (returns, cancellations, inquiries, cases)
+  const tok = await getEbayToken(env);
+  const r = await fetch('https://api.ebay.com/post-order/v2/' + path, { headers: { Authorization: 'IAF ' + tok, 'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US', 'Content-Type': 'application/json', Accept: 'application/json' } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('eBay ' + r.status + ': ' + JSON.stringify(d.error || d.errors || d).slice(0, 240));
+  return d;
+}
+const officeV = x => (x && typeof x === 'object' && 'value' in x) ? x.value : x;
+const OFFICE_EBAY_OPEN_RET = /OPEN|PENDING|WAITING|REQUEST|ESCALAT|ITEM_SHIPPED|ITEM_DELIVERED|PARTIAL/i;
+const officeSources = {
+  async ebay_msg(env) { // the eBay messages the 30-minute timer already reads (eBay Messages app): a thread waits until we answer it
+    await ebayThreadsEnsureSheet(env);
+    const rows = ((await rSheetGet(env, `${THREAD_TAB}!A2:J5000`).catch(() => ({ values: [] }))).values || []), cut = officeSince(30), by = {};
+    rows.forEach(r => { const id = r[0] || r[1]; if (!id || !(r[2] >= cut)) return; (by[id] = by[id] || []).push(r); });
+    return Object.keys(by).map(id => { const L = by[id].sort((a, b) => String(a[2]).localeCompare(String(b[2]))), lastB = L.filter(r => r[6] === 'BUYER').pop(), last = L[L.length - 1];
+      if (!lastB) return null; const ans = last[6] === 'SELLER' && String(last[2]) >= String(lastB[2]);
+      return { src: 'ebay_msg', ext_id: id + '|' + lastB[2], channel: 'eBay', kind: 'message', title: (lastB[5] || 'Message') + ' — ' + (lastB[4] || ''), detail: lastB[7] || '',
+        customer: lastB[4] || '', order_no: lastB[3] || '', url: 'index.html#ebay-messages', received_at: lastB[2], closed: ans, closed_at: ans ? (last[9] || last[2]) : '', closed_by: 'eBay Messages' }; }).filter(Boolean);
+  },
+  async ebay_return(env) {
+    const d = await officeEbayPO(env, 'return/search?creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200');
+    return (d.members || []).map(m => { const st = String(m.state || m.status || ''), ci = m.creationInfo || {};
+      return { src: 'ebay_return', ext_id: m.returnId, channel: 'eBay', kind: 'return', title: 'Return ' + (ci.reason || '').replace(/_/g, ' ').toLowerCase() + ' — ' + (m.buyerLoginName || ''),
+        detail: (ci.comments && ci.comments.content) || '', order_no: m.orderId || '', customer: m.buyerLoginName || '', ext_status: st, received_at: officeV(ci.creationDate),
+        url: 'https://www.ebay.com/rt/ReturnDetails?returnId=' + encodeURIComponent(m.returnId), closed: !!st && !OFFICE_EBAY_OPEN_RET.test(st) }; });
+  },
+  async ebay_cancel(env) {
+    const d = await officeEbayPO(env, 'cancellation/search?creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200');
+    return (d.cancellations || d.members || []).map(c => { const st = String(c.cancelState || c.cancelStatus || '');
+      return { src: 'ebay_cancel', ext_id: c.cancelId, channel: 'eBay', kind: 'cancel', title: 'Cancel request — ' + String(c.cancelReason || '').replace(/_/g, ' ').toLowerCase() + ' — ' + (c.buyerLoginName || ''),
+        order_no: c.legacyOrderId || '', customer: c.buyerLoginName || '', ext_status: st, received_at: officeV(c.cancelRequestDate), url: 'https://www.ebay.com/sh/ord/?filter=status:CANCELLATION_REQUESTS',
+        closed: !!st && !/REQUEST|PENDING|OPEN/i.test(st) }; });
+  },
+  async ebay_case(env) { // "item not received" inquiries + eBay cases (they hurt the account: answer fast)
+    const out = [];
+    const a = await officeEbayPO(env, 'inquiry/search?inquiry_creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200');
+    (a.members || []).forEach(m => { const st = String(m.inquiryStatusEnum || m.status || '');
+      out.push({ src: 'ebay_case', ext_id: 'inq-' + m.inquiryId, channel: 'eBay', kind: 'case', title: 'Item not received inquiry — ' + (m.buyer || ''), customer: m.buyer || '', order_no: m.itemId || '',
+        ext_status: st, received_at: officeV(m.creationDate), url: 'https://www.ebay.com/rt/InquiryDetails?inquiryId=' + encodeURIComponent(m.inquiryId), closed: !!st && /CLOSED/i.test(st) }); });
+    const b = await officeEbayPO(env, 'casemanagement/search?case_creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200').catch(() => ({}));
+    (b.members || []).forEach(m => { const st = String(m.caseStatusEnum || m.status || '');
+      out.push({ src: 'ebay_case', ext_id: 'case-' + m.caseId, channel: 'eBay', kind: 'case', title: 'eBay case — ' + (m.buyer || ''), customer: m.buyer || '', ext_status: st, received_at: officeV(m.creationDate),
+        url: 'https://www.ebay.com/rt/CaseDetails?caseId=' + encodeURIComponent(m.caseId), closed: !!st && /CLOSED/i.test(st) }); });
+    return out;
+  },
+  async ebay_feedback(env) { // negative / neutral feedback left for us (reply, or ask the buyer to revise)
+    const tok = await getEbayToken(env), out = [];
+    for (const ct of ['Negative', 'Neutral']) {
+      const r = await fetch('https://api.ebay.com/ws/api.dll', { method: 'POST', headers: { 'X-EBAY-API-CALL-NAME': 'GetFeedback', 'X-EBAY-API-SITEID': '0', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-IAF-TOKEN': tok, 'Content-Type': 'text/xml' },
+        body: `<?xml version="1.0" encoding="utf-8"?><GetFeedbackRequest xmlns="urn:ebay:apis:eBLBaseComponents"><FeedbackType>FeedbackReceivedAsSeller</FeedbackType><CommentType>${ct}</CommentType><DetailLevel>ReturnAll</DetailLevel><Pagination><EntriesPerPage>50</EntriesPerPage><PageNumber>1</PageNumber></Pagination></GetFeedbackRequest>` });
+      const x = await r.text();
+      if (/<Ack>Failure<\/Ack>/.test(x)) throw new Error('eBay GetFeedback: ' + ((/<LongMessage>([^<]*)/.exec(x) || [])[1] || 'failed'));
+      const g = (b, k) => { const m = new RegExp('<' + k + '>([^<]*)</' + k + '>').exec(b); return m ? m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ''; };
+      (x.match(/<FeedbackDetail>[\s\S]*?<\/FeedbackDetail>/g) || []).forEach(b => { const at = g(b, 'CommentTime'); if (at && at < officeSince(60)) return;
+        out.push({ src: 'ebay_feedback', ext_id: g(b, 'FeedbackID'), channel: 'eBay', kind: 'feedback', title: ct + ' feedback — ' + g(b, 'CommentingUser'), detail: g(b, 'CommentText'), customer: g(b, 'CommentingUser'),
+          order_no: g(b, 'OrderLineItemID') || g(b, 'ItemID'), received_at: at, ext_status: ct, url: 'https://www.ebay.com/fdbk/mweb_profile?fdbkType=FeedbackReceivedAsSeller&filter=feedback_page%3ARECEIVED_AS_SELLER',
+          closed: /<FeedbackResponse>/.test(b) || /<Response>/.test(b) }); });
+    }
+    return out;
+  },
+  async ebay_health(env) { // seller standards (defect rate, late shipments, cases closed without seller resolution)
+    const creds = btoa(`${env.EBAY_CLIENT_ID}:${env.EBAY_CLIENT_SECRET}`);
+    const tr = await fetch('https://api.ebay.com/identity/v1/oauth2/token', { method: 'POST', headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(env.EBAY_REFRESH_TOKEN || '') + '&scope=' + encodeURIComponent('https://api.ebay.com/oauth/api_scope/sell.analytics.readonly') });
+    const td = await tr.json().catch(() => ({}));
+    if (!td.access_token) throw new Error('eBay did not give the "analytics" permission (sell.analytics.readonly) — re-authorize eBay with it: ' + JSON.stringify(td).slice(0, 160));
+    const r = await fetch('https://api.ebay.com/sell/analytics/v1/seller_standards_profile', { headers: { Authorization: 'Bearer ' + td.access_token, Accept: 'application/json' } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('eBay ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 240));
+    const P = (d.standardsProfiles || []).map(p => ({ program: p.program, level: p.standardsLevel, cycle: p.cycle && p.cycle.cycleType, metrics: (p.metrics || []).map(m => ({ name: m.name || m.metricKey, value: officeV(m.value), level: m.level, limit: officeV(m.thresholdUpperBound) || officeV(m.thresholdLowerBound) })) }));
+    return { items: [], data: { profiles: P } };
+  },
+  // ── Amazon (reports: asked for, then read when Amazon has made them — a few minutes later) ──
+  async amz_feedback(env) {
+    const txt = await officeAmzReport(env, 'GET_SELLER_FEEDBACK_DATA', 60); if (txt == null) return null;
+    return officeTsv(txt).filter(r => +(r['rating'] || r['Rating'] || 5) <= 3).map(r => { const oid = r['order id'] || r['Order ID'] || '', rt = r['rating'] || r['Rating'];
+      return { src: 'amz_feedback', ext_id: oid + '|' + (r['date'] || r['Date'] || ''), channel: 'Amazon', kind: 'feedback', title: rt + '★ feedback — order ' + oid, detail: r['comments'] || r['Comments'] || '',
+        order_no: oid, received_at: r['date'] || r['Date'], ext_status: rt + ' stars', url: 'https://sellercentral.amazon.com/feedback-manager/index.html', closed: !!(r['your response'] || r['Response']) }; });
+  },
+  async amz_return(env) {
+    const txt = await officeAmzReport(env, 'GET_FLAT_FILE_RETURNS_DATA_BY_RETURN_DATE', 30); if (txt == null) return null;
+    return officeTsv(txt).map(r => { const oid = r['order id'] || r['Order ID'] || '', rma = r['amazon rma id'] || r['Amazon RMA ID'] || '', st = r['return request status'] || r['Return request status'] || '';
+      return { src: 'amz_return', ext_id: rma || oid + '|' + (r['merchant sku'] || ''), channel: 'Amazon', kind: 'return', title: 'Return — ' + (r['merchant sku'] || r['Merchant SKU'] || '') + ' · ' + (r['return reason'] || r['Return reason'] || ''),
+        detail: r['customer comments'] || r['Customer comments'] || '', order_no: oid, received_at: r['return request date'] || r['Return request date'], ext_status: st,
+        url: 'https://sellercentral.amazon.com/returns/list', closed: /closed|completed|refunded/i.test(st) }; });
+  },
+  async amz_health(env) {
+    const txt = await officeAmzReport(env, 'GET_V2_SELLER_PERFORMANCE_REPORT', 0); if (txt == null) return null;
+    let d = {}; try { d = JSON.parse(txt); } catch (e) { throw new Error('Amazon account health report could not be read'); }
+    const pm = (d.performanceMetrics || [])[0] || {}, pick = o => o ? { rate: o.rate, status: o.status, target: o.targetValue != null ? o.targetValue : (o.target && o.target.targetValue) } : null;
+    const odr = pm.orderDefectRate || {};
+    return { items: [], data: { accountStatuses: d.accountStatuses || [], ahr: pm.accountHealthRating || null, metrics: {
+      'Order defect rate (FBM)': pick(odr.mfn), 'Order defect rate (FBA)': pick(odr.afn), 'Late shipment rate': pick(pm.lateShipmentRate), 'Pre-fulfillment cancel rate': pick(pm.preFulfillmentCancellationRate),
+      'Valid tracking rate': pick(pm.validTrackingRate), 'On-time delivery rate': pick(pm.onTimeDeliveryRate) } } };
+  },
+  // ── Walmart ────────────────────────────────────────────────────────────
+  async wm_return(env) {
+    const d = await officeWalmart(env, '/v3/returns?returnCreationStartDate=' + encodeURIComponent(officeSince(30)) + '&limit=200');
+    return (d.returnOrders || []).map(o => { const L = o.returnOrderLines || [], st = String(o.returnOrderStatus || (L[0] && L[0].currentRefundStatus) || o.currentRefundStatus || '');
+      const cn = o.customerName ? [o.customerName.firstName, o.customerName.lastName].filter(Boolean).join(' ') : '';
+      return { src: 'wm_return', ext_id: o.returnOrderId, channel: 'Walmart', kind: 'return', title: 'Return — ' + L.map(l => (l.item && (l.item.sku || l.item.productName)) || '').filter(Boolean).slice(0, 3).join(', ') + (L[0] && L[0].returnReason ? ' · ' + L[0].returnReason : ''),
+        order_no: o.customerOrderId || '', customer: cn, ext_status: st, received_at: o.returnOrderDate, url: 'https://seller.walmart.com/order-management/returns', closed: /COMPLETE|REFUNDED|CLOSED/i.test(st) }; });
+  },
+  async wm_cancel(env) {
+    const d = await officeWalmart(env, '/v3/orders?createdStartDate=' + encodeURIComponent(officeSince(30)) + '&status=Cancelled&limit=100');
+    return ((((d.list || {}).elements || {}).order) || []).map(o => ({ src: 'wm_cancel', ext_id: o.purchaseOrderId, channel: 'Walmart', kind: 'cancel', title: 'Cancelled order ' + (o.customerOrderId || o.purchaseOrderId),
+      order_no: o.customerOrderId || '', customer: ((o.shippingInfo || {}).postalAddress || {}).name || '', received_at: o.orderDate ? new Date(+o.orderDate || o.orderDate).toISOString() : '',
+      url: 'https://seller.walmart.com/orders/manage-orders', ext_status: 'Cancelled' }));
+  },
+  // ── Shopify ────────────────────────────────────────────────────────────
+  async shop_order(env) { // cancelled orders and refunds of the last 30 days
+    const tok = await getShopifyToken(env), dom = env.SHOPIFY_STORE_DOMAIN;
+    const r = await fetch(`https://${dom}/admin/api/2024-10/orders.json?status=any&updated_at_min=${encodeURIComponent(officeSince(30))}&limit=250&fields=id,name,cancelled_at,cancel_reason,financial_status,refunds,email,customer,created_at`, { headers: { 'X-Shopify-Access-Token': tok } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Shopify ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 200));
+    const out = [];
+    (d.orders || []).forEach(o => { const who = o.customer ? [o.customer.first_name, o.customer.last_name].filter(Boolean).join(' ') : (o.email || ''), url = `https://${dom}/admin/orders/${o.id}`;
+      if (o.cancelled_at) out.push({ src: 'shop_order', ext_id: 'cancel-' + o.id, channel: 'Shopify', kind: 'cancel', title: 'Cancelled ' + o.name + (o.cancel_reason ? ' · ' + o.cancel_reason : ''), order_no: o.name, customer: who, received_at: o.cancelled_at, url, ext_status: o.financial_status });
+      (o.refunds || []).forEach(f => out.push({ src: 'shop_order', ext_id: 'refund-' + f.id, channel: 'Shopify', kind: 'refund', title: 'Refund on ' + o.name + (f.note ? ' · ' + f.note : ''), order_no: o.name, customer: who, received_at: f.created_at, url, ext_status: o.financial_status })); });
+    return out;
+  },
+};
+async function officeWalmart(env, path) {
+  const tok = await getWalmartToken(env);
+  const r = await fetch('https://marketplace.walmartapis.com' + path, { headers: { 'WM_SEC.ACCESS_TOKEN': tok, 'WM_SVC.NAME': 'Walmart Marketplace', 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), Accept: 'application/json' } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Walmart ' + r.status + ': ' + JSON.stringify(d.errors || d.error || d).slice(0, 240));
+  return d;
+}
+function officeTsv(txt) {
+  const L = String(txt || '').split(/\r?\n/).filter(x => x.trim()); if (!L.length) return [];
+  const h = L[0].split('\t').map(x => x.trim().toLowerCase());
+  return L.slice(1).map(l => { const c = l.split('\t'), o = {}; h.forEach((k, i) => { o[k] = (c[i] || '').trim(); }); return o; });
+}
+// An Amazon report: asked for once (again after 6 hours), read when ready. → its text, or null while Amazon is still making it.
+async function officeAmzReport(env, type, days) {
+  if (!env.AMAZON_REFRESH_TOKEN) throw new Error('Amazon is not connected');
+  const row = await env.DB.prepare('SELECT * FROM office_rep WHERE type = ?').bind(type).first(), token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  const ask = async () => {
+    const body = { reportType: type, marketplaceIds: [mid] }; if (days) body.dataStartTime = officeSince(days);
+    const r = await fetch('https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports', { method: 'POST', headers: { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.reportId) throw new Error('Amazon ' + r.status + ': ' + JSON.stringify(d.errors || d).slice(0, 240));
+    await env.DB.prepare('INSERT OR REPLACE INTO office_rep (type, report_id, at, status, error) VALUES (?,?,?,?,?)').bind(type, d.reportId, new Date().toISOString(), 'pending', '').run();
+    return null;
+  };
+  if (!row || (row.status !== 'pending' && Date.now() - Date.parse(row.at) > 6 * 3600000)) return await ask();
+  if (row.status !== 'pending') return null; // read less than 6 hours ago — nothing new
+  const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports/${row.report_id}`);
+  if (d.processingStatus === 'DONE' && d.reportDocumentId) {
+    const txt = await awdReportText(env, token, d.reportDocumentId);
+    await env.DB.prepare("UPDATE office_rep SET status = 'done', at = ? WHERE type = ?").bind(new Date().toISOString(), type).run();
+    return txt;
+  }
+  if (d.processingStatus === 'CANCELLED') { await env.DB.prepare("UPDATE office_rep SET status = 'done', at = ? WHERE type = ?").bind(new Date().toISOString(), type).run(); return ''; } // nothing in it
+  if (d.processingStatus === 'FATAL') { await env.DB.prepare("UPDATE office_rep SET status = 'error', at = ?, error = ? WHERE type = ?").bind(new Date().toISOString(), 'Amazon could not make the report', type).run(); throw new Error('Amazon could not make this report (FATAL) — the app may need the right role in Seller Central'); }
+  return null;
+}
+let _officePullAt = 0;
+async function officePull(env, force) {
+  await officeTables(env);
+  if (!force && Date.now() - _officePullAt < 5 * 60000) return { ok: true, skipped: true };
+  _officePullAt = Date.now();
+  const res = {};
+  const has = { ebay: !!env.EBAY_REFRESH_TOKEN, amz: !!env.AMAZON_REFRESH_TOKEN, wm: !!env.WALMART_CLIENT_ID, shop: !!(env.SHOPIFY_STORE_DOMAIN && env.SHOPIFY_CLIENT_ID) };
+  for (const src of Object.keys(officeSources)) {
+    const ch = src.split('_')[0];
+    if (!has[ch]) { await officeSrcSet(env, src, false, 0, 'not connected (no ' + ({ ebay: 'eBay', amz: 'Amazon', wm: 'Walmart', shop: 'Shopify' }[ch]) + ' keys on the server)'); res[src] = 'not connected'; continue; }
+    try {
+      let out = await officeSources[src](env);
+      if (out == null) { const old = await env.DB.prepare('SELECT * FROM office_src WHERE src = ?').bind(src).first();
+        await officeSrcSet(env, src, true, old ? old.n : 0, old && old.ok ? '' : '⏳ Amazon is making the report — ready in a few minutes', old && old.data ? JSON.parse(old.data) : null); res[src] = 'waiting'; continue; }
+      let data = null; if (!Array.isArray(out)) { data = out.data || null; out = out.items || []; }
+      let n = 0; for (const it of out) if (it && it.ext_id) n += await officeUpsert(env, it);
+      await officeSrcSet(env, src, true, out.length, '', data); res[src] = { read: out.length, new: n };
+    } catch (e) { await officeSrcSet(env, src, false, 0, e.message || String(e)); res[src] = 'error: ' + (e.message || e); }
+  }
+  return { ok: true, res };
+}
+async function officeRoute(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await officeTables(env);
+  const p = url.pathname, method = request.method, who = String((session && (session.displayName || session.username)) || '?').slice(0, 40);
+  const roles = (session && session.roles) || [], adm = roles.includes('admin') || roles.includes('owner');
+  const D = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '';
+  const range = () => { const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); let f = D(url.searchParams.get('from')) || today, t = D(url.searchParams.get('to')) || f; if (t < f) [f, t] = [t, f];
+    return { from: f, to: t, start: nyDateRangeUTC(f).start, end: nyDateRangeUTC(t).end }; };
+  if (p === '/office/pull' && method === 'POST') { const b = await request.json().catch(() => ({})); return J(await officePull(env, !!b.force)); }
+  if (p === '/office/items' && method === 'GET') {
+    const st = url.searchParams.get('status') || 'open', ch = url.searchParams.get('channel') || '', q = String(url.searchParams.get('q') || '').trim().toUpperCase();
+    const w = [], a = [];
+    if (st === 'open' || st === 'done') { w.push('status = ?'); a.push(st); }
+    if (ch) { w.push('channel = ?'); a.push(ch); }
+    if (q) { w.push('(UPPER(title) LIKE ? OR UPPER(order_no) LIKE ? OR UPPER(customer) LIKE ? OR UPPER(detail) LIKE ? OR UPPER(COALESCE(note, \'\')) LIKE ?)'); for (let i = 0; i < 5; i++) a.push('%' + q + '%'); }
+    if (st === 'done') { const R = range(); w.push('done_at >= ? AND done_at < ?'); a.push(R.start, R.end); }
+    const items = await d1All(env, 'SELECT * FROM office_item' + (w.length ? ' WHERE ' + w.join(' AND ') : '') + (st === 'done' ? ' ORDER BY done_at DESC' : ' ORDER BY due_at, received_at') + ' LIMIT 500', a);
+    const srcs = await d1All(env, 'SELECT * FROM office_src', []);
+    const cnt = await d1All(env, "SELECT channel, COUNT(*) n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) late FROM office_item WHERE status = 'open' GROUP BY channel", [new Date().toISOString()]);
+    return J({ ok: true, items, srcs: srcs.map(s => ({ ...s, data: s.data ? JSON.parse(s.data) : null })), counts: cnt, admin: adm });
+  }
+  if (p === '/office/act' && method === 'POST') {
+    const b = await request.json().catch(() => ({})), rid = String(b._requestId || '').slice(0, 80);
+    if (rid) { const c = await claimRequestId(env, rid, 'office/act'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+    const it = await env.DB.prepare('SELECT * FROM office_item WHERE id = ?').bind(parseInt(b.id, 10) || 0).first(); if (!it) return J({ ok: false, error: 'Not found' }, 404);
+    const now = new Date().toISOString(), note = String(b.note || '').trim().slice(0, 1000); let took = null, detail = note;
+    if (b.action === 'open') { if (!it.opened_at) await env.DB.prepare('UPDATE office_item SET opened_at = ?, opened_by = ? WHERE id = ?').bind(now, who, it.id).run(); }
+    else if (b.action === 'done') {
+      if (it.status === 'done') return J({ ok: true, already: true });
+      const start = it.opened_at || now; took = Math.max(0, Math.round((Date.parse(now) - Date.parse(start)) / 1000));
+      await env.DB.prepare("UPDATE office_item SET status = 'done', done_at = ?, done_by = ?, done_how = 'done here', opened_at = COALESCE(opened_at, ?), opened_by = COALESCE(opened_by, ?), note = CASE WHEN ? != '' THEN ? ELSE note END WHERE id = ?")
+        .bind(now, who, now, who, note, note, it.id).run();
+    } else if (b.action === 'reopen') await env.DB.prepare("UPDATE office_item SET status = 'open', done_at = NULL, done_by = NULL, done_how = NULL WHERE id = ?").bind(it.id).run();
+    else if (b.action === 'note') { if (!note) return J({ ok: false, error: 'Write the note' }, 400); await env.DB.prepare('UPDATE office_item SET note = ? WHERE id = ?').bind(note, it.id).run(); }
+    else return J({ ok: false, error: 'action: open / done / reopen / note' }, 400);
+    await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail, took_sec) VALUES (?,?,?,?,?,?,?)').bind(now, who, it.id, it.src, b.action, detail, took).run();
+    const res = { ok: true, at: now, by: who, took }; if (rid) await recordRequestResult(env, rid, res); return J(res);
+  }
+  if (p === '/office/manual' && method === 'POST') { // something handled on a channel we can't read — kept like any other task (started now, ✓ Done later)
+    const b = await request.json().catch(() => ({})), rid = String(b._requestId || '').slice(0, 80);
+    if (rid) { const c = await claimRequestId(env, rid, 'office/manual'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+    const ch = String(b.channel || '').slice(0, 30), kind = String(b.kind || 'task').slice(0, 30), ref = String(b.ref || '').trim().slice(0, 120); if (!ch) return J({ ok: false, error: 'Which channel?' }, 400);
+    const now = new Date().toISOString(), id = 'm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const r = await env.DB.prepare(`INSERT INTO office_item (src, ext_id, channel, kind, title, detail, order_no, customer, url, received_at, due_at, status, opened_at, opened_by, updated_at)
+      VALUES ('manual',?,?,?,?,?,?,'',?,?,?,'open',?,?,?)`).bind(id, ch, kind, String(b.title || (ch + ' ' + kind)).slice(0, 300), String(b.note || '').slice(0, 2000), ref, String(b.url || '').slice(0, 500), now, officeDue(kind, now), now, who, now).run();
+    await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, who, r.meta.last_row_id, 'manual', 'start', ch + ' ' + kind + (ref ? ' · ' + ref : '')).run();
+    const res = { ok: true, id: r.meta.last_row_id }; if (rid) await recordRequestResult(env, rid, res); return J(res);
+  }
+  if ((p === '/office/stats' || p === '/office/log') && !adm) return J({ ok: false, error: 'Admin only' }, 403);
+  if (p === '/office/stats' && method === 'GET') {
+    const R = range(), wq = String(url.searchParams.get('who') || '').trim().toUpperCase();
+    const rows = await d1All(env, "SELECT * FROM office_item WHERE status = 'done' AND done_at >= ? AND done_at < ?" + (wq ? ' AND UPPER(done_by) LIKE ?' : ''), wq ? [R.start, R.end, '%' + wq + '%'] : [R.start, R.end]);
+    const by = {}, sec = (a, b) => { const x = Date.parse(a), y = Date.parse(b); return isNaN(x) || isNaN(y) || y < x ? null : (y - x) / 1000; };
+    rows.forEach(r => { const day = new Date(r.done_at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), k = day + '|' + (r.done_by || '?');
+      const o = by[k] = by[k] || { day, who: r.done_by || '?', done: 0, byHere: 0, work: [], reply: [], channels: {} };
+      o.done++; o.channels[r.channel] = (o.channels[r.channel] || 0) + 1;
+      if (r.done_how === 'done here') { o.byHere++; const w = sec(r.opened_at, r.done_at); if (w != null) o.work.push(w); }
+      const rp = sec(r.received_at, r.done_at); if (rp != null) o.reply.push(rp); });
+    const avg = l => l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null;
+    const open = await d1First(env, "SELECT COUNT(*) n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) late FROM office_item WHERE status = 'open'", [new Date().toISOString()]);
+    return J({ ok: true, from: R.from, to: R.to, open: open || {}, rows: Object.values(by).sort((a, b) => b.day.localeCompare(a.day) || a.who.localeCompare(b.who))
+      .map(o => ({ day: o.day, who: o.who, done: o.done, doneHere: o.byHere, avgWorkSec: avg(o.work), avgReplySec: avg(o.reply), channels: o.channels })) });
+  }
+  if (p === '/office/log' && method === 'GET') {
+    const R = range(), wq = String(url.searchParams.get('who') || '').trim().toUpperCase(), q = String(url.searchParams.get('q') || '').trim().toUpperCase(), w = ['l.at >= ?', 'l.at < ?'], a = [R.start, R.end];
+    if (wq) { w.push('UPPER(l.by_user) LIKE ?'); a.push('%' + wq + '%'); }
+    if (q) { w.push('(UPPER(COALESCE(i.title, \'\')) LIKE ? OR UPPER(COALESCE(i.order_no, \'\')) LIKE ? OR UPPER(COALESCE(i.customer, \'\')) LIKE ? OR UPPER(COALESCE(l.detail, \'\')) LIKE ?)'); for (let k = 0; k < 4; k++) a.push('%' + q + '%'); }
+    const rows = await d1All(env, 'SELECT l.*, i.channel, i.kind, i.title, i.order_no, i.customer, i.received_at FROM office_log l LEFT JOIN office_item i ON i.id = l.item_id WHERE ' + w.join(' AND ') + ' ORDER BY l.id DESC LIMIT 2000', a);
+    return J({ ok: true, from: R.from, to: R.to, rows });
+  }
+  return J({ ok: false, error: 'Office route not found' }, 404);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

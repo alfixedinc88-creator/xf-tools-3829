@@ -40,7 +40,7 @@ const SHELL_ASSETS = [
 // every page opens with no internet. A file that can't be fetched is skipped (never blocks the update).
 const BASE = '/xf-tools-3829/';
 const OFFLINE_PAGES = ['index.html', 'inventory.html', 'packship.html', 'warehouse.html', 'upc.html', 'labelprint.html', 'lights.html',
-  'reorder.html', 'awd.html', 'repricer.html', 'sales.html', 'receivepo.html', 'ldash.html', 'profit.html', 'imagemaker.html', 'training.html',
+  'reorder.html', 'awd.html', 'repricer.html', 'sales.html', 'receivepo.html', 'ldash.html', 'profit.html', 'office.html', 'imagemaker.html', 'training.html',
   'xfitting-admin.html', 'xf-access.js', 'xf-lang.js', 'xf-lang-es.js', 'xf-signout.js', 'manifest.json', 'icon-192x192.png', 'icon-512x512.png'];
 // Fonts and libraries pages load from these sites (Excel, barcodes, charts…): saved after the first use, used offline.
 const LIB_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'unpkg.com'];
