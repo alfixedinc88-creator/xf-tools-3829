@@ -374,6 +374,16 @@ document.addEventListener('input', function (e) {
       { key: 'amazondata', label: '🔄 Amazon data', sel: '#pf-app .panel:has(#pf-sync-btn)' },
       { key: 'pull90', label: 'Pull the last 90 days again', sel: '#pf-sync90-btn' },
       { key: 'history', label: 'History', sel: '#pf-app .panel details:has(#pf-log)' } ] },
+    // 🧑‍💼 Owner (2026-11-02): the office person's page — every channel's messages / returns / cancellations / feedback / account health
+    { key: 'office', file: 'office.html', name: '🧑‍💼 Office', needs: 'any sign-in', card: card('office.html'), tabs: [
+      { key: 'todo', label: '📋 To do', sel: '#of-tab-todo, #of-pg-todo', parts: [
+        { key: 'srcs', label: 'Channel status (what was read, what is grey)', sel: '#of-srcs' },
+        { key: 'grey', label: '⚪ Not connected yet — 📝 I\'m handling one', sel: '#of-grey' },
+        { key: 'pull', label: '🔄 Check channels now', sel: '#of-pull-btn' } ] },
+      { key: 'done', label: '✅ Done', sel: '#of-tab-done, #of-pg-done' },
+      { key: 'health', label: '🩺 Account health', sel: '#of-tab-health, #of-pg-health' },
+      { key: 'profit', label: '💰 Profit', sel: '#of-tab-profit, #of-pg-profit' },
+      { key: 'hist', label: '🕘 History & time (Admin only)', sel: '#of-tab-hist, #of-pg-hist' } ], parts: [] },
     { key: 'imagemaker', file: 'imagemaker.html', name: '🖼️ Image Maker', needs: 'any sign-in', card: card('imagemaker.html'), tabs: [], parts: [
       { key: 'photo', label: 'Product Photo', sel: '.imx-controls > .imx-panel:has(#imx-drop)' },
       { key: 'bgremove', label: 'Background removal', sel: '#imx-bgremove-wrap' },

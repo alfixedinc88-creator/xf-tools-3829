@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="manifest" href="manifest.json"><!-- installed app: opens without the address bar -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XFitting — Office</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#f0f1f3; --bg4:#e8eaed; --border:#dde0e6; --border2:#c8cbd4;
+  --text:#1a1d23; --text2:#4a5060; --text3:#8a90a0; --accent:#1a56db; --accent-bg:#eef2fd;
+  --green:#0e7f3e; --green-bg:#e8f7ee; --red:#c52a1a; --red-bg:#fdf0ee; --orange:#b45309; --orange-bg:#fef3e2;
+  --yellow:#8a6d00; --yellow-bg:#fff8d6; --purple:#6d28d9; --purple-bg:#f2effe;
+  --mono:'DM Mono', monospace; --sans:'DM Sans', sans-serif;
+  --shadow:0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+body { min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); font-size:14px; }
+#pf-app { display:none; flex-direction:column; min-height:100vh; }
+.topbar { background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; position:sticky; top:0; z-index:200; }
+.topbar-left { display:flex; align-items:center; gap:12px; }
+.topbar-right { display:flex; align-items:center; gap:8px; }
+.tb-logo { font-family:var(--mono); font-size:11px; letter-spacing:3px; color:var(--accent); font-weight:500; }
+.tb-name { font-weight:700; font-size:15px; }
+.btn { font-family:inherit; font-size:13px; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.btn:hover { border-color:var(--border2); background:var(--bg3); }
+.btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn-primary:hover { background:#1246c0; }
+.btn:disabled { opacity:.55; cursor:default; }
+.wrap { max-width:1400px; width:100%; margin:0 auto; padding:18px 24px 60px; }
+.controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--bg2); }
+.seg button { font-family:inherit; font-size:13px; padding:7px 14px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-weight:600; }
+.seg button.on { background:var(--accent); color:#fff; }
+input[type=text], input[type=number], select { font-family:inherit; font-size:13px; padding:7px 11px; border:1px solid var(--border); border-radius:8px; background:var(--bg2); color:var(--text); }
+#pf-search { width:260px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:14px; }
+.card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; box-shadow:var(--shadow); }
+.card .lbl { font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:.8px; font-weight:600; }
+.card .val { font-size:20px; font-weight:700; margin-top:4px; font-family:var(--mono); }
+.card .sub { font-size:11.5px; color:var(--text3); margin-top:2px; }
+.notes { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.note { border-radius:9px; padding:10px 14px; font-size:13px; line-height:1.5; border:1px solid var(--border); background:var(--bg2); }
+.note.red { background:var(--red-bg); border-color:#f3c9c3; color:#7a1d12; }
+.note.yellow { background:var(--yellow-bg); border-color:#f0e2a0; color:#5c4a00; }
+.note.green { background:var(--green-bg); border-color:#bfe5cd; color:#0b5a2d; }
+.note.blue { background:var(--accent-bg); border-color:#cddaf8; color:#173d99; }
+.note details summary { cursor:pointer; font-weight:600; }
+.tablewrap { background:var(--bg2); border:1px solid var(--border); border-radius:10px; overflow:auto; box-shadow:var(--shadow); }
+table { border-collapse:collapse; width:100%; }
+th, td { padding:8px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--bg4); font-size:13px; }
+th { position:sticky; top:0; background:var(--bg3); font-size:11.5px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; cursor:pointer; user-select:none; z-index:1; }
+th.l, td.l { text-align:left; }
+td.num { font-family:var(--mono); }
+tbody tr.row { cursor:pointer; }
+tbody tr.row:hover td { background:#f7f9fd; }
+tr.loss td.st { border-left:4px solid var(--red); }
+tr.thin td.st { border-left:4px solid #e0b400; }
+tr.good td.st { border-left:4px solid var(--green); }
+tr.nocost td.st { border-left:4px solid var(--border2); }
+.pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; }
+.pill.loss { background:var(--red-bg); color:var(--red); }
+.pill.thin { background:var(--yellow-bg); color:var(--yellow); }
+.pill.good { background:var(--green-bg); color:var(--green); }
+.pill.nocost { background:var(--bg4); color:var(--text2); }
+.neg { color:var(--red); }
+.warn { color:var(--orange); font-size:12px; white-space:normal; }
+td.sku { white-space:normal; min-width:170px; max-width:300px; }
+th { white-space:normal; }
+tfoot td { font-weight:700; background:var(--bg3); border-top:2px solid var(--border2); }
+tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-space:normal; }
+.detail-inner { position:sticky; left:16px; width:min(1320px, calc(100vw - 90px)); }
+.detail-grid { display:grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap:16px; }
+.mini th, .mini td { font-size:12px; padding:5px 7px; }
+.mini th { position:static; cursor:default; }
+.box { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+.box h4 { font-size:13px; margin-bottom:8px; }
+.kv { display:grid; grid-template-columns:auto auto; gap:3px 12px; font-size:13px; margin-top:8px; }
+.kv div:nth-child(even) { text-align:right; font-family:var(--mono); }
+.panel { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-top:14px; }
+.panel h3 { font-size:14px; margin-bottom:8px; }
+.muted { color:var(--text3); font-size:12px; }
+.mono { font-family:var(--mono); }
+#pf-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1d23; color:#fff; font-size:12.5px; padding:10px 18px; border-radius:100px; opacity:0; transition:opacity .3s; z-index:9999; pointer-events:none; }
+@media (max-width: 800px) { .detail-grid { grid-template-columns: 1fr; } #pf-search { width:100%; } .wrap { padding:14px 12px 60px; } .topbar { padding:0 12px; } }
+  
+.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+.tab { font-family:inherit; font-size:13px; font-weight:700; padding:8px 14px; border-radius:9px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.tab.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+.chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+.chip { font-size:12px; font-weight:700; padding:5px 10px; border-radius:20px; border:1px solid var(--border); background:var(--bg2); cursor:pointer; }
+.chip.on { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+.srcs { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px; margin-bottom:14px; }
+.src { border-radius:9px; padding:8px 11px; font-size:12px; border:1px solid var(--border); background:var(--bg2); }
+.src b { font-size:12.5px; }
+.src.ok { border-left:4px solid var(--green); }
+.src.err { border-left:4px solid var(--red); }
+.src.grey { background:var(--bg4); color:var(--text3); border-left:4px solid var(--border2); }
+.src.grey a { color:var(--text2); }
+.item { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:8px; box-shadow:var(--shadow); }
+.item.late { border-left:5px solid var(--red); }
+.item.soon { border-left:5px solid #e0b400; }
+.item .top { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start; }
+.badge { display:inline-block; font-size:10.5px; font-weight:800; padding:2px 7px; border-radius:5px; margin-right:4px; color:#fff; }
+.b-Amazon { background:#ff9900; } .b-eBay { background:#0064d2; } .b-Walmart { background:#0071ce; } .b-Shopify { background:#5e8e3e; } .b-Gmail { background:#c5221f; } .b-Other { background:#6b7280; }
+.acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; align-items:center; }
+.acts input { flex:1; min-width:160px; }
+.due { font-size:12px; font-weight:700; white-space:nowrap; }
+.panel { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:12px; box-shadow:var(--shadow); }
+.hgrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:10px; }
+.met { display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-bottom:1px solid var(--bg4); font-size:13px; }
+.good { color:var(--green); } .bad { color:var(--red); font-weight:700; }
+#of-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1d23; color:#fff; font-size:12.5px; padding:10px 18px; border-radius:100px; opacity:0; transition:opacity .3s; z-index:9999; pointer-events:none; }
+  </style>
+<script src="xf-lang.js?v=20261005a"></script>
+</head>
+<body>
+<div id="of-login" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;max-width:340px;width:100%;padding:0 20px">
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px"><span style="color:var(--accent)">XF</span>ITTING — Office</div>
+    <div style="font-size:20px;font-weight:600;margin-bottom:6px">Sign in</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">Sign in with your XFitting credentials</div>
+    <input id="of-user" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px">
+    <input id="of-pass" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px" onkeydown="if(event.key==='Enter')ofLogin()">
+    <button id="of-login-btn" onclick="ofLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer">Sign In</button>
+    <div id="of-login-err" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);min-height:16px"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3);text-decoration:none">← Back to Launcher</a>
+  </div>
+</div>
+
+<!-- 🧑‍💼 Owner (2026-11-02): "hiring an office guy to reply to customer messages, keep our account health, reply to / take off feedback…
+     Amazon, eBay, Walmart, Shopify, Gmail info@ — set it up so we can keep eyes on it, with all the history: when he does each message, how
+     long each one takes him, and search it back". "Do what you can do first, turn the ones you can't do grey — I'll fix them later." -->
+<div id="of-app" style="display:none;flex-direction:column;min-height:100vh">
+  <div class="topbar">
+    <div class="topbar-left"><div class="tb-logo">XFITTING</div><div class="tb-name">🧑‍💼 Office</div></div>
+    <div class="topbar-right">
+      <button class="btn" id="of-pull-btn" onclick="ofPull(true)" title="Read every channel now (it also runs by itself every hour)">🔄 Check channels now</button>
+      <button class="btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
+      <button class="btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="tabs" id="of-tabs">
+      <button class="tab on" id="of-tab-todo" data-t="todo" onclick="ofTab('todo')">📋 To do <span id="of-n-open"></span></button>
+      <button class="tab" id="of-tab-done" data-t="done" onclick="ofTab('done')">✅ Done</button>
+      <button class="tab" id="of-tab-health" data-t="health" onclick="ofTab('health')">🩺 Account health</button>
+      <button class="tab" id="of-tab-profit" data-t="profit" onclick="ofTab('profit')">💰 Profit</button>
+      <button class="tab" id="of-tab-hist" data-t="hist" onclick="ofTab('hist')" style="display:none">🕘 History &amp; time (Admin)</button>
+    </div>
+
+    <div id="of-pg-todo">
+      <div class="srcs" id="of-srcs"></div>
+      <div class="chips" id="of-chips"></div>
+      <div class="controls"><input type="text" id="of-q" placeholder="Search order #, customer, words…" style="width:280px" onkeydown="if(event.key==='Enter')ofLoad()"><button class="btn" onclick="ofLoad()">🔍</button>
+        <span class="muted" id="of-todo-sum"></span></div>
+      <div id="of-list"></div>
+      <div class="panel" id="of-grey" style="margin-top:14px"></div>
+    </div>
+
+    <div id="of-pg-done" style="display:none">
+      <div class="controls">From <input type="date" id="of-d-from"> to <input type="date" id="of-d-to"> <button class="btn" onclick="ofLoadDone()">🔍 Show</button> <span class="muted" id="of-done-sum"></span></div>
+      <div id="of-done"></div>
+    </div>
+
+    <div id="of-pg-health" style="display:none"><div class="hgrid" id="of-health"></div></div>
+
+    <div id="of-pg-profit" style="display:none">
+      <div class="panel"><b>💵 Amazon — profit per listing</b><div class="muted" style="margin:4px 0 8px">Selling price − Amazon fees − shipping label − product cost (SKU Mgr). Already working on the Profit Check page.</div>
+        <a class="btn btn-primary" href="profit.html" style="text-decoration:none;display:inline-block">Open Profit Check →</a></div>
+      <div class="src grey" id="of-profit-grey" style="padding:12px"><b>⚪ Every channel (eBay, Walmart, Shopify) with landed cost — not set up yet</b><br>
+        Profit = price − channel fee − shipping label − SKU Mgr cost × 1.6 (+60% container / import) − advertising − labor.
+        Needs: labor $ an hour and minutes an order, and the ad spend source (Amazon ads / eBay Promoted Listings). Tell Claude when ready.</div>
+    </div>
+
+    <div id="of-pg-hist" style="display:none">
+      <div class="controls">From <input type="date" id="of-h-from"> to <input type="date" id="of-h-to"> <input type="text" id="of-h-who" placeholder="Name (all)" style="width:140px">
+        <input type="text" id="of-h-q" placeholder="Order #, customer, words…" style="width:200px"> <button class="btn btn-primary" onclick="ofLoadHist()">🔍 Search</button></div>
+      <div id="of-stats"></div>
+      <div id="of-log"></div>
+    </div>
+  </div>
+</div>
+<div id="of-toast"></div>
+<script>
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var TOKEN = localStorage.getItem('xf_cred_token') || null;
+var USER = null; try { USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
+var OF = { tab: 'todo', ch: '', items: [], srcs: [], admin: false };
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function toast(m) { var t = document.getElementById('of-toast'); t.textContent = m; t.style.opacity = '1'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = '0'; }, 3500); }
+function g(id) { return document.getElementById(id); }
+function showLogin() { g('of-app').style.display = 'none'; g('of-login').style.display = 'flex'; }
+function signedOut() { TOKEN = null; USER = null; localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); showLogin(); }
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, { 'X-Cred-Token': TOKEN || '' });
+  var r; try { r = await fetch(WORKER_URL + path, opts); } catch (e) { throw new Error('📶 No connection — try again'); }
+  if (r.status === 401) { signedOut(); throw new Error('Please sign in again'); }
+  var d = await r.json().catch(function () { return { ok: false, error: 'Bad reply (' + r.status + ')' }; });
+  if (!d.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+window.ofLogin = async function () {
+  var u = g('of-user').value.trim(), p = g('of-pass').value, err = g('of-login-err'), btn = g('of-login-btn'); err.textContent = '';
+  if (!u || !p) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    var d = await res.json(); if (!res.ok) { err.textContent = d.error || 'Login failed'; return; }
+    TOKEN = d.token; USER = { displayName: d.displayName, roles: d.roles, userId: d.userId };
+    localStorage.setItem('xf_cred_token', d.token); localStorage.setItem('xf_cred_user', JSON.stringify(USER)); openApp();
+  } catch (e) { err.textContent = 'Connection error — try again.'; } finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+};
+function nyDay(d) { return (d || new Date()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
+function ago(v) { var t = Date.parse(v); if (isNaN(t)) return ''; var m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; }
+function dur(sec) { if (sec == null || isNaN(sec)) return '—'; sec = Math.round(sec); return sec < 90 ? sec + ' sec' : sec < 5400 ? Math.round(sec / 6) / 10 + ' min' : sec < 172800 ? Math.round(sec / 360) / 10 + ' hr' : Math.round(sec / 8640) / 10 + ' days'; }
+function when(v) { try { return v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; } catch (e) { return v || '—'; } }
+function dueTxt(it) { var t = Date.parse(it.due_at); if (isNaN(t)) return ''; var m = Math.round((t - Date.now()) / 60000);
+  return m < 0 ? '<span class="due bad">⏰ LATE ' + dur(-m * 60) + '</span>' : '<span class="due" style="color:' + (m < 240 ? 'var(--orange)' : 'var(--text3)') + '">⏳ due in ' + dur(m * 60) + '</span>'; }
+// What each channel source is (the server reads these by itself every hour; ⚪ = can't be read, with why)
+var OF_SRC = { ebay_msg: ['eBay', '💬 Messages'], ebay_return: ['eBay', '↩ Package returns'], ebay_cancel: ['eBay', '✖ Cancellations'], ebay_case: ['eBay', '⚠ Cases / not received'],
+  ebay_feedback: ['eBay', '⭐ Feedback (negative / neutral)'], ebay_health: ['eBay', '🩺 Account health'], amz_feedback: ['Amazon', '⭐ Feedback manager (1–3 stars)'], amz_return: ['Amazon', '↩ Package returns'],
+  amz_health: ['Amazon', '🩺 Account health'], wm_return: ['Walmart', '↩ Package returns'], wm_cancel: ['Walmart', '✖ Cancellations'], shop_order: ['Shopify', '✖ Cancellations / ↩ refunds'] };
+// ⚪ The ones no app can read yet (owner 2026-11-02: "turn the ones you can't do grey, I'll fix them later") — a link to do it on the
+// channel, and "📝 I'm handling one" so the time it takes is still kept.
+var OF_GREY = [
+  { ch: 'Amazon', name: '💬 Buyer messages', why: 'Amazon gives apps no way to read buyer messages. They also come by email → connect Gmail (below) to get them here.', url: 'https://sellercentral.amazon.com/messaging/inbox', kind: 'message' },
+  { ch: 'Amazon', name: '🗣 Voice of the Customer', why: 'No API from Amazon — check it on Seller Central.', url: 'https://sellercentral.amazon.com/voice-of-the-customer', kind: 'task' },
+  { ch: 'Amazon', name: '⭐ Customer reviews', why: 'No API for single reviews (Brand Registry) — check it on Seller Central.', url: 'https://sellercentral.amazon.com/brand-customer-reviews', kind: 'task' },
+  { ch: 'Walmart', name: '💬 Buyer messages', why: 'Walmart sends buyer messages by email only → connect Gmail to get them here.', url: 'https://seller.walmart.com/', kind: 'message' },
+  { ch: 'Walmart', name: '🩺 Account health', why: 'Not connected yet (Walmart seller performance needs its own permission).', url: 'https://seller.walmart.com/', kind: 'task' },
+  { ch: 'Shopify', name: '💬 Customer messages', why: 'Shopify messages come by email (Shopify Inbox has no API) → connect Gmail.', url: 'https://admin.shopify.com/', kind: 'message' },
+  { ch: 'Gmail', name: '📧 info@xfitting.com', why: 'Not connected yet — needs a one-time Google permission for info@ (Workspace admin, or "Allow" sign-in). Tell Claude which one it is.', url: 'https://mail.google.com/', kind: 'message' } ];
+window.ofTab = function (t) {
+  OF.tab = t; document.querySelectorAll('#of-tabs .tab').forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); });
+  ['todo', 'done', 'health', 'profit', 'hist'].forEach(function (k) { g('of-pg-' + k).style.display = k === t ? '' : 'none'; });
+  if (t === 'done') ofLoadDone(); if (t === 'health') ofRenderHealth(); if (t === 'hist') ofLoadHist();
+};
+window.ofChan = function (c) { OF.ch = OF.ch === c ? '' : c; ofLoad(); };
+async function ofLoad() {
+  try {
+    var q = g('of-q').value.trim(), d = await api('/office/items?status=open' + (OF.ch ? '&channel=' + encodeURIComponent(OF.ch) : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    OF.items = d.items || []; OF.srcs = d.srcs || []; OF.admin = !!d.admin; g('of-tab-hist').style.display = OF.admin ? '' : 'none';
+    var tot = 0, late = 0; (d.counts || []).forEach(function (c) { tot += c.n; late += c.late || 0; });
+    g('of-n-open').innerHTML = tot ? '(' + tot + (late ? ' · <span style="color:#fecaca">' + late + ' late</span>' : '') + ')' : '';
+    g('of-chips').innerHTML = ['Amazon', 'eBay', 'Walmart', 'Shopify', 'Gmail', 'Other'].map(function (c) { var x = (d.counts || []).filter(function (k) { return k.channel === c; })[0];
+      return '<span class="chip' + (OF.ch === c ? ' on' : '') + '" onclick="ofChan(\'' + c + '\')">' + c + ' ' + (x ? x.n + (x.late ? ' · ⏰' + x.late : '') : '0') + '</span>'; }).join('');
+    ofRenderSrcs(); ofRenderList(); ofRenderGrey();
+    g('of-todo-sum').textContent = OF.items.length + ' to do' + (OF.ch ? ' on ' + OF.ch : '') + ' · the most urgent first';
+  } catch (e) { g('of-list').innerHTML = '<div class="note red">' + esc(e.message) + '</div>'; }
+}
+window.ofLoad = ofLoad;
+function ofRenderSrcs() {
+  var by = {}; OF.srcs.forEach(function (s) { by[s.src] = s; });
+  g('of-srcs').innerHTML = Object.keys(OF_SRC).map(function (k) { var s = by[k], i = OF_SRC[k];
+    var cls = !s ? 'grey' : s.ok ? 'ok' : (/not connected/i.test(s.error || '') ? 'grey' : 'err');
+    return '<div class="src ' + cls + '"><span class="badge b-' + i[0] + '">' + i[0] + '</span><b>' + i[1] + '</b><div class="muted">'
+      + (!s ? '⚪ not checked yet — 🔄 Check channels now' : s.ok ? '✓ ' + (s.error ? esc(s.error) : 'read ' + ago(s.at)) : (cls === 'grey' ? '⚪ ' : '⚠ ') + esc(s.error)) + '</div></div>'; }).join('');
+}
+function ofRenderList() {
+  if (!OF.items.length) { g('of-list').innerHTML = '<div class="note green">✅ Nothing waiting' + (OF.ch ? ' on ' + esc(OF.ch) : '') + '.</div>'; return; }
+  g('of-list').innerHTML = OF.items.map(function (it) { var t = Date.parse(it.due_at), late = t < Date.now(), soon = !late && t - Date.now() < 4 * 3600000;
+    return '<div class="item' + (late ? ' late' : soon ? ' soon' : '') + '" data-id="' + it.id + '"><div class="top"><div><span class="badge b-' + esc(it.channel) + '">' + esc(it.channel) + '</span><b>' + esc(it.title) + '</b>'
+      + '<div class="muted">' + esc(it.kind) + (it.order_no ? ' · order <span class="mono">' + esc(it.order_no) + '</span>' : '') + (it.customer ? ' · ' + esc(it.customer) : '') + ' · came in ' + esc(when(it.received_at)) + ' (' + ago(it.received_at) + ')'
+      + (it.ext_status ? ' · ' + esc(it.ext_status) : '') + (it.opened_at ? ' · 👁 opened by ' + esc(it.opened_by) + ' ' + ago(it.opened_at) : '') + '</div></div>' + dueTxt(it) + '</div>'
+      + (it.detail ? '<div style="margin-top:6px;font-size:13px;white-space:pre-wrap">' + esc(String(it.detail).slice(0, 600)) + '</div>' : '')
+      + (it.note ? '<div style="margin-top:4px;font-size:12px;color:var(--purple)">📝 ' + esc(it.note) + '</div>' : '')
+      + '<div class="acts">' + (it.url ? '<a class="btn" href="' + esc(it.url) + '" target="_blank" rel="noopener" onclick="ofAct(' + it.id + ',\'open\')">🔗 Open on ' + esc(it.channel) + '</a>' : '<button class="btn" onclick="ofAct(' + it.id + ',\'open\')">▶ Start</button>')
+      + '<input type="text" id="of-note-' + it.id + '" placeholder="What you did / replied (kept on record)"><button class="btn btn-primary" onclick="ofDone(' + it.id + ')">✓ Done</button></div></div>'; }).join('');
+}
+function ofRenderGrey() {
+  g('of-grey').innerHTML = '<b>⚪ Not connected yet — do these on the channel</b> <span class="muted">(tap 📝 when you start one: the time it takes is kept like the others)</span>'
+    + OF_GREY.map(function (x, i) { return '<div class="src grey" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-' + x.ch + '">' + x.ch + '</span><b>' + x.name + '</b>'
+      + '<span style="flex:1;min-width:200px">' + esc(x.why) + '</span><a class="btn" href="' + esc(x.url) + '" target="_blank" rel="noopener">🔗 Open</a>'
+      + '<input type="text" id="of-gref-' + i + '" placeholder="Order # / customer" style="width:150px"><button class="btn" onclick="ofManual(' + i + ')">📝 I\'m handling one</button></div>'; }).join('');
+}
+var _ofRid = function (k) { return 'of-' + k + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7); };
+window.ofAct = async function (id, action) { try { await api('/office/act', { method: 'POST', body: JSON.stringify({ id: id, action: action, _requestId: _ofRid('act') }) }); } catch (e) { toast(e.message); } };
+window.ofDone = async function (id) {
+  var n = g('of-note-' + id), note = n ? n.value.trim() : '';
+  try { var d = await api('/office/act', { method: 'POST', body: JSON.stringify({ id: id, action: 'done', note: note, _requestId: _ofRid('done') }) });
+    toast('✓ Done' + (d.took != null ? ' — took ' + dur(d.took) : '')); ofLoad(); } catch (e) { toast(e.message); }
+};
+window.ofManual = async function (i) {
+  var x = OF_GREY[i], r = g('of-gref-' + i), ref = r ? r.value.trim() : '';
+  try { await api('/office/manual', { method: 'POST', body: JSON.stringify({ channel: x.ch, kind: x.kind, ref: ref, title: x.ch + ' ' + x.name.replace(/^\S+\s/, '') + (ref ? ' — ' + ref : ''), url: x.url, _requestId: _ofRid('man') }) });
+    if (r) r.value = ''; toast('📝 Started — press ✓ Done on it in the list when finished'); ofLoad(); } catch (e) { toast(e.message); }
+};
+window.ofPull = async function (force) {
+  var b = g('of-pull-btn'); if (b) { b.disabled = true; b.textContent = '⏳ Checking…'; }
+  try { await api('/office/pull', { method: 'POST', body: JSON.stringify({ force: !!force }) }); } catch (e) { toast(e.message); }
+  finally { if (b) { b.disabled = false; b.textContent = '🔄 Check channels now'; } }
+  ofLoad(); if (OF.tab === 'health') ofRenderHealth();
+};
+async function ofLoadDone() {
+  var f = g('of-d-from'), t = g('of-d-to'); if (!f.value) f.value = nyDay(); if (!t.value) t.value = f.value;
+  try { var d = await api('/office/items?status=done&from=' + f.value + '&to=' + t.value);
+    var L = d.items || [], sec = function (a, b) { var x = Date.parse(a), y = Date.parse(b); return isNaN(x) || isNaN(y) || y < x ? null : (y - x) / 1000; };
+    g('of-done-sum').textContent = L.length + ' done';
+    g('of-done').innerHTML = !L.length ? '<div class="muted">Nothing done in these days.</div>' : '<div class="tablewrap"><table><thead><tr><th class="l">Done</th><th class="l">Who</th><th class="l">Channel</th><th class="l">What</th><th class="l">Order</th><th>Came in → done</th><th>Work time</th><th class="l">How / note</th></tr></thead><tbody>'
+      + L.map(function (it) { return '<tr><td class="l">' + esc(when(it.done_at)) + '</td><td class="l">' + esc(it.done_by) + '</td><td class="l"><span class="badge b-' + esc(it.channel) + '">' + esc(it.channel) + '</span></td><td class="l" style="white-space:normal;max-width:380px">' + esc(it.title) + '</td>'
+        + '<td class="l mono">' + esc(it.order_no) + '</td><td>' + dur(sec(it.received_at, it.done_at)) + '</td><td>' + (it.done_how === 'done here' ? dur(sec(it.opened_at, it.done_at)) : '—') + '</td><td class="l" style="white-space:normal">' + esc(it.done_how || '') + (it.note ? ' · 📝 ' + esc(it.note) : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  } catch (e) { g('of-done').innerHTML = '<div class="note red">' + esc(e.message) + '</div>'; }
+}
+window.ofLoadDone = ofLoadDone;
+function ofRenderHealth() {
+  var by = {}; OF.srcs.forEach(function (s) { by[s.src] = s; });
+  var card = function (title, s, body) { return '<div class="panel">' + title + (s && !s.ok ? '<div class="src ' + (/not connected/i.test(s.error) ? 'grey' : 'err') + '" style="margin-top:6px">' + esc(s.error) + '</div>' : '') + (body || '') + '</div>'; };
+  var a = by.amz_health, ad = a && a.data, e = by.ebay_health, ed = e && e.data;
+  var pct = function (v) { return v == null ? '—' : (Math.round(v * 10000) / 100) + '%'; };
+  var h = card('<b><span class="badge b-Amazon">Amazon</span>Account health</b> <a href="https://sellercentral.amazon.com/performance/dashboard" target="_blank" rel="noopener" class="muted">open ↗</a>', a,
+    ad ? (ad.ahr ? '<div class="met"><span>Account Health Rating</span><b>' + esc(ad.ahr.ahrStatus || ad.ahr.status || '') + ' ' + esc(ad.ahr.ahrScore != null ? ad.ahr.ahrScore : '') + '</b></div>' : '')
+      + Object.keys(ad.metrics || {}).map(function (k) { var m = ad.metrics[k]; if (!m) return ''; var bad = /BAD|POOR|FAIL|AT_RISK|CRITICAL/i.test(m.status || '');
+        return '<div class="met"><span>' + esc(k) + '</span><span class="' + (bad ? 'bad' : 'good') + '">' + pct(m.rate) + ' ' + esc(m.status || '') + (m.target != null ? ' <span class="muted">(limit ' + pct(m.target) + ')</span>' : '') + '</span></div>'; }).join('')
+      + (ad.accountStatuses || []).map(function (x) { return '<div class="met"><span>Account status</span><b>' + esc(x.status || x.accountStatus || JSON.stringify(x)) + '</b></div>'; }).join('')
+      : '<div class="muted" style="margin-top:6px">⏳ Not read yet — 🔄 Check channels now (Amazon makes the report in a few minutes).</div>');
+  h += card('<b><span class="badge b-eBay">eBay</span>Seller standards</b> <a href="https://www.ebay.com/sh/performance/dashboard" target="_blank" rel="noopener" class="muted">open ↗</a>', e,
+    ed ? (ed.profiles || []).map(function (p) { return '<div style="margin-top:6px"><b>' + esc(p.program) + ' · ' + esc(p.cycle || '') + ': ' + esc(p.level) + '</b>' + (p.metrics || []).map(function (m) {
+        return '<div class="met"><span>' + esc(m.name) + '</span><span>' + esc(typeof m.value === 'object' ? JSON.stringify(m.value) : m.value) + ' ' + esc(m.level || '') + '</span></div>'; }).join('') + '</div>'; }).join('') : '');
+  h += '<div class="panel src grey"><b><span class="badge b-Walmart">Walmart</span>Account health</b><div>⚪ Not connected yet (Walmart seller performance needs its own permission). <a href="https://seller.walmart.com/" target="_blank" rel="noopener">Open Seller Center ↗</a></div></div>';
+  h += '<div class="panel src grey"><b><span class="badge b-Shopify">Shopify</span></b><div>⚪ Shopify has no account health score.</div></div>';
+  g('of-health').innerHTML = h;
+}
+async function ofLoadHist() {
+  var f = g('of-h-from'), t = g('of-h-to'); if (!f.value) { var d0 = new Date(Date.now() - 6 * 86400000); f.value = nyDay(d0); } if (!t.value) t.value = nyDay();
+  var qs = 'from=' + f.value + '&to=' + t.value + (g('of-h-who').value.trim() ? '&who=' + encodeURIComponent(g('of-h-who').value.trim()) : '') + (g('of-h-q').value.trim() ? '&q=' + encodeURIComponent(g('of-h-q').value.trim()) : '');
+  try {
+    var s = await api('/office/stats?' + qs), l = await api('/office/log?' + qs);
+    g('of-stats').innerHTML = '<div class="panel"><b>👷 By day and person</b> <span class="muted">— open now: ' + ((s.open && s.open.n) || 0) + (s.open && s.open.late ? ' (' + s.open.late + ' late)' : '') + '</span>'
+      + (!(s.rows || []).length ? '<div class="muted">Nothing done in these days.</div>' : '<div class="tablewrap" style="margin-top:6px"><table><thead><tr><th class="l">Day</th><th class="l">Who</th><th>Done</th><th>Average work time</th><th>Average came in → done</th><th class="l">Channels</th></tr></thead><tbody>'
+        + s.rows.map(function (r) { return '<tr><td class="l">' + esc(r.day) + '</td><td class="l"><b>' + esc(r.who) + '</b></td><td>' + r.done + '</td><td>' + dur(r.avgWorkSec) + '</td><td>' + dur(r.avgReplySec) + '</td><td class="l">'
+          + Object.keys(r.channels).map(function (c) { return esc(c) + ' ' + r.channels[c]; }).join(' · ') + '</td></tr>'; }).join('') + '</tbody></table></div>') + '</div>';
+    g('of-log').innerHTML = '<div class="panel"><b>📜 Everything done (newest first)</b>' + (!(l.rows || []).length ? '<div class="muted">Nothing.</div>' : '<div class="tablewrap" style="margin-top:6px"><table class="of-log-t"><thead><tr><th class="l">When</th><th class="l">Who</th><th class="l">Did</th><th class="l">Channel</th><th class="l">What</th><th class="l">Order</th><th>Took</th><th class="l">Note</th></tr></thead><tbody>'
+      + l.rows.map(function (r) { return '<tr><td class="l">' + esc(when(r.at)) + '</td><td class="l">' + esc(r.by_user) + '</td><td class="l">' + esc(r.action) + '</td><td class="l">' + esc(r.channel || '') + '</td><td class="l" style="white-space:normal;max-width:360px">' + esc(r.title || '') + '</td>'
+        + '<td class="l mono">' + esc(r.order_no || '') + '</td><td>' + (r.took_sec != null ? dur(r.took_sec) : '') + '</td><td class="l" style="white-space:normal">' + esc(r.detail || '') + '</td></tr>'; }).join('') + '</tbody></table></div>') + '</div>';
+  } catch (e) { g('of-stats').innerHTML = '<div class="note red">' + esc(e.message) + '</div>'; g('of-log').innerHTML = ''; }
+}
+window.ofLoadHist = ofLoadHist;
+function openApp() { g('of-login').style.display = 'none'; g('of-app').style.display = 'flex'; ofLoad(); ofPull(false); setInterval(function () { if (OF.tab === 'todo' && !document.hidden) ofLoad(); }, 120000); }
+(function () { if (!TOKEN || !USER) { showLogin(); return; } openApp(); })();
+</script>
+<script src="xf-signout.js?v=20261019b"></script>
+<script src="xf-access.js?v=20261031u"></script>
+</body>
+</html>
