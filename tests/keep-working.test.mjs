@@ -12477,6 +12477,7 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
   keys.forEach(k => { env[k] = 'k'; }); env.SHOPIFY_STORE_DOMAIN = 'shop.example.com';
   const realF = globalThis.fetch; let amzRep = 0;
   const T1 = new Date(Date.now() - 30 * 3600000).toISOString();
+  const MD = new Date(Date.now() - 30 * 3600000).toISOString().slice(0, 10); // a recent date (the report's own format is read by Date.parse)
   globalThis.fetch = async (u, o) => { u = String(u); const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
     if (u.includes('identity/v1/oauth2/token')) return /analytics/.test(String(o && o.body)) ? J({ error: 'invalid_scope' }, 400) : J({ access_token: 'e', expires_in: 7200 });
     if (u.includes('return/search')) return J({ members: [{ returnId: 'R1', state: 'RETURN_REQUESTED', buyerLoginName: 'bob', orderId: '11-111', creationInfo: { reason: 'DEFECTIVE_ITEM', creationDate: { value: T1 }, comments: { content: 'leaks' } } },
@@ -12488,7 +12489,7 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
     if (u.includes('/reports/2021-06-30/reports/')) return J({ processingStatus: 'DONE', reportDocumentId: 'D-' + u.split('/').pop() });
     if (u.includes('/reports/2021-06-30/reports')) return J({ reportId: 'RP' + (++amzRep) });
     if (u.includes('/reports/2021-06-30/documents/')) return J({ url: 'https://doc.example/' + u.split('/').pop() });
-    if (u.startsWith('https://doc.example/')) return new Response(u.includes('RP1') ? 'date\trating\tcomments\tyour response\torder id\n10/30/26\t2\tslow\t\t111-2223333-4444444\n10/30/26\t5\tgreat\t\t111-0000000-0000000\n' : u.includes('RP3') ? JSON.stringify({ performanceMetrics: [{ lateShipmentRate: { rate: 0.01, status: 'GOOD', targetValue: 0.04 } }] }) : 'order id\n');
+    if (u.startsWith('https://doc.example/')) return new Response(u.includes('RP1') ? 'date\trating\tcomments\tyour response\torder id\n' + MD + '\t2\tslow\t\t111-2223333-4444444\n' + MD + '\t5\tgreat\t\t111-0000000-0000000\n' : u.includes('RP3') ? JSON.stringify({ performanceMetrics: [{ lateShipmentRate: { rate: 0.01, status: 'GOOD', targetValue: 0.04 } }] }) : 'order id\n');
     if (u.includes('walmartapis.com/v3/token')) return J({ access_token: 'w', expires_in: 900 });
     if (u.includes('walmartapis.com')) return J({ errors: [{ code: 'UNAUTHORIZED' }] }, 403);
     if (u.includes('/admin/oauth/access_token')) return J({ access_token: 's', expires_in: 3600 });
@@ -12531,6 +12532,14 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
   check('…the page: ⚪ grey cards for what no app can read yet (Amazon buyer messages / Voice of the Customer / reviews, Walmart / Shopify messages, Gmail info@) with a link + 📝; a 🧑‍💼 Office card on the home page; works offline (OFFLINE_PAGES)',
     /Amazon gives apps no way to read buyer messages/.test(ih) && /Voice of the Customer/.test(ih) && /info@xfitting\.com/.test(ih) && /📝 I\\'m handling one/.test(ih) && /'office\.html'/.test(sw)
       && /onclick="window\.location\.href='office\.html'"/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8')), null);
+  // Owner (2026-11-02): "the messages from 2 days ago and before — ignore them for now, mark them done, don't show them anymore"
+  sq.prepare("INSERT INTO office_item (src, ext_id, channel, kind, title, received_at, due_at, status, updated_at) VALUES ('ebay_msg','OLD-1','eBay','message','old question','2026-10-30T15:00:00.000Z','2026-10-31T15:00:00.000Z','open',?)").run(new Date().toISOString());
+  sq.prepare("INSERT INTO office_item (src, ext_id, channel, kind, title, received_at, due_at, status, updated_at) VALUES ('ebay_return','OLD-R','eBay','return','old return','2026-10-30T15:00:00.000Z','2026-11-02T15:00:00.000Z','open',?)").run(new Date().toISOString());
+  const i9 = await get('/office/items'), o9 = sq.prepare("SELECT status, done_by, done_how FROM office_item WHERE ext_id = 'OLD-1'").get();
+  const st9 = await get('/office/stats?from=' + today + '&to=' + today), sys9 = (st9.rows || []).find(r => r.who === 'system');
+  check('a customer MESSAGE that came in before Nov 1 (2 days back): off the to-do list, kept on record as done ("old — before the Office started", by system), not counted as anyone\'s work; an old RETURN (feedback, cancellations, cases too) stays on the list',
+    !i9.items.some(x => x.ext_id === 'OLD-1') && i9.items.some(x => x.ext_id === 'OLD-R') && o9.status === 'done' && o9.done_by === 'system' && /old — before the Office started/.test(o9.done_how) && !sys9
+      && sq.prepare("SELECT COUNT(*) n FROM office_log WHERE action = 'closed' AND detail LIKE 'old — before%'").get().n >= 1, { o9, sys9 });
   globalThis.fetch = realF; keys.forEach(k => { if (saved[k] === undefined) delete env[k]; else env[k] = saved[k]; });
   sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
 }
