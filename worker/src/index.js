@@ -26307,6 +26307,11 @@ async function shipStatusUpload(request, env) {
 // GET  /office/stats?from=&to=&who=    per person per day: done, average time a task, average reply time   (Admin / Owner)
 // GET  /office/log?from=&to=&who=&q=   every action                                                         (Admin / Owner)
 // ═══════════════════════════════════════════════════════════════════════════
+// 🗓 Owner (2026-11-02): "the messages from 2 days ago and before — just ignore them for now: mark them done, don't show them anymore" —
+// "the customer messages only, not the feedback and other stuff". A customer MESSAGE that came in before Nov 1, 2026 (New York) is kept on
+// record as done ("old — before the Office started"), never on the to-do list, and not counted as anyone's work in the 🕘 History numbers.
+// Feedback, returns, cancellations and cases stay on the list, however old.
+const OFFICE_CUTOFF = '2026-11-01T04:00:00.000Z', OFFICE_OLD = 'old — before the Office started (owner 2026-11-02)';
 const OFFICE_DUE_H = { message: 24, return: 72, cancel: 72, case: 72, inquiry: 72, feedback: 48, refund: 72, task: 24 };
 async function officeTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS office_item (id INTEGER PRIMARY KEY AUTOINCREMENT, src TEXT, ext_id TEXT, channel TEXT, kind TEXT, title TEXT,
@@ -26324,9 +26329,11 @@ async function officeUpsert(env, it) {
   const ex = await env.DB.prepare('SELECT id, status FROM office_item WHERE src = ? AND ext_id = ?').bind(it.src, t(it.ext_id, 120)).first();
   if (!ex) {
     if (it.closed) return 0; // already finished on the channel before we ever saw it — nothing to do
-    const r = await env.DB.prepare(`INSERT INTO office_item (src, ext_id, channel, kind, title, detail, order_no, customer, url, received_at, due_at, status, ext_status, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,'open',?,?)`).bind(it.src, t(it.ext_id, 120), it.channel, it.kind, t(it.title, 300), t(it.detail, 2000), t(it.order_no, 80), t(it.customer, 120),
-      t(it.url, 500), officeIso(it.received_at) || now, it.due_at || officeDue(it.kind, it.received_at || now), t(it.ext_status, 80), now).run();
+    const rec = officeIso(it.received_at) || now, old = it.kind === 'message' && rec < OFFICE_CUTOFF;
+    const r = await env.DB.prepare(`INSERT INTO office_item (src, ext_id, channel, kind, title, detail, order_no, customer, url, received_at, due_at, status, ext_status, updated_at, done_at, done_by, done_how)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(it.src, t(it.ext_id, 120), it.channel, it.kind, t(it.title, 300), t(it.detail, 2000), t(it.order_no, 80), t(it.customer, 120),
+      t(it.url, 500), rec, it.due_at || officeDue(it.kind, it.received_at || now), old ? 'done' : 'open', t(it.ext_status, 80), now, old ? now : null, old ? 'system' : null, old ? OFFICE_OLD : null).run();
+    if (old) return 0;
     await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, 'system', r.meta.last_row_id, it.src, 'new', t(it.title, 300)).run();
     return 1;
   }
@@ -26502,11 +26509,20 @@ async function officeAmzReport(env, type, days) {
   if (d.processingStatus === 'FATAL') { await env.DB.prepare("UPDATE office_rep SET status = 'error', at = ?, error = ? WHERE type = ?").bind(new Date().toISOString(), 'Amazon could not make the report', type).run(); throw new Error('Amazon could not make this report (FATAL) — the app may need the right role in Seller Central'); }
   return null;
 }
+async function officeOldSweep(env) {
+  const L = await d1All(env, "SELECT id, src FROM office_item WHERE status = 'open' AND kind = 'message' AND received_at < ?", [OFFICE_CUTOFF]); if (!L.length) return 0;
+  const now = new Date().toISOString(), st = [];
+  L.forEach(x => { st.push(env.DB.prepare("UPDATE office_item SET status = 'done', done_at = ?, done_by = 'system', done_how = ? WHERE id = ? AND status = 'open'").bind(now, OFFICE_OLD, x.id));
+    st.push(env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, 'system', x.id, x.src, 'closed', OFFICE_OLD)); });
+  for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+  return L.length;
+}
 let _officePullAt = 0;
 async function officePull(env, force) {
   await officeTables(env);
   if (!force && Date.now() - _officePullAt < 5 * 60000) return { ok: true, skipped: true };
   _officePullAt = Date.now();
+  await officeOldSweep(env);
   const res = {};
   const has = { ebay: !!env.EBAY_REFRESH_TOKEN, amz: !!env.AMAZON_REFRESH_TOKEN, wm: !!env.WALMART_CLIENT_ID, shop: !!(env.SHOPIFY_STORE_DOMAIN && env.SHOPIFY_CLIENT_ID) };
   for (const src of Object.keys(officeSources)) {
@@ -26539,6 +26555,7 @@ async function officeRoute(request, url, env, session) {
     if (ch) { w.push('channel = ?'); a.push(ch); }
     if (q) { w.push('(UPPER(title) LIKE ? OR UPPER(order_no) LIKE ? OR UPPER(customer) LIKE ? OR UPPER(detail) LIKE ? OR UPPER(COALESCE(note, \'\')) LIKE ?)'); for (let i = 0; i < 5; i++) a.push('%' + q + '%'); }
     if (st === 'done') { const R = range(); w.push('done_at >= ? AND done_at < ?'); a.push(R.start, R.end); }
+    await officeOldSweep(env);
     const items = await d1All(env, 'SELECT * FROM office_item' + (w.length ? ' WHERE ' + w.join(' AND ') : '') + (st === 'done' ? ' ORDER BY done_at DESC' : ' ORDER BY due_at, received_at') + ' LIMIT 500', a);
     const srcs = await d1All(env, 'SELECT * FROM office_src', []);
     const cnt = await d1All(env, "SELECT channel, COUNT(*) n, SUM(CASE WHEN due_at < ? THEN 1 ELSE 0 END) late FROM office_item WHERE status = 'open' GROUP BY channel", [new Date().toISOString()]);
@@ -26574,7 +26591,7 @@ async function officeRoute(request, url, env, session) {
   if ((p === '/office/stats' || p === '/office/log') && !adm) return J({ ok: false, error: 'Admin only' }, 403);
   if (p === '/office/stats' && method === 'GET') {
     const R = range(), wq = String(url.searchParams.get('who') || '').trim().toUpperCase();
-    const rows = await d1All(env, "SELECT * FROM office_item WHERE status = 'done' AND done_at >= ? AND done_at < ?" + (wq ? ' AND UPPER(done_by) LIKE ?' : ''), wq ? [R.start, R.end, '%' + wq + '%'] : [R.start, R.end]);
+    const rows = await d1All(env, "SELECT * FROM office_item WHERE status = 'done' AND done_at >= ? AND done_at < ? AND COALESCE(done_how, '') != '" + OFFICE_OLD + "'" + (wq ? ' AND UPPER(done_by) LIKE ?' : ''), wq ? [R.start, R.end, '%' + wq + '%'] : [R.start, R.end]);
     const by = {}, sec = (a, b) => { const x = Date.parse(a), y = Date.parse(b); return isNaN(x) || isNaN(y) || y < x ? null : (y - x) / 1000; };
     rows.forEach(r => { const day = new Date(r.done_at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), k = day + '|' + (r.done_by || '?');
       const o = by[k] = by[k] || { day, who: r.done_by || '?', done: 0, byHere: 0, work: [], reply: [], channels: {} };
