@@ -12303,6 +12303,32 @@ console.log('\n🔤 Labels cut at a space before "=" (26-2-3 =10 → 26-2-3) put
   sq.exec("DELETE FROM awd_label_map WHERE shipment='STAR-SPACE1'; DELETE FROM awd_label_fix_log WHERE shipment='STAR-SPACE1'; DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-SPACE1]%'; DELETE FROM amazon_fba_inventory WHERE sku IN ('96-2-3 =10','96-2-3=2')");
 }
 
+// Owner (2026-10-31, photos): label "SKU: 27-1-6 =10" (FNSKU B0B9KXBYMK = the ASIN, shared by =10 and =10X) stayed cut as "27-1-6", so the
+// Box check said "rebag and label it as 27-1-6" for the right 27-1-6=10 bags. Amazon's SKU list of the shipment now puts it right.
+console.log('\n📦 Label cut at " =" whose FNSKU can\'t tell (=10 / =10X share the ASIN) → put right from Amazon\'s SKUs in that shipment');
+{
+  const realFetch = globalThis.fetch, asked = [];
+  globalThis.fetch = async (u, o) => { const s0 = String(u);
+    if (s0.includes('/awd/2024-05-09/inboundShipments/')) { asked.push(s0); const id = decodeURIComponent(s0.split('inboundShipments/')[1].split('?')[0]);
+      const sk = { 'STAR-CUT27': ['27-1-6 =10', '30-3-4=10X'], 'STAR-REAL27': ['27-1-6', '27-1-6=10'] }[id] || [];
+      return new Response(JSON.stringify({ shipmentId: id, shipmentSkuQuantities: sk.map(k => ({ sku: k, expectedQuantity: { quantity: 5 } })) })); }
+    return realFetch(u, o); };
+  sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, afn_listing_exists) VALUES ('27-1-6=10','B0B9KXBYMK','B0B9KXBYMK','Yes'), ('27-1-6=10X','B0B9KXBYMK','B0B9KXBYMK','Yes')").run();
+  const ins = sq.prepare('INSERT OR REPLACE INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, at, by_user) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  const T0 = new Date().toISOString();
+  ins.run('201952611628558672', 'STAR-CUT27', '27-1-6', '27-1-6', '2-1', 5, 'BARN=3-3-6', 0, 'B0B9KXBYMK', T0, 'TS'); // Box 225 in the photo
+  ins.run('201952611628558673', 'STAR-CUT27', '27-1-6', '27-1-6', '2-2', 5, 'BARN=3-3-6', 0, 'B0B9KXBYMK', T0, 'TS');
+  ins.run('201952611628558674', 'STAR-REAL27', '27-1-6', '27-1-6', '1-1', 5, 'BARN=3-3-6', 0, 'B0B9KXBYMK', T0, 'TS'); // a shipment that has a real "27-1-6"
+  const o = await get('/awd/box-pallet?open=00201952611628558672');
+  check('Box check opens Box 2-1 → part 27-1-6=10 (both boxes), so the 27-1-6=10 bags are ✅ the right item, not "rebag as 27-1-6"; the =10X listing is never picked; kept in the fix log with why',
+    o.box && o.box.part === '27-1-6=10' && (o.boxes || []).length === 2 && o.boxes.every(x => x.part === '27-1-6=10')
+      && sq.prepare("SELECT COUNT(*) n FROM awd_label_fix_log WHERE shipment='STAR-CUT27' AND old_part='27-1-6' AND new_part='27-1-6=10' AND why LIKE '%Amazon''s list of SKUs in shipment STAR-CUT27%'").get().n === 2, { box: o.box, boxes: o.boxes });
+  check('…a shipment where Amazon has a real "27-1-6" SKU is never touched; Amazon is asked once per shipment (kept 6 h)',
+    sq.prepare("SELECT part FROM awd_label_map WHERE sscc='201952611628558674'").get().part === '27-1-6' && asked.filter(x => x.includes('STAR-CUT27')).length === 1, asked);
+  globalThis.fetch = realFetch;
+  sq.exec("DELETE FROM awd_label_map WHERE shipment IN ('STAR-CUT27','STAR-REAL27'); DELETE FROM awd_label_fix_log WHERE shipment IN ('STAR-CUT27','STAR-REAL27'); DELETE FROM amazon_fba_inventory WHERE sku IN ('27-1-6=10','27-1-6=10X')");
+}
+
 // Owner (2026-10-31): "UPC Barcodes → Saved Shipment: connect it to the AWD Planner, I want it to update automatically, no more manually".
 console.log('\n🔗 AWD Planner → UPC Barcodes Saved Shipment, by itself (export / 📤 send / 🏷 labels)');
 {
