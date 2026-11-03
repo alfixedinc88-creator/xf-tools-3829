@@ -117,6 +117,7 @@ document.addEventListener('input', function (e) {
       { key: 'transfer', label: 'Transfer', sel: '#inv-tab-transfer', parts: [
         { key: 'modecode', label: 'SKU / Part# / UPC / Name', sel: '#xfr-mode-code' },
         { key: 'container', label: '🚢 Container here', sel: '#xfr-mode-cont, #xfr-cont-wrap' },
+        { key: 'contfinish', label: '✅ Container here — Finish / ↩ Put back a container (Admin / Owner)', sel: '.xfr-cont-finish' },
         { key: 'camera', label: '📷 Scan Barcode', sel: '#xfr-cam-btn' },
         { key: 'fromloc', label: 'From Location', sel: '#xfr-from-card' },
         { key: 'cart', label: '🛒 Transfer Cart', sel: '#xfr-cart-card' } ] },

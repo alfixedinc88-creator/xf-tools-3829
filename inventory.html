@@ -11157,6 +11157,18 @@ window.invCredLogin = async function() {
         xfrContLoad();
       }).catch(function(e) { alert('Not deleted: ' + e.message); });
   };
+  window.xfrContFinish = function(i, undo) {
+    var c = (xfrCont.containers || [])[i]; if (!c) return;
+    if (!xfrIsAdmin()) { invFlash('Only an Admin / Owner can finish a container', 'error'); return; }
+    var left = Math.max(0, (c.cases || 0) - (c.moved || 0));
+    if (!undo && !confirm('✅ Finish "' + c.title + '"?\n\nIt comes off this list (it stays under ✅ Finished — ↩ Put back any time).'
+      + (left > 0 ? '\n\n⚠ ' + xfrN(left) + ' box(es) are not moved off its pallets yet (' + xfrN(c.moved) + ' / ' + xfrN(c.cases) + '). Finish it anyway?' : ''))) return;
+    wFetch(W + '/inventory/containers/finish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: c.title, undo: !!undo }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not changed: ' + ((d && d.error) || 'error'), 'error'); return; }
+        invFlash(undo ? '↩ "' + c.title + '" is back on the list' : '✅ "' + c.title + '" finished — off the list', 'success'); xfrContLoad();
+      }).catch(function(e) { invFlash('Not changed — ' + ((e && e.message) || 'check WiFi'), 'error'); });
+  };
   window.xfrContSoldOut = function(how) { if (xfrCont.title) soldOutPalletsReport(xfrCont.title, how); };
   window.xfrContLoad = function() {
     var box = g('xfr-cont-list'); if (!box) return;
@@ -11167,16 +11179,24 @@ window.invCredLogin = async function() {
       if (!d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
       xfrCont.containers = d.containers;
       if (!d.containers.length) { box.innerHTML = "<div class='iempty'>No received containers yet — a container shows here after you click 📦 Received on it in Reorder Planner → Reorder.</div>"; return; }
-      box.innerHTML = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Containers</div>'
-        + d.containers.map(function(c, i) {
+      // ✅ Owner (2026-11-03): "a button I can click on finish so it will not show in this page any more" — finished containers go to a
+      // closed "✅ Finished" list under it (↩ Put back). Admin / Owner only (the server checks too).
+      var adm = xfrIsAdmin(), row = function(c, i) {
           var done = c.cases > 0 && c.moved >= c.cases;
           return '<div class="iloc-opt" style="display:flex;align-items:center;gap:8px" onclick="xfrContOpen(' + i + ')">'
             + '<div style="flex:1;min-width:0"><div style="font-weight:700">🚢 ' + xfrEsc(c.title) + '</div>'
             + '<div style="font-size:11px;color:var(--text3)">' + xfrEsc(c.vendors || '') + ' · ' + c.pallets + ' pallets · ' + xfrN(c.moved) + ' / ' + xfrN(c.cases) + ' boxes moved'
             + (c.notStockedIn ? ' · <span style="color:var(--orange)">not stocked in yet (' + c.notStockedIn + ' part #s still On the way)</span>' : '')
-            + (c.upcIssues ? ' · <b style="color:var(--red)">⚠ ' + c.upcIssues + ' UPC not matching</b>' : '') + '</div></div>'
+            + (c.upcIssues ? ' · <b style="color:var(--red)">⚠ ' + c.upcIssues + ' UPC not matching</b>' : '')
+            + (c.finished ? ' · ✅ finished by ' + xfrEsc(c.finished.by || '?') + (c.finished.at ? ' ' + xfrEsc(new Date(c.finished.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) : '') : '') + '</div></div>'
+            + (adm ? '<button type="button" class="xfr-cont-finish" onclick="event.stopPropagation();xfrContFinish(' + i + ',' + (c.finished ? 'true' : 'false') + ')" style="padding:6px 10px;border-radius:8px;border:1.5px solid ' + (c.finished ? 'var(--border)' : 'var(--green)') + ';background:var(--bg2);color:' + (c.finished ? 'var(--text2)' : 'var(--green)') + ';font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">' + (c.finished ? '↩ Put back' : '✅ Finish') + '</button>' : '')
             + '<span class="iloc-badge ' + (done ? 'ex' : '') + '">' + (done ? '✓ Done' : 'Open') + '</span></div>';
-        }).join('');
+        };
+      var open = [], fin = [];
+      d.containers.forEach(function(c, i) { (c.finished ? fin : open).push(row(c, i)); });
+      box.innerHTML = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Containers</div>'
+        + (open.join('') || "<div class='iempty'>Every container is finished ✅</div>")
+        + (fin.length ? '<details id="xfr-cont-finished" style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text3)">✅ Finished (' + fin.length + ')</summary>' + fin.join('') + '</details>' : '');
     }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
   };
   // ── 🚢 Container here: scan & go ─────────────────────────────────────
