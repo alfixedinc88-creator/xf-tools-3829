@@ -12623,5 +12623,51 @@ console.log('\n🕘 Container here → History of a container: who, when, where,
       && /if \(m && m\.parentNode !== document\.body\) document\.body\.appendChild\(m\)/.test(ihH) && /oninput="xfrContHistFilter\(this\.value\)"/.test(ihH) && /key: 'conthist'[^\n]*sel: '\.xfr-cont-hist'/.test(xaH), null);
 }
 
+// Owner (2026-11-03, photo): 23-6-2's 💲 Price history says $0.833/pc (container), but every SKU Mgr row showed $1.83 — new rows
+// (Audit "found more") took the old COGS list's $1.833 (a typo of 0.8327). "Change the price back to 0.8327."
+console.log('\n💲 23-6-2: new rows take the newest real price, not the old COGS list; ✏️ Fix a wrong price (Owner) puts it right everywhere');
+{
+  sq.exec('CREATE TABLE IF NOT EXISTS cogs (base_sku TEXT PRIMARY KEY, unit_price REAL DEFAULT 0, updated_at TEXT)');
+  await get('/inventory/price-history?part=93-6-2'); // makes the price tables
+  await get('/inventory/cost/spots');
+  const T0 = new Date(Date.now() - 86400000).toISOString();
+  sq.prepare("INSERT OR REPLACE INTO cogs (base_sku, unit_price, updated_at) VALUES ('93-6-2', 1.8327, ?)").run(T0);
+  const ml = sq.prepare('INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor, price, updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
+  ml.run('93-6-2', 'elbow', '93-6-2=10', 'BO=1-2-2-1', 2, 150, 'EFF', 1.8327, T0);
+  ml.run('93-6-2', 'elbow', '93-6-2=50XX', 'FRONT=3-3-2', 2, 150, 'EFF', 1.833, T0);
+  sq.prepare("INSERT INTO part_price_log (part, parent, location, price, old_price, at, source, title, by_user, cases) VALUES ('93-6-2=10','93-6-2','GARAGE',0.833,NULL,?,'📦 Received container','JQ26209','Chen',3)").run(T0);
+  const cl = sq.prepare('INSERT INTO cost_layer (part, location, cases, price, received_at, source, title) VALUES (?,?,?,?,?,?,?)');
+  cl.run('93-6-2=10', 'BO=1-2-2-1', 2, 0.833, T0, 'received', 'JQ26209');
+  cl.run('93-6-2=50XX', 'FRONT=3-3-2', 1, 0.833, T0, 'received', 'JQ26209');
+  cl.run('93-6-2=50XX', 'FRONT=3-3-2', 1, 1.833, T0, 'audit', null);
+  const shelf = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num LIKE '93-6-2=%'").get().c;
+  // an Audit "found more" makes a new row → its price = the newest real price ($0.833), not the COGS list's $1.8327
+  const lg = await post('/inventory/log', { type: 'IN', partNum: '93-6-2=25', sku: '93-6-2', location: 'BO=1-1-1-1', cases: 1, initials: 'TS', isNew: true, unitsPerCase: 150, notes: '[AUDIT] found more' });
+  const pend = (await get('/inventory/pending')).items.find(x => x.d1Id === lg.d1Id);
+  if (pend) await post('/inventory/verify', { rowIndex: pend.rowIndex, action: 'Approved', item: pend });
+  const nr = sq.prepare("SELECT price FROM master_list WHERE part_num = '93-6-2=25'").get();
+  check('a new row (Audit found more) takes the newest price in 💲 Price history ($0.833), not the old COGS list ($1.8327)', nr && Math.abs(nr.price - 0.833) < 1e-9, nr);
+  const s0 = shelf();
+  const denied = await call('/inventory/price-correct', { method: 'POST', headers: H, body: JSON.stringify({ part: '93-6-2', wrong: 1.833, right: 0.8327 }) });
+  const ou = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES ('ownpf', ?, 'OWN', 1, ?)").run(hex(salt) + ':' + hex(new Uint8Array(bits)), new Date().toISOString());
+  for (const role of ['mgmt', 'owner']) sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(ou.lastInsertRowid, role);
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"ownpf","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const fx = await (await call('/inventory/price-correct', { method: 'POST', headers: OH, body: JSON.stringify({ part: '93-6-2', wrong: 1.833, right: 0.8327 }) })).json();
+  const rows = sq.prepare("SELECT part_num, price FROM master_list WHERE part_num LIKE '93-6-2=%' ORDER BY part_num").all();
+  const lays = sq.prepare("SELECT part, cases, price FROM cost_layer WHERE part LIKE '93-6-2=%' ORDER BY id").all();
+  const cg = sq.prepare("SELECT unit_price FROM cogs WHERE base_sku = '93-6-2'").get();
+  const hist = sq.prepare("SELECT COUNT(*) n FROM part_price_log WHERE parent = '93-6-2' AND source = 'Wrong price fixed' AND by_user = 'OWN' AND price = 0.8327 AND old_price = 1.833").get().n;
+  check('✏️ Fix a wrong price is Owner only (a manager gets 403)', denied.status === 403, denied.status);
+  check('Owner: $1.833 → $0.8327 for 93-6-2 — the 2 rows at $1.83x, the 1 case on the shelf at $1.833 and the COGS list put right; the $0.833 row / batches left alone; cases never change (' + s0 + ' = ' + shelf() + ' ✅); kept in 💲 Price history with who',
+    fx.ok && fx.rows === 2 && fx.batches === 1 && fx.cogs === true && shelf() === s0
+      && rows.find(r => r.part_num === '93-6-2=10').price === 0.8327 && rows.find(r => r.part_num === '93-6-2=50XX').price === 0.8327 && Math.abs(rows.find(r => r.part_num === '93-6-2=25').price - 0.833) < 1e-9
+      && JSON.stringify(lays.map(l => l.price)) === '[0.833,0.833,0.8327,0.833]' && cg.unit_price === 0.8327 && hist >= 2, { fx, rows, lays, cg, hist });
+  const ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the button is in 💲 Price history for the Owner only, with a check mark in 🧩 Pages & Tabs', /INV_CRED_USER\.roles\.indexOf\('owner'\) >= 0 \? skumgrPriceFixHtml\(d, e\)/.test(ih) && /\/inventory\/price-correct/.test(ih)
+    && /key: 'pricefix'.*sel: '#skumgr-pricefix'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '93-6-2=%'; DELETE FROM cost_layer WHERE part LIKE '93-6-2=%'; DELETE FROM part_price_log WHERE parent = '93-6-2'; DELETE FROM cogs WHERE base_sku = '93-6-2'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

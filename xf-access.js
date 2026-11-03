@@ -153,6 +153,7 @@ document.addEventListener('input', function (e) {
         { key: 'parent', label: '🧬 Parent ≠ Part #', sel: '#skumgr-parent-btn, #skumgr-parent-panel' },
         { key: 'pncheck', label: '🧹 Check part #s', sel: '#skumgr-pncheck-btn, #skumgr-pncheck-panel' },
         { key: 'pricehist', label: '💲 Price history', sel: '#skumgr-pricehist-btn, #skumgr-pricehist' },
+        { key: 'pricefix', label: '✏️ Fix a wrong price (Owner only)', sel: '#skumgr-pricefix' },
         { key: 'addrow', label: '+ Add New Row', sel: '#inv-panel-skumgr button[onclick="skumgrShowAddRow()"]' },
         { key: 'incoming', label: 'Ordered / on the way', sel: '#skumgr-incoming' },
         { key: 'incomingtotal', label: '📊 Search totals (in stock / still making / on the way / sold)', sel: '#skumgr-incoming .sk-sum-box' },

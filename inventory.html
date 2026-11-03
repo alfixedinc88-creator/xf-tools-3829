@@ -9269,6 +9269,34 @@ window.invCredLogin = async function() {
   // the date — kept forever. A parent # (30-3-4) shows all its pack sizes;
   // a whole part # (30-3-4=10X) only that one. Below: the batches on the
   // shelves now (same spot, different price → the oldest is used up first).
+  // ✏️ Owner (2026-11-03): "23-6-2 was only 0.8327, but SKU Mgr says $1.83 — change it back". A WRONG price (a typo, the old
+  // COGS list) is put right everywhere for the parent part # — the SKU Mgr rows, the cases already on the shelves and the COGS
+  // list — unlike a price edit, which is a new price from now on. Owner only; kept in 💲 Price history (who, when, wrong → right).
+  function skumgrPriceFixHtml(d, e) {
+    var parent = String(d.q || '').split('=')[0], cnt = {};
+    (_skumgrRows || []).forEach(function(r) { var p = parseFloat(r.price); if (String(r.part_num || r.partNum || '').toUpperCase().split('=')[0].trim() === parent && p > 0) { var k = p.toFixed(4); cnt[k] = (cnt[k] || 0) + 1; } });
+    var newest = d.rows.length ? +d.rows[0].price : 0, wrong = '';
+    Object.keys(cnt).sort(function(x, y) { return cnt[y] - cnt[x]; }).some(function(k) { if (!newest || Math.abs(+k - newest) >= 0.02) { wrong = String(+k); return true; } return false; });
+    var inp = function(id, v) { return '<input id="' + id + '" type="number" step="0.0001" min="0" value="' + e(v) + '" style="width:90px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)">'; };
+    return '<div id="skumgr-pricefix" style="margin-top:10px;padding:8px;border:1.5px dashed #B45309;border-radius:8px;background:#FFFBEB;color:#78350F">'
+      + '<b>✏️ Fix a wrong price</b> <span style="font-size:11px">(Owner) — every ' + e(parent) + ' part #: the SKU Mgr rows, the cases already on the shelves and the COGS list at the wrong price get the right one. Cases never change.</span>'
+      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">Wrong $/pc ' + inp('skumgr-pf-wrong', wrong) + ' → right $/pc ' + inp('skumgr-pf-right', newest ? String(newest) : '')
+      + '<button type="button" onclick="skumgrPriceFix(\'' + e(parent) + '\')" style="padding:5px 12px;border:none;border-radius:7px;background:#B45309;color:#fff;font-weight:700;cursor:pointer">✏️ Fix it</button>'
+      + '<span id="skumgr-pf-msg" style="font-size:12px"></span></div></div>';
+  }
+  window.skumgrPriceFix = function(parent) {
+    var w = parseFloat((g('skumgr-pf-wrong') || {}).value), r = parseFloat((g('skumgr-pf-right') || {}).value), msg = g('skumgr-pf-msg');
+    if (!(w > 0) || !(r > 0)) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = 'Type both prices per piece'; } return; }
+    if (!confirm('Put right every ' + parent + ' price that is $' + w + ' → $' + r + ' per piece?\n\nSKU Mgr rows, the cases already on the shelves and the COGS list. Cases don\'t change. It is kept in 💲 Price history.')) return;
+    if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = 'Fixing…'; }
+    wFetch(W + '/inventory/price-correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: parent, wrong: w, right: r }) })
+      .then(function(x) { return x.json(); }).then(function(d) {
+        if (!d || !d.ok) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'failed'); } return; }
+        invFlash('✓ ' + parent + ': $' + w + ' → $' + r + ' — ' + d.rows + ' row(s), ' + d.batches + ' batch(es) on the shelves' + (d.cogs ? ', COGS list' : ''), 'success');
+        if (typeof window.skumgrSearch === 'function') window.skumgrSearch();
+        window.skumgrPriceHistory(parent, true);
+      }).catch(function() { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ failed (WiFi?)'; } });
+  };
   window.skumgrPriceHistory = function(q, open) {
     var box = g('skumgr-pricehist'); if (!box) return;
     q = String(q || '').trim().toUpperCase();
@@ -9304,6 +9332,7 @@ window.invCredLogin = async function() {
         + (d.rows.length ? '<div style="overflow-x:auto;margin-top:6px"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><tr><th ' + th + '>Date</th><th ' + th + '>Part #</th><th ' + th + '>Price per piece</th><th ' + th + '>Change</th><th ' + th + '>From</th><th ' + th + '>Where</th><th ' + th + '>Who</th></tr>' + hist + '</table></div>' : '')
         + (d.batches.length ? '<div style="font-weight:700;margin:8px 0 2px">On the shelves now <span style="font-weight:400;color:var(--text3)">(same spot, different price: the oldest is used up first)</span></div>'
           + '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><tr><th ' + th + '>Part #</th><th ' + th + '>Spot</th><th ' + th + '>Cases</th><th ' + th + '>Price</th><th ' + th + '>Came in</th></tr>' + bt + '</table></div>' : '')
+        + (INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('owner') >= 0 ? skumgrPriceFixHtml(d, e) : '')
         + '</details>';
     }).catch(function() { box.innerHTML = '<div style="padding:8px;color:var(--red);font-size:12px">💲 Price history failed to load.</div>'; });
   };
