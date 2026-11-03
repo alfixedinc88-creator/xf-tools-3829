@@ -2540,6 +2540,7 @@ async function reorderComputeRecommendations(env, days) {
 let _reorderFixReady = false;
 async function reorderFixTables(env) {
   if (_reorderFixReady) return;
+  await invLogEnsureColumns(env); // ⚡ the History indexes Container here reads with
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_vendor_catalog (vendor TEXT NOT NULL, part TEXT NOT NULL, item_no TEXT, description TEXT,
     outside_upc TEXT, inside_upc TEXT, asin TEXT, inner_pcs REAL, case_pcs REAL, raw_part TEXT, updated_at TEXT, PRIMARY KEY (vendor, part))`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_alias (raw TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, updated_at TEXT)`).run();
@@ -7287,8 +7288,32 @@ async function receivedContainerTitles(env) {
 }
 // 🚢 Container here lists only containers already 📦 Received on Reorder —
 // one still on the water (or never received) stays on the Reorder page.
+// ✅ Owner (2026-11-03): "for the Container, have a button I can click on finish so it will not show in this page any more".
+// POST { title } → finished: off the 🚢 Container here list (a "✅ Finished" list under it, ↩ Put back). { title, undo: true } → back on
+// the list. Admin / Owner only. Nothing else changes: its pallets, boxes moved / left, stock and History stay as they are (a box scanned
+// from it is still found). Every finish / put back is kept (who, when, boxes left then) in container_finish_log.
+async function containerFinishTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS container_finish (title TEXT PRIMARY KEY, at TEXT, by_user TEXT, left_boxes REAL)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS container_finish_log (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, action TEXT, left_boxes REAL, at TEXT, by_user TEXT)').run();
+}
+async function inventoryContainerFinish(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Only an Admin / Owner can finish a container' }, 403);
+  await reorderFixTables(env); await containerFinishTables(env);
+  const b = await request.json().catch(() => ({}));
+  const title = String(b.title || '').trim(); if (!title) return J({ ok: false, error: 'Pick a container' }, 400);
+  const p = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(cases) AS cases FROM reorder_pallet WHERE title = ?').bind(title).first();
+  if (!p || !p.n) return J({ ok: false, error: 'No pallets found for "' + title + '"' }, 404);
+  const mv = await env.DB.prepare(`SELECT SUM(x.moved) AS moved FROM (${_PALLET_MOVED_SQL} GROUP BY m.pallet_id) x JOIN reorder_pallet p ON p.id = x.pallet_id WHERE p.title = ?`).bind(title).first().catch(() => null);
+  const left = Math.max(0, Math.round(((p.cases || 0) - ((mv && mv.moved) || 0)) * 1000) / 1000), now = new Date().toISOString();
+  const who = String(session.displayName || session.username || '?').slice(0, 40);
+  if (b.undo) await env.DB.prepare('DELETE FROM container_finish WHERE title = ?').bind(title).run();
+  else await env.DB.prepare('INSERT OR REPLACE INTO container_finish (title, at, by_user, left_boxes) VALUES (?,?,?,?)').bind(title, now, who, left).run();
+  await env.DB.prepare('INSERT INTO container_finish_log (title, action, left_boxes, at, by_user) VALUES (?,?,?,?,?)').bind(title, b.undo ? 'put back' : 'finished', left, now, who).run();
+  return J({ ok: true, title, finished: !b.undo, left, at: now, by: who });
+}
 async function inventoryContainers(env) {
-  await reorderFixTables(env);
+  await reorderFixTables(env); await containerFinishTables(env);
   const got = await receivedContainerTitles(env);
   const rows = ((await env.DB.prepare(`SELECT title, GROUP_CONCAT(DISTINCT vendor) AS vendors, COUNT(DISTINCT vendor || '|' || pallet) AS pallets,
     COUNT(*) AS lines, SUM(cases) AS cases, MAX(updated_at) AS at FROM reorder_pallet GROUP BY title ORDER BY at DESC`).all()).results || [])
@@ -7297,7 +7322,8 @@ async function inventoryContainers(env) {
     JOIN reorder_pallet p ON p.id = x.pallet_id GROUP BY p.title`).all()).results || []).forEach(r => { moved[r.title] = r.moved || 0; });
   const onWay = {}; ((await env.DB.prepare('SELECT title, COUNT(*) AS n FROM reorder_incoming GROUP BY title').all()).results || []).forEach(r => { onWay[r.title] = r.n; });
   const upc = {}; (await d1All(env, 'SELECT title, COUNT(*) AS n FROM pallet_upc_issue WHERE fixed_at IS NULL GROUP BY title')).forEach(r => { upc[r.title] = r.n; });
-  return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0, upcIssues: upc[r.title] || 0 })) }), { headers: { 'Content-Type': 'application/json' } }));
+  const fin = {}; (await d1All(env, 'SELECT title, at, by_user FROM container_finish')).forEach(r => { fin[r.title] = { at: r.at, by: r.by_user }; }); // ✅ finished
+  return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0, upcIssues: upc[r.title] || 0, finished: fin[r.title] || null })) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // GET /inventory/pallets/received — Warehouse Lookup → Item Locator: the
 // boxes of a 📦 Received container still on their pallet (not yet moved to a
@@ -7488,7 +7514,7 @@ async function containerPalletLines(env, o) {
   if (o.pallet && o.vendor != null) { const v = String(o.vendor), vu = String(vendorUnmask(v));
     rows = rows.filter(r => r.vendor === v || r.vendor === vu || String(vendorCode(r.vendor || '')) === v); }
   // Searching (no container picked): only containers already 📦 Received, same as the list.
-  if (!title) { const got = await receivedContainerTitles(env); rows = rows.filter(r => got.has(r.title)); }
+  if (!title) { const got = o.got || await receivedContainerTitles(env); rows = rows.filter(r => got.has(r.title)); } // o.got: already read by the caller (one read a scan)
   const moved = {};
   if (rows.length) {
     const ids = rows.map(r => r.id);
@@ -7645,7 +7671,7 @@ async function inventoryContainerScan(url, env) {
   if (!part && AMZ_CODE_RE.test(code)) { const a = await amzCodeToPart(env, code).catch(() => null); if (a && a.part) part = a.part; } // 🏷 ASIN box / FNSKU bag
   if (!part) return J({ ok: true, part: null, lines: [] });
   const got = await receivedContainerTitles(env);
-  const { lines } = await containerPalletLines(env, { q: part });
+  const { lines } = await containerPalletLines(env, { q: part, got });
   const ls = lines.filter(l => got.has(l.title) && String(l.part).toUpperCase() === part && l.left > 0);
   const out = { ok: true, part, lines: ls };
   if (ls.length === 1) {
@@ -11280,6 +11306,7 @@ const _app = {
       if (path === '/inventory/veeqo-box/save' && method === 'POST') return await veeqoBoxSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
+      if (path === '/inventory/containers/finish' && method === 'POST') return await inventoryContainerFinish(request, env, session);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/containers/pallet-view' && method === 'GET') return await inventoryPalletView(url, env);
       if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
@@ -18361,6 +18388,11 @@ async function invLogEnsureColumns(env) {
   for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL', 'pcs_each REAL', 'wh_pcs_before REAL', 'wh_pcs_after REAL'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
+  // ⚡ Owner (2026-11-03, before the container transfer: "make sure all at fast speed, sometime it was slow"): two partial indexes —
+  // the "[RECEIVED] <container> — …" Stock Ins (read on every 🚢 Container here scan / pallet open, a whole-History read before) and the
+  // rows waiting for approval (read on every scan / move). Same answers, only found without reading all of History.
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_invlog_in_notes ON inventory_log(notes COLLATE NOCASE) WHERE type = 'IN'").run().catch(() => {});
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_invlog_pending ON inventory_log(type) WHERE status = 'Pending'").run().catch(() => {});
   _invLogReady = true;
 }
 

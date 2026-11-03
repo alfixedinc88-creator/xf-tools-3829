@@ -12544,5 +12544,42 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
   sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
 }
 
+console.log('\n✅ Container here: Finish a container (off the list, ↩ Put back) + ⚡ fast scans (History indexes)');
+{
+  // Owner (2026-11-03): "for the Container, have a button I can click on finish so it will not show in this page any more. 2. make sure everything
+  // running fine and work, we going to doing the transfer soon, make sure all at fast speed, sometime it was slow".
+  const T = 'Container FINISH';
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T, stage: 'shipped', last: true, file: 'f.xlsx', rows: [{ part: '64-4-4=5', raw: '64-4-4=5', qty: 30, cases: 6, pcs: 300, case_pcs: 50, src_rows: '5', description: 'cap' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'f.xlsx', lines: [{ pallet: '3', part: '64-4-4=5', raw: '64-4-4=5', cases: 6, pcs: 300, units: 30, pcsPerCtn: 50, row: '5' }] });
+  await post('/reorder/fix/incoming-receive', { title: T, location: 'GARAGE', lines: [{ key: '64-4-4=5', part: '64-4-4=5', cases: 6, description: 'cap' }] });
+  const shelf0 = shelf(), l0 = (await get('/inventory/containers')).containers.find(c => c.title === T);
+  check('a 📦 Received container is on the list, not finished', l0 && !l0.finished && l0.cases === 6, l0);
+  const pkF = await call('/inventory/containers/finish', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: T }) });
+  check('only an Admin / Owner can finish one (a picker → 403)', pkF.status === 403, pkF.status);
+  const f = await post('/inventory/containers/finish', { title: T });
+  const l1 = (await get('/inventory/containers')).containers.find(c => c.title === T);
+  check('✅ Finish → marked finished (who / when, 6 boxes not moved yet kept); the page puts it under ✅ Finished, off the list',
+    f.ok && f.finished && f.left === 6 && l1 && l1.finished && l1.finished.by === 'TS', { f, l1 });
+  const sc = await get('/inventory/containers/scan?code=64-4-4%3D5');
+  check('…nothing else changes: SKU Mgr total the same, a box of it scanned is still found on Pallet 3 (no box lost)', shelf() === shelf0 && sc.lines.some(x => x.title === T && x.pallet === '3' && x.left === 6), { s0: shelf0, s1: shelf(), sc: sc.lines });
+  const u = await post('/inventory/containers/finish', { title: T, undo: true });
+  const l2 = (await get('/inventory/containers')).containers.find(c => c.title === T);
+  const lg = sq.prepare('SELECT action, left_boxes, by_user FROM container_finish_log WHERE title = ? ORDER BY id').all(T).map(x => x.action + ':' + x.left_boxes + ':' + x.by_user).join(',');
+  check('↩ Put back → on the list again; both kept on record (finished, put back — who, boxes left)', u.ok && l2 && !l2.finished && lg === 'finished:6:TS,put back:6:TS', { l2, lg });
+  const ihF = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const xaF = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('page: ✅ Finish / ↩ Put back on each container (Admin / Owner), finished ones under a closed "✅ Finished (N)"; warns when boxes are still on its pallets; 🧩 check mark',
+    /class="xfr-cont-finish" onclick="event\.stopPropagation\(\);xfrContFinish\(/.test(ihF) && /<details id="xfr-cont-finished"/.test(ihF) && /box\(es\) are not moved off its pallets yet/.test(ihF)
+      && /var adm = xfrIsAdmin\(\)/.test(ihF) && /key: 'contfinish'[^\n]*sel: '\.xfr-cont-finish'/.test(xaF), null);
+  // ⚡ the "[RECEIVED] …" Stock Ins and the rows waiting for approval are found by index, not by reading all of History
+  const plan = q => sq.prepare('EXPLAIN QUERY PLAN ' + q).all().map(r => r.detail).join(' | ');
+  const p1 = plan("SELECT notes FROM inventory_log WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected'");
+  const p2 = plan("SELECT part_num, location, cases FROM inventory_log WHERE status='Pending' AND (type='OUT' OR type='TRANSFER_OUT') AND cases>0");
+  check('⚡ received containers / waiting-for-approval are read by index (idx_invlog_in_notes, idx_invlog_pending), not the whole History', /idx_invlog_in_notes/.test(p1) && /idx_invlog_pending/.test(p2), { p1, p2 });
+  let nRecv = 0; const prep0 = env.DB.prepare; env.DB.prepare = function(sql) { if (/notes LIKE '\[RECEIVED\] %'/.test(sql)) nRecv++; return prep0.call(env.DB, sql); };
+  await get('/inventory/containers/scan?code=64-4-4%3D5'); env.DB.prepare = prep0;
+  check('⚡ a box scan reads the received containers once (it was twice)', nRecv === 1, nRecv);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
