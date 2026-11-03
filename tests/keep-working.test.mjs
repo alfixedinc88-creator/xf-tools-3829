@@ -12581,5 +12581,47 @@ console.log('\n✅ Container here: Finish a container (off the list, ↩ Put bac
   check('⚡ a box scan reads the received containers once (it was twice)', nRecv === 1, nRecv);
 }
 
+console.log('\n🕘 Container here → History of a container: who, when, where, how long each pallet, average a pallet (Admin / Owner)');
+{
+  // Owner (2026-11-03): "for Transfer → Container here I want it to have all the history under there too, only Admin level up can see — who, how long,
+  // when and when he put that there, all the details, and average how long it will take for one pallet".
+  const T = 'Container HIST';
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T, stage: 'shipped', last: true, file: 'f.xlsx', rows: [
+    { part: '65-5-5=5', raw: '65-5-5=5', qty: 30, cases: 6, pcs: 300, case_pcs: 50, src_rows: '5', description: 'cap' }, { part: '66-6-6=5', raw: '66-6-6=5', qty: 20, cases: 4, pcs: 200, case_pcs: 50, src_rows: '6', description: 'tee' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'f.xlsx', lines: [
+    { pallet: '1', part: '65-5-5=5', raw: '65-5-5=5', cases: 6, pcs: 300, units: 30, pcsPerCtn: 50, row: '5' }, { pallet: '2', part: '66-6-6=5', raw: '66-6-6=5', cases: 4, pcs: 200, units: 20, pcsPerCtn: 50, row: '6' }] });
+  await post('/reorder/fix/incoming-receive', { title: T, location: 'GARAGE', lines: [{ key: '65-5-5=5', part: '65-5-5=5', cases: 6, description: 'cap' }, { key: '66-6-6=5', part: '66-6-6=5', cases: 4, description: 'tee' }] });
+  const lid = p => sq.prepare('SELECT id FROM reorder_pallet WHERE title = ? AND part = ?').get(T, p).id, gid = p => sq.prepare("SELECT id FROM master_list WHERE part_num = ? AND location = 'GARAGE'").get(p).id;
+  const mv = (part, n, to, who) => post('/inventory/transfer', { partNum: part, sku: part, fromLocation: 'GARAGE', fromMasterId: gid(part), toLocation: to, cases: n, initials: who, notes: '[CONTAINER SCAN] ' + T, palletLineId: lid(part), checkHave: true });
+  await post('/inventory/review-mode', { mode: 'auto' });
+  await post('/inventory/containers/pallet-open', { title: T, vendor: 'KW', pallet: '1' });
+  const a = await mv('65-5-5=5', 4, 'C1=7-1-1', 'AN'), b = await mv('65-5-5=5', 2, 'C1=7-1-2', 'BO'), c = await mv('66-6-6=5', 1, 'C2=7-1-1', 'AN');
+  await post('/inventory/review-mode', { mode: 'manual' });
+  // the clock of this made-up day: pallet 1 opened 9:00, boxes 9:10 (AN 4) and 9:30 (BO 2, the last) → 30 min; pallet 2 started 9:40 (AN 1 of 4)
+  const D0 = '2026-11-02T14:';
+  sq.prepare("UPDATE pallet_open SET at = ? WHERE title = ? AND pallet = '1'").run(D0 + '00:00.000Z', T);
+  const mids = sq.prepare('SELECT m.id, m.out_log_id FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id WHERE p.title = ? ORDER BY m.id').all(T);
+  ['10', '30', '40'].forEach((mm, k) => { sq.prepare('UPDATE inventory_log SET timestamp = ? WHERE id = ?').run(D0 + mm + ':00.000Z', mids[k].out_log_id); sq.prepare('UPDATE pallet_move SET at = ? WHERE id = ?').run(D0 + mm + ':00.000Z', mids[k].id); });
+  const shelf0 = shelf();
+  const h = await get('/inventory/containers/history?title=' + encodeURIComponent(T));
+  const p1 = h.pallets && h.pallets.find(x => x.pallet === '1'), p2 = h.pallets && h.pallets.find(x => x.pallet === '2'), an = h.byPerson && h.byPerson.find(x => x.who === 'AN');
+  check('totals: 2 pallets, 1 finished, 7 of 10 boxes moved (3 left), average a pallet 30 min (opened 9:00 → last box 9:30)',
+    a.ok && b.ok && c.ok && h.ok && h.totals.pallets === 2 && h.totals.palletsFinished === 1 && h.totals.palletsStarted === 2 && h.totals.moved === 7 && h.totals.left === 3 && h.totals.avgMinutes === 30, h.totals || h);
+  check('each pallet: Pallet 1 opened 9:00 by TS → finished 9:30 by BO, 30 min, 6 / 6, AN + BO; Pallet 2 1 / 4 so far (3 left)',
+    p1 && p1.finished && p1.minutes === 30 && p1.openedBy === 'TS' && p1.closedBy === 'BO' && p1.moved === 6 && p1.people.join(',') === 'AN,BO' && p2 && !p2.finished && p2.left === 3 && p2.moved === 1, { p1, p2 });
+  check('each person: AN 5 boxes, 2 moves, 2 pallets, average a pallet 30 min (the finished one they worked on)',
+    an && an.boxes === 5 && an.moves === 2 && an.pallets === 2 && an.avgMinutes === 30 && h.byPerson.find(x => x.who === 'BO').palletsFinished === 1, h.byPerson);
+  const m0 = h.moves[0];
+  check('every box moved, newest first: when, who, pallet, part #, boxes, from GARAGE → put at, how (🚢 Container here)',
+    h.moves.length === 3 && m0.who === 'AN' && m0.pallet === '2' && m0.part === '66-6-6=5' && m0.cases === 1 && m0.from === 'GARAGE' && m0.to === 'C2=7-1-1' && m0.at === D0 + '40:00.000Z' && h.moves[2].to === 'C1=7-1-1', h.moves);
+  check('…read only: SKU Mgr total unchanged by looking', shelf() === shelf0, null);
+  const pkH = await call('/inventory/containers/history?title=' + encodeURIComponent(T), { headers: { 'X-Cred-Token': pk.token } });
+  check('only Admin / Owner can see it (a picker → 403)', pkH.status === 403, pkH.status);
+  const ihH = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), xaH = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('page: 🕘 History on each container (Admin / Owner) → average a pallet, each person, each pallet (tap → its full detail on this tab), every box moved with a who / pallet / part # / spot filter; 🧩 check mark',
+    /class="xfr-cont-hist" onclick="event\.stopPropagation\(\);xfrContHist\(/.test(ihH) && /⏱ Average a pallet/.test(ihH) && /window\.histPalletOpen\(\{ title: XCH\.d\.title/.test(ihH)
+      && /if \(m && m\.parentNode !== document\.body\) document\.body\.appendChild\(m\)/.test(ihH) && /oninput="xfrContHistFilter\(this\.value\)"/.test(ihH) && /key: 'conthist'[^\n]*sel: '\.xfr-cont-hist'/.test(xaH), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

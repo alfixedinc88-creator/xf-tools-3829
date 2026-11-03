@@ -8749,6 +8749,8 @@ window.invCredLogin = async function() {
 
   // 🚢 Owner: "click each pallet: when, who, transferred what to where, how long it took them".
   var histPalletRows = [];
+  // 🕘 Transfer → Container here → History: the same pallet detail (the pop-up moves out of the History tab so it shows on any tab).
+  window.histPalletOpen = function(p) { var m = g('hist-pallet-modal'); if (m && m.parentNode !== document.body) document.body.appendChild(m); histPalletRows = [p]; window.histPalletDetail(0); };
   window.histPalletDetail = function(i) {
     var p = histPalletRows[i]; if (!p) return;
     var modal = g('hist-pallet-modal'), body = g('hist-pallet-body');
@@ -11169,6 +11171,73 @@ window.invCredLogin = async function() {
         invFlash(undo ? '↩ "' + c.title + '" is back on the list' : '✅ "' + c.title + '" finished — off the list', 'success'); xfrContLoad();
       }).catch(function(e) { invFlash('Not changed — ' + ((e && e.message) || 'check WiFi'), 'error'); });
   };
+  // 🕘 Owner (2026-11-03): "for Transfer → Container here I want it to have all the history under there too, only Admin level up can see: who, how long,
+  // when and where he put it, all the details, and the average time a pallet takes". One container: totals + average per pallet, each person,
+  // each pallet (tap → everything about it), every box moved (newest first, filter by who / pallet / part # / spot). Admin / Owner (server too).
+  var XCH = null;
+  window.xfrContHist = function(i) {
+    var c = (xfrCont.containers || [])[i]; if (!c) return;
+    if (!xfrIsAdmin()) { invFlash('Admin / Owner only', 'error'); return; }
+    var m = g('xfr-chist'); if (!m) { m = document.createElement('div'); m.id = 'xfr-chist'; document.body.appendChild(m); }
+    m.style.cssText = 'position:fixed;inset:0;z-index:990;background:rgba(0,0,0,.45);display:flex;justify-content:center;align-items:flex-start;padding:16px 10px;overflow:auto';
+    m.onclick = function(e) { if (e.target === m) xfrContHistClose(); };
+    m.innerHTML = '<div style="background:var(--bg2);color:var(--text);border-radius:14px;padding:14px;width:980px;max-width:100%">⏳ Loading the history of ' + xfrEsc(c.title) + '…</div>';
+    wFetch(W + '/inventory/containers/history?title=' + encodeURIComponent(c.title)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { m.firstChild.innerHTML = '<div style="color:var(--red);font-weight:700">⚠ ' + xfrEsc((d && d.error) || 'Could not load') + '</div><button type="button" onclick="xfrContHistClose()" style="margin-top:10px;padding:8px 14px">Close</button>'; return; }
+      XCH = { d: d, q: '' }; xfrContHistRender();
+    }).catch(function(e) { m.firstChild.innerHTML = '<div style="color:var(--red)">⚠ ' + xfrEsc((e && e.message) || 'check WiFi') + '</div><button type="button" onclick="xfrContHistClose()" style="margin-top:10px;padding:8px 14px">Close</button>'; });
+  };
+  window.xfrContHistClose = function() { var m = g('xfr-chist'); if (m) m.remove(); XCH = null; };
+  window.xfrContHistFilter = function(v) { if (!XCH) return; XCH.q = String(v || '').trim().toUpperCase(); var b = g('xfr-chist-moves'); if (b) b.innerHTML = xfrContHistMoves(); };
+  window.xfrContHistPallet = function(k) { var p = XCH && XCH.d.pallets[k]; if (p && window.histPalletOpen) window.histPalletOpen({ title: XCH.d.title, vendor: p.vendor, pallet: p.pallet }); };
+  function xfrHT(iso) { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : '—'; }
+  function xfrHM(v) { if (v == null) return '—'; var x = Math.round(Number(v) || 0); return x < 60 ? x + ' min' : Math.floor(x / 60) + ' h' + (x % 60 ? ' ' + (x % 60) + ' min' : ''); }
+  var XCH_TH = 'padding:5px 7px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
+  var XCH_TD = 'padding:5px 7px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
+  function xfrHTable(head, rows) { return '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px;margin-bottom:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>'
+    + head.map(function(h) { return '<th style="' + XCH_TH + (h.r ? ';text-align:right' : '') + '">' + h.t + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>'; }
+  function xfrContHistMoves() {
+    var d = XCH.d, q = XCH.q, kind = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer', records: '📋 already there (count only)', found: '➕ never received — added' };
+    var ms = d.moves.filter(function(x) { return !q || [x.who, x.pallet, 'P' + x.pallet, x.part, x.to, x.from].some(function(v) { return String(v || '').toUpperCase().indexOf(q) >= 0; }); });
+    return xfrHTable([{ t: 'When' }, { t: 'Who' }, { t: 'Pallet' }, { t: 'Part #' }, { t: 'Boxes', r: 1 }, { t: 'From' }, { t: 'Put at' }, { t: 'How' }],
+      ms.map(function(x) { return '<tr style="' + (x.counted ? '' : 'opacity:.5;text-decoration:line-through') + '" title="' + (x.counted ? '' : 'Rejected / cancelled — the boxes went back on the pallet') + '"><td style="' + XCH_TD + '">' + xfrHT(x.at) + '</td>'
+        + '<td style="' + XCH_TD + ';font-family:var(--mono);font-weight:700">' + xfrEsc(x.who) + '</td><td style="' + XCH_TD + ';font-family:var(--mono)">' + xfrEsc(x.pallet) + '</td>'
+        + '<td style="' + XCH_TD + ';font-family:var(--mono)">' + xfrEsc(x.part) + '</td><td style="' + XCH_TD + ';text-align:right;font-weight:800">' + xfrN(x.cases) + '</td>'
+        + '<td style="' + XCH_TD + ';font-family:var(--mono)">' + xfrEsc(x.from || '—') + '</td><td style="' + XCH_TD + ';font-family:var(--mono);font-weight:700">' + xfrEsc(x.to || '—') + '</td>'
+        + '<td style="' + XCH_TD + '">' + (kind[x.kind] || xfrEsc(x.kind)) + (x.status === 'Pending' ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</td></tr>'; }).join('')
+        || '<tr><td style="' + XCH_TD + '" colspan="8">' + (q ? 'Nothing matches "' + xfrEsc(q) + '"' : 'No boxes moved yet') + '</td></tr>')
+      + (d.movesTotal > d.moves.length ? '<div style="font-size:11px;color:var(--text3)">Newest ' + d.moves.length + ' of ' + d.movesTotal + ' moves shown.</div>' : '');
+  }
+  function xfrContHistRender() {
+    var m = g('xfr-chist'); if (!m || !XCH) return;
+    var d = XCH.d, T = d.totals;
+    var tile = function(lab, val, sub, col) { return '<div style="flex:1 1 150px;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">' + lab + '</div>'
+      + '<div style="font-size:18px;font-weight:800;font-family:var(--mono);color:' + (col || 'var(--text)') + '">' + val + '</div>' + (sub ? '<div style="font-size:11px;color:var(--text3)">' + sub + '</div>' : '') + '</div>'; };
+    var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-weight:800;font-size:17px;flex:1">🕘 ' + xfrEsc(d.title) + ' — history</div>'
+      + '<button type="button" onclick="xfrContHistClose()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text3)">✕</button></div>'
+      + '<div id="xfr-chist-tiles" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+      + tile('⏱ Average a pallet', xfrHM(T.avgMinutes), T.palletsFinished ? 'of ' + T.palletsFinished + ' finished pallet' + (T.palletsFinished === 1 ? '' : 's') + (T.fastest != null ? ' · fastest ' + xfrHM(T.fastest) + ' · slowest ' + xfrHM(T.slowest) : '') : 'no pallet finished yet', 'var(--purple)')
+      + tile('🧱 Pallets', T.palletsFinished + ' / ' + T.pallets + ' done', (T.palletsStarted - T.palletsFinished) + ' started, not finished · ' + (T.pallets - T.palletsStarted) + ' not started')
+      + tile('📦 Boxes moved', xfrN(T.moved) + ' / ' + xfrN(T.boxes), T.left > 0 ? xfrN(T.left) + ' still on the pallets' : 'all moved', T.left > 0 ? 'var(--orange)' : 'var(--green)')
+      + tile('🕘 First → last box', T.firstAt ? xfrHT(T.firstAt).replace(/,.*$/, '') + ' → ' + xfrHT(T.lastAt).replace(/,.*$/, '') : '—', T.firstAt ? xfrHT(T.firstAt) + ' → ' + xfrHT(T.lastAt) + ' · ' + T.people + ' people' : '')
+      + '</div>';
+    h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">👤 Each person</div>' + xfrHTable([{ t: 'Who' }, { t: 'Boxes', r: 1 }, { t: 'Moves', r: 1 }, { t: 'Pallets', r: 1 }, { t: 'Finished', r: 1 }, { t: 'Avg a pallet', r: 1 }, { t: 'First → last' }],
+      d.byPerson.map(function(x) { return '<tr><td style="' + XCH_TD + ';font-family:var(--mono);font-weight:800">' + xfrEsc(x.who) + '</td><td style="' + XCH_TD + ';text-align:right;font-weight:800">' + xfrN(x.boxes) + '</td>'
+        + '<td style="' + XCH_TD + ';text-align:right">' + x.moves + '</td><td style="' + XCH_TD + ';text-align:right">' + x.pallets + '</td><td style="' + XCH_TD + ';text-align:right">' + x.palletsFinished + '</td>'
+        + '<td style="' + XCH_TD + ';text-align:right;font-family:var(--mono);color:var(--purple);font-weight:700">' + xfrHM(x.avgMinutes) + '</td><td style="' + XCH_TD + '">' + xfrHT(x.first) + ' → ' + xfrHT(x.last) + '</td></tr>'; }).join('')
+        || '<tr><td style="' + XCH_TD + '" colspan="7">Nobody moved a box yet</td></tr>');
+    h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">🧱 Each pallet — how long (opened → last box moved) · tap one for everything about it</div>'
+      + xfrHTable([{ t: 'Pallet' }, { t: 'Time', r: 1 }, { t: 'Boxes', r: 1 }, { t: 'Who' }, { t: 'Opened' }, { t: 'Finished' }],
+      d.pallets.map(function(p, k) { return '<tr class="xfr-chist-pal" style="cursor:pointer" onclick="xfrContHistPallet(' + k + ')"><td style="' + XCH_TD + ';font-family:var(--mono);font-weight:800">' + xfrEsc(p.pallet) + (p.vendor ? ' <span style="color:var(--text3);font-weight:400">' + xfrEsc(p.vendor) + '</span>' : '') + '</td>'
+        + '<td style="' + XCH_TD + ';text-align:right;font-family:var(--mono);font-weight:800;color:' + (p.finished ? 'var(--purple)' : 'var(--orange)') + '">' + (p.minutes == null ? '—' : xfrHM(p.minutes) + (p.finished ? '' : ' so far')) + '</td>'
+        + '<td style="' + XCH_TD + ';text-align:right;font-family:var(--mono)">' + xfrN(p.moved) + ' / ' + xfrN(p.boxes) + '</td><td style="' + XCH_TD + ';font-family:var(--mono)">' + xfrEsc((p.people || []).join(', ') || '—') + '</td>'
+        + '<td style="' + XCH_TD + '">' + (p.openedAt ? xfrHT(p.openedAt) + (p.openedBy ? ' · ' + xfrEsc(p.openedBy) : '') : '<span style="color:var(--text3)">not started</span>') + '</td>'
+        + '<td style="' + XCH_TD + '">' + (p.finished ? xfrHT(p.closedAt) + (p.closedBy ? ' · ' + xfrEsc(p.closedBy) : '') : p.started ? '<span style="color:var(--orange);font-weight:700">' + xfrN(p.left) + ' left</span>' : '—') + '</td></tr>'; }).join(''));
+    h += '<div style="display:flex;align-items:center;gap:8px;margin:4px 0 6px"><div style="font-size:12px;font-weight:800;flex:1">🕘 Every box moved — newest first</div>'
+      + '<input type="text" placeholder="Who / pallet / part # / spot…" oninput="xfrContHistFilter(this.value)" style="width:220px;max-width:50%;padding:6px 9px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg);color:var(--text)"></div>'
+      + '<div id="xfr-chist-moves">' + xfrContHistMoves() + '</div>';
+    m.firstChild.innerHTML = h;
+  }
   window.xfrContSoldOut = function(how) { if (xfrCont.title) soldOutPalletsReport(xfrCont.title, how); };
   window.xfrContLoad = function() {
     var box = g('xfr-cont-list'); if (!box) return;
@@ -11189,6 +11258,7 @@ window.invCredLogin = async function() {
             + (c.notStockedIn ? ' · <span style="color:var(--orange)">not stocked in yet (' + c.notStockedIn + ' part #s still On the way)</span>' : '')
             + (c.upcIssues ? ' · <b style="color:var(--red)">⚠ ' + c.upcIssues + ' UPC not matching</b>' : '')
             + (c.finished ? ' · ✅ finished by ' + xfrEsc(c.finished.by || '?') + (c.finished.at ? ' ' + xfrEsc(new Date(c.finished.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) : '') : '') + '</div></div>'
+            + (adm ? '<button type="button" class="xfr-cont-hist" onclick="event.stopPropagation();xfrContHist(' + i + ')" title="Every box moved: who, when, where; how long each pallet took" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">🕘 History</button>' : '')
             + (adm ? '<button type="button" class="xfr-cont-finish" onclick="event.stopPropagation();xfrContFinish(' + i + ',' + (c.finished ? 'true' : 'false') + ')" style="padding:6px 10px;border-radius:8px;border:1.5px solid ' + (c.finished ? 'var(--border)' : 'var(--green)') + ';background:var(--bg2);color:' + (c.finished ? 'var(--text2)' : 'var(--green)') + ';font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">' + (c.finished ? '↩ Put back' : '✅ Finish') + '</button>' : '')
             + '<span class="iloc-badge ' + (done ? 'ex' : '') + '">' + (done ? '✓ Done' : 'Open') + '</span></div>';
         };
