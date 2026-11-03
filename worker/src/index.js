@@ -6507,8 +6507,15 @@ async function inventoryVerifyInner(request, env) {
             inheritJ = String(existingRow.units_per_case || '');
             inheritM = String(existingRow.vendor || '');
           }
+          // 💲 Owner (2026-11-03, 23-6-2: price history newest $0.833, but new rows took the old COGS list's $1.833): the
+          // newest price this part # really came in at (💲 Price history) first; the COGS list only when there is none.
+          const lastPrice = await d1First(env,
+            'SELECT price FROM part_price_log WHERE parent = ? AND price > 0 ORDER BY at DESC, id DESC LIMIT 1',
+            [String(baseSku || '').trim().toUpperCase()]
+          ).catch(() => null);
+          if (lastPrice && lastPrice.price > 0) inheritN = String(lastPrice.price);
           // Get price from cogs table
-          const cogsRow = await d1First(env,
+          const cogsRow = inheritN ? null : await d1First(env,
             'SELECT unit_price FROM cogs WHERE UPPER(base_sku)=? LIMIT 1',
             [baseSku]
           );
@@ -6938,6 +6945,42 @@ async function inventoryCostValueFix(request, env, session) {
   const now = await d1First(env, 'SELECT id, part_num, name, location, cases, units_per_case, price, vendor FROM master_list WHERE id=?', [r.id]);
   return J({ ok: true, row: { id: now.id, partNum: now.part_num, name: now.name || '', location: now.location, cases: parseFloat(now.cases) || 0,
     unitsPerCase: parseFloat(now.units_per_case) || 0, price: parseFloat(now.price) || 0, vendor: now.vendor || '' } });
+}
+
+// POST /inventory/price-correct {part, wrong, right} — OWNER ONLY. Owner (2026-11-03): "23-6-2 was only 0.8327, but SKU Mgr
+// says $1.83 — change the price back". A price that was WRONG (a typo, the old COGS list), not a new price: unlike a SKU Mgr
+// price edit (new price from now on, the cases there keep the old one) it puts right, for every part # of that parent:
+// the SKU Mgr rows at the wrong price, the price batches on the shelves at the wrong price, and the COGS list. Only what is
+// at the wrong price (± half a cent) changes; cases, part #s and spots never. Kept in 💲 Price history (who, when, wrong → right).
+async function inventoryPriceCorrect(request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  if (!cs || !(cs.roles || []).includes('owner')) return J({ ok: false, error: 'Owner only' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const parent = mlParent(b.part), wrong = parseFloat(b.wrong), right = parseFloat(b.right);
+  if (!parent) return J({ ok: false, error: 'Which part #?' }, 400);
+  if (!(wrong > 0) || !(right > 0)) return J({ ok: false, error: 'The wrong price and the right price per piece, both more than 0' }, 400);
+  if (Math.abs(wrong - right) < 0.02) return J({ ok: false, error: 'The two prices are almost the same — nothing to put right' }, 400);
+  const near = v => Math.abs((parseFloat(v) || 0) - wrong) <= 0.005, now = new Date().toISOString(), who = String(cs.displayName || cs.username || 'Owner').slice(0, 40);
+  await costTables(env); await priceLogTables(env);
+  const rows = (await d1All(env, 'SELECT id, part_num, location, price FROM master_list WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ?', [parent, parent + '=%']))
+    .filter(r => mlParent(r.part_num) === parent && near(r.price));
+  const lay = ((await env.DB.prepare('SELECT id, part, location, cases, price FROM cost_layer WHERE part = ? OR part LIKE ?').bind(parent, parent + '=%').all()).results || [])
+    .filter(l => mlParent(l.part) === parent && near(l.price));
+  const cg = await d1First(env, 'SELECT base_sku, unit_price FROM cogs WHERE UPPER(base_sku) = ?', [parent]).catch(() => null);
+  const cogsFixed = !!(cg && near(cg.unit_price));
+  if (!rows.length && !lay.length && !cogsFixed) return J({ ok: false, error: 'Nothing of ' + parent + ' is at $' + wrong + ' — check the price on the rows' }, 404);
+  const st = [];
+  rows.forEach(r => st.push(env.DB.prepare('UPDATE master_list SET price = ?, updated_at = ? WHERE id = ?').bind(right, now, r.id)));
+  lay.forEach(l => st.push(env.DB.prepare('UPDATE cost_layer SET price = ? WHERE id = ?').bind(right, l.id)));
+  if (cogsFixed) st.push(env.DB.prepare('UPDATE cogs SET unit_price = ?, updated_at = ? WHERE UPPER(base_sku) = ?').bind(right, now, parent));
+  const parts = [...new Set(rows.map(r => _costKey(r.part_num)).concat(lay.map(l => _costKey(l.part))))].sort();
+  const layCases = Math.round(lay.reduce((t, l) => t + (parseFloat(l.cases) || 0), 0) * 100) / 100;
+  const note = 'wrong $' + wrong + ' put right: ' + rows.length + ' SKU Mgr row(s), ' + lay.length + ' batch(es) on the shelves (' + layCases + ' cs)' + (cogsFixed ? ', COGS list' : '');
+  (parts.length ? parts : [parent]).forEach(p => st.push(env.DB.prepare('INSERT INTO part_price_log (part, parent, location, price, old_price, at, source, title, by_user, cases) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(p, parent, null, right, wrong, now, 'Wrong price fixed', note.slice(0, 120), who, null)));
+  for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
+  return J({ ok: true, parent, wrong, right, rows: rows.length, batches: lay.length, batchCases: layCases, cogs: cogsFixed, parts });
 }
 
 // ── 💲 Price change record (kept forever) ─────────────────────────────────
@@ -11648,7 +11691,7 @@ const _app = {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/cost/value-rows', '/inventory/cost/value-fix', '/inventory/price-history', '/inventory/incoming', '/inventory/partnum-check'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/cost/value-rows', '/inventory/cost/value-fix', '/inventory/price-correct', '/inventory/price-history', '/inventory/incoming', '/inventory/partnum-check'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }
@@ -11666,6 +11709,7 @@ const _app = {
       if (path === '/inventory/cost/value-fix' && method === 'POST') return await inventoryCostValueFix(request, env, session);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncomingFor(url, env);
       if (path === '/inventory/price-history' && method === 'GET') return await inventoryPriceHistory(url, env);
+      if (path === '/inventory/price-correct' && method === 'POST') return await inventoryPriceCorrect(request, env);
       // audit-mode POST + other mgmt routes
       if (path === '/inventory/audit-mode'      && method === 'POST') return await inventoryAuditModeSet(request, env);
       if (path === '/inventory/review-mode'     && method === 'POST') return await inventoryReviewModeSet(request, env);
