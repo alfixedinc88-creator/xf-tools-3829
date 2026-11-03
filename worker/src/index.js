@@ -7312,6 +7312,59 @@ async function inventoryContainerFinish(request, env, session) {
   await env.DB.prepare('INSERT INTO container_finish_log (title, action, left_boxes, at, by_user) VALUES (?,?,?,?,?)').bind(title, b.undo ? 'put back' : 'finished', left, now, who).run();
   return J({ ok: true, title, finished: !b.undo, left, at: now, by: who });
 }
+// 🕘 GET /inventory/containers/history?title= — Owner (2026-11-03): "for Transfer → Container here I want it to have all the history under there too,
+// only Admin level up can see: who, how long, when and where he put it, all the details, and the average time a pallet takes". One container:
+// every box moved off its pallets (when, who, part #, boxes, from → to, how), each pallet (opened when / by whom → last box moved, how long),
+// each person (moves, boxes, pallets, first → last, average per pallet), and the container's totals with the average time per finished pallet.
+// The same rules as History → 🚢 / a pallet's detail: a rejected / cancelled move doesn't count; a pallet's time = the last time it was
+// opened before its first box → the box that emptied it (not emptied yet = so far). Admin / Owner only (server-checked). Read only.
+async function inventoryContainerHistory(url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
+  await reorderFixTables(env);
+  const title = String(url.searchParams.get('title') || '').trim(); if (!title) return J({ ok: false, error: 'Pick a container' }, 400);
+  const lines = await d1All(env, 'SELECT id, vendor, pallet, part, description, cases FROM reorder_pallet WHERE title = ? ORDER BY vendor, pallet, part', [title]);
+  if (!lines.length) return J({ ok: false, error: 'No pallets found for "' + title + '"' }, 404);
+  const byId = {}; lines.forEach(l => { byId[l.id] = l; });
+  const raw = await d1All(env, `SELECT m.pallet_id, m.cases, m.to_location AS toLoc, COALESCE(m.kind, '') AS kind,
+      UPPER(TRIM(COALESCE(NULLIF(l.initials, ''), m.by_user, ''))) AS who, COALESCE(l.timestamp, m.at) AS at, l.location AS fromLoc, l.status, l.cancelled_at AS cancelledAt
+    FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id WHERE m.pallet_id IN (SELECT id FROM reorder_pallet WHERE title = ?)
+    ORDER BY COALESCE(l.timestamp, m.at), m.id`, [title]);
+  const opensAll = (await d1All(env, 'SELECT at, by_user, vendor, pallet FROM pallet_open WHERE title = ? ORDER BY at', [title]).catch(() => [])) || [];
+  const r3 = v => Math.round((parseFloat(v) || 0) * 1000) / 1000, mins = (a, b) => a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 600) / 100) : null;
+  const moves = raw.map(m => { const l = byId[m.pallet_id] || {};
+    return { at: m.at, who: m.who || '?', vendor: l.vendor || '', pallet: l.pallet || '', part: l.part || '', cases: r3(m.cases), from: m.fromLoc || '', to: m.toLoc || '',
+      kind: m.kind || 'container', status: m.status || '', counted: String(m.status || '') !== 'Rejected' && !m.cancelledAt, _v: l.vendor || '' }; });
+  const pk = (v, p) => v + '|' + p, pal = {};
+  lines.forEach(l => { const k = pk(l.vendor, l.pallet); const x = pal[k] = pal[k] || { vendor: l.vendor, pallet: l.pallet, boxes: 0, parts: 0 }; x.boxes += parseFloat(l.cases) || 0; x.parts++; });
+  const pallets = [], finMins = [], perMins = {}, people = {};
+  Object.keys(pal).forEach(k => {
+    const x = pal[k], vc = String(vendorCode(x.vendor) || '').toUpperCase();
+    const good = moves.filter(m => m.counted && pk(m._v, m.pallet) === k);
+    let sum = 0, doneAt = null, doneBy = null; for (const m of good) { sum += m.cases; if (!doneAt && x.boxes > 0 && sum >= x.boxes - 1e-9) { doneAt = m.at; doneBy = m.who; } }
+    const op = opensAll.filter(o => String(o.pallet) === String(x.pallet) && (String(o.vendor || '') === x.vendor || String(vendorCode(o.vendor) || '').toUpperCase() === vc));
+    const first = good[0], last = good[good.length - 1], o0 = first ? [...op].reverse().find(o => o.at <= first.at) || null : (op[op.length - 1] || null);
+    const startAt = (o0 && o0.at) || (first && first.at) || null, endAt = doneAt || (last && last.at) || null, m = first ? mins(startAt, endAt) : null;
+    const who = [...new Set(good.map(g => g.who))];
+    pallets.push({ vendor: x.vendor || '', pallet: x.pallet, parts: x.parts, boxes: r3(x.boxes), moved: r3(sum), left: r3(Math.max(0, x.boxes - sum)),
+      openedAt: startAt, openedBy: o0 ? String(o0.by_user || '').toUpperCase() : '', fromOpen: !!o0, closedAt: doneAt, closedBy: doneBy, finished: !!doneAt,
+      started: !!first || !!op.length, minutes: m, people: who, moves: good.length });
+    if (doneAt && m != null) { finMins.push(m); who.forEach(w => (perMins[w] = perMins[w] || []).push(m)); }
+    good.forEach(g => { const p = people[g.who] = people[g.who] || { who: g.who, moves: 0, boxes: 0, pallets: new Set(), palletsFinished: 0, first: g.at, last: g.at };
+      p.moves++; p.boxes += g.cases; p.pallets.add(k); if (g.at < p.first) p.first = g.at; if (g.at > p.last) p.last = g.at; });
+    if (doneBy && people[doneBy]) people[doneBy].palletsFinished++;
+  });
+  const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10 : null;
+  const byPerson = Object.values(people).map(p => ({ who: p.who, moves: p.moves, boxes: r3(p.boxes), pallets: p.pallets.size, palletsFinished: p.palletsFinished,
+    first: p.first, last: p.last, avgMinutes: avg(perMins[p.who] || []) })).sort((a, b) => b.boxes - a.boxes);
+  pallets.sort((a, b) => String(a.vendor).localeCompare(String(b.vendor)) || String(a.pallet).localeCompare(String(b.pallet), undefined, { numeric: true }));
+  const good = moves.filter(m => m.counted), boxes = r3(lines.reduce((a, l) => a + (parseFloat(l.cases) || 0), 0)), moved = r3(good.reduce((a, m) => a + m.cases, 0));
+  const totals = { pallets: pallets.length, palletsStarted: pallets.filter(p => p.started).length, palletsFinished: finMins.length, boxes, moved, left: r3(Math.max(0, boxes - moved)),
+    avgMinutes: avg(finMins), fastest: finMins.length ? Math.min(...finMins) : null, slowest: finMins.length ? Math.max(...finMins) : null,
+    firstAt: good.length ? good[0].at : null, lastAt: good.length ? good[good.length - 1].at : null, people: byPerson.length };
+  moves.forEach(m => { delete m._v; });
+  return J({ ok: true, title, totals, byPerson, pallets, moves: moves.slice().reverse().slice(0, 3000), movesTotal: moves.length });
+}
 async function inventoryContainers(env) {
   await reorderFixTables(env); await containerFinishTables(env);
   const got = await receivedContainerTitles(env);
@@ -11307,6 +11360,7 @@ const _app = {
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/finish' && method === 'POST') return await inventoryContainerFinish(request, env, session);
+      if (path === '/inventory/containers/history' && method === 'GET') return await inventoryContainerHistory(url, env, session);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/containers/pallet-view' && method === 'GET') return await inventoryPalletView(url, env);
       if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
