@@ -203,7 +203,8 @@ document.addEventListener('input', function (e) {
         { key: 'runreport', label: '🔒 USPS Run Report', sel: '#ps-panel-closebatch > .ps-card:has(#ps-usps-report-section)' } ] },
       { key: 'cancellation', label: '🗑️ Cancellation', sel: '#ps-tab-cancellation', parts: [
         { key: 'add', label: '🗑️ Mark an Order for Cancellation', sel: '#ps-panel-cancellation > .ps-card:has(#ps-cancelorder-tracking)' },
-        { key: 'history', label: 'History', sel: '#ps-panel-cancellation span[onclick="psShowCancelOrderHistory()"]' } ] },
+        { key: 'history', label: 'History', sel: '#ps-panel-cancellation span[onclick="psShowCancelOrderHistory()"]' },
+        { key: 'autocancel', label: '🤖 Auto-cancelled in Veeqo (cancelled on the market, no label yet)', sel: '#ps-autocancel-card' } ] },
       { key: 'progress', label: '📊 Progress', sel: '#ps-tab-progress', parts: [
         { key: 'stats', label: 'Stat cards', sel: '#ps-panel-progress > .ps-stat-bar' },
         { key: 'bars', label: 'UPS / USPS progress bars', sel: '#ps-panel-progress > .ps-progress-wrap' },
