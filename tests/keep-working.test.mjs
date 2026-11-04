@@ -11522,10 +11522,10 @@ console.log('\n⏱ Picking / Packing: each person\'s pace under their name (stea
   // MY: a package every 28 s for 10 packages, a 40-min lunch, then 6 more every 30 s → 14 steady gaps: (9 × 28 + 5 × 30) s ÷ 14 = 28.7 s each ≈ 125 an hour
   const my = [], k = []; for (let i = 0; i < 10; i++) my.push(at(i * 28)); for (let i = 0; i < 6; i++) my.push(at(9 * 28 + 2400 + i * 30));
   const p = P.pace(my), few = P.pace([at(0), at(60), at(120)]);
-  check('16 scans with a 40-min lunch in the middle: the lunch is left out → 14 steady scans, 28.7 sec each, 125 an hour; shown "⏱ 29 sec each · 125 an hour"; fewer than 5 steady scans → nothing shown',
-    p && p.n === 14 && Math.abs(p.avgMin * 60 - 28.71) < 0.5 && p.perHour === 125 && /⏱ 29 sec each · 125 an hour/.test(P.html({ ts: my })) && few === null && P.html({ ts: [] }) === '', { p, html: P.html({ ts: my }) });
+  check('16 scans with a 40-min lunch in the middle: the lunch is left out → 14 steady scans, 28.7 sec each, 125 an hour; shown "⏱ 29 sec an order · 125 orders an hour" (owner 2026-11-04: per order, not "each"); fewer than 5 steady scans → nothing shown',
+    p && p.n === 14 && Math.abs(p.avgMin * 60 - 28.71) < 0.5 && p.perHour === 125 && /⏱ 29 sec an order · 125 orders an hour/.test(P.html({ ts: my })) && few === null && P.html({ ts: [] }) === '', { p, html: P.html({ ts: my }) });
   check('…under every name on Packing (Scanned Today / by person) and Picking (Picked Today / by person) — everyone sees it; the times come from each scan',
-    (ph.match(/parts\.join\(' · '\) \+ '<\/span>' \+ _psPaceHtml\(u\)/g) || []).length === 2 && (ph.match(/if \(s\.timestamp\) byUser\[who\]\.ts\.push\(s\.timestamp\);/g) || []).length === 2
+    (ph.match(/parts\.join\(' · '\) \+ '<\/span>' \+ _psPaceHtml\(u\)/g) || []).length === 2 && (ph.match(/if \(s\.timestamp && !\(tk && byUser\[who\]\.seen\[tk\]\)\) \{ byUser\[who\]\.ts\.push\(s\.timestamp\);/g) || []).length === 2
       && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psRenderPersonChips() {')) < ph.indexOf('// ── Per-person scan-history detail modal') && ph.indexOf('_psPaceHtml(u)', ph.indexOf('function _psPickRenderPersonChips() {')) > 0, null);
 }
 
@@ -11546,7 +11546,7 @@ console.log('\n⏱ Pace hidden: only an Admin / Owner taps ⏱ Show pace to see 
   const pkAfter = pk.o.html({ ts }), adAfter = ad.o.html({ ts });
   check('everyone: no pace under the names (hidden now); a picker never gets the ⏱ Show pace button and tapping does nothing; an Admin / Owner gets ⏱ Show pace on Picking and Packing → the pace shows under each name (both lists re-drawn), button says ⏱ Hide pace',
     pkBefore === '' && adBefore === '' && pk.btns[0].style.display === 'none' && pkAfter === '' && pk.renders.length === 0
-      && /⏱ 30 sec each · 120 an hour/.test(adAfter) && ad.btns.every(b => b.style.display === 'inline-block' && b.textContent === '⏱ Hide pace') && ad.renders.join(',') === 'pack,pick'
+      && /⏱ 30 sec an order · 120 orders an hour/.test(adAfter) && ad.btns.every(b => b.style.display === 'inline-block' && b.textContent === '⏱ Hide pace') && ad.renders.join(',') === 'pack,pick'
       && (ph.match(/<button type="button" class="ps-pace-btn" onclick="psTogglePace\(\)" style="display:none/g) || []).length === 2, { adAfter, pk: pk.btns[0].style, ad: ad.btns.map(b => [b.style.display, b.textContent]) });
   delete globalThis.__w;
 }
@@ -12745,6 +12745,33 @@ console.log('\n🗑 Cancelled on the market, no label yet → cancelled in Veeqo
     /<select id="ps-al-autocancel"/.test(ps) && /c\.autoCancel = acSel\.value/.test(ps) && /cancelled in Veeqo \(no label yet\)/.test(ps) && /id="ps-autocancel-card"/.test(ps) && /if \(name === 'cancellation'\) \{ psLoadCancelOrders\(\); psLoadAutoCancels\(\); \}/.test(ps)
       && /key: 'autocancel'[^\n]*sel: '#ps-autocancel-card'/.test(xa), null);
   sq.exec("DELETE FROM veeqo_auto_cancel; DELETE FROM ship_label_link WHERE order_num = 'K-6'");
+}
+
+// Owner (2026-11-04): "picking and packing time — go with ORDER, not pieces: one label is one order however many inside, count as one;
+// and by the package sizes: 1 item how many orders how long, 1 item over 13 lb how long, 2 items how long…".
+console.log('\n⏱ Picking / Packing time: one label = one order; ⏱ time an order for each package size (1 item, 1 item over 13 lb, 2 items…)');
+{
+  const { readFileSync: rfZ } = await import('node:fs');
+  const ph = rfZ(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('var PS_HEAVY_LB_THRESHOLD = 13;'), ph.indexOf('var _psItemCountModalOpen = false;'))
+    + ph.slice(ph.indexOf('var PS_PACE_GAP_MIN = 10'), ph.indexOf('function _psRenderPersonChips() {'));
+  const el = { innerHTML: '' };
+  const Z = new Function('document', 'var _psPaceOn = true, _psItemCountSource = {}; function _psPaceAdmin() { return true; }' + src + '; return { bySize: _psPaceBySize, render: _psRenderItemCountBreakdown };')({ getElementById: () => el });
+  const at = sec => new Date(Date.UTC(2026, 10, 4, 14, 0, 0) + sec * 1000).toISOString();
+  // MG: 1 item every 30 s ×5, then 4 heavy 1-item orders 90 s apart, then 3 orders of 2 items 60 s apart; a 3-piece label scanned twice
+  const sc = [], add1 = (t, tr, n, lb) => sc.push({ initials: 'MG', tracking: tr, timestamp: at(t), itemCount: n, weightLb: lb });
+  let t = 0; for (let i = 0; i < 5; i++) add1(t += 30, 'A' + i, 1, 2);
+  for (let i = 0; i < 4; i++) add1(t += 90, 'H' + i, 1, 20);
+  for (let i = 0; i < 3; i++) add1(t += 60, 'B' + i, 2, 3);
+  add1(t + 5, 'B2', 2, 3); // the same label scanned again 5 s later → not a new order
+  const z = Z.bySize(sc);
+  check('MG: 1 item → 5 orders, 4 timed at 30 s; 1 item over 13 lb → 4 timed at 90 s; 2 items → 3 timed at 60 s; the same label scanned twice counts once',
+    z['1'] && z['1'].n === 4 && z['1'].ms === 120000 && z['1:heavy'] && z['1:heavy'].n === 4 && z['1:heavy'].ms === 360000 && z['2'] && z['2'].n === 3 && z['2'].ms === 180000, z);
+  Z.render(sc, 'x');
+  check('…the Package sizes chips show it: "5 × 1 item ⏱ 30 sec" · "4 × 1 item over 13 lb ⏱ 1.5 min" · "4 × 2 items ⏱ 60 sec" (only when an Admin / Owner shows pace)',
+    /<b>5<\/b><span>× 1 item<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 30 sec<\/span>/.test(el.innerHTML) && /× 1 item over 13 lb<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 1.5 min/.test(el.innerHTML)
+      && /× 2 items<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 60 sec/.test(el.innerHTML) && /average time an order \(one label, however many pieces\)/.test(el.innerHTML)
+      && /var pace = \(typeof _psPaceOn !== 'undefined' && _psPaceOn && _psPaceAdmin\(\)\) \? _psPaceBySize\(scans\) : null;/.test(ph), el.innerHTML);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
