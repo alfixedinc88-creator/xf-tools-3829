@@ -143,8 +143,15 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
     </div>
   </div>
   <div class="wrap">
+    <!-- 🗂 Owner (2026-11-04): "separate it into different tabs — Messages: eBay how many need to be done, Amazon how many… they click on the
+         message, finish each tab one by one". One tab per kind of work; in it, each channel with how many are waiting; tap one, finish it,
+         the next one opens by itself. -->
     <div class="tabs" id="of-tabs">
-      <button class="tab on" id="of-tab-todo" data-t="todo" onclick="ofTab('todo')">📋 To do <span id="of-n-open"></span></button>
+      <button class="tab on" id="of-tab-msg" data-t="msg" onclick="ofTab('msg')">💬 Messages <span class="of-tn" data-k="msg"></span></button>
+      <button class="tab" id="of-tab-ret" data-t="ret" onclick="ofTab('ret')">↩ Returns <span class="of-tn" data-k="ret"></span></button>
+      <button class="tab" id="of-tab-can" data-t="can" onclick="ofTab('can')">✖ Cancellations <span class="of-tn" data-k="can"></span></button>
+      <button class="tab" id="of-tab-case" data-t="case" onclick="ofTab('case')">⚠ Cases <span class="of-tn" data-k="case"></span></button>
+      <button class="tab" id="of-tab-fb" data-t="fb" onclick="ofTab('fb')">⭐ Feedback &amp; reviews <span class="of-tn" data-k="fb"></span></button>
       <button class="tab" id="of-tab-done" data-t="done" onclick="ofTab('done')">✅ Done</button>
       <button class="tab" id="of-tab-health" data-t="health" onclick="ofTab('health')">🩺 Account health</button>
       <button class="tab" id="of-tab-profit" data-t="profit" onclick="ofTab('profit')">💰 Profit</button>
@@ -152,12 +159,12 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
     </div>
 
     <div id="of-pg-todo">
-      <div class="srcs" id="of-srcs"></div>
       <div class="chips" id="of-chips"></div>
       <div class="controls"><input type="text" id="of-q" placeholder="Search order #, customer, words…" style="width:280px" onkeydown="if(event.key==='Enter')ofLoad()"><button class="btn" onclick="ofLoad()">🔍</button>
         <span class="muted" id="of-todo-sum"></span></div>
       <div id="of-list"></div>
       <div class="panel" id="of-grey" style="margin-top:14px"></div>
+      <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">📡 What this tab reads from each channel</summary><div class="srcs" id="of-srcs" style="margin-top:6px"></div></details>
     </div>
 
     <div id="of-pg-done" style="display:none">
@@ -188,7 +195,10 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var TOKEN = localStorage.getItem('xf_cred_token') || null;
 var USER = null; try { USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
-var OF = { tab: 'todo', ch: '', items: [], srcs: [], admin: false };
+var OF = { tab: 'msg', ch: {}, items: [], srcs: [], admin: false, open: null };
+var OF_KIND = { message: 'msg', return: 'ret', refund: 'ret', cancel: 'can', case: 'case', inquiry: 'case', feedback: 'fb', review: 'fb' };
+var OF_TABS = { msg: '💬 Messages', ret: '↩ Returns', can: '✖ Cancellations', case: '⚠ Cases', fb: '⭐ Feedback & reviews' };
+var OF_CH = ['eBay', 'Amazon', 'Walmart', 'Shopify', 'Gmail'];
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function toast(m) { var t = document.getElementById('of-toast'); t.textContent = m; t.style.opacity = '1'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = '0'; }, 3500); }
 function g(id) { return document.getElementById(id); }
@@ -221,59 +231,84 @@ function when(v) { try { return v ? new Date(v).toLocaleString('en-US', { timeZo
 function dueTxt(it) { var t = Date.parse(it.due_at); if (isNaN(t)) return ''; var m = Math.round((t - Date.now()) / 60000);
   return m < 0 ? '<span class="due bad">⏰ LATE ' + dur(-m * 60) + '</span>' : '<span class="due" style="color:' + (m < 240 ? 'var(--orange)' : 'var(--text3)') + '">⏳ due in ' + dur(m * 60) + '</span>'; }
 // What each channel source is (the server reads these by itself every hour; ⚪ = can't be read, with why)
-var OF_SRC = { ebay_msg: ['eBay', '💬 Messages'], ebay_return: ['eBay', '↩ Package returns'], ebay_cancel: ['eBay', '✖ Cancellations'], ebay_case: ['eBay', '⚠ Cases / not received'],
-  ebay_feedback: ['eBay', '⭐ Feedback (negative / neutral)'], ebay_health: ['eBay', '🩺 Account health'], amz_feedback: ['Amazon', '⭐ Feedback manager (1–3 stars)'], amz_return: ['Amazon', '↩ Package returns'],
-  amz_health: ['Amazon', '🩺 Account health'], wm_return: ['Walmart', '↩ Package returns'], wm_cancel: ['Walmart', '✖ Cancellations'], shop_order: ['Shopify', '✖ Cancellations / ↩ refunds'] };
+var OF_SRC = { ebay_msg: ['eBay', '💬 Messages', 'msg'], ebay_return: ['eBay', '↩ Package returns', 'ret'], ebay_cancel: ['eBay', '✖ Cancellations', 'can'], ebay_case: ['eBay', '⚠ Cases / not received', 'case'],
+  ebay_feedback: ['eBay', '⭐ Feedback (negative / neutral)', 'fb'], ebay_health: ['eBay', '🩺 Account health', 'health'], amz_feedback: ['Amazon', '⭐ Feedback manager (1–3 stars)', 'fb'], amz_return: ['Amazon', '↩ Package returns', 'ret'],
+  amz_health: ['Amazon', '🩺 Account health', 'health'], wm_return: ['Walmart', '↩ Package returns', 'ret'], wm_cancel: ['Walmart', '✖ Cancellations', 'can'], shop_order: ['Shopify', '✖ Cancellations / ↩ refunds', 'can ret'] };
 // ⚪ The ones no app can read yet (owner 2026-11-02: "turn the ones you can't do grey, I'll fix them later") — a link to do it on the
 // channel, and "📝 I'm handling one" so the time it takes is still kept.
 var OF_GREY = [
-  { ch: 'Amazon', name: '💬 Buyer messages', why: 'Amazon gives apps no way to read buyer messages. They also come by email → connect Gmail (below) to get them here.', url: 'https://sellercentral.amazon.com/messaging/inbox', kind: 'message' },
-  { ch: 'Amazon', name: '🗣 Voice of the Customer', why: 'No API from Amazon — check it on Seller Central.', url: 'https://sellercentral.amazon.com/voice-of-the-customer', kind: 'task' },
-  { ch: 'Amazon', name: '⭐ Customer reviews', why: 'No API for single reviews (Brand Registry) — check it on Seller Central.', url: 'https://sellercentral.amazon.com/brand-customer-reviews', kind: 'task' },
+  { ch: 'Amazon', name: '💬 Buyer messages', why: 'Amazon gives apps no way to read buyer messages. They also come by email → connect Gmail to get them here.', url: 'https://sellercentral.amazon.com/messaging/inbox', kind: 'message' },
+  { ch: 'Amazon', name: '🗣 Voice of the Customer', why: 'No API from Amazon — check it on Seller Central.', url: 'https://sellercentral.amazon.com/voice-of-the-customer', kind: 'review' },
+  { ch: 'Amazon', name: '⭐ Customer reviews', why: 'No API for single reviews (Brand Registry) — check it on Seller Central.', url: 'https://sellercentral.amazon.com/brand-customer-reviews', kind: 'review' },
   { ch: 'Walmart', name: '💬 Buyer messages', why: 'Walmart sends buyer messages by email only → connect Gmail to get them here.', url: 'https://seller.walmart.com/', kind: 'message' },
-  { ch: 'Walmart', name: '🩺 Account health', why: 'Not connected yet (Walmart seller performance needs its own permission).', url: 'https://seller.walmart.com/', kind: 'task' },
   { ch: 'Shopify', name: '💬 Customer messages', why: 'Shopify messages come by email (Shopify Inbox has no API) → connect Gmail.', url: 'https://admin.shopify.com/', kind: 'message' },
   { ch: 'Gmail', name: '📧 info@xfitting.com', why: 'Not connected yet — needs a one-time Google permission for info@ (Workspace admin, or "Allow" sign-in). Tell Claude which one it is.', url: 'https://mail.google.com/', kind: 'message' } ];
 window.ofTab = function (t) {
   OF.tab = t; document.querySelectorAll('#of-tabs .tab').forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); });
-  ['todo', 'done', 'health', 'profit', 'hist'].forEach(function (k) { g('of-pg-' + k).style.display = k === t ? '' : 'none'; });
-  if (t === 'done') ofLoadDone(); if (t === 'health') ofRenderHealth(); if (t === 'hist') ofLoadHist();
+  var work = !!OF_TABS[t]; g('of-pg-todo').style.display = work ? '' : 'none';
+  ['done', 'health', 'profit', 'hist'].forEach(function (k) { g('of-pg-' + k).style.display = k === t ? '' : 'none'; });
+  if (work) { OF.open = null; ofRender(); } if (t === 'done') ofLoadDone(); if (t === 'health') ofRenderHealth(); if (t === 'hist') ofLoadHist();
 };
-window.ofChan = function (c) { OF.ch = OF.ch === c ? '' : c; ofLoad(); };
+window.ofChan = function (c) { OF.ch[OF.tab] = OF.ch[OF.tab] === c ? '' : c; OF.open = null; ofRender(); };
 async function ofLoad() {
   try {
-    var q = g('of-q').value.trim(), d = await api('/office/items?status=open' + (OF.ch ? '&channel=' + encodeURIComponent(OF.ch) : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    var q = g('of-q').value.trim(), d = await api('/office/items?status=open' + (q ? '&q=' + encodeURIComponent(q) : ''));
     OF.items = d.items || []; OF.srcs = d.srcs || []; OF.admin = !!d.admin; g('of-tab-hist').style.display = OF.admin ? '' : 'none';
-    var tot = 0, late = 0; (d.counts || []).forEach(function (c) { tot += c.n; late += c.late || 0; });
-    g('of-n-open').innerHTML = tot ? '(' + tot + (late ? ' · <span style="color:#fecaca">' + late + ' late</span>' : '') + ')' : '';
-    g('of-chips').innerHTML = ['Amazon', 'eBay', 'Walmart', 'Shopify', 'Gmail', 'Other'].map(function (c) { var x = (d.counts || []).filter(function (k) { return k.channel === c; })[0];
-      return '<span class="chip' + (OF.ch === c ? ' on' : '') + '" onclick="ofChan(\'' + c + '\')">' + c + ' ' + (x ? x.n + (x.late ? ' · ⏰' + x.late : '') : '0') + '</span>'; }).join('');
-    ofRenderSrcs(); ofRenderList(); ofRenderGrey();
-    g('of-todo-sum').textContent = OF.items.length + ' to do' + (OF.ch ? ' on ' + OF.ch : '') + ' · the most urgent first';
+    ofRender();
   } catch (e) { g('of-list').innerHTML = '<div class="note red">' + esc(e.message) + '</div>'; }
+}
+function ofTabOf(it) { return OF_KIND[it.kind] || 'msg'; }
+// each work tab: how many wait (⏰ late) on its button; in the tab, each channel with its count — tap one to work through it
+function ofRender() {
+  var now = Date.now(), cnt = {};
+  OF.items.forEach(function (it) { var t = ofTabOf(it), c = cnt[t] = cnt[t] || { n: 0, late: 0, ch: {} }, late = Date.parse(it.due_at) < now;
+    c.n++; if (late) c.late++; var x = c.ch[it.channel] = c.ch[it.channel] || { n: 0, late: 0 }; x.n++; if (late) x.late++; });
+  document.querySelectorAll('.of-tn').forEach(function (e) { var c = cnt[e.dataset.k]; e.innerHTML = c ? '(' + c.n + (c.late ? ' <span style="background:#fff;color:#dc2626;border-radius:8px;padding:0 5px">⏰ ' + c.late + ' late</span>' : '') + ')' : ''; });
+  if (!OF_TABS[OF.tab]) return;
+  var T = OF.tab, c = cnt[T] || { n: 0, ch: {} }, sel = OF.ch[T] || '';
+  var greyCh = {}; OF_GREY.forEach(function (x) { if ((OF_KIND[x.kind] || 'msg') === T) greyCh[x.ch] = 1; });
+  var readCh = {}; Object.keys(OF_SRC).forEach(function (k) { if (OF_SRC[k][2].split(' ').indexOf(T) >= 0) readCh[OF_SRC[k][0]] = 1; });
+  g('of-chips').innerHTML = OF_CH.filter(function (ch) { return readCh[ch] || greyCh[ch] || c.ch[ch]; }).map(function (ch) { var x = c.ch[ch];
+    var grey = !readCh[ch] && !x;
+    return '<span class="chip of-chch' + (sel === ch ? ' on' : '') + '" data-ch="' + ch + '" onclick="ofChan(\'' + ch + '\')" style="font-size:14px;padding:8px 14px' + (grey ? ';opacity:.55' : '') + '">'
+      + '<span class="badge b-' + ch + '">' + ch + '</span> ' + (grey ? '⚪ not connected' : '<b>' + (x ? x.n : 0) + '</b> to do' + (x && x.late ? ' · <span class="bad">⏰ ' + x.late + ' late</span>' : '')) + '</span>'; }).join('');
+  OF.view = OF.items.filter(function (it) { return ofTabOf(it) === T && (!sel || it.channel === sel); });
+  ofRenderSrcs(); ofRenderList(); ofRenderGrey();
+  g('of-todo-sum').textContent = OF.view.length + ' to do' + (sel ? ' on ' + sel : '') + ' · the most urgent first · tap one to work on it';
 }
 window.ofLoad = ofLoad;
 function ofRenderSrcs() {
   var by = {}; OF.srcs.forEach(function (s) { by[s.src] = s; });
-  g('of-srcs').innerHTML = Object.keys(OF_SRC).map(function (k) { var s = by[k], i = OF_SRC[k];
+  g('of-srcs').innerHTML = Object.keys(OF_SRC).filter(function (k) { return OF_SRC[k][2].split(' ').indexOf(OF.tab) >= 0; }).map(function (k) { var s = by[k], i = OF_SRC[k];
     var cls = !s ? 'grey' : s.ok ? 'ok' : (/not connected/i.test(s.error || '') ? 'grey' : 'err');
     return '<div class="src ' + cls + '"><span class="badge b-' + i[0] + '">' + i[0] + '</span><b>' + i[1] + '</b><div class="muted">'
       + (!s ? '⚪ not checked yet — 🔄 Check channels now' : s.ok ? '✓ ' + (s.error ? esc(s.error) : 'read ' + ago(s.at)) : (cls === 'grey' ? '⚪ ' : '⚠ ') + esc(s.error)) + '</div></div>'; }).join('');
 }
 function ofRenderList() {
-  if (!OF.items.length) { g('of-list').innerHTML = '<div class="note green">✅ Nothing waiting' + (OF.ch ? ' on ' + esc(OF.ch) : '') + '.</div>'; return; }
-  g('of-list').innerHTML = OF.items.map(function (it) { var t = Date.parse(it.due_at), late = t < Date.now(), soon = !late && t - Date.now() < 4 * 3600000;
-    return '<div class="item' + (late ? ' late' : soon ? ' soon' : '') + '" data-id="' + it.id + '"><div class="top"><div><span class="badge b-' + esc(it.channel) + '">' + esc(it.channel) + '</span><b>' + esc(it.title) + '</b>'
-      + '<div class="muted">' + esc(it.kind) + (it.order_no ? ' · order <span class="mono">' + esc(it.order_no) + '</span>' : '') + (it.customer ? ' · ' + esc(it.customer) : '') + ' · came in ' + esc(when(it.received_at)) + ' (' + ago(it.received_at) + ')'
-      + (it.ext_status ? ' · ' + esc(it.ext_status) : '') + (it.opened_at ? ' · 👁 opened by ' + esc(it.opened_by) + ' ' + ago(it.opened_at) : '') + '</div></div>' + dueTxt(it) + '</div>'
-      + (it.detail ? '<div style="margin-top:6px;font-size:13px;white-space:pre-wrap">' + esc(String(it.detail).slice(0, 600)) + '</div>' : '')
+  var L = OF.view || [], sel = OF.ch[OF.tab] || '';
+  if (!L.length) { g('of-list').innerHTML = '<div class="note green">✅ Nothing waiting in ' + esc(OF_TABS[OF.tab]) + (sel ? ' on ' + esc(sel) : '') + '.</div>'; return; }
+  if (OF.open && !L.some(function (x) { return x.id === OF.open; })) OF.open = null;
+  g('of-list').innerHTML = L.map(function (it) { var t = Date.parse(it.due_at), late = t < Date.now(), soon = !late && t - Date.now() < 4 * 3600000, on = OF.open === it.id;
+    var head = '<div class="top" onclick="ofOpen(' + it.id + ')" style="cursor:pointer"><div><span class="badge b-' + esc(it.channel) + '">' + esc(it.channel) + '</span><b>' + esc(it.title) + '</b>'
+      + '<div class="muted">' + (it.order_no ? 'order <span class="mono">' + esc(it.order_no) + '</span> · ' : '') + (it.customer ? esc(it.customer) + ' · ' : '') + 'came in ' + ago(it.received_at)
+      + (it.opened_at ? ' · 👁 ' + esc(it.opened_by) : '') + '</div></div>' + dueTxt(it) + '</div>';
+    if (!on) return '<div class="item of-row' + (late ? ' late' : soon ? ' soon' : '') + '" data-id="' + it.id + '">' + head + '</div>';
+    return '<div class="item of-row' + (late ? ' late' : soon ? ' soon' : '') + '" data-id="' + it.id + '" style="border:2px solid var(--accent)">' + head
+      + '<div class="muted" style="margin-top:4px">' + esc(it.kind) + ' · came in ' + esc(when(it.received_at)) + (it.ext_status ? ' · ' + esc(it.ext_status) : '') + '</div>'
+      + (it.detail ? '<div style="margin-top:6px;font-size:14px;white-space:pre-wrap;background:var(--bg3);padding:8px 10px;border-radius:8px">' + esc(String(it.detail).slice(0, 2000)) + '</div>' : '')
       + (it.note ? '<div style="margin-top:4px;font-size:12px;color:var(--purple)">📝 ' + esc(it.note) + '</div>' : '')
-      + '<div class="acts">' + (it.url ? '<a class="btn" href="' + esc(it.url) + '" target="_blank" rel="noopener" onclick="ofAct(' + it.id + ',\'open\')">🔗 Open on ' + esc(it.channel) + '</a>' : '<button class="btn" onclick="ofAct(' + it.id + ',\'open\')">▶ Start</button>')
-      + '<input type="text" id="of-note-' + it.id + '" placeholder="What you did / replied (kept on record)"><button class="btn btn-primary" onclick="ofDone(' + it.id + ')">✓ Done</button></div></div>'; }).join('');
+      + '<div class="acts">' + (it.url ? '<a class="btn" href="' + esc(it.url) + '" target="_blank" rel="noopener">🔗 Open on ' + esc(it.channel) + '</a>' : '')
+      + '<input type="text" id="of-note-' + it.id + '" placeholder="What you did / replied (kept on record)" onkeydown="if(event.key===\'Enter\')ofDone(' + it.id + ')"><button class="btn btn-primary" onclick="ofDone(' + it.id + ')">✓ Done — next</button></div></div>'; }).join('');
 }
+// tap one → it opens (and the time starts: who opened it, when); tap again → closed
+window.ofOpen = function (id) { if (OF.open === id) { OF.open = null; ofRenderList(); return; } OF.open = id; ofRenderList(); var it = OF.items.filter(function (x) { return x.id === id; })[0];
+  if (it && !it.opened_at) { it.opened_at = new Date().toISOString(); it.opened_by = (USER && USER.displayName) || ''; ofAct(id, 'open'); }
+  var n = g('of-note-' + id); if (n) n.focus(); };
 function ofRenderGrey() {
+  var sel = OF.ch[OF.tab] || '', G = OF_GREY.map(function (x, i) { return [x, i]; }).filter(function (p) { return (OF_KIND[p[0].kind] || 'msg') === OF.tab && (!sel || p[0].ch === sel); });
+  g('of-grey').style.display = G.length ? '' : 'none';
   g('of-grey').innerHTML = '<b>⚪ Not connected yet — do these on the channel</b> <span class="muted">(tap 📝 when you start one: the time it takes is kept like the others)</span>'
-    + OF_GREY.map(function (x, i) { return '<div class="src grey" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-' + x.ch + '">' + x.ch + '</span><b>' + x.name + '</b>'
+    + G.map(function (p) { var x = p[0], i = p[1]; return x; }).map(function (x) { var i = OF_GREY.indexOf(x); return '<div class="src grey" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-' + x.ch + '">' + x.ch + '</span><b>' + x.name + '</b>'
       + '<span style="flex:1;min-width:200px">' + esc(x.why) + '</span><a class="btn" href="' + esc(x.url) + '" target="_blank" rel="noopener">🔗 Open</a>'
       + '<input type="text" id="of-gref-' + i + '" placeholder="Order # / customer" style="width:150px"><button class="btn" onclick="ofManual(' + i + ')">📝 I\'m handling one</button></div>'; }).join('');
 }
@@ -282,7 +317,9 @@ window.ofAct = async function (id, action) { try { await api('/office/act', { me
 window.ofDone = async function (id) {
   var n = g('of-note-' + id), note = n ? n.value.trim() : '';
   try { var d = await api('/office/act', { method: 'POST', body: JSON.stringify({ id: id, action: 'done', note: note, _requestId: _ofRid('done') }) });
-    toast('✓ Done' + (d.took != null ? ' — took ' + dur(d.took) : '')); ofLoad(); } catch (e) { toast(e.message); }
+    toast('✓ Done' + (d.took != null ? ' — took ' + dur(d.took) : ''));
+    var L = OF.view || [], k = L.map(function (x) { return x.id; }).indexOf(id), nx = L[k + 1] || L[k - 1]; // the next one opens by itself
+    OF.items = OF.items.filter(function (x) { return x.id !== id; }); OF.open = null; ofRender(); if (nx) ofOpen(nx.id); ofLoad(); } catch (e) { toast(e.message); }
 };
 window.ofManual = async function (i) {
   var x = OF_GREY[i], r = g('of-gref-' + i), ref = r ? r.value.trim() : '';
@@ -339,7 +376,7 @@ async function ofLoadHist() {
   } catch (e) { g('of-stats').innerHTML = '<div class="note red">' + esc(e.message) + '</div>'; g('of-log').innerHTML = ''; }
 }
 window.ofLoadHist = ofLoadHist;
-function openApp() { g('of-login').style.display = 'none'; g('of-app').style.display = 'flex'; ofLoad(); ofPull(false); setInterval(function () { if (OF.tab === 'todo' && !document.hidden) ofLoad(); }, 120000); }
+function openApp() { g('of-login').style.display = 'none'; g('of-app').style.display = 'flex'; ofLoad(); ofPull(false); setInterval(function () { if (OF_TABS[OF.tab] && !OF.open && !document.hidden) ofLoad(); }, 120000); }
 (function () { if (!TOKEN || !USER) { showLogin(); return; } openApp(); })();
 </script>
 <script src="xf-signout.js?v=20261019b"></script>

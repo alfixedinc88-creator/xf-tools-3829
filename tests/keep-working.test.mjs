@@ -12540,6 +12540,14 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
   check('a customer MESSAGE that came in before Nov 1 (2 days back): off the to-do list, kept on record as done ("old — before the Office started", by system), not counted as anyone\'s work; an old RETURN (feedback, cancellations, cases too) stays on the list',
     !i9.items.some(x => x.ext_id === 'OLD-1') && i9.items.some(x => x.ext_id === 'OLD-R') && o9.status === 'done' && o9.done_by === 'system' && /old — before the Office started/.test(o9.done_how) && !sys9
       && sq.prepare("SELECT COUNT(*) n FROM office_log WHERE action = 'closed' AND detail LIKE 'old — before%'").get().n >= 1, { o9, sys9 });
+  // Owner (2026-11-04): "move Office to the top, right next to Training; separate it into tabs — Messages: eBay how many to do, Amazon how
+  // many…; they click on the message, finish each tab one by one"
+  const ixO = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), ohO = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../office.html', import.meta.url)), 'utf8');
+  const tr = ixO.indexOf("window.location.href='training.html'"), of = ixO.indexOf("window.location.href='office.html'"), between = ixO.slice(tr, of);
+  check('home page: the 🧑‍💼 Office card is right after 🎓 Training (top section); Office has one tab per kind of work (💬 Messages · ↩ Returns · ✖ Cancellations · ⚠ Cases · ⭐ Feedback & reviews), each with how many wait; in a tab each channel with its count (grey = not connected); tap one → it opens (time starts), ✓ Done — next opens the next one',
+    tr > 0 && of > tr && (between.match(/class="launcher-card"/g) || []).length === 1 && ['msg', 'ret', 'can', 'case', 'fb'].every(k => ohO.includes('id="of-tab-' + k + '"'))
+      && /var OF_KIND = \{ message: 'msg', return: 'ret', refund: 'ret', cancel: 'can', case: 'case', inquiry: 'case', feedback: 'fb', review: 'fb' \};/.test(ohO) && /class="chip of-chch/.test(ohO)
+      && /window\.ofOpen = function \(id\)/.test(ohO) && /✓ Done — next/.test(ohO) && /if \(nx\) ofOpen\(nx\.id\)/.test(ohO), { tr, of });
   globalThis.fetch = realF; keys.forEach(k => { if (saved[k] === undefined) delete env[k]; else env[k] = saved[k]; });
   sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
 }
