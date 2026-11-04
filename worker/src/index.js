@@ -23175,18 +23175,21 @@ async function shipAckPrintDupe(request, env) {
 // ── 🤖 Auto print (owner, 2026-10-08) ────────────────────────────────────
 // Labels the 🖨 Printer station printed by itself (label_print_batch source
 // 'printer station'), by tracking # → { id, printedAt (latest), order, … }.
-async function shipAutoPrinted(env, sinceIso) {
+// withHand: + the labels printed with 🖨 Print in Auto Label (source 'by hand') — the Auto print report checks those too (owner
+// 2026-11-04: "17 labels not printed yet … I clicked print … then 6 … the report says nothing to check — is that right?"). The
+// Print Log's 🤖 AUTO PRINT tag stays the printer station's only.
+async function shipAutoPrinted(env, sinceIso, withHand) {
   await labelBatchEnsure(env);
-  const batches = await d1All(env, "SELECT ts, label_ids FROM label_print_batch WHERE source = 'printer station' AND ts >= ? ORDER BY ts", [sinceIso]);
-  const at = new Map();
-  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {} ids.forEach(id => { id = parseInt(id); if (id > 0) at.set(id, b.ts); }); });
+  const batches = await d1All(env, "SELECT ts, label_ids, source FROM label_print_batch WHERE (source = 'printer station'" + (withHand ? " OR source = 'by hand'" : '') + ") AND ts >= ? ORDER BY ts", [sinceIso]);
+  const at = new Map(), how = new Map();
+  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {} ids.forEach(id => { id = parseInt(id); if (id > 0) { at.set(id, b.ts); how.set(id, b.source === 'by hand' ? 'hand' : 'auto'); } }); });
   const out = new Map(), ids = [...at.keys()];
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
     (await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service FROM label_print_queue WHERE id IN (${part.map(() => '?').join(',')})`, part)).forEach(r => {
       const t = normalizeShipTracking(String(r.tracking || '')); if (!t) return;
       const prev = out.get(t), ts = at.get(r.id);
-      if (!prev || ts > prev.printedAt) out.set(t, { id: r.id, printedAt: ts, order: r.order_number || '', channel: r.channel || '', carrier: r.carrier || '', service: r.service || '', tracking: t });
+      if (!prev || ts > prev.printedAt) out.set(t, { id: r.id, printedAt: ts, how: how.get(r.id) || 'auto', order: r.order_number || '', channel: r.channel || '', carrier: r.carrier || '', service: r.service || '', tracking: t });
     });
   }
   return out;
@@ -23198,7 +23201,7 @@ async function shipAutoPrintReport(url, env) {
   await ensureShipD1Tables(env); await labelWatchEnsure(env);
   const days = Math.min(31, Math.max(1, parseInt(url.searchParams.get('days')) || 1));
   const since = nyDaysStartUTC(days), now = Date.now();
-  const ap = await shipAutoPrinted(env, since);
+  const ap = await shipAutoPrinted(env, since, true); // 🤖 the printer station + ✋ 🖨 Print in Auto Label
   const tracks = [...ap.keys()];
   const first = async (table) => {
     const m = new Map();
@@ -23222,7 +23225,8 @@ async function shipAutoPrintReport(url, env) {
       checkedBy: c ? c.by_user : null, checkedAt: c ? c.at : null, checkedNote: c ? c.note : null };
   }).sort((x, y) => (x.printedAt < y.printedAt ? 1 : -1));
   const count = k => rows.filter(r => r.state === k).length;
-  return cors(new Response(JSON.stringify({ ok: true, days, since, rows, counts: { total: rows.length, read: count('read'), later: count('later'), missing: count('missing'), waiting: count('waiting') } }),
+  return cors(new Response(JSON.stringify({ ok: true, days, since, rows, counts: { total: rows.length, read: count('read'), later: count('later'), missing: count('missing'), waiting: count('waiting'),
+    auto: rows.filter(r => r.how !== 'hand').length, hand: rows.filter(r => r.how === 'hand').length } }),
     { headers: { 'Content-Type': 'application/json' } }));
 }
 

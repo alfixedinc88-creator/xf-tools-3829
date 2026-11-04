@@ -4503,13 +4503,18 @@ console.log('\n🤖 Print Log: AUTO PRINT tag; report of auto prints not read by
     S(T[0]).autoPrint === true && S(T[0]).order === 'AP-1' && !S(T[3]).autoPrint, [S(T[0]), S(T[3])]);
   const rp = await get('/ship/auto-print-report?days=1');
   const R = n => (rp.rows || []).find(x => x.order === n) || {};
-  check('report: AP-1 ✓ read by Print Log · AP-2 ⚠ missed by Print Log but picked (PK) + packed (PA) · AP-3 ❌ not scanned anywhere · AP-4 (by hand) not in it',
+  // Owner (2026-11-04): "17 labels not printed yet … I clicked print … then 6 … is the report right?" — the labels printed with 🖨 Print in Auto
+  // Label (by hand) were never in it. Now they are (✋), next to the station's (🤖); the Print Log's 🤖 AUTO PRINT tag stays the station's only.
+  check('report: AP-1 🤖 ✓ read by Print Log · AP-2 🤖 ⚠ missed by Print Log but picked (PK) + packed (PA) · AP-3 🤖 ❌ not scanned anywhere · AP-4 ✋ printed by hand, ✓ read — in it too (3 by the station, 1 by hand)',
     rp.ok && R('AP-1').state === 'read' && R('AP-2').state === 'later' && R('AP-2').pickBy === 'PK' && R('AP-2').packBy === 'PA' && !!R('AP-2').pickAt && !!R('AP-2').packAt
-    && R('AP-3').state === 'missing' && !R('AP-4').order && rp.counts.total === 3 && rp.counts.later === 1 && rp.counts.missing === 1 && rp.counts.read === 1, rp);
+    && R('AP-3').state === 'missing' && R('AP-4').how === 'hand' && R('AP-4').state === 'read' && R('AP-1').how === 'auto'
+    && rp.counts.total === 4 && rp.counts.auto === 3 && rp.counts.hand === 1 && rp.counts.later === 1 && rp.counts.missing === 1 && rp.counts.read === 2, rp);
   const { readFileSync: rf13 } = await import('node:fs');
   const ph = rf13(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('Print Log tab: 🤖 AUTO PRINT badge, the 🤖 Auto print report card (Today / 3 / 7 / 30 days, not read / not scanned / all, Excel)',
     /s\.autoPrint \? '<span class="ps-badge"/.test(ph) && /id="ps-ap-card"/.test(ph) && /\/ship\/auto-print-report\?days=/.test(ph) && /window\.psApCsv = function/.test(ph), null);
+  check('…the card says 🤖 by the printer station · ✋ with 🖨 Print in Auto Label; "Not scanned anywhere yet" with none says that (not "every label was read by the Print Log" when some were missed)',
+    /✋ ' \+ \(c\.hand \|\| 0\) \+ ' with 🖨 Print in Auto Label/.test(ph) && /show === 'missing' \? '✓ None not scanned anywhere/.test(ph) && /were missed by the Print Log but scanned at Picking \/ Packing/.test(ph), null);
 }
 
 // Owner (2026-10-09): "which tracking numbers from 15 to 60 days ago still don't show delivered, so I can open claims
