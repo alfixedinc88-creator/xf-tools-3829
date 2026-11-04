@@ -4402,9 +4402,11 @@ function _psPaintScanSummary(scans, labelHtml) {
   var byUser = {};
   scans.forEach(function(s) {
     var who = s.initials || 'Unassigned';
-    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[] };
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[], seen:{} };
     byUser[who].total++;
-    if (s.timestamp) byUser[who].ts.push(s.timestamp);
+    // ⏱ one label = one order, however many pieces (owner 2026-11-04): the same label again doesn't count twice in the time
+    var tk = String(s.tracking || '').toUpperCase();
+    if (s.timestamp && !(tk && byUser[who].seen[tk])) { byUser[who].ts.push(s.timestamp); if (tk) byUser[who].seen[tk] = 1; }
     if (s.carrier === 'UPS') byUser[who].ups++;
     else if (s.carrier === 'USPS') byUser[who].usps++;
     else byUser[who].other++;
@@ -4446,6 +4448,25 @@ var PS_HEAVY_LB_THRESHOLD = 13;
 // separately since it likely needs a different box. A package with no
 // weight on record can't be judged either way, so it stays in the plain
 // chip rather than silently vanishing from both.
+// ⏱ Owner (2026-11-04): "go with order, not pieces — one label is one order however many inside; and by the package sizes:
+// 1 item how many orders how long, 1 item over 13 lb how long, 2 items how long…". For each person, their labels in time order
+// (the same label again counts once); the time from one label to the next (under 10 min — a longer gap is a break, left out)
+// is the time that order took, and goes to that order's package size. Average = that time ÷ those orders.
+function _psSizeKey(s) {
+  var n = parseInt(s.itemCount, 10); if (s.itemCount == null || !n || n < 1) return 'unknown';
+  var w = parseFloat(s.weightLb); return (s.weightLb != null && !isNaN(w) && w > PS_HEAVY_LB_THRESHOLD) ? n + ':heavy' : String(n);
+}
+function _psPaceBySize(scans) {
+  var per = {}, out = {};
+  (scans || []).forEach(function(s) { var t = Date.parse(s.timestamp); if (isNaN(t)) return; (per[s.initials || 'Unassigned'] = per[s.initials || 'Unassigned'] || []).push({ t: t, s: s }); });
+  Object.keys(per).forEach(function(who) {
+    var seen = {}, L = per[who].sort(function(a, b) { return a.t - b.t; }).filter(function(x) { var k = String(x.s.tracking || '').toUpperCase(); if (k && seen[k]) return false; if (k) seen[k] = 1; return true; });
+    for (var i = 1; i < L.length; i++) { var d = L[i].t - L[i - 1].t; if (!(d > 0 && d < PS_PACE_GAP_MIN * 60000)) continue;
+      var k = _psSizeKey(L[i].s), o = out[k] = out[k] || { n: 0, ms: 0 }; o.n++; o.ms += d; }
+  });
+  return out;
+}
+function _psPaceFmt(o) { if (!o || o.n < 3) return ''; var sec = Math.round(o.ms / o.n / 1000); return sec < 90 ? sec + ' sec' : (Math.round(sec / 6) / 10) + ' min'; }
 function _psRenderItemCountBreakdown(scans, elId) {
   var el = document.getElementById(elId);
   if (!el) return;
@@ -4468,16 +4489,19 @@ function _psRenderItemCountBreakdown(scans, elId) {
     return aHeavy - bHeavy;
   });
   if (!keys.length && !unknown) { el.innerHTML = ''; return; }
+  var pace = (typeof _psPaceOn !== 'undefined' && _psPaceOn && _psPaceAdmin()) ? _psPaceBySize(scans) : null; // ⏱ only when an Admin / Owner shows pace
   var chips = keys.map(function(key) {
     var heavy = key.indexOf(':heavy') !== -1;
     var n = parseInt(key, 10);
     var label = n + ' item' + (n !== 1 ? 's' : '') + (heavy ? ' over ' + PS_HEAVY_LB_THRESHOLD + ' lb' : '');
-    return '<span class="ps-itemcount-chip' + (heavy ? ' heavy' : '') + '" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',\'' + key + '\')"><b>' + counts[key] + '</b><span>× ' + label + '</span></span>';
+    var pt = pace ? _psPaceFmt(pace[key]) : '';
+    return '<span class="ps-itemcount-chip' + (heavy ? ' heavy' : '') + '" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',\'' + key + '\')"><b>' + counts[key] + '</b><span>× ' + label + '</span>'
+      + (pt ? '<span class="ps-itemcount-pace" title="Average time an order (one label), steady work only — ' + pace[key].n + ' orders timed" style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--green);margin-left:4px">⏱ ' + pt + '</span>' : '') + '</span>';
   }).join('');
   if (unknown) {
     chips += '<span class="ps-itemcount-chip unknown" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',\'unknown\')"><b>' + unknown + '</b><span>unknown size</span></span>';
   }
-  el.innerHTML = '<span class="ps-itemcount-label">Package sizes</span>' + chips;
+  el.innerHTML = '<span class="ps-itemcount-label">Package sizes' + (pace ? ' <span style="font-weight:400;text-transform:none;letter-spacing:0">· ⏱ = average time an order (one label, however many pieces)</span>' : '') + '</span>' + chips;
 }
 
 var _psItemCountModalOpen = false;
@@ -4565,8 +4589,8 @@ function _psPaceHtml(u) {
   if (!_psPaceOn || !_psPaceAdmin()) return ''; // hidden unless an Admin / Owner tapped ⏱ Show pace
   var p = _psPace(u && u.ts); if (!p) return '';
   var sec = Math.round(p.avgMin * 60);
-  return '<span class="ps-scan-summary-chip-pace" title="Steady work only: ' + p.n + ' scans less than ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out)" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
-    + (sec < 90 ? sec + ' sec' : p.avgMin + ' min') + ' each · ' + p.perHour + ' an hour</span>';
+  return '<span class="ps-scan-summary-chip-pace" title="One label = one order, however many pieces. Steady work only: ' + p.n + ' orders less than ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out)" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
+    + (sec < 90 ? sec + ' sec' : p.avgMin + ' min') + ' an order · ' + p.perHour + ' orders an hour</span>';
 }
 function _psRenderPersonChips() {
   var byEl = document.getElementById('ps-scan-summary-by');
@@ -6243,6 +6267,7 @@ window.psTogglePace = function() {
   _psPaceOn = !_psPaceOn; _psPaceNote();
   if (typeof _psRenderPersonChips === 'function') _psRenderPersonChips();
   if (typeof _psPickRenderPersonChips === 'function') _psPickRenderPersonChips();
+  if (typeof _psItemCountSource !== 'undefined' && typeof _psRenderItemCountBreakdown === 'function') Object.keys(_psItemCountSource).forEach(function(id) { _psRenderItemCountBreakdown(_psItemCountSource[id], id); }); // ⏱ on the package sizes too
 };
 window.psSwitchTab = function(name) {
   if (name === 'scan' || name === 'picking') _psPaceNote();
@@ -8204,9 +8229,11 @@ function _psPaintPickSummary(scans, labelHtml) {
   var byUser = {};
   scans.forEach(function(s) {
     var who = s.initials || 'Unassigned';
-    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[] };
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0, ts:[], seen:{} };
     byUser[who].total++;
-    if (s.timestamp) byUser[who].ts.push(s.timestamp);
+    // ⏱ one label = one order, however many pieces (owner 2026-11-04): the same label again doesn't count twice in the time
+    var tk = String(s.tracking || '').toUpperCase();
+    if (s.timestamp && !(tk && byUser[who].seen[tk])) { byUser[who].ts.push(s.timestamp); if (tk) byUser[who].seen[tk] = 1; }
     if (s.carrier === 'UPS') byUser[who].ups++;
     else if (s.carrier === 'USPS') byUser[who].usps++;
     else byUser[who].other++;
