@@ -380,10 +380,14 @@ document.addEventListener('input', function (e) {
       { key: 'history', label: 'History', sel: '#pf-app .panel details:has(#pf-log)' } ] },
     // 🧑‍💼 Owner (2026-11-02): the office person's page — every channel's messages / returns / cancellations / feedback / account health
     { key: 'office', file: 'office.html', name: '🧑‍💼 Office', needs: 'any sign-in', card: card('office.html'), tabs: [
-      { key: 'todo', label: '📋 To do', sel: '#of-tab-todo, #of-pg-todo', parts: [
-        { key: 'srcs', label: 'Channel status (what was read, what is grey)', sel: '#of-srcs' },
+      { key: 'msg', label: '💬 Messages', sel: '#of-tab-msg', parts: [
+        { key: 'srcs', label: 'What each channel reads (what was read, what is grey)', sel: '#of-srcs' },
         { key: 'grey', label: '⚪ Not connected yet — 📝 I\'m handling one', sel: '#of-grey' },
         { key: 'pull', label: '🔄 Check channels now', sel: '#of-pull-btn' } ] },
+      { key: 'ret', label: '↩ Returns', sel: '#of-tab-ret' },
+      { key: 'can', label: '✖ Cancellations', sel: '#of-tab-can' },
+      { key: 'case', label: '⚠ Cases', sel: '#of-tab-case' },
+      { key: 'fb', label: '⭐ Feedback & reviews', sel: '#of-tab-fb' },
       { key: 'done', label: '✅ Done', sel: '#of-tab-done, #of-pg-done' },
       { key: 'health', label: '🩺 Account health', sel: '#of-tab-health, #of-pg-health' },
       { key: 'profit', label: '💰 Profit', sel: '#of-tab-profit, #of-pg-profit' },
