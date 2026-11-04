@@ -30126,6 +30126,7 @@ const AUTOLABEL_PAGE_NEEDS = 4; // auto runs merge only after one merge by hand 
 const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
+  autoCancel: 'preview',       // 🗑 cancelled on the market, NO label yet → 'off' | 'preview' (list only) | 'on' (cancel it in Veeqo) — owner 2026-11-04
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
   // ...except in these New York times, each with its own wait (owner 2026-10-16): Mon–Fri 3:30–4 pm 3 min, from 4 pm none;
   // Sat 12:30–1 pm 3 min, from 1 pm none. Until 3:30 pm (Sat 12:30 pm) and on Sunday: the 30-min wait.
@@ -30345,6 +30346,7 @@ function autolabelCleanConfig(c) {
   return {
     mode: ['off', 'preview', 'auto'].includes(c.mode) ? c.mode : 'off',
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
+    autoCancel: ['off', 'preview', 'on'].includes(c.autoCancel) ? c.autoCancel : AUTOLABEL_DEFAULTS.autoCancel,
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
     noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
     noWaitMinutes:     num(c.noWaitMinutes, D.noWaitMinutes, 0, 30),
@@ -31234,6 +31236,64 @@ async function autolabelHandleNewCancels(env, cancels, cfg) {
     out.newSeen++;
   }
   return out;
+}
+
+// 🗑 Owner (2026-11-04): "where there's cancellation in each market, can we auto cancel the orders if not print the label yet?"
+// Every order a market has cancelled — the WHOLE order, done (Amazon Canceled; Walmart all lines cancelled; Shopify cancelled; eBay
+// cancelled / cancel request completed) — that has NO label yet is cancelled in Veeqo, so nobody can print it by hand later.
+// Never: an order with a label / tracking (that goes on the 🗑️ Cancellation list — cancelWatch), shipped, already cancelled, linked to a
+// Stamps.com label (ship_label_link), a partial cancel, an eBay cancel REQUEST not accepted yet, or a refund only — those are listed
+// for a person ("needs a person"), never cancelled automatically. cfg.autoCancel: 'preview' = only listed ("would cancel"), 'on' = cancelled.
+// After the cancel the order is read again from Veeqo: it counts as cancelled only when Veeqo itself says "cancelled". Every order is kept
+// in veeqo_auto_cancel (market, order #, Veeqo id, what happened, when, error); a failed one is tried again (3 times). 15 look-ups a run.
+const AUTOCANCEL_FULL = { amazon: s => s === 'CANCELED', walmart: s => s === 'CANCELLED', shopify: s => s === 'CANCELLED', ebay: s => s === 'CANCELED' || s === 'CANCEL_COMPLETED' };
+async function autolabelAutoCancel(env, cancels, cfg) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS veeqo_auto_cancel (channel TEXT NOT NULL, order_num TEXT NOT NULL, state TEXT, veeqo_id TEXT, result TEXT,
+    tries INTEGER DEFAULT 0, error TEXT, first_at TEXT, at TEXT, mode TEXT, customer TEXT, PRIMARY KEY (channel, order_num))`).run();
+  const out = { mode: cfg.autoCancel, cancelled: 0, wouldCancel: 0, hasLabel: 0, needsPerson: 0, failed: 0, checked: 0 };
+  const now = new Date().toISOString(); let lookups = 0;
+  const FINAL = new Set(['cancelled', 'already_cancelled', 'has_label', 'shipped', 'needs_person']);
+  const save = (c, num, o) => env.DB.prepare(`INSERT INTO veeqo_auto_cancel (channel, order_num, state, veeqo_id, result, tries, error, first_at, at, mode, customer) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(channel, order_num) DO UPDATE SET state = excluded.state, veeqo_id = excluded.veeqo_id, result = excluded.result, tries = excluded.tries, error = excluded.error, at = excluded.at,
+    mode = excluded.mode, customer = excluded.customer`).bind(c.channel, num, c.state || '', o.veeqoId || '', o.result, o.tries || 0, (o.error || '').slice(0, 300), now, now, cfg.autoCancel, (o.customer || '').slice(0, 80)).run();
+  for (const c of cancels.all) {
+    if (c.channel === 'veeqo') continue; // Veeqo already says cancelled
+    const num = autolabelOrderNum(c.num), st = String(c.state || '').toUpperCase();
+    const had = await env.DB.prepare('SELECT result, tries FROM veeqo_auto_cancel WHERE channel = ? AND order_num = ?').bind(c.channel, num).first();
+    if (had && (FINAL.has(had.result) || (had.result === 'failed' && had.tries >= 3) || (had.result === 'not_in_veeqo' && had.tries >= 3)) ) continue;
+    if (had && had.result === 'would_cancel' && cfg.autoCancel !== 'on') continue; // listed already; looked at again once it is turned on
+    const full = (AUTOCANCEL_FULL[c.channel] || (() => false))(st);
+    if (!full) { if (!had) { await save(c, num, { result: 'needs_person', error: st === 'PARTIAL_CANCEL' ? 'only part of the order was cancelled' : /REQUESTED/.test(st) ? 'buyer asked to cancel — accept it on ' + c.channel + ' first' : 'refund / ' + st + ' — not a whole-order cancel' }); out.needsPerson++; } continue; }
+    if (lookups >= 15) break;
+    lookups++; out.checked++;
+    let order = c.order || null;
+    if (!order) { const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(c.num)}&page_size=5&page=1`).catch(() => null);
+      order = (Array.isArray(res) ? res : []).find(o => autolabelOrderNum(o.number) === num || (c.alt || []).some(a => autolabelOrderNum(a) === autolabelOrderNum(o.number))) || null; }
+    const tries = ((had && had.tries) || 0) + 1, cust = order ? veeqoExtractCustomerName(order) || '' : '';
+    if (!order) { await save(c, num, { result: 'not_in_veeqo', tries }); continue; }
+    const vst = String(order.status || '').toLowerCase(), trk = veeqoExtractTracking(order) || '';
+    if (vst === 'cancelled') { await save(c, num, { veeqoId: String(order.id), result: 'already_cancelled', customer: cust }); continue; }
+    if (vst === 'shipped' || trk) { await save(c, num, { veeqoId: String(order.id), result: trk ? 'has_label' : 'shipped', customer: cust, error: trk ? 'label ' + trk : '' }); out.hasLabel++; continue; }
+    const link = await env.DB.prepare('SELECT tracking FROM ship_label_link WHERE UPPER(order_num) = ? LIMIT 1').bind(String(order.number || c.num).toUpperCase()).first().catch(() => null);
+    if (link) { await save(c, num, { veeqoId: String(order.id), result: 'has_label', customer: cust, error: 'Stamps.com label ' + (link.tracking || '') }); out.hasLabel++; continue; }
+    if (cfg.autoCancel !== 'on') { await save(c, num, { veeqoId: String(order.id), result: 'would_cancel', customer: cust }); out.wouldCancel++; continue; }
+    let err = '';
+    try {
+      await veeqoFetch(env, `/orders/${order.id}/cancel`, { method: 'PUT', body: '{}' });
+      const again = await veeqoFetch(env, `/orders/${order.id}`).catch(() => null);
+      if (!again || String(again.status || '').toLowerCase() !== 'cancelled') err = 'Veeqo did not show it cancelled after the cancel (status: ' + ((again && again.status) || '?') + ')';
+    } catch (e) { err = String(e && e.message || e); }
+    if (err) { await save(c, num, { veeqoId: String(order.id), result: 'failed', tries, error: err, customer: cust }); out.failed++; continue; }
+    await save(c, num, { veeqoId: String(order.id), result: 'cancelled', customer: cust }); out.cancelled++;
+    await autolabelLog(env, { orderId: order.id, orderNumber: order.number, channel: veeqoExtractChannel(order), customer: cust, action: 'auto_cancelled',
+      reason: `cancelled on ${c.channel} (${st}), no label yet → cancelled in Veeqo` }).catch(() => {});
+  }
+  return out;
+}
+async function autolabelAutoCancelList(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS veeqo_auto_cancel (channel TEXT NOT NULL, order_num TEXT NOT NULL, state TEXT, veeqo_id TEXT, result TEXT,
+    tries INTEGER DEFAULT 0, error TEXT, first_at TEXT, at TEXT, mode TEXT, customer TEXT, PRIMARY KEY (channel, order_num))`).run();
+  return ((await env.DB.prepare("SELECT channel, order_num AS orderNum, state, veeqo_id AS veeqoId, result, tries, error, first_at AS firstAt, at, mode, customer FROM veeqo_auto_cancel WHERE result != 'already_cancelled' ORDER BY at DESC LIMIT 200").all()).results) || [];
 }
 
 // ── Veeqo rates + buying ─────────────────────────────────────────────────
@@ -32539,6 +32599,10 @@ async function autolabelRunOnce(env, opts = {}) {
     try { result.cancelWatch = await autolabelHandleNewCancels(env, cancels, cfg); }
     catch (e) { result.cancelWatch = { error: e.message }; }
   }
+  if (cfg.autoCancel && cfg.autoCancel !== 'off') { // 🗑 cancelled on the market, no label yet → cancelled in Veeqo (or listed, in preview)
+    try { result.autoCancel = await autolabelAutoCancel(env, cancels, cfg); }
+    catch (e) { result.autoCancel = { error: e.message }; }
+  }
   if (cfg.mode === 'off' && !opts.force) { result.finishedAt = new Date().toISOString(); return result; }
 
   // Orders already on the (hand-entered or auto) Cancellation list, by order number.
@@ -32942,7 +33006,7 @@ async function autolabelCron(env) {
   const cfg = await autolabelLoadConfig(env);
   await scanFormClockEnsure(env); // ⏰ the exact 8:50 pm alarm stays set
   try { await autolabelScanFormTick(env); } catch (e) { console.error('[autolabel] scan form tick', e.message); }
-  if (cfg.mode === 'off' && !cfg.cancelWatch) return { skipped: 'off' };
+  if (cfg.mode === 'off' && !cfg.cancelWatch && (!cfg.autoCancel || cfg.autoCancel === 'off')) return { skipped: 'off' };
   let last = null;
   try { last = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
   if (last && last.trigger === 'cron' && last.startedAt &&
@@ -33378,6 +33442,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
 
   // ▶ Run now. Owner: "auto buy labels is on, why do I still see would buy? as soon as it's in would buy, buy the
   // label" → with ⚡ Auto on it buys like the automatic run (same checks, limits, pause times); otherwise a preview.
+  if (path === '/veeqo/autolabel/auto-cancels' && method === 'GET') {
+    return cors(new Response(JSON.stringify({ ok: true, rows: await autolabelAutoCancelList(env) }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   if (path === '/veeqo/autolabel/run' && method === 'POST') {
     const cfgNow = await autolabelLoadConfig(env);
     const result = await autolabelRun(env, { trigger: 'manual', buy: cfgNow.mode === 'auto', force: true });

@@ -1484,6 +1484,13 @@ body {
       <div style="font-size:11px;color:var(--text3);margin-top:8px">Picking and Packing will get an alert the moment this tracking is scanned — they'll tear the label off, throw it away, and tap Confirm. Come back here once it's actually been canceled (in Veeqo, etc) and mark it done.</div>
     </div>
 
+    <!-- 🤖 Cancelled on the market with no label yet → cancelled in Veeqo by Auto Label (owner 2026-11-04) -->
+    <div class="ps-card" id="ps-autocancel-card" style="margin-top:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-weight:700;font-size:14px;flex:1">🤖 Auto-cancelled in Veeqo (cancelled on the market, no label yet)</div>
+        <span onclick="psLoadAutoCancels()" style="cursor:pointer;font-size:12px;color:var(--accent)">↻</span></div>
+      <div id="ps-autocancel-list" style="font-size:12px;color:var(--text3)">Loading…</div>
+    </div>
+
     <div class="ps-section-header" style="margin-top:16px">
       <div class="ps-section-title">Open Cancellations</div>
       <div class="ps-section-cnt" id="ps-cancelorder-cnt-label">0 open</div>
@@ -1861,6 +1868,14 @@ body {
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer;margin-top:6px">
           <input type="checkbox" id="ps-al-cancelwatch" onchange="psAlSaveConfig()">
           Cancellation watch: put cancelled orders that already have a label on the 🗑️ Cancellation list
+        </label>
+        <!-- 🗑 Owner (2026-11-04): "where there's cancellation in each market, can we auto cancel the orders if not print the label yet?" -->
+        <label id="ps-al-autocancel-row" style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);margin-top:6px;flex-wrap:wrap">
+          Cancelled on the market and <b>no label yet</b> → cancel it in Veeqo:
+          <select id="ps-al-autocancel" class="ps-field-input" style="width:auto;margin:0;padding:4px 8px" onchange="psAlSaveConfig()">
+            <option value="off">⏸ Off</option><option value="preview">👀 Preview only (list, cancel nothing)</option><option value="on">✅ On — cancel in Veeqo</option>
+          </select>
+          <span style="font-size:11px;color:var(--text3);flex-basis:100%">Only whole orders the market already cancelled (Amazon, Walmart, Shopify, eBay). Never an order with a label, shipped, or a Stamps.com label; a partial cancel, an eBay cancel request not accepted yet, or a refund is listed for a person. See 🗑️ Cancellation → 🤖 Auto-cancelled.</span>
         </label>
         <div id="ps-al-status" style="font-size:12px;color:var(--text3);margin-top:10px;font-family:var(--mono);line-height:1.6"></div>
       </div>
@@ -6273,7 +6288,7 @@ window.psSwitchTab = function(name) {
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); psCbLoadScanForms(); }
   if (name === 'labelcheck')  { psLcFocus(); }
-  if (name === 'cancellation') { psLoadCancelOrders(); }
+  if (name === 'cancellation') { psLoadCancelOrders(); psLoadAutoCancels(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
   if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); _psRenderOrderLookupDebugTool(); }
@@ -7120,6 +7135,30 @@ window.psPrintDupeAck = function(id, btnEl) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Confirm'; }
     _psToast('Could not confirm — ' + e.message, 'err');
   });
+};
+
+// 🤖 What Auto Label did with orders a market cancelled before a label was printed (🗑 owner 2026-11-04): cancelled in Veeqo,
+// would be (preview), has a label (→ the list below), could not, or needs a person (partial / request / refund). Newest first.
+var PS_AC_TXT = { cancelled: ['✅ Cancelled in Veeqo', 'var(--green)'], would_cancel: ['👀 Would cancel (preview)', 'var(--accent)'], failed: ['✗ Could not cancel', 'var(--red)'],
+  has_label: ['🏷 Has a label — not cancelled', 'var(--orange)'], shipped: ['🚚 Shipped — not cancelled', 'var(--orange)'], needs_person: ['👤 Needs a person', 'var(--orange)'], not_in_veeqo: ['… not in Veeqo (yet)', 'var(--text3)'] };
+window.psLoadAutoCancels = function() {
+  var el = document.getElementById('ps-autocancel-list'); if (!el) return;
+  fetch(PS_WORKER + '/veeqo/autolabel/auto-cancels', { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) {
+    var rows = (d && d.rows) || [];
+    if (!d || !d.ok) { el.innerHTML = '<span style="color:var(--red)">Could not load</span>'; return; }
+    if (!rows.length) { el.innerHTML = 'Nothing yet — orders a market cancels before their label is printed show here.'; return; }
+    var E = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+    var t = function(iso) { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
+    var n = {}; rows.forEach(function(r) { n[r.result] = (n[r.result] || 0) + 1; });
+    el.innerHTML = '<div style="margin-bottom:6px;color:var(--text2)">' + Object.keys(n).map(function(k) { return '<b style="color:' + ((PS_AC_TXT[k] || [])[1] || 'inherit') + '">' + n[k] + '</b> ' + E(((PS_AC_TXT[k] || [k])[0])); }).join(' · ') + '</div>'
+      + '<div style="overflow-x:auto;max-height:320px;overflow-y:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>'
+      + ['When', 'Market', 'Order #', 'Customer', 'What happened', 'Why'].map(function(h) { return '<th style="text-align:left;padding:4px 6px;border-bottom:2px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text3)">' + h + '</th>'; }).join('')
+      + '</tr></thead><tbody>' + rows.map(function(r) { var x = PS_AC_TXT[r.result] || [r.result, 'var(--text2)'];
+        return '<tr><td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + t(r.at) + '</td><td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + E(r.channel) + '</td>'
+          + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--mono)">' + E(r.orderNum) + '</td><td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + E(r.customer) + '</td>'
+          + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);font-weight:700;color:' + x[1] + ';white-space:nowrap">' + E(x[0]) + '</td>'
+          + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);color:var(--text3)">' + E(r.error || r.state) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }).catch(function() { el.innerHTML = '<span style="color:var(--red)">Could not load — check WiFi</span>'; });
 };
 
 // ── Order Cancellation (Cancellation tab + Picking/Packing intercept) ────
@@ -9402,6 +9441,7 @@ function _psAlRenderConfig(d) {
     b.style.borderColor = on ? col : '';
   });
   document.getElementById('ps-al-cancelwatch').checked = !!c.cancelWatch;
+  var acSel = document.getElementById('ps-al-autocancel'); if (acSel) acSel.value = c.autoCancel || 'preview';
   document.querySelectorAll('#ps-al-rules [data-k]').forEach(function(inp){
     var k = inp.getAttribute('data-k');
     if (k === 'lowValuePct') inp.value = Math.round((c.lowValueRatio || 0) * 100);
@@ -9449,6 +9489,7 @@ function _psAlReadRules() {
     else c[k] = inp.value;
   });
   c.cancelWatch = document.getElementById('ps-al-cancelwatch').checked;
+  var acSel = document.getElementById('ps-al-autocancel'); if (acSel) c.autoCancel = acSel.value;
   return c;
 }
 
@@ -9553,6 +9594,10 @@ function _psAlRenderRun(r) {
       ? '<span style="color:var(--green)">' + k + ' ✓ ' + c.count + '</span>'
       : '<span style="color:var(--red)" title="' + _psAlEsc(c.error) + '">' + k + ' ✗ error</span>';
   }).join(' · ') + (r.cancelWatch && r.cancelWatch.addedToCancelList ? ' · <b>' + r.cancelWatch.addedToCancelList + ' added to Cancellation list</b>' : '')
+    + (r.autoCancel ? (r.autoCancel.error ? ' · <span style="color:var(--red)">🗑 auto-cancel: ' + _psAlEsc(r.autoCancel.error) + '</span>'
+      : (r.autoCancel.cancelled ? ' · <b style="color:var(--green)">🗑 ' + r.autoCancel.cancelled + ' cancelled in Veeqo (no label yet)</b>' : '')
+      + (r.autoCancel.wouldCancel ? ' · <b>👀 ' + r.autoCancel.wouldCancel + ' would be cancelled in Veeqo (preview)</b>' : '')
+      + (r.autoCancel.failed ? ' · <b style="color:var(--red)">🗑 ' + r.autoCancel.failed + ' could not be cancelled — see 🗑️ Cancellation</b>' : '')) : '')
     + (r.notes && r.notes.length ? '<div style="color:var(--orange);margin-top:4px">' + r.notes.map(_psAlEsc).join('<br>') + '</div>' : '');
 
   var counts = r.counts || {};

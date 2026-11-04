@@ -12669,5 +12669,65 @@ console.log('\n💲 23-6-2: new rows take the newest real price, not the old COG
   sq.exec("DELETE FROM master_list WHERE part_num LIKE '93-6-2=%'; DELETE FROM cost_layer WHERE part LIKE '93-6-2=%'; DELETE FROM part_price_log WHERE parent = '93-6-2'; DELETE FROM cogs WHERE base_sku = '93-6-2'");
 }
 
+console.log('\n🗑 Cancelled on the market, no label yet → cancelled in Veeqo (Auto Label; preview / on)');
+{
+  // Owner (2026-11-04): "where there's cancellation in each market, can we auto cancel the orders if not print the label yet?"
+  const { readFileSync: rfC } = await import('node:fs');
+  const wk = rfC(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  const src = wk.slice(wk.indexOf('const AUTOCANCEL_FULL'), wk.indexOf('// ── Veeqo rates + buying'));
+  // a made-up Veeqo: 5 orders
+  const V = { 'A-1': { id: 11, number: 'A-1', status: 'awaiting_fulfillment' }, 'A-2': { id: 12, number: 'A-2', status: 'awaiting_fulfillment', label: '1Z999' },
+    'W-3': { id: 13, number: 'W-3', status: 'awaiting_fulfillment' }, 'S-4': { id: 14, number: '#S-4', status: 'shipped' }, 'E-5': { id: 15, number: 'E-5', status: 'awaiting_fulfillment' },
+    'K-6': { id: 16, number: 'K-6', status: 'awaiting_fulfillment' } };
+  const calls = []; let refuse = false;
+  const veeqoFetch = async (env, path, o) => { calls.push((o && o.method || 'GET') + ' ' + path);
+    const q = /query=([^&]+)/.exec(path); if (q) { const k = decodeURIComponent(q[1]); return Object.values(V).filter(x => x.number.replace('#', '') === k).map(x => ({ ...x })); }
+    const c = /^\/orders\/(\d+)\/cancel$/.exec(path); if (c) { if (refuse) throw new Error('Veeqo /orders/' + c[1] + '/cancel → HTTP 422: cannot cancel'); Object.values(V).find(x => x.id === +c[1]).status = 'cancelled'; return {}; }
+    const g1 = /^\/orders\/(\d+)$/.exec(path); if (g1) return { ...Object.values(V).find(x => x.id === +g1[1]) };
+    return []; };
+  const logs = [];
+  const fn = new Function('veeqoFetch', 'autolabelOrderNum', 'veeqoExtractTracking', 'veeqoExtractCustomerName', 'veeqoExtractChannel', 'autolabelLog', src + '; return autolabelAutoCancel;')(
+    veeqoFetch, s => String(s || '').trim().toUpperCase().replace(/^#/, ''), o => o.label || '', () => 'Ann', () => 'Amazon', async (e, x) => { logs.push(x); });
+  sq.exec("CREATE TABLE IF NOT EXISTS ship_label_link (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, tracking TEXT, order_num TEXT)");
+  sq.prepare("INSERT INTO ship_label_link (at, by_user, tracking, order_num) VALUES (?, 'TS', '9400STAMPS1', 'K-6')").run(new Date().toISOString());
+  const cancels = { all: [
+    { channel: 'amazon', num: 'A-1', state: 'CANCELED' }, { channel: 'amazon', num: 'A-2', state: 'CANCELED' }, { channel: 'walmart', num: 'W-3', state: 'CANCELLED' },
+    { channel: 'shopify', num: 'S-4', state: 'CANCELLED' }, { channel: 'ebay', num: 'E-5', state: 'CANCEL_REQUESTED' }, { channel: 'walmart', num: 'W-9', state: 'PARTIAL_CANCEL' },
+    { channel: 'amazon', num: 'K-6', state: 'CANCELED' }, { channel: 'veeqo', num: 'V-7', state: 'CANCELLED_IN_VEEQO' } ] };
+  const res = r => Object.fromEntries(sq.prepare('SELECT order_num, result FROM veeqo_auto_cancel').all().map(x => [x.order_num, x.result]));
+  const p1 = await fn(env, cancels, { autoCancel: 'preview' });
+  const r1 = res(cancels);
+  check('👀 Preview: A-1 and W-3 (whole order cancelled, no label) → "would cancel", NOTHING cancelled in Veeqo',
+    r1['A-1'] === 'would_cancel' && r1['W-3'] === 'would_cancel' && p1.wouldCancel === 2 && !calls.some(c => /cancel$/.test(c)) && V['A-1'].status === 'awaiting_fulfillment', { r1, p1 });
+  check('…never: A-2 (has a label 1Z999), S-4 (shipped), K-6 (a Stamps.com label linked) — not cancelled',
+    r1['A-2'] === 'has_label' && r1['S-4'] === 'shipped' && r1['K-6'] === 'has_label', r1);
+  check('…eBay cancel REQUEST not accepted yet and a Walmart PARTIAL cancel → "needs a person", never looked up / cancelled; Veeqo\'s own cancel skipped',
+    r1['E-5'] === 'needs_person' && r1['W-9'] === 'needs_person' && !('V-7' in r1) && !calls.some(c => /E-5|W-9/.test(c)), { r1, calls });
+  calls.length = 0;
+  const p2 = await fn(env, cancels, { autoCancel: 'on' });
+  const r2 = res(cancels);
+  check('✅ On: A-1 and W-3 cancelled in Veeqo (PUT /orders/11/cancel, /orders/13/cancel), checked again (Veeqo says cancelled), kept on record + Auto Label log',
+    p2.cancelled === 2 && r2['A-1'] === 'cancelled' && r2['W-3'] === 'cancelled' && V['A-1'].status === 'cancelled' && V['W-3'].status === 'cancelled'
+      && calls.includes('PUT /orders/11/cancel') && calls.includes('GET /orders/11') && logs.filter(l => l.action === 'auto_cancelled').length === 2, { p2, r2, calls });
+  check('…the ones with a label / shipped / needing a person are not looked at again; A-2 still has its label', !calls.some(c => /A-2|S-4|K-6|E-5|12\/cancel/.test(c)) && V['A-2'].status === 'awaiting_fulfillment', calls);
+  calls.length = 0; const p3 = await fn(env, cancels, { autoCancel: 'on' });
+  check('…run again: nothing cancelled twice, no Veeqo calls', p3.cancelled === 0 && calls.length === 0, { p3, calls });
+  V['N-8'] = { id: 18, number: 'N-8', status: 'awaiting_fulfillment' }; refuse = true;
+  const p4 = await fn(env, { all: [{ channel: 'amazon', num: 'N-8', state: 'CANCELED' }] }, { autoCancel: 'on' });
+  const f = sq.prepare("SELECT result, tries, error FROM veeqo_auto_cancel WHERE order_num='N-8'").get();
+  check('Veeqo refuses → "could not cancel" with Veeqo\'s answer, tried again next run (up to 3 times), the order left as it was', p4.failed === 1 && f.result === 'failed' && f.tries === 1 && /HTTP 422/.test(f.error) && V['N-8'].status === 'awaiting_fulfillment', f);
+  const cfgA = await get('/veeqo/autolabel/config');
+  await post('/veeqo/autolabel/config', { config: { ...cfgA.config, autoCancel: 'on' } }); const cfgB = await get('/veeqo/autolabel/config');
+  await post('/veeqo/autolabel/config', { config: { ...cfgA.config } });
+  check('setting: starts at 👀 Preview (cancels nothing until it is turned On); On is saved', cfgA.defaults.autoCancel === 'preview' && cfgB.config.autoCancel === 'on', { a: cfgA.config.autoCancel, b: cfgB.config.autoCancel });
+  const lst = await get('/veeqo/autolabel/auto-cancels');
+  check('🗑️ Cancellation → 🤖 Auto-cancelled list: every order with what happened (cancelled / has a label / needs a person / could not)', lst.ok && lst.rows.some(r => r.orderNum === 'A-1' && r.result === 'cancelled') && lst.rows.some(r => r.orderNum === 'N-8' && r.result === 'failed'), lst.rows);
+  const ps = rfC(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), xa = rfC(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('page: Auto Label setting (Off / 👀 Preview / ✅ On), the last run says how many were cancelled, the 🤖 list on the Cancellation tab; 🧩 check mark',
+    /<select id="ps-al-autocancel"/.test(ps) && /c\.autoCancel = acSel\.value/.test(ps) && /cancelled in Veeqo \(no label yet\)/.test(ps) && /id="ps-autocancel-card"/.test(ps) && /if \(name === 'cancellation'\) \{ psLoadCancelOrders\(\); psLoadAutoCancels\(\); \}/.test(ps)
+      && /key: 'autocancel'[^\n]*sel: '#ps-autocancel-card'/.test(xa), null);
+  sq.exec("DELETE FROM veeqo_auto_cancel; DELETE FROM ship_label_link WHERE order_num = 'K-6'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
