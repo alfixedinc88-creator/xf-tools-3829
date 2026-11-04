@@ -26467,7 +26467,7 @@ async function officeUpsert(env, it) {
     await env.DB.prepare('INSERT INTO office_log (at, by_user, item_id, src, action, detail) VALUES (?,?,?,?,?,?)').bind(now, 'system', r.meta.last_row_id, it.src, 'new', t(it.title, 300)).run();
     return 1;
   }
-  await env.DB.prepare('UPDATE office_item SET title = ?, detail = ?, ext_status = ?, updated_at = ? WHERE id = ?').bind(t(it.title, 300), t(it.detail, 2000), t(it.ext_status, 80), now, ex.id).run();
+  await env.DB.prepare('UPDATE office_item SET title = ?, detail = ?, ext_status = ?, url = CASE WHEN ? != \'\' THEN ? ELSE url END, updated_at = ? WHERE id = ?').bind(t(it.title, 300), t(it.detail, 2000), t(it.ext_status, 80), t(it.url, 500), t(it.url, 500), now, ex.id).run();
   if (it.closed && ex.status === 'open') {
     const at = officeIso(it.closed_at) || now;
     await env.DB.prepare("UPDATE office_item SET status = 'done', done_at = ?, done_by = ?, done_how = ? WHERE id = ?").bind(at, t(it.closed_by || it.channel, 40), 'closed on ' + it.channel, ex.id).run();
@@ -26489,6 +26489,7 @@ async function officeEbayPO(env, path) { // Post-Order API (returns, cancellatio
   return d;
 }
 const officeV = x => (x && typeof x === 'object' && 'value' in x) ? x.value : x;
+const OFFICE_EBAY_INBOX = 'https://mesg.ebay.com/mesgweb/ViewMessages/0';
 const OFFICE_EBAY_OPEN_RET = /OPEN|PENDING|WAITING|REQUEST|ESCALAT|ITEM_SHIPPED|ITEM_DELIVERED|PARTIAL/i;
 const officeSources = {
   async ebay_msg(env) { // the eBay messages the 30-minute timer already reads (eBay Messages app): a thread waits until we answer it
@@ -26498,7 +26499,7 @@ const officeSources = {
     return Object.keys(by).map(id => { const L = by[id].sort((a, b) => String(a[2]).localeCompare(String(b[2]))), lastB = L.filter(r => r[6] === 'BUYER').pop(), last = L[L.length - 1];
       if (!lastB) return null; const ans = last[6] === 'SELLER' && String(last[2]) >= String(lastB[2]);
       return { src: 'ebay_msg', ext_id: id + '|' + lastB[2], channel: 'eBay', kind: 'message', title: (lastB[5] || 'Message') + ' — ' + (lastB[4] || ''), detail: lastB[7] || '',
-        customer: lastB[4] || '', order_no: lastB[3] || '', url: 'index.html#ebay-messages', received_at: lastB[2], closed: ans, closed_at: ans ? (last[9] || last[2]) : '', closed_by: 'eBay Messages' }; }).filter(Boolean);
+        customer: lastB[4] || '', order_no: lastB[3] || '', url: OFFICE_EBAY_INBOX /* 🔗 eBay's own Messages page (owner 2026-11-04: "Open on eBay opened our app, not eBay") */, received_at: lastB[2], closed: ans, closed_at: ans ? (last[9] || last[2]) : '', closed_by: 'eBay Messages' }; }).filter(Boolean);
   },
   async ebay_return(env) {
     const d = await officeEbayPO(env, 'return/search?creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200');

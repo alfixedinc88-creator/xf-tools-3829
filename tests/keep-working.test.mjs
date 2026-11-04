@@ -12548,6 +12548,11 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
     tr > 0 && of > tr && (between.match(/class="launcher-card"/g) || []).length === 1 && ['msg', 'ret', 'can', 'case', 'fb'].every(k => ohO.includes('id="of-tab-' + k + '"'))
       && /var OF_KIND = \{ message: 'msg', return: 'ret', refund: 'ret', cancel: 'can', case: 'case', inquiry: 'case', feedback: 'fb', review: 'fb' \};/.test(ohO) && /class="chip of-chch/.test(ohO)
       && /window\.ofOpen = function \(id\)/.test(ohO) && /✓ Done — next/.test(ohO) && /if \(nx\) ofOpen\(nx\.id\)/.test(ohO), { tr, of });
+  // Owner (2026-11-04): "for messages, Open on eBay just pops up our app — not our eBay website"
+  const wkO = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('an eBay message\'s 🔗 Open on eBay goes to eBay\'s own Messages page (mesg.ebay.com), never our app; one saved before with our app\'s link is sent there too, and its link is put right on the next read',
+    /url: OFFICE_EBAY_INBOX/.test(wkO) && /const OFFICE_EBAY_INBOX = 'https:\/\/mesg\.ebay\.com\/mesgweb\/ViewMessages\/0'/.test(wkO) && !/url: 'index\.html#ebay-messages'/.test(wkO)
+      && new Function(ohO.match(/function ofUrl\(it\) \{[^\n]*\}/)[0] + '; return ofUrl;')()({ channel: 'eBay', url: 'index.html#ebay-messages' }) === 'https://mesg.ebay.com/mesgweb/ViewMessages/0' && /url = CASE WHEN \? != \\'\\' THEN \? ELSE url END/.test(wkO), null);
   globalThis.fetch = realF; keys.forEach(k => { if (saved[k] === undefined) delete env[k]; else env[k] = saved[k]; });
   sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
 }
