@@ -297,9 +297,11 @@ function ofRenderList() {
       + '<div class="muted" style="margin-top:4px">' + esc(it.kind) + ' · came in ' + esc(when(it.received_at)) + (it.ext_status ? ' · ' + esc(it.ext_status) : '') + '</div>'
       + (it.detail ? '<div style="margin-top:6px;font-size:14px;white-space:pre-wrap;background:var(--bg3);padding:8px 10px;border-radius:8px">' + esc(String(it.detail).slice(0, 2000)) + '</div>' : '')
       + (it.note ? '<div style="margin-top:4px;font-size:12px;color:var(--purple)">📝 ' + esc(it.note) + '</div>' : '')
-      + '<div class="acts">' + (it.url ? '<a class="btn" href="' + esc(it.url) + '" target="_blank" rel="noopener">🔗 Open on ' + esc(it.channel) + '</a>' : '')
+      + '<div class="acts">' + (it.url ? '<a class="btn" href="' + esc(ofUrl(it)) + '" target="_blank" rel="noopener">🔗 Open on ' + esc(it.channel) + '</a>' : '')
       + '<input type="text" id="of-note-' + it.id + '" placeholder="What you did / replied (kept on record)" onkeydown="if(event.key===\'Enter\')ofDone(' + it.id + ')"><button class="btn btn-primary" onclick="ofDone(' + it.id + ')">✓ Done — next</button></div></div>'; }).join('');
 }
+// 🔗 the channel's own page (owner 2026-11-04: "Open on eBay just pops up our app, not eBay") — a message saved with our app's link goes to eBay Messages
+function ofUrl(it) { var u = String(it.url || ''); return /^https?:\/\//.test(u) ? u : it.channel === 'eBay' ? 'https://mesg.ebay.com/mesgweb/ViewMessages/0' : u; }
 // tap one → it opens (and the time starts: who opened it, when); tap again → closed
 window.ofOpen = function (id) { if (OF.open === id) { OF.open = null; ofRenderList(); return; } OF.open = id; ofRenderList(); var it = OF.items.filter(function (x) { return x.id === id; })[0];
   if (it && !it.opened_at) { it.opened_at = new Date().toISOString(); it.opened_by = (USER && USER.displayName) || ''; ofAct(id, 'open'); }
