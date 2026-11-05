@@ -11789,7 +11789,7 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
     && !globalThis.invAmlIsLabel('95-1-1=10') && !globalThis.invAmlIsLabel('840428944803'), null);
   globalThis.invAmlOpen('00201952611628559002'); await wait();
   check('scan Box 2-2 → STAR-AML1, 95-1-1=10-  → 95-1-1=10, its 4 labels (2-4 PREVIOUS PACKED); "1 of 3 labels scanned · missing: Box 2-1, Box 2-3 … AWD Planner → 🖨 Reprint"; 96-2-2 not in it',
-    /STAR-AML1/.test(html) && /95-1-1=10/.test(html) && /4 Amazon labels \(boxes\) of 95-1-1=10/.test(html) && /PREVIOUS PACKED/.test(html) && /1 of 3 labels scanned · missing: Box 2-1, Box 2-3/.test(html) && /AWD Planner → 🖨 Reprint/.test(html) && !/96-2-2/.test(html), html.slice(0, 1500));
+    /STAR-AML1/.test(html) && /95-1-1=10/.test(html) && /4 Big Company labels \(boxes\) of 95-1-1=10/.test(html) /* owner 2026-11-05: "Amazon label" → "Big Company label" */ && /PREVIOUS PACKED/.test(html) && /1 of 3 labels scanned · missing: Box 2-1, Box 2-3/.test(html) && /AWD Planner → 🖨 Reprint/.test(html) && !/96-2-2/.test(html), html.slice(0, 1500));
   check('…the plan is the 📦 AWD shipments ready plan for 3 boxes (30 units, the PREVIOUS PACKED one left out) of that shipment',
     planArgs && planArgs.o.part === '95-1-1=10' && planArgs.o.per[0].units === 30 && planArgs.o.per[0].boxes === 3 && planArgs.ships[0].shipment === 'STAR-AML1', planArgs);
   check('…1 cs already grabbed for the shipment → 2 boxes still to grab: "Grab — for 2 boxes: 2 cs × 95-1-1=10 @ C1=1-1-1"; Boxes we\'re working on = 2',
@@ -11797,7 +11797,7 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
   globalThis.invAmlScan('00201952611628559001'); globalThis.invAmlScan('00201952611628559003');
   check('scan the other labels of it (one printed again) → "✓ All 3 labels scanned"', /✓ All 3 labels scanned/.test(html), null);
   globalThis.invAmlNPad(); pad.cb(1);
-  check('Boxes we\'re working on → number pad → 1 → "Grab — for 1 box: 1 cs" (100 pcs a box, 100 pcs a case)', /How many boxes \(Amazon labels\) of 95-1-1=10/.test(pad.t) && /Grab — for 1 box/.test(html) && /<b[^>]*>1 cs<\/b>/.test(html), html);
+  check('Boxes we\'re working on → number pad → 1 → "Grab — for 1 box: 1 cs" (100 pcs a box, 100 pcs a case)', /How many boxes \(Big Company labels\) of 95-1-1=10/.test(pad.t) && /Grab — for 1 box/.test(html) && /<b[^>]*>1 cs<\/b>/.test(html), html);
   globalThis.invAmlAdd();
   const it = list[0];
   check('➕ Put on my Pull List → 1 case of 95-1-1=10 @ C1=1-1-1 for Big Company, shipment STAR-AML1, taken for everyone (claim), the labels kept for the Stock Out notes',
@@ -11809,19 +11809,19 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
   check('everything already grabbed / on a Pull List → "✅ Nothing left to grab … the rest is on a Pull List", ➕ greyed out (never grabbed twice)', /✅ Nothing left to grab for 95-1-1=10/.test(html) && /the rest is on a Pull List/.test(html) && /id="inv-aml-add" onclick="invAmlAdd\(\)" disabled/.test(html), html);
   globalThis.invAmlClose();
   globalThis.invAmlOpen('00201952611628559999'); await wait();
-  check('a label not in our records → "🏷 Amazon label not in our records … AWD Planner → 🏷"', /Amazon label not in our records/.test(html), html);
+  check('a label not in our records → "🏷 Big Company label not in our records … AWD Planner → 🏷"', /Big Company label not in our records/.test(html) && /AWD Planner → 🏷/.test(html), html);
   check('Scan or Search (Stock Out): an Amazon label opens this, everything else is looked up as before', /if \(invMode === 'out' && window\.invAmlIsLabel && window\.invAmlIsLabel\(code\)\) \{ window\.invAmlOpen\(code\); return; \}/.test(ihA), null);
   ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd'].forEach(k => { delete globalThis[k]; });
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AML1'");
 }
 
-console.log('\n🏷 Stock Out Big Company: 🏷 Scan an Amazon label → Pull List (always open) + extra labels not grabbed yet');
+console.log('\n🏷 Stock Out Big Company: 🏷 Scan a Big Company label → Pull List (always open) + extra labels not grabbed yet');
 {
   // Owner (2026-11-05): "for 'stock out big company' need to added one thing for we can scan the Amazon label to added to the pull list, for
   // some reason we have some extra label didn't grab yet, so, we need to scan it and grab it".
   const { readFileSync: rfX5 } = await import('node:fs');
   const ihX = rfX5(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), axX = rfX5(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
-  check('a scan box of its own on Big Company (Scan or Search starts folded there): 🏷 Scan an Amazon label → Pull List, shown / hidden with the Big Company cards, a 🧩 Pages & Tabs check mark',
+  check('a scan box of its own on Big Company (Scan or Search starts folded there): 🏷 Scan a Big Company label → Pull List, shown / hidden with the Big Company cards, a 🧩 Pages & Tabs check mark',
     /<div class="icard" id="inv-amlscan-card" style="display:none;/.test(ihX) && /id="inv-amlscan-inp"[^>]*onkeydown="if\(event\.key==='Enter'\)\{event\.preventDefault\(\);invAmlScanBox\(this\);\}"/.test(ihX)
       && /var amC = g\("inv-amlscan-card"\); if \(amC\) amC\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ihX)
       && /var amc = g\('inv-amlscan-card'\); if \(amc\) amc\.style\.display = dest === 'company'/.test(ihX) && /sel: '#inv-amlscan-card'/.test(axX), null);
@@ -11844,7 +11844,7 @@ console.log('\n🏷 Stock Out Big Company: 🏷 Scan an Amazon label → Pull Li
   new Function(...Object.keys(envX), code)(...Object.values(envX));
   const wait = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); };
   const box = { value: '95-1-1=10' }; globalThis.invAmlScanBox(box);
-  check('the scan box: a part # → "not an Amazon box label" (nothing opened), the box is cleared for the next scan', /not an Amazon box label/.test(flashes.pop() || '') && html === '' && box.value === '', null);
+  check('the scan box: a part # → "not a Big Company label" (nothing opened), the box is cleared for the next scan', /not a Big Company label/.test(flashes.pop() || '') && html === '' && box.value === '', null);
   box.value = '00201952611628558002'; globalThis.invAmlScanBox(box); await wait();
   check('…the Amazon label of Box 3-2 → its popup; all grabbed already → "✅ Nothing left to grab" + "🏷 Extra labels — boxes with no product yet?" → 🏷 Grab for 1 extra label (Box 3-2 · 10 units)',
     /✅ Nothing left to grab for 95-1-1=10/.test(html) && /🏷 Extra labels — boxes with no product yet\?/.test(html) && /id="inv-aml-xcalc"[^>]*>🏷 Grab for 1 extra label \(Box 3-2 · 10 units\)/.test(html) && !/inv-aml-xadd/.test(html), html);
@@ -11883,6 +11883,85 @@ console.log('\n🏷 Stock Out Big Company: 🏷 Scan an Amazon label → Pull Li
   globalThis.invAmlClose();
   ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd', 'invAmlExtraCalc', 'invAmlExtraAdd', 'invAmlScanBox'].forEach(k => { delete globalThis[k]; });
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AMLX'"); sq.exec("DELETE FROM awd_claim"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-AMLX]%'").run();
+}
+
+console.log('\n📜 Big Company label popup: who grabbed / when / which pallet · 📜 Big Company history: spot before → after vs SKU Mgr');
+{
+  // Owner (2026-11-05): "show those info when people scan that, like who already grab, when, or it was in the pallet, which pallet who and when
+  // and change the Amazon label to 'Big Company' label. Also give me the history under the 'Stock out big company' … who, when, where, how they
+  // grab it and also … on that aisle at that time what we have before and after, need to make sure it was match to our 'sku mgr'".
+  const { readFileSync: rfH } = await import('node:fs');
+  const ihH = rfH(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), axH = rfH(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('98-1-1','Coupling','98-1-1=10','C3=1-1-1',6,100), ('98-1-1','Coupling','98-1-1=10','C4=2-2-2',2,100)").run();
+  const mC3 = sq.prepare("SELECT id FROM master_list WHERE part_num = '98-1-1=10' AND location = 'C3=1-1-1'").get().id;
+  await post('/awd/label-map', { shipment: 'STAR-HIST1', labels: [{ sscc: '201952611628560001', sku: '98-1-1=10-', part: '98-1-1=10', seq: '5-1', units: 10, loc: 'C3=1-1-1' },
+    { sscc: '201952611628560002', sku: '98-1-1=10-', part: '98-1-1=10', seq: '5-2', units: 10, loc: 'C3=1-1-1' }, { sscc: '201952611628560003', sku: '98-1-1=10-', part: '98-1-1=10', seq: '5-3', units: 10, loc: 'C3=1-1-1' }] });
+  await get('/awd/box-pallet?sscc=201952611628560001'); // (makes the Box check table)
+  sq.prepare("INSERT INTO awd_box_scan (at, by_user, sscc, shipment, seq, part, kind, pallet) VALUES (?,?,?,?,?,?,?,?)").run('2026-11-05T15:10:00.000Z', 'NB', '201952611628560001', 'STAR-HIST1', '5-1', '98-1-1=10', 'pallet', 2);
+  const approve = async d => { const it = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === d.d1Id); if (it) await post('/inventory/verify', { rowIndex: it.rowIndex, action: 'Approved', item: it }); };
+  const so1 = await post('/inventory/log', { type: 'OUT', partNum: '98-1-1=10', sku: '98-1-1', location: 'C3=1-1-1', cases: 2, initials: 'TS', masterId: mC3, notes: '[BIG COMPANY for 98-1-1=10] [AWD: STAR-HIST1] ' });
+  await approve(so1);
+  const sp1 = sq.prepare('SELECT spot_before b, spot_after a, total_before tb, total_after ta FROM inventory_log WHERE id = ?').get(so1.d1Id) || {};
+  check('every approved Stock Out keeps its SPOT before → after too (C3=1-1-1: 6 → 4) next to the part # total (8 → 6)', sp1.b === 6 && sp1.a === 4 && sp1.tb === 8 && sp1.ta === 6, sp1);
+  await post('/awd/claim', { area: 'C4', at: new Date().toISOString(), lines: [{ id: 'chist-1', part: '98-1-1=10', forPart: '98-1-1=10', cases: 1, ships: ['STAR-HIST1'], loc: 'C4=2-2-2' }] });
+  const li = await get('/awd/label-info?shipment=STAR-HIST1&part=98-1-1=10-');
+  const g0 = (li.grabs || [])[0] || {}, c0 = (li.claims || [])[0] || {}, b1 = (li.boxes || []).find(b => b.seq === '5-1') || {}, b2 = (li.boxes || []).find(b => b.seq === '5-2') || {};
+  check('server /awd/label-info: grabbed — TS, 2 cs × 98-1-1=10 @ C3=1-1-1, from the 📦 AWD list, spot 6 → 4; on a Pull List — TS, 1 cs @ C4=2-2-2; Box 5-1 on PALLET 2 by NB (when kept), Box 5-2 not checked yet',
+    li.ok && li.grabs.length === 1 && g0.by === 'TS' && g0.cases === 2 && g0.loc === 'C3=1-1-1' && g0.how === '📦 AWD list' && g0.spotBefore === 6 && g0.spotAfter === 4 && !!g0.at
+      && li.claims.length === 1 && c0.by === 'TS' && c0.loc === 'C4=2-2-2' && c0.cases === 1 && b1.kind === 'pallet' && b1.pallet === 2 && b1.by === 'NB' && b1.at === '2026-11-05T15:10:00.000Z' && !b2.kind, li);
+  // the popup shows it (the page's own code, the server's answer)
+  { const code = ihH.slice(ihH.indexOf('  var AML = null;'), ihH.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+    let html = ''; const plan = { need: { 'STAR-HIST1': 3 }, left: { 'STAR-HIST1': 0 }, grabbed: { 'STAR-HIST1': 2 }, onList: { 'STAR-HIST1': 1 }, short: [], takes: [] };
+    const envH = { g: () => null, invModal: (id, h) => { html = h; }, invModalClose: () => { html = ''; }, invEsc: v => String(v == null ? '' : v), xfrN: v => Math.round((parseFloat(v) || 0) * 1000) / 1000, invFlash() {}, W: '',
+      wFetch: u => Promise.resolve({ json: () => /\/awd\/(label-map|label-info)/.test(u) ? get(u.replace(/^.*?\/awd/, '/awd')) : Promise.resolve({ ok: true, grabbed: [], claims: [], locks: {} }) }),
+      AWDS: {}, invAwdGot: () => [], invAwdPlanPart: () => Promise.resolve(JSON.parse(JSON.stringify(plan))), invAwdPlanPartCalc: () => Promise.resolve({ takes: [] }), invAwdKind: () => 'full', invAwdKindBadge: () => '', invAwdExtraHow: () => '',
+      invAwdTag: n => String(n || '').trim(), invPullItemKey: (p, l) => p + '@' + l.location, invPullList: [], invTagBoxSize() {}, invPost: () => Promise.resolve({}), invSavePullList() {}, invRenderPullList() {},
+      invStockOutDest: 'company', invMode: 'out', invSwitchTab() {}, xfrKeypad() {}, xfrFmtT: v => 'T(' + v + ')', window: globalThis };
+    new Function(...Object.keys(envH), code)(...Object.values(envH));
+    globalThis.invAmlOpen('00201952611628560002'); for (let i = 0; i < 30 && !/inv-aml-info/.test(html); i++) await new Promise(r => setTimeout(r, 10));
+    check('popup (scan Box 5-2): "🏷 Big Company label" (not "Amazon label") · 📜 Already for this shipment: ✓ TS grabbed · when · 2 cs × 98-1-1=10 @ C3=1-1-1 · 📦 AWD list · spot 6 → 4; 👤 TS has it on a Pull List … 1 cs @ C4=2-2-2; Box 5-1 "🟫 on PALLET 2 — by NB, T(…)"; the rest not shown as on a pallet',
+      /🏷 Big Company label<\/div>/.test(html) && !/>🏷 Amazon label/.test(html) && /📜 Already for this shipment — who, when, where/.test(html)
+        && /✓ <b>TS<\/b> grabbed · T\([^)]*\) · <b[^>]*>2 cs × 98-1-1=10<\/b> @ <b[^>]*>C3=1-1-1<\/b> · 📦 AWD list · spot 6 → 4 cs/.test(html)
+        && /👤 <b>TS<\/b> has it on a Pull List \(not grabbed yet\) since T\([^)]*\) · <b[^>]*>1 cs × 98-1-1=10<\/b> @ <b[^>]*>C4=2-2-2<\/b>/.test(html)
+        && /🟫 on PALLET 2 — by NB, T\(2026-11-05T15:10:00\.000Z\)/.test(html) && (html.match(/class="inv-aml-boxinfo"/g) || []).length === 1, html);
+    globalThis.invAmlClose(); ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd', 'invAmlExtraCalc', 'invAmlExtraAdd', 'invAmlScanBox'].forEach(k => { delete globalThis[k]; }); }
+  // 📜 history: the row matches SKU Mgr; a second grab on the same spot → both still ✅ (the first says "changed 1× since"); SKU Mgr changed
+  // with no record → ⚠ on the newest row of that spot
+  let h = await get('/inventory/bigco-history?days=1'), r1 = (h.rows || []).find(r => r.id === so1.d1Id) || {};
+  check('server /inventory/bigco-history: TS · 2 cs × 98-1-1=10 @ C3=1-1-1 · spot 6 → 4 · total 8 → 6 · SKU Mgr now 4 → "✅ 6 − 2 = 4 = SKU Mgr now ✅"',
+    h.ok && r1.by === 'TS' && r1.cases === 2 && r1.loc === 'C3=1-1-1' && r1.spotBefore === 6 && r1.spotAfter === 4 && r1.totalBefore === 8 && r1.totalAfter === 6 && r1.skuNow === 4
+      && r1.check.kind === 'ok' && r1.check.txt === '✅ 6 − 2 = 4 = SKU Mgr now ✅' && /\[AWD: STAR-HIST1\]/.test(r1.notes), r1);
+  const so2 = await post('/inventory/log', { type: 'OUT', partNum: '98-1-1=10', sku: '98-1-1', location: 'C3=1-1-1', cases: 1, initials: 'NB', masterId: mC3, notes: '[BIG COMPANY for 98-1-1=10] [AWD: STAR-HIST1] [🏷 EXTRA labels 98-1-1=10: Box 5-3 (labels left over, no product grabbed for them yet)] ' });
+  await approve(so2);
+  h = await get('/inventory/bigco-history?days=1'); r1 = h.rows.find(r => r.id === so1.d1Id) || {}; let r2 = h.rows.find(r => r.id === so2.d1Id) || {};
+  check('…NB grabs 1 more there (extra label 5-3) → NB\'s row "✅ 4 − 1 = 3 = SKU Mgr now ✅"; TS\'s row still ✅ and says "changed 1× since · SKU Mgr now 3 cs"; the day: 2 rows, 3 cs, ✅ 2',
+    r2.check.txt === '✅ 4 − 1 = 3 = SKU Mgr now ✅' && r1.check.kind === 'ok' && /changed 1× since · SKU Mgr now 3 cs/.test(r1.check.txt) && r1.laterList[0].by === 'NB'
+      && h.rows.filter(r => r.part === '98-1-1=10').length === 2 && h.tot.ok >= 2 && h.tot.bad === 0, { r1: r1.check, r2: r2.check, tot: h.tot });
+  sq.prepare('UPDATE master_list SET cases = 5 WHERE id = ?').run(mC3); // changed in SKU Mgr with NO record
+  h = await get('/inventory/bigco-history?days=1'); r2 = h.rows.find(r => r.id === so2.d1Id) || {};
+  check('…SKU Mgr changed with no record (C3 3 → 5) → ⚠ "SKU Mgr now has 5 cs at C3=1-1-1, not 3" on the newest row of that spot (counted as ⚠ in the day)',
+    r2.check.kind === 'bad' && /SKU Mgr now has 5 cs at C3=1-1-1, not 3/.test(r2.check.txt) && h.tot.bad === 1, r2.check);
+  check('server: the history is Admin / Owner only; pending rows say "after approval"; old rows say why the spot is not there (never blank)',
+    /async function invBigCoHistory[\s\S]{0,400}if \(!\(roles\.includes\('admin'\) \|\| roles\.includes\('owner'\)\)\) return J\(\{ ok: false, error: 'Admin only' \}, 403\)/.test(rfH(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'))
+      && /kind: 'wait', txt: 'after approval'/.test(rfH(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8')) && /spot before → after not recorded \(Stock Outs approved before 2026-11-05\)/.test(rfH(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8')), null);
+  // the card on Stock Out Big Company (page code + the server's answer)
+  { const code = ihH.slice(ihH.indexOf('  // 📜 Big Company history (owner 2026-11-05)'), ihH.indexOf('  window.invAwdHistLoad = function() {'));
+    const els = { 'inv-bcoh-out': { innerHTML: '' }, 'inv-bcoh-f': { value: '' } };
+    const envB = { g: id => els[id] || null, W: '', wFetch: u => Promise.resolve({ json: () => get(u) }), ckE: v => String(v == null ? '' : v), xfrN: v => Math.round((parseFloat(v) || 0) * 1000) / 1000,
+      xfrFmtT: v => 'T(' + v + ')', invAwdIsAdmin: () => true, document: { querySelectorAll: () => [] }, window: globalThis };
+    new Function(...Object.keys(envB), code)(...Object.values(envB));
+    globalThis.invBcoHistLoad(1); for (let i = 0; i < 40 && !/inv-bcoh-tot/.test(els['inv-bcoh-out'].innerHTML); i++) await new Promise(r => setTimeout(r, 10));
+    els['inv-bcoh-f'].value = '98-1-1'; globalThis.invBcoHistDraw(); const o = els['inv-bcoh-out'].innerHTML;
+    check('📜 Big Company history card: who · when · cases × part # @ spot · how (📦 AWD shipment STAR-HIST1 · 🏷 extra labels) · 📍 spot before → after · Σ part total before → after · SKU Mgr now · ✅ / ⚠; filter by part #',
+      (o.match(/class="inv-bcoh-row"/g) || []).length === 2 && /<b>NB<\/b> · T\(/.test(o) && /1 cs × 98-1-1=10<\/b> @ <b[^>]*>C3=1-1-1<\/b>/.test(o) && /📦 AWD shipment STAR-HIST1 · 🏷 extra labels \(98-1-1=10: Box 5-3\)/.test(o)
+        && /📍 spot C3=1-1-1: <b>6 → 4 cs<\/b> · part total \(every spot\): 8 → 6 cs · SKU Mgr now at this spot: <b>5 cs<\/b>/.test(o) && /⚠ SKU Mgr now has 5 cs/.test(o) && /showing 2/.test(o), o.slice(0, 2500));
+    ['invBcoIsAdmin', 'invBcoHistLoad', 'invBcoHistDraw'].forEach(k => { delete globalThis[k]; }); }
+  check('the card sits on Stock Out Big Company, Admin / Owner only, and has its 🧩 Pages & Tabs check marks (history + the popup\'s 📜 list); Scan card says "Big Company label"',
+    /<details class="icard" id="inv-bcohist-card" style="display:none;/.test(ihH) && /var bhC = g\("inv-bcohist-card"\); if \(bhC\) bhC\.style\.display = \(mode === "out" && invStockOutDest === 'company' && window\.invBcoIsAdmin && window\.invBcoIsAdmin\(\)\)/.test(ihH)
+      && /var bhc = g\('inv-bcohist-card'\); if \(bhc\) bhc\.style\.display = dest === 'company' && window\.invBcoIsAdmin\(\)/.test(ihH) && /sel: '#inv-bcohist-card'/.test(axH) && /sel: '\.inv-aml-info'/.test(axH)
+      && />🏷 Scan a Big Company label → Pull List<\/div>/.test(ihH), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-HIST1'"); sq.exec("DELETE FROM awd_claim"); sq.exec("DELETE FROM awd_box_scan WHERE shipment = 'STAR-HIST1'");
+  sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-HIST1]%'").run(); sq.prepare("DELETE FROM master_list WHERE part_num = '98-1-1=10'").run();
 }
 
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has

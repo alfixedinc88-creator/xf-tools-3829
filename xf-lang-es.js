@@ -3769,12 +3769,22 @@ XFLang.add({
 
 // ── Inventory → Stock Out Big Company: 🏷 scan an Amazon label → Pull List, extra labels (2026-11-05)
 XFLang.add({
-  "🏷 Scan an Amazon label → Pull List": "🏷 Escanear una etiqueta de Amazon → Lista de recogida",
+  "🏷 Scan a Big Company label → Pull List": "🏷 Escanear una etiqueta de Big Company → Lista de recogida",
   "A label not grabbed yet (or left over)? Scan it — the app says what to grab and where, then ➕ Pull List.": "¿Una etiqueta que no se ha recogido (o que sobró)? Escanéala — la app dice qué recoger y dónde, luego ➕ Lista de recogida.",
   "🏷 Extra labels — boxes with no product yet?": "🏷 Etiquetas extra — ¿cajas que todavía no tienen producto?",
   "Only if these labels really have no product in their box yet. Scan every leftover label of {} above, then grab for them.": "Solo si estas etiquetas de verdad no tienen producto en su caja todavía. Escanea arriba cada etiqueta que sobró de {}, luego recoge para ellas.",
   "Scan the leftover label(s) above first.": "Primero escanea arriba la(s) etiqueta(s) que sobraron.",
   "➕ Put the extra on my Pull List": "➕ Poner lo extra en mi Lista de recogida"
+});
+
+// ── Stock Out Big Company: 🏷 label popup who / when / pallet + 📜 Big Company history (2026-11-05)
+XFLang.add({
+  "📜 Already for this shipment — who, when, where": "📜 Ya para este envío — quién, cuándo, dónde",
+  "📜 Big Company history — who, when, where, before → after": "📜 Historial Big Company — quién, cuándo, dónde, antes → después",
+  "(Admin only)": "(solo Admin)",
+  "🏷 Big Company label": "🏷 Etiqueta Big Company",
+  "🏷 Big Company label not in our records": "🏷 Etiqueta Big Company no está en nuestros registros",
+  "times · notes": "horas · notas"
 });
 
 XFLang._ready();
