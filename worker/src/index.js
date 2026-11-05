@@ -30284,7 +30284,9 @@ const AUTOLABEL_DEFAULTS = {
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
   // ...except in these New York times, each with its own wait (owner 2026-10-16): Mon–Fri 3:30–4 pm 3 min, from 4 pm none;
   // Sat 12:30–1 pm 3 min, from 1 pm none. Until 3:30 pm (Sat 12:30 pm) and on Sunday: the 30-min wait.
-  noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0',
+  // Owner (2026-11-05): "from 5:30 – 8:30 pm must have the 30-min wait, and Saturday after 3 pm to 8:30 pm too" → the no-wait time ends
+  // where printing stops (Mon–Fri 4:30 pm, Sat 1:45 pm); when printing starts again (5:30 pm / 3 pm) it is the 30-min wait.
+  noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-16:30=0; Sat 12:30-13:00=3; Sat 13:00-13:45=0',
   noWaitMinutes: 3,            // ...a no-wait time without its own "=N" waits this long (owner: "wait a few minutes to see if a merge order comes in")
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
   scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45', // New York time (owner 2026-10-08: 8:45 pm EVERY day; Mon-Fri 4:30 pm, Sat 1:45 pm)
@@ -30487,7 +30489,29 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, 'autolabel_rules_sched_845_1008', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Sat restart 3 pm, scan form 8:45 pm every day, restart 12:05 am (owner's request): ${JSON.stringify(before)} → no auto print ${saved.pauseTimes}; scan forms ${saved.scanFormTimes}` }).catch(() => {});
   }
+  // Owner (2026-11-05): "from 5:30 – 8:30 pm must have the 30-min wait, and Saturday after 3 pm to 8:30 pm too" — once, on the saved
+  // rules: every no-wait time ends where auto print stops that day (whatever the times are now), so after the restart it is the 30-min wait.
+  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_stop_1105')) !== 'done') {
+    const before = saved.noWaitTimes == null ? AUTOLABEL_DEFAULTS.noWaitTimes : saved.noWaitTimes;
+    saved.noWaitTimes = autolabelNoWaitEndAtPause(before, saved.pauseTimes == null ? AUTOLABEL_DEFAULTS.pauseTimes : saved.pauseTimes);
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_nowait_stop_1105', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `30-min wait again after auto print restarts (Mon-Fri 5:30-8:30 pm, Sat 3-8:30 pm) (owner's request): no wait ${before} → ${saved.noWaitTimes}` }).catch(() => {});
+  }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
+}
+// Each no-wait time cut where auto print stops on that day (the first stop after it starts) — days whose stop is different get their own part.
+function autolabelNoWaitEndAtPause(noWait, pause) {
+  const P = autolabelNoWaitParse(pause), out = [];
+  for (const w of autolabelNoWaitParse(noWait)) {
+    const byTo = {};
+    for (const d of w.days) {
+      const stops = P.filter(p => p.days.includes(d) && p.from > w.from && p.from < w.to).map(p => p.from);
+      const to = stops.length ? Math.min(...stops) : w.to; (byTo[to] = byTo[to] || []).push(d);
+    }
+    Object.keys(byTo).map(Number).sort((a, b) => a - b).forEach(to => out.push({ ...w, days: byTo[to], to }));
+  }
+  return out.filter(w => w.from < w.to).map(autolabelNoWaitText).join('; ');
 }
 
 // Coerces every field to the right type/range so a typo in the UI can't

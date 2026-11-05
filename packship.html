@@ -9409,7 +9409,10 @@ function _psAlSchedHtml(c) {
     // ✏️ each time remembers which rule made it (field · which part · from / to / at) so a tap on it changes that rule (owner 2026-11-05)
     var add = function(at, txt, ref) { (ev[at] = ev[at] || []).push(txt); if (ref) (refs[at] = refs[at] || []).push(ref); };
     var stopped = function(t) { return pS.some(function(x) { return x.days.indexOf(d) >= 0 && t >= x.from && t < x.to; }); };
-    pS.forEach(function(x, i) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS', { f: 'pauseTimes', i: i, k: 'from' }); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again', { f: 'pauseTimes', i: i, k: 'to' }); });
+    // ▶ STARTS again — and with which wait (owner 2026-11-05: "from 5:30 pm I didn't see the 30-min wait — is there?")
+    var nwAt = function(t) { return nwS.filter(function(y) { return y.days.indexOf(d) >= 0 && t >= y.from && t < y.to; })[0]; };
+    pS.forEach(function(x, i) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS', { f: 'pauseTimes', i: i, k: 'from' });
+      if (x.to < 1440) { var w0 = nwAt(x.to), m0 = w0 ? (w0.min != null ? w0.min : nw) : wait; add(x.to, '▶ Auto print STARTS again' + (w0 ? (m0 ? ' — orders wait only ' + m0 + ' min' : ' — no wait, an order prints as soon as it comes in') : ' — orders wait ' + wait + ' min'), { f: 'pauseTimes', i: i, k: 'to' }); } });
     sfS.forEach(function(x, i) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made', { f: 'scanFormTimes', i: i, k: 'at' }); });
     nwS.forEach(function(x, i) { if (x.days.indexOf(d) < 0) return; var mn = x.min != null ? x.min : nw;
       add(x.from, mn ? '⏩ No ' + wait + '-min wait — new orders wait ' + mn + ' min (to catch a merge), then print' : '⚡ No wait — an order prints as soon as it comes in', { f: 'noWaitTimes', i: i, k: 'from' });
