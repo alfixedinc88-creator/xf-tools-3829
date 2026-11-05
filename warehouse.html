@@ -2552,8 +2552,15 @@ function whInvField(sku) {
   const rows = whInvRows(sku);
   if (!rows.length) return '<div class="field"><div class="field-lbl">🏬 Inventory</div><div class="field-val" style="color:var(--red);font-weight:700">✗ No inventory</div></div>';
   const cases = Math.round(rows.reduce((a, r) => a + (r.casesNum || 0), 0) * 100) / 100;
+  // 🔢 Owner (2026-11-05): "under Inventory I want the total pieces we have left too" — every spot's cases × its Units per Case (that box size),
+  // added up. A spot with no Units per Case in SKU Mgr is said in red (not counted), never silently left out.
+  let pcs = 0; const noEach = [];
+  rows.forEach(r => { const e = parseFloat(String(r.eachQty == null ? '' : r.eachQty).replace(/[^\d.]/g, '')); if (e > 0) pcs += (r.casesNum || 0) * e; else noEach.push(r.partNum || r.sku); });
+  pcs = Math.round(pcs * 100) / 100;
   return '<div class="field" style="cursor:pointer" onclick="whInvToggle(this)" data-sku="' + wpAttr(sku) + '" title="Tap to see every spot (like Item Locator)"><div class="field-lbl">🏬 Inventory</div>'
-    + '<div class="field-val" style="color:var(--green);font-weight:700">✓ ' + cases.toLocaleString() + ' cases · ' + rows.length + ' spot' + (rows.length === 1 ? '' : 's') + ' <span style="color:var(--accent);font-weight:600">▸ show</span></div></div>';
+    + '<div class="field-val" style="color:var(--green);font-weight:700">✓ ' + cases.toLocaleString() + ' cases · ' + rows.length + ' spot' + (rows.length === 1 ? '' : 's') + ' <span style="color:var(--accent);font-weight:600">▸ show</span></div>'
+    + '<div class="wh-inv-pcs" style="font-size:13px;font-weight:700;color:var(--text);margin-top:2px">= ' + pcs.toLocaleString() + ' pieces' + (noEach.length ? ' <span style="font-weight:400;color:var(--text3)">(counted)</span>' : '') + '</div>'
+    + (noEach.length ? '<div style="font-size:11px;color:var(--red);font-weight:600">⚠ ' + noEach.length + ' spot' + (noEach.length === 1 ? '' : 's') + ' with no Units per Case — not counted in pieces: ' + noEach.join(', ') + '</div>' : '') + '</div>';
 }
 function whInvFill(list) {
   const rows = whInvRows(list.getAttribute('data-sku'));

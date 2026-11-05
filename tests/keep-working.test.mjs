@@ -5606,6 +5606,13 @@ console.log('\n🔍 Warehouse Lookup: Item Locator merged into Item Search (🏬
   run.whInvToggle({ closest: () => ({ querySelector: () => list }), querySelector: () => lab });
   check('…tap it → the Item Locator cards for every spot (C1=1-1-1 3 cases, GARAGE 2 cases with its 🧱 pallet), tap again → hidden',
     list.style.display === 'block' && /C1=1-1-1/.test(list.innerHTML) && /GARAGE/.test(list.innerHTML) && /<PALLET>/.test(list.innerHTML) && (list.innerHTML.match(/class="card"/g) || []).length === 2 && lab.textContent === '▾ hide', null);
+  // 🔢 Owner (2026-11-05): "under Inventory I want the total pieces we have left too"
+  g.DB.master[0].eachQty = '100'; el('inp-search').value = '30-3-4'; run.doSearch('search'); const hp1 = els['res-search'].innerHTML;
+  g.DB.master[1].eachQty = '50'; run.doSearch('search'); const hp2 = els['res-search'].innerHTML;
+  check('…total pieces under it: 3 cases × 100 + 2 cases × 50 = "= 400 pieces"; a spot with no Units per Case → "= 300 pieces (counted)" + "⚠ 1 spot with no Units per Case — not counted in pieces: 30-3-4=2" (never silently dropped)',
+    /✓ 5 cases · 2 spots/.test(hp2) && /class="wh-inv-pcs"[^>]*>= 400 pieces<\/div>/.test(hp2) && !/not counted in pieces/.test(hp2)
+      && /= 300 pieces <span[^>]*>\(counted\)/.test(hp1) && /⚠ 1 spot with no Units per Case — not counted in pieces: 30-3-4=2/.test(hp1), { hp1: hp1.slice(0, 900) });
+  delete g.DB.master[0].eachQty; delete g.DB.master[1].eachQty;
   check('…Item Locator tab hidden (kept), Item Search opens first', /onclick="switchTab\('locator'\)" style="display:none"/.test(wh) && /<div class="tabitem active" onclick="switchTab\('search'\)">/.test(wh) && /let activeTab = 'search';/.test(wh), null);
 }
 
