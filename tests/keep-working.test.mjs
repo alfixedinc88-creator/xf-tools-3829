@@ -12006,6 +12006,17 @@ console.log('\n👆 Box check Pallets: tap ON a pallet / NOT on a pallet yet / l
   win.invBcReprint(['201952611628561005']); await wait();
   check('🖨 a label not saved on this device → the print window closes and it says where to print (office computer / upload the PDF in AWD Planner)',
     printed[1].closed && /not saved on THIS device — print on the office computer that uploaded the label PDF/.test(flashes[flashes.length - 1]) && acts.length === 1, flashes);
+  // Owner (2026-11-05): "the info there I want to see name" — every label row shows the product name
+  D.ready[0].name = 'Tee 1/2"'; D.notYet[1].name = 'Coupling 3/4"'; BXC.totView = ''; win.invBcTotShow('all'); h = els['inv-bc-totlist'].innerHTML;
+  check('each label row shows its product name under the part # (Box 2-1 "Tee 1/2"", Box 3-1 "Coupling 3/4""), and "by NB" for who',
+    /Box 2-1<\/b>[^]*?92-2-2=5<\/b><div class="inv-bc-tlname"[^>]*>Tee 1\/2&quot;<\/div>/.test(h) && /Box 3-1<\/b>[^]*?93-3-3=2<\/b><div class="inv-bc-tlname"[^>]*>Coupling 3\/4&quot;<\/div>/.test(h) && /· by NB T\(/.test(h), h);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('94-4-4','Union 1 inch','94-4-4=10','C2=1-1-1',3,100)").run();
+  await post('/awd/label-map', { shipment: 'STAR-NAME1', labels: [{ sscc: '201952611628562001', sku: '94-4-4=10-', part: '94-4-4=10', seq: '1-1', units: 10, loc: 'C2=1-1-1' },
+    { sscc: '201952611628562002', sku: '94-4-4=10-', part: '94-4-4=10', seq: '1-2', units: 10, loc: 'C2=1-1-1', name: 'Union 1" (label)' }] });
+  await post('/awd/box-pallet', { sscc: '201952611628562002', kind: 'pallet', pallet: 4, _requestId: 'nm-1' });
+  const bp = await get('/awd/box-pallet?shipment=STAR-NAME1'), ny = (bp.notYet || [])[0] || {}, onp = (((bp.pallets || [])[0] || {}).boxes || [])[0] || {};
+  check('server: a label with no name of its own gets SKU Mgr\'s ("Union 1 inch" — not scanned yet); one with its own name keeps it (on PALLET 4)', ny.name === 'Union 1 inch' && onp.name === 'Union 1" (label)', { ny, onp });
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-NAME1'"); sq.exec("DELETE FROM awd_box_scan WHERE shipment = 'STAR-NAME1'"); sq.prepare("DELETE FROM master_list WHERE part_num = '94-4-4=10'").run();
 }
 
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has
