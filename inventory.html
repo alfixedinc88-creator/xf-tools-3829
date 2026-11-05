@@ -2646,7 +2646,7 @@ window.invCredLogin = async function() {
   function invBcPallets() {
     var el = g('inv-bc-pallets'), sh = BXC.ship; if (!el) return;
     wFetch(W + '/awd/box-pallet?' + (sh ? 'shipment=' + encodeURIComponent(sh) : 'latest=1')).then(function(r) { return r.json(); }).then(function(d) {
-      if (!d || !d.ok || !d.shipment) return; BXC.ship = d.shipment;
+      if (!d || !d.ok || !d.shipment) return; BXC.ship = d.shipment; BXC.palData = d;
       var ph = d.photos || {}, T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }; BXC.readyList = d.ready || [];
       // 🟫 Owner (2026-10-27, "pallet 1 has 14 cases, the record shows 7"): Amazon boxes AND our cases (an Amazon box can be 2 of our cases);
       // boxes with the Amazon label on but no PALLET scanned; box scans on this phone not sent yet
@@ -2709,8 +2709,12 @@ window.invCredLogin = async function() {
     var all = d.boxes || 0, on = d.onPallets || 0, nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
     L.sort(function(x, y) { var a = String(x.b.loc || '~'), c = String(y.b.loc || '~'), A = nv(x.b.seq), B = nv(y.b.seq);
       return a < c ? -1 : a > c ? 1 : String(x.b.part).localeCompare(String(y.b.part)) || (A[0] - B[0]) || (A[1] - B[1]); });
-    var tile = function(n, t, bg) { return '<div style="flex:1;min-width:120px;padding:8px;border-radius:10px;background:' + bg + ';color:#fff;text-align:center"><div style="font-size:24px;font-weight:900">' + n + '</div><div style="font-size:12px;font-weight:700">' + t + '</div></div>'; };
-    return '<div class="inv-bc-tot" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + tile(on, '🟫 labels ON a pallet', 'var(--green)') + tile(L.length, '⚠ NOT on a pallet yet', L.length ? '#d97706' : 'var(--text3)') + tile(all, '📦 labels in all', '#7c3aed') + '</div>'
+    // 👆 Owner (2026-11-05): "labels on a pallet / not on a pallet yet / labels in all — I want we able to click on it, to see what is in what … and
+    // right next to it … click on the button to print the amazon labels" — each tile opens its list right under the tiles (tap again = close)
+    var tile = function(n, t, bg, k) { var on1 = BXC.totView === k; return '<div class="inv-bc-tile" data-k="' + k + '" role="button" tabindex="0" onclick="invBcTotShow(\'' + k + '\')" style="flex:1;min-width:120px;padding:8px;border-radius:10px;background:' + bg + ';color:#fff;text-align:center;cursor:pointer;'
+      + (on1 ? 'outline:3px solid var(--text);outline-offset:2px' : '') + '"><div style="font-size:24px;font-weight:900">' + n + '</div><div style="font-size:12px;font-weight:700">' + t + '</div><div style="font-size:10.5px;opacity:.9">' + (on1 ? '▾ showing — tap to close' : '▸ tap to see') + '</div></div>'; };
+    return '<div class="inv-bc-tot" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + tile(on, '🟫 labels ON a pallet', 'var(--green)', 'on') + tile(L.length, '⚠ NOT on a pallet yet', L.length ? '#d97706' : 'var(--text3)', 'not') + tile(all, '📦 labels in all', '#7c3aed', 'all') + '</div>'
+      + '<div id="inv-bc-totlist">' + invBcTotList(d) + '</div>'
       + (on + L.length !== all ? '<div style="color:var(--red);font-weight:700;margin-top:4px">⚠ ' + on + ' + ' + L.length + ' ≠ ' + all + ' — tell the office</div>' : '')
       + (L.length ? '<details class="inv-bc-notpal"' + (invBcOpen('notpal') ? ' open' : '') + ' ontoggle="invBcOpenSet(\'notpal\', this.open)" style="margin-top:6px;border:2px solid #d97706;border-radius:10px;padding:6px 8px;background:var(--bg2)"><summary style="cursor:pointer;font-weight:800;color:#b45309">⚠ Which ' + L.length + ' label' + (L.length === 1 ? ' is' : 's are') + ' not on a pallet yet</summary>'
         + L.map(function(x) { var T = BC_NOTPAL[x.k];
@@ -2719,6 +2723,81 @@ window.invCredLogin = async function() {
             + (x.k === 'off' && x.b.note ? ' <span style="color:#0e7490">(' + ckE(x.b.note) + ')</span>' : '') + (x.b.by ? ' <span style="color:var(--text3)">· ' + ckE(x.b.by) + '</span>' : '') + ' <span style="color:var(--text3);font-family:var(--mono);font-size:10px">…' + ckE(String(x.b.sscc || '').slice(-6)) + '</span></div></div>'; }).join('')
         + '<div style="font-size:12px;color:var(--text2);margin-top:5px">🖨 Label lost or torn? Reprint the exact Amazon label on the office computer: <b>AWD Planner → 🏷 box labels → ⚠ Not on a pallet yet → 🖨</b></div></details>' : '');
   }
+  // 👆 the list a tile opens (owner 2026-11-05): ON a pallet → each PALLET and its labels; NOT on a pallet yet → each label and why, with 🖨;
+  // labels in all → every label and where it is now, with 🖨. 🖨 prints the exact Amazon label saved by the AWD Planner on this device.
+  window.invBcTotShow = function(k) { BXC.totView = BXC.totView === k ? '' : k; var d = BXC.palData; if (!d) return;
+    Array.prototype.forEach.call(document.querySelectorAll('.inv-bc-tile'), function(t) { var on1 = t.getAttribute('data-k') === BXC.totView; t.style.outline = on1 ? '3px solid var(--text)' : ''; t.style.outlineOffset = '2px';
+      var h = t.lastChild; if (h) h.textContent = on1 ? '▾ showing — tap to close' : '▸ tap to see'; });
+    var el = g('inv-bc-totlist'); if (el) el.innerHTML = invBcTotList(d); };
+  function invBcAllLabels(d) { // every label of the shipment, each once, with where it is now
+    var L = [], seen = {}, add = function(b, k, pal) { if (!b || seen[b.sscc]) return; seen[b.sscc] = 1; L.push({ b: b, k: k, pal: pal }); };
+    (d.pallets || []).forEach(function(p) { (p.boxes || []).forEach(function(b) { add(b, 'pallet', p.pallet); }); });
+    ['ready', 'split', 'rebag', 'mismatch', 'off', 'notYet'].forEach(function(k) { (d[k] || []).forEach(function(b) { add(b, k); }); });
+    var nv = function(x) { return String(x || '').split('-').map(function(v) { return parseInt(v, 10) || 0; }); };
+    L.sort(function(x, y) { var A = nv(x.b.seq), B = nv(y.b.seq); return String(x.b.part).localeCompare(String(y.b.part)) || (A[0] - B[0]) || (A[1] - B[1]); });
+    return L;
+  }
+  function invBcTotList(d) {
+    var k = BXC.totView; if (!k || !d) return '';
+    var T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }, all = invBcAllLabels(d);
+    var row = function(x, pr) { var N = BC_NOTPAL[x.k], why = x.k === 'pallet' ? '<span style="color:var(--green);font-weight:800">🟫 PALLET ' + ckE(x.pal) + '</span>' : '<span style="color:' + N[2] + ';font-weight:700">' + N[0] + ' ' + N[1] + '</span>';
+      return '<div class="inv-bc-tl" data-k="' + x.k + '" style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px"><div style="flex:1;min-width:0"><b>Box ' + ckE(x.b.seq) + '</b>'
+        + (x.b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' <b style="font-family:var(--mono)">' + ckE(x.b.part) + '</b>' + (x.b.loc ? ' <span style="color:var(--text3)">· ' + ckE(x.b.loc) + '</span>' : '') + ' · ' + why
+        + (x.b.by ? ' <span style="color:var(--text3)">· ' + ckE(x.b.by) + (x.b.at ? ' ' + T(x.b.at) : '') + '</span>' : '') + ' <span style="color:var(--text3);font-family:var(--mono);font-size:10px">…' + ckE(String(x.b.sscc || '').slice(-6)) + '</span></div>'
+        + (pr ? '<button type="button" class="inv-bc-pr1" onclick="invBcReprint([' + ckE(JSON.stringify(String(x.b.sscc || ''))) + '])" title="Print this Amazon label" style="flex:0 0 auto;padding:4px 8px;border-radius:7px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:800;font-size:12px;cursor:pointer">🖨</button>' : '') + '</div>'; };
+    var box = function(title, color, inner) { return '<div class="inv-bc-totview" data-k="' + k + '" style="margin-top:6px;border:2px solid ' + color + ';border-radius:10px;padding:6px 8px;background:var(--bg2)"><div style="display:flex;align-items:center;gap:6px"><b style="flex:1;color:' + color + '">' + title + '</b>'
+      + '<button type="button" onclick="invBcTotShow(' + ckE(JSON.stringify(k)) + ')" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text3)">✕</button></div>' + inner + '</div>'; };
+    var prAll = function(L, what) { return L.length ? '<button type="button" class="inv-bc-prall" onclick="invBcReprint(' + ckE(JSON.stringify(L.map(function(x) { return String(x.b.sscc || ''); }))) + ')" style="width:100%;margin:6px 0 2px;padding:9px;border-radius:9px;border:none;background:#7c3aed;color:#fff;font-weight:800;cursor:pointer">🖨 Print all ' + L.length + ' ' + what + ' Amazon label' + (L.length === 1 ? '' : 's') + '</button>' : ''; };
+    if (k === 'on') {
+      var P = (d.pallets || []); if (!P.length) return box('🟫 Labels ON a pallet', 'var(--green)', '<div style="color:var(--text3);font-size:12px;margin-top:4px">No label on a pallet yet.</div>');
+      return box('🟫 Labels ON a pallet — ' + P.length + ' pallet' + (P.length === 1 ? '' : 's'), 'var(--green)', P.map(function(p) { var B = all.filter(function(x) { return x.k === 'pallet' && String(x.pal) === String(p.pallet); });
+        return '<details class="inv-bc-tlpal" open style="margin-top:4px"><summary style="cursor:pointer;font-weight:800">🟫 PALLET ' + ckE(p.pallet) + ' — ' + B.length + ' label' + (B.length === 1 ? '' : 's') + '</summary>' + B.map(function(x) { return row(x, true); }).join('') + '</details>'; }).join(''));
+    }
+    if (k === 'not') { var N1 = all.filter(function(x) { return x.k !== 'pallet'; });
+      return box('⚠ NOT on a pallet yet — ' + N1.length + ' label' + (N1.length === 1 ? '' : 's'), '#b45309', N1.length ? prAll(N1, 'not-on-a-pallet') + N1.map(function(x) { return row(x, true); }).join('') : '<div style="color:var(--green);font-weight:700;margin-top:4px">✅ Every label is on a pallet</div>'); }
+    return box('📦 Labels in all — ' + all.length, '#7c3aed', '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">🟫 ' + all.filter(function(x) { return x.k === 'pallet'; }).length + ' on a pallet · ⚠ ' + all.filter(function(x) { return x.k !== 'pallet'; }).length + ' not yet</div>' + all.map(function(x) { return row(x, true); }).join(''));
+  }
+  // 🖨 the exact Amazon label (with our template), from the labels the AWD Planner saved on THIS device (its 💾 saved labels + 🕘 the last 10
+  // sets). Labels made since 2026-10-28 carry their SSCCs; older ones are matched by SKU + Box N-k only when that is exact (same as the Planner).
+  function invBcLblDb() { return new Promise(function(res, rej) { if (typeof indexedDB === 'undefined') return rej(new Error('no IndexedDB'));
+    var q = indexedDB.open('awd_lbl', 1); q.onupgradeneeded = function() { q.result.createObjectStore('kv'); }; q.onsuccess = function() { res(q.result); }; q.onerror = function() { rej(q.error); }; }); }
+  function invBcLblGet(db, k) { return new Promise(function(res) { try { var q = db.transaction('kv', 'readonly').objectStore('kv').get(k); q.onsuccess = function() { res(q.result === undefined ? null : q.result); }; q.onerror = function() { res(null); }; } catch (e) { res(null); } }); }
+  function invBcPages(groups, want, d) { // = awdPalPages in awd.html
+    var out = [], got = {}, all = invBcAllLabels(d).map(function(x) { return x.b; }), old = {};
+    (groups || []).forEach(function(g1) { if (g1.ssccs) { if (g1.ssccs.some(function(x) { return want[x] && !got[x]; })) { g1.pages.forEach(function(p) { out.push(p); }); g1.ssccs.forEach(function(x) { if (want[x]) got[x] = 1; }); } return; }
+      var kk = String(g1.key || '').split('|'); if (kk[0] !== '1' || kk.length < 5) return; var sku = String(kk[kk.length - 2]).toUpperCase(); (old[sku] = old[sku] || []).push({ g: g1, i: +kk[kk.length - 1] }); });
+    Object.keys(old).forEach(function(sku) { var G = old[sku].sort(function(a, b) { return a.i - b.i; }), B = all.filter(function(x) { return String(x.sku || '').toUpperCase() === sku; });
+      var N = B.length ? parseInt(String(B[0].seq).split('-')[0], 10) : 0; if (!N || G.length !== N || B.length !== N) return;
+      B.forEach(function(x) { var k2 = parseInt(String(x.seq).split('-')[1], 10); if (want[x.sscc] && !got[x.sscc] && G[k2 - 1]) { G[k2 - 1].g.pages.forEach(function(p) { out.push(p); }); got[x.sscc] = 1; } }); });
+    return { pages: out, got: got };
+  }
+  window.invBcReprint = function(ssccs) {
+    var d = BXC.palData; if (!d || !ssccs || !ssccs.length) return;
+    var want = {}; ssccs.forEach(function(x) { if (x) want[x] = 1; });
+    var all = invBcAllLabels(d).map(function(x) { return x.b; }), L = all.filter(function(b) { return want[b.sscc]; });
+    var w = window.open('', '_blank'); // opened on the tap (a pop-up opened later is blocked), filled once the labels are read
+    if (!w) { invFlash('Allow pop-ups for this page, then tap 🖨 again', 'error'); return; }
+    w.document.write('<!doctype html><title>Amazon labels</title><body style="font-family:Arial;padding:20px">⏳ Getting the labels…</body>');
+    invBcLblDb().then(function(db) { return invBcLblGet(db, 'idx').then(function(idx) {
+      var keys = ['last'].concat((idx || []).filter(function(x) { return !x.shipment || !d.shipment || x.shipment === d.shipment; }).map(function(x) { return 'h:' + x.at; }));
+      return Promise.all(keys.map(function(k) { return invBcLblGet(db, k); })); }); }).catch(function() { return []; }).then(function(recs) {
+      var pages = [], got = {};
+      (recs || []).forEach(function(rec) { if (!rec || !(rec.groups || []).length) return; var left = {}; Object.keys(want).forEach(function(x) { if (!got[x]) left[x] = 1; }); if (!Object.keys(left).length) return;
+        var r = invBcPages(rec.groups, left, d); r.pages.forEach(function(p) { pages.push(p); }); Object.keys(r.got).forEach(function(x) { got[x] = 1; }); });
+      var miss = L.filter(function(b) { return !got[b.sscc]; });
+      if (!pages.length) { try { w.close(); } catch (e) {}
+        invFlash('🖨 ' + (L.length === 1 ? 'This Amazon label is' : 'These Amazon labels are') + ' not saved on THIS device — print on the office computer that uploaded the label PDF (AWD Planner → 🏷 box labels), or upload the label PDF of ' + (d.shipment || 'this shipment') + ' in AWD Planner on this device first', 'error'); return; }
+      var pg = pages[0];
+      w.document.open();
+      w.document.write('<!doctype html><html><head><title>Amazon labels — ' + String(L.length - miss.length) + '</title><style>@page{size:' + pg.w + 'in ' + pg.h + 'in;margin:0}body{margin:0}img{width:' + pg.w + 'in;height:' + pg.h + 'in;display:block;page-break-after:always}</style></head><body>'
+        + pages.map(function(x) { return '<img src="' + x.url + '">'; }).join('') + '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>');
+      w.document.close();
+      // 🕘 kept: who / when / which boxes (the same record the AWD Planner keeps for a reprint)
+      try { wFetch(W + '/awd/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'label_reprint', detail: { shipment: d.shipment || '', labels: L.length - miss.length,
+        boxes: L.filter(function(b) { return got[b.sscc]; }).map(function(b) { return b.part + ' ' + b.seq; }), from: 'Stock Out Big Company' }, _requestId: 'bcreprint-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) }).catch(function() {}); } catch (e) {}
+      invFlash('🖨 ' + (L.length - miss.length) + ' Amazon label' + (L.length - miss.length === 1 ? '' : 's') + ' sent to print' + (miss.length ? ' · ⚠ ' + miss.length + ' not saved on this device (' + miss.slice(0, 6).map(function(b) { return b.part + ' ' + b.seq; }).join(', ') + ') — print those on the office computer' : ''), miss.length ? 'warn' : 'success');
+    });
+  };
   // 🖨 PALLET labels: big "PALLET 1" + its barcode, one per 4 × 6 label
   window.invPalletLabels = function() {
     var a = prompt('Print PALLET labels — from which number to which? (e.g. 1-10)', '1-10'); if (!a) return;
@@ -17817,6 +17896,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261105b"></script>
+<script src="xf-access.js?v=20261105c"></script>
 </body>
 </html>
