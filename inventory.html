@@ -667,6 +667,14 @@ window.invCredLogin = async function() {
       <div id="inv-awdship-hist-out" style="font-size:12px;margin-top:6px">Loading…</div>
     </details>
   </details>
+  <!-- 🏷 Owner (2026-11-05): "for 'stock out big company' … scan the Amazon label to added to the pull list, for some reason we have some extra
+       label didn't grab yet, so, we need to scan it and grab it" — Big Company only, always open (Scan or Search starts folded there). -->
+  <div class="icard" id="inv-amlscan-card" style="display:none;border:2px solid #b45309">
+    <div style="font-weight:800;color:#92400E">🏷 Scan an Amazon label → Pull List</div>
+    <div style="font-size:12px;color:var(--text2);margin:2px 0 6px">A label not grabbed yet (or left over)? Scan it — the app says what to grab and where, then ➕ Pull List.</div>
+    <input id="inv-amlscan-inp" type="text" autocomplete="off" placeholder="scan the Amazon box label…" onkeydown="if(event.key==='Enter'){event.preventDefault();invAmlScanBox(this);}"
+      style="width:100%;box-sizing:border-box;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">
+  </div>
   <!-- 🗜 Owner (2026-10-30): "for Box check I want this part to show, we are going to use it a lot" — the title, the on a pallet / not yet line,
        📦 Next box and the scan box always show; only the pallets / labels-not-on-a-pallet list and the day's count fold away (tap to open). -->
   <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
@@ -2255,6 +2263,7 @@ window.invCredLogin = async function() {
     var awdSh = g("inv-awdship-card"); if (awdSh) awdSh.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     if (awdSh && awdSh.open && mode === "out" && invStockOutDest === 'company' && window.AWDS && typeof window.invAwdShipLoad === 'function') window.invAwdShipLoad(); // ready to grab right away (saved list at once)
     var bxC = g("inv-boxcheck-card"); if (bxC) bxC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
+    var amC = g("inv-amlscan-card"); if (amC) amC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
     // stock out, so hidden there.
@@ -3275,6 +3284,7 @@ window.invCredLogin = async function() {
     if (!todo.length) { A.busy = false; A.plan = { takes: [], short: [], need: {}, left: {}, grabbed: {}, onList: {}, allGot: true }; invAmlRender(); return; }
     wFetch(W + '/awd/ship-send?open=1').then(function(r) { return r.json(); }).catch(function() { return AWDS.data || {}; }).then(function(d) {
       d = d || {}; if (d.locks) AWDS.locks = d.locks; else if (!AWDS.locks) AWDS.locks = {};
+      if (AML === A) A.xDone = invAmlExtraDone(d, A);
       return invAwdPlanPart({ part: A.part, name: A.name, per: { 0: { units: units, boxes: todo.length } } }, [{ shipment: A.shipment }], invAwdGot(d));
     }).then(function(r) { if (AML !== A) return; A.plan = r; A.busy = false; if (A.n == null) A.n = invAmlLeftBoxes(A); invAmlRender(); })
       .catch(function(e) { if (AML !== A) return; A.busy = false; A.err = (e && e.message) || 'could not work it out'; invAmlRender(); });
@@ -3298,6 +3308,7 @@ window.invCredLogin = async function() {
         + (r.short || []).map(function(x) { return '<div style="color:var(--red);font-size:12px;font-weight:700">⚠ ' + invEsc(x) + '</div>'; }).join('');
     }
     var canAdd = !A.busy && r && left > 0 && r.takes.length && !A.added;
+    if (!A.busy && !A.err && r && (!left || !r.takes.length) && !A.added) plan += invAmlExtraHtml(A, r);
     invModal('inv-aml-modal', '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-weight:800;font-size:16px;flex:1">🏷 Amazon label</div><button type="button" onclick="invAmlClose()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">✕</button></div>'
       + '<div style="font-size:12px;color:var(--text3)">Shipment <b style="color:var(--text)">' + invEsc(A.shipment) + '</b></div>'
       + '<div style="font-size:15px;margin:4px 0 8px"><span style="font-family:var(--mono);font-size:12px;color:var(--text3)">' + invEsc(A.sku) + ' →</span> <b style="font-family:var(--mono);font-size:17px;color:var(--accent)">' + invEsc(A.part) + '</b>' + (A.name ? '<div style="font-size:12px;color:var(--text2)">' + invEsc(A.name) + '</div>' : '') + '</div>'
@@ -3316,8 +3327,83 @@ window.invCredLogin = async function() {
   window.invAmlScan = function(v) {
     var ss = invAmlSscc(v); if (!ss) { if (String(v || '').trim()) invFlash('That is not an Amazon box label — scan the big barcode on the Amazon label', 'error'); return; }
     if (AML && AML.boxes.some(function(b) { return b.sscc === ss; })) { var b = AML.boxes.filter(function(x) { return x.sscc === ss; })[0];
-      if (AML.scanned[ss]) invFlash('Box ' + (b.seq || '?') + ' already scanned', 'warn'); AML.scanned[ss] = 1; invAmlRender(); return; }
+      if (AML.scanned[ss]) invFlash('Box ' + (b.seq || '?') + ' already scanned', 'warn'); else AML.xPlan = null; AML.scanned[ss] = 1; invAmlRender(); return; }
     window.invAmlOpen(v); // another part # / shipment → its own popup
+  };
+  // 🏷 Owner (2026-11-05): "for 'stock out big company' we can scan the Amazon label to added to the pull list, for some reason we have some
+  // extra label didn't grab yet, so we need to scan it and grab it". When the app says ✅ nothing left to grab for the part # but labels are left
+  // over with no product: the labels SCANNED here (not PREVIOUS PACKED, not already grabbed as extra by anyone) → what their boxes need, by the
+  // Big Company pick rules (Rule #1, least rebag) → the Pull List, tagged with the shipment and "🏷 EXTRA labels <part #>: Box …" in the Stock Out
+  // notes. A box grabbed as extra once (sent, on any phone's Pull List) can't be grabbed as extra again.
+  function invAmlXKey(part, seq) { return String(part || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '') + '|' + String(seq || '').trim(); }
+  function invAmlExtraDone(d, A) {
+    var tag = invAwdTag(A.shipment), done = {}, add = function(part, seqs, who) { (seqs || []).forEach(function(q) { var k = invAmlXKey(part, q); if (!done[k]) done[k] = who; }); };
+    var sq = function(t) { return String(t || '').split(',').map(function(x) { return x.trim(); }).filter(Boolean); };
+    ((d && d.grabbed) || []).forEach(function(x) { if (x.extra && (x.ships || []).map(invAwdTag).indexOf(tag) >= 0) add(x.extra.part, x.extra.seqs, 'grabbed'); });
+    ((d && d.claims) || []).forEach(function(c) { var m = /^🏷 extra (\S+) Box (.+)$/.exec(c.area || ''); if (m && (c.ships || []).map(invAwdTag).indexOf(tag) >= 0) add(m[1], sq(m[2]), 'on ' + (c.by || 'a') + '\'s Pull List'); });
+    (typeof invPullList !== 'undefined' ? invPullList : []).forEach(function(x) { var e = x.amlExtra; if (e && !x.noneFound && invAwdTag(e.ship) === tag) add(e.part, e.seqs, x.submitted || x.grabbed ? 'grabbed' : 'on your Pull List'); });
+    return done;
+  }
+  function invAmlExtraBoxes(A) { var D = A.xDone || {}; return A.boxes.filter(function(b) { return A.scanned[b.sscc] && !b.prev && !D[invAmlXKey(A.part, b.seq)]; }); }
+  function invAmlExtraHtml(A, r) {
+    var D = A.xDone || {}, B = invAmlExtraBoxes(A), had = A.boxes.filter(function(b) { return A.scanned[b.sscc] && !b.prev && D[invAmlXKey(A.part, b.seq)]; });
+    var list = (r.onList || {})[A.shipment] || 0, h = '<div id="inv-aml-extra" style="margin-top:10px;padding:9px 10px;border-radius:9px;border:2px dashed #b45309;background:#FFFBEB">'
+      + '<div style="font-weight:800;color:#92400E">🏷 Extra labels — boxes with no product yet?</div>'
+      + '<div style="font-size:12px;color:var(--text2);line-height:1.4;margin-top:2px">Only if these labels really have no product in their box yet. Scan every leftover label of ' + invEsc(A.part) + ' above, then grab for them.'
+      + (list ? '<br><b style="color:#b45309">⚠ ' + xfrN(list) + ' cs of it are on a Pull List not grabbed yet — ask who has it first (👤 Being grabbed now).</b>' : '') + '</div>';
+    had.forEach(function(b) { h += '<div style="font-size:12px;color:var(--text3);margin-top:3px">Box ' + invEsc(b.seq || '?') + ' — already grabbed as extra (' + invEsc(D[invAmlXKey(A.part, b.seq)]) + ')</div>'; });
+    if (!B.length) return h + (had.length ? '' : '<div style="font-size:12px;margin-top:4px;color:var(--text3)">Scan the leftover label(s) above first.</div>') + '</div>';
+    var u = B.reduce(function(a, b) { return a + (parseFloat(b.units) || 0); }, 0), names = B.map(function(b) { return b.seq || '?'; }).join(', ');
+    if (A.xBusy) return h + '<div style="padding:6px 0;color:var(--text3)">⏳ Working out where to grab for Box ' + invEsc(names) + '…</div></div>';
+    var X = A.xPlan;
+    if (!X || X.key !== names) return h + '<button type="button" id="inv-aml-xcalc" onclick="invAmlExtraCalc()" style="margin-top:8px;width:100%;padding:10px;border-radius:9px;border:2px solid #b45309;background:var(--bg);color:#92400E;font-weight:800;cursor:pointer">🏷 Grab for ' + B.length + ' extra label' + (B.length === 1 ? '' : 's') + ' (Box ' + invEsc(names) + ' · ' + xfrN(u) + ' units)</button></div>';
+    if (X.err) return h + '<div style="color:var(--red);font-weight:700;margin-top:4px">⚠ ' + invEsc(X.err) + '</div></div>';
+    h += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);margin:6px 0 4px">Grab — for extra Box ' + invEsc(names) + '</div>'
+      + X.takes.map(function(t) { return '<div class="inv-aml-xtake" style="padding:7px 9px;margin-bottom:5px;border-radius:8px;background:var(--bg3);font-size:13px"><b style="font-family:var(--mono);font-size:15px">' + xfrN(t.cases) + ' cs</b> × <b style="font-family:var(--mono)">' + invEsc(t.partNum) + '</b> @ <b style="font-family:var(--mono)">' + invEsc(t.loc.location) + '</b>' + invAwdKindBadge(invAwdKind(t)) + (t.how ? '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + invEsc(t.how) + '</div>' : '') + '</div>'; }).join('')
+      + (X.short || []).map(function(x) { return '<div style="color:var(--red);font-size:12px;font-weight:700">⚠ ' + invEsc(x) + '</div>'; }).join('');
+    if (X.takes.length) h += '<button type="button" id="inv-aml-xadd" onclick="invAmlExtraAdd()" style="margin-top:6px;width:100%;padding:11px;border-radius:9px;border:none;background:#b45309;color:#fff;font-weight:800;font-size:14px;cursor:pointer">➕ Put the extra on my Pull List</button>';
+    return h + '</div>';
+  }
+  window.invAmlExtraCalc = function() {
+    var A = AML; if (!A || A.xBusy) return; var B = invAmlExtraBoxes(A); if (!B.length) return;
+    var names = B.map(function(b) { return b.seq || '?'; }).join(', '), u = B.reduce(function(a, b) { return a + (parseFloat(b.units) || 0); }, 0);
+    A.xBusy = true; invAmlRender();
+    // never the 🔒 locked plan (it is for the labels it was made for) and nothing taken off as grabbed: these boxes are on top of that
+    Promise.resolve(invAwdPlanPartCalc({ part: A.part, name: A.name, per: { 0: { units: u, boxes: B.length } } }, [{ shipment: A.shipment }], [])).then(function(r) {
+      if (AML !== A) return; A.xBusy = false; A.xPlan = { key: names, seqs: B.map(function(b) { return b.seq; }), takes: (r && r.takes) || [], short: (r && r.short) || [], err: r && r.err && !(r.takes || []).length ? 'could not work it out — check WiFi' : '' }; invAmlRender();
+    }).catch(function(e) { if (AML !== A) return; A.xBusy = false; A.xPlan = { key: names, takes: [], short: [], err: (e && e.message) || 'could not work it out' }; invAmlRender(); });
+  };
+  window.invAmlExtraAdd = function() {
+    var A = AML, X = A && A.xPlan; if (!A || !X || !X.takes.length || A.added) return;
+    if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
+    var B = invAmlExtraBoxes(A).map(function(b) { return b.seq || '?'; }); if (B.join(', ') !== X.key) { A.xPlan = null; invAmlRender(); return; } // changed → work it out again
+    var tag = invAwdTag(A.shipment), claims = [], area = '🏷 extra ' + A.part + ' Box ' + X.key;
+    var note = '🏷 EXTRA labels ' + A.part + ': Box ' + X.key + ' (labels left over, no product grabbed for them yet)';
+    X.takes.forEach(function(t) {
+      var cid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      claims.push({ id: cid, part: t.partNum, forPart: t.target, cases: t.cases, ships: [tag], loc: t.loc.location });
+      // its own Pull List item (never merged into another one): the boxes it is for go with it into the Stock Out notes
+      var it = { key: invPullItemKey(t.partNum, t.loc), partNum: t.partNum, sku: (t.L && t.L.sku) || t.partNum, name: (t.L && t.L.name) || A.name || '', location: t.loc.location, cases: String(t.cases),
+        systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
+        isPlaceholder: !!t.loc.isPlaceholder, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: null };
+      invPullList.push(it); if (typeof invTagBoxSize === 'function') invTagBoxSize(it, t.loc);
+      it.dest = 'company'; it.forPart = t.target; it.how = t.how; it.awdShipment = tag; it.awdClaims = [cid]; it.awdKind = invAwdKind(t); it.amlNote = note;
+      it.amlExtra = { ship: tag, part: A.part, seqs: X.seqs.slice() };
+      if (it.awdKind === 'extra') it.how = invAwdExtraHow(t) + (t.how ? ' · ' + t.how : '');
+    });
+    invPost(W + '/awd/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ area: area, at: new Date().toISOString(), lines: claims }) }).catch(function() {});
+    var ls = function(l) { var m = String(l || '').match(/(\d+)/); return m ? parseInt(m[1]) : 9999; };
+    invPullList.sort(function(a, b) { return ls(a.location) - ls(b.location) || a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum); });
+    A.added = true; AWDS.addN = (AWDS.addN || 0) + 1;
+    invSavePullList(); invRenderPullList(); if (typeof window.invAwdShipLoad === 'function' && g('inv-awdship-out')) window.invAwdShipLoad();
+    invFlash('✓ On your Pull List (extra labels Box ' + X.key + '): ' + X.takes.map(function(t) { return xfrN(t.cases) + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + '), 'success');
+    invAmlClose();
+  };
+  // 🏷 the always-there scan box (Big Company): Scan or Search starts folded there, so a label has its own place to be scanned
+  window.invAmlScanBox = function(el) {
+    var v = String((el && el.value) || '').trim(); if (el) el.value = ''; if (!v) return;
+    if (!invAmlSscc(v)) { invFlash('That is not an Amazon box label — scan the big barcode on the Amazon label (a part # goes in Scan or Search)', 'error'); return; }
+    window.invAmlOpen(v);
   };
   window.invAmlNPad = function() {
     var A = AML; if (!A || A.busy) return; var left = invAmlLeftBoxes(A);
@@ -3375,6 +3461,7 @@ window.invCredLogin = async function() {
       var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
+      var amc = g('inv-amlscan-card'); if (amc) amc.style.display = dest === 'company' ? 'block' : 'none';
       if (typeof invSsApply === 'function') invSsApply(dest); // 🗜 Scan or Search folds on Big Company only
       invRenderPullList(); if (typeof invLoadAllPulls === 'function') invLoadAllPulls(); if (typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount(); // 🔀 this tab's own list
       if (dest === 'company') { invAmzBcLoad(true); invBoxCheckDay(); invBcPallets(); /* 📷 the pallets of the latest shipment, at once */ if (aws) window.invAwdShipLoad(); /* 🗜 loads while closed too: the closed line shows it (owner 2026-10-30) */ } // 📦 the shipments ready: the saved list at once, a quick check for changes behind it
@@ -7961,7 +8048,7 @@ window.invCredLogin = async function() {
     var add = { key: l.partNum + '|' + l.location, partNum: l.partNum, sku: (a.d && a.d.sku) || l.partNum, name: (a.d && a.d.name) || it.name || '', location: l.location, cases: String(a.n),
       systemCases: l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0), rowIndex: l.rowIndex, isPlaceholder: false, masterRowIndex: l.rowIndex, masterId: l.masterId || null,
       addedAt: new Date().toISOString(), sourceStockoutId: it.sourceStockoutId || null, dest: it.dest || 'shelving', forPart: it.forPart, how: it.how, caseOf: it.caseOf,
-      awdShipment: it.awdShipment || undefined, awdKind: it.awdKind || undefined, amlNote: it.amlNote || undefined,
+      awdShipment: it.awdShipment || undefined, awdKind: it.awdKind || undefined, amlNote: it.amlNote || undefined, amlExtra: it.amlExtra || undefined,
       scanNote: '[NONE FOUND AT ' + it.location + ' — grabbed here instead]' };
     invNoneFoundNow(a.i, true);
     invPullList.push(add);
@@ -17636,6 +17723,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261031u"></script>
+<script src="xf-access.js?v=20261105a"></script>
 </body>
 </html>

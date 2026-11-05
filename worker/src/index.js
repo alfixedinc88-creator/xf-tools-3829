@@ -1590,7 +1590,11 @@ async function awdShipOpen(env, url) {
     if (!m || /\[NONE FOUND ON SHELF\]/.test(r.notes || '')) return;
     const ships = m[1].split('|').map(AWD_TAG_NAME).filter(Boolean); let fp = f ? U(f[1]) : U(r.part_num);
     for (const t of ships) { const to = fixTo[t + '|' + fp]; if (to) { fp = to; break; } } // 🔤 grabbed for a cut part # (before the label fix) → counts for the right one
-    grabbed.push({ part: U(r.part_num), forPart: fp, cases: parseFloat(r.cases) || 0, ships, status: r.status || '' });
+    const g = { part: U(r.part_num), forPart: fp, cases: parseFloat(r.cases) || 0, ships, status: r.status || '' };
+    // 🏷 grabbed for EXTRA Amazon labels (owner 2026-11-05) → which boxes, so the same box can't be grabbed as extra twice
+    const xl = /🏷 EXTRA labels (\S+): Box ([^(\]]+)/.exec(r.notes || '');
+    if (xl) g.extra = { part: U(xl[1]), seqs: xl[2].split(',').map(x => x.trim()).filter(Boolean) };
+    grabbed.push(g);
   });
   // 🔒 the locked plans of the open shipments (the phones grab exactly these), each spot with its SKU Mgr row (to put it on a Pull List)
   const locks = {};
@@ -1857,7 +1861,7 @@ async function awdClaim(request, env, session) {
   const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 500), now = new Date().toISOString(); let n = 0;
   for (const x of lines) { const id = t(x.id, 40); if (!id) continue;
     const r = await env.DB.prepare('INSERT OR IGNORE INTO awd_claim (id, at, by_user, area, part, for_part, cases, ships, loc, status) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, t(b.at, 30) || now, who, t(b.area, 20), t(x.part, 60).toUpperCase(), t(x.forPart, 60).toUpperCase(), parseFloat(x.cases) || 0, (Array.isArray(x.ships) ? x.ships : []).map(y => t(y, 60)).join('|'), t(x.loc, 60), 'open').run();
+      .bind(id, t(b.at, 30) || now, who, t(b.area, /^🏷 extra /.test(String(b.area || '')) ? 200 : 20), /* 🏷 extra labels: the boxes are kept whole (never grabbed as extra twice) */ t(x.part, 60).toUpperCase(), t(x.forPart, 60).toUpperCase(), parseFloat(x.cases) || 0, (Array.isArray(x.ships) ? x.ships : []).map(y => t(y, 60)).join('|'), t(x.loc, 60), 'open').run();
     n += (r.meta && r.meta.changes) || 0; }
   return await done({ ok: true, taken: n, by: who });
 }

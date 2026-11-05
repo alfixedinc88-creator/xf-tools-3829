@@ -11815,6 +11815,76 @@ console.log('\n🏷 Scan or Search an Amazon label → what to grab, the boxes /
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AML1'");
 }
 
+console.log('\n🏷 Stock Out Big Company: 🏷 Scan an Amazon label → Pull List (always open) + extra labels not grabbed yet');
+{
+  // Owner (2026-11-05): "for 'stock out big company' need to added one thing for we can scan the Amazon label to added to the pull list, for
+  // some reason we have some extra label didn't grab yet, so, we need to scan it and grab it".
+  const { readFileSync: rfX5 } = await import('node:fs');
+  const ihX = rfX5(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), axX = rfX5(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('a scan box of its own on Big Company (Scan or Search starts folded there): 🏷 Scan an Amazon label → Pull List, shown / hidden with the Big Company cards, a 🧩 Pages & Tabs check mark',
+    /<div class="icard" id="inv-amlscan-card" style="display:none;/.test(ihX) && /id="inv-amlscan-inp"[^>]*onkeydown="if\(event\.key==='Enter'\)\{event\.preventDefault\(\);invAmlScanBox\(this\);\}"/.test(ihX)
+      && /var amC = g\("inv-amlscan-card"\); if \(amC\) amC\.style\.display = \(mode === "out" && invStockOutDest === 'company'\)/.test(ihX)
+      && /var amc = g\('inv-amlscan-card'\); if \(amc\) amc\.style\.display = dest === 'company'/.test(ihX) && /sel: '#inv-amlscan-card'/.test(axX), null);
+  await post('/awd/label-map', { shipment: 'STAR-AMLX', labels: [
+    { sscc: '201952611628558001', sku: '95-1-1=10-', part: '95-1-1=10', seq: '3-1', units: 10, loc: 'C1=1-1-1' }, { sscc: '201952611628558002', sku: '95-1-1=10-', part: '95-1-1=10', seq: '3-2', units: 10, loc: 'C1=1-1-1' },
+    { sscc: '201952611628558003', sku: '95-1-1=10-', part: '95-1-1=10', seq: '3-3', units: 10, loc: 'C1=1-1-1' }, { sscc: '201952611628558004', sku: '95-1-1=10-', part: '95-1-1=10', seq: '3-4', units: 10, prev: true }] });
+  const code = ihX.slice(ihX.indexOf('  var AML = null;'), ihX.indexOf('  // A part # picked for Big Company that ships with Amazon'));
+  let html = '', calcArgs = null, ship = { ok: true, grabbed: [], claims: [], locks: {} }; const flashes = [], posts = [], list = [];
+  // the app says everything is grabbed for 95-1-1=10 in STAR-AMLX (3 cs) — but labels are left over
+  const plan = { need: { 'STAR-AMLX': 3 }, left: { 'STAR-AMLX': 0 }, grabbed: { 'STAR-AMLX': 3 }, onList: {}, short: [], takes: [] };
+  const envX = { g: id => id === 'inv-aml-inp' ? { focus() {} } : null, invModal: (id, h) => { html = h; }, invModalClose: () => { html = ''; },
+    invEsc: v => String(v == null ? '' : v), xfrN: v => Math.round((parseFloat(v) || 0) * 1000) / 1000, invFlash: (m, t) => flashes.push(t + ': ' + m), W: '',
+    wFetch: u => Promise.resolve({ json: () => /label-map/.test(u) ? get(u.replace(/^.*?\/awd/, '/awd')) : Promise.resolve(JSON.parse(JSON.stringify(ship))) }),
+    AWDS: {}, invAwdGot: () => [], invAwdPlanPart: () => Promise.resolve(JSON.parse(JSON.stringify(plan))),
+    invAwdPlanPartCalc: (o, ships, got) => { calcArgs = { o, ships, got }; const c = o.per[0].units / 10;
+      return Promise.resolve({ takes: [{ target: '95-1-1=10', partNum: '95-1-1=10', cases: c, how: '', boxPcs: 100, L: { sku: '95-1-1=10', name: 'Elbow' }, loc: { location: 'C1=2-2-2', eachQty: 100, cases: 6, masterId: 11, rowIndex: 4 } }], short: [], need: {}, left: {}, grabbed: {}, onList: {} }); },
+    invAwdKind: () => 'full', invAwdKindBadge: () => '', invAwdExtraHow: () => '', invAwdTag: n => String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60),
+    invPullItemKey: (p, l) => p + '@' + l.location, invPullList: list, invTagBoxSize() {}, invPost: (u, o) => { posts.push(JSON.parse(o.body)); return Promise.resolve({}); },
+    invSavePullList() {}, invRenderPullList() {}, invStockOutDest: 'company', invMode: 'out', invSwitchTab() {}, xfrKeypad() {}, window: globalThis };
+  new Function(...Object.keys(envX), code)(...Object.values(envX));
+  const wait = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)); };
+  const box = { value: '95-1-1=10' }; globalThis.invAmlScanBox(box);
+  check('the scan box: a part # → "not an Amazon box label" (nothing opened), the box is cleared for the next scan', /not an Amazon box label/.test(flashes.pop() || '') && html === '' && box.value === '', null);
+  box.value = '00201952611628558002'; globalThis.invAmlScanBox(box); await wait();
+  check('…the Amazon label of Box 3-2 → its popup; all grabbed already → "✅ Nothing left to grab" + "🏷 Extra labels — boxes with no product yet?" → 🏷 Grab for 1 extra label (Box 3-2 · 10 units)',
+    /✅ Nothing left to grab for 95-1-1=10/.test(html) && /🏷 Extra labels — boxes with no product yet\?/.test(html) && /id="inv-aml-xcalc"[^>]*>🏷 Grab for 1 extra label \(Box 3-2 · 10 units\)/.test(html) && !/inv-aml-xadd/.test(html), html);
+  globalThis.invAmlScan('00201952611628558003'); globalThis.invAmlScan('00201952611628558004');
+  check('…scan the other leftover label (3-3) and the PREVIOUS PACKED one (3-4) → 2 extra labels (Box 3-2, 3-3 · 20 units); PREVIOUS PACKED never counted',
+    /🏷 Grab for 2 extra labels \(Box 3-2, 3-3 · 20 units\)/.test(html), html);
+  globalThis.invAmlExtraCalc(); await wait();
+  check('…tap it → worked out by the Big Company rules for 20 units / 2 boxes of STAR-AMLX, NOT the locked plan and nothing taken off as grabbed → "Grab — for extra Box 3-2, 3-3: 2 cs × 95-1-1=10 @ C1=2-2-2"',
+    calcArgs && calcArgs.o.part === '95-1-1=10' && calcArgs.o.per[0].units === 20 && calcArgs.o.per[0].boxes === 2 && calcArgs.ships[0].shipment === 'STAR-AMLX' && calcArgs.got.length === 0
+      && /Grab — for extra Box 3-2, 3-3/.test(html) && /class="inv-aml-xtake"[^>]*><b[^>]*>2 cs<\/b> × <b[^>]*>95-1-1=10<\/b> @ <b[^>]*>C1=2-2-2<\/b>/.test(html) && /id="inv-aml-xadd"/.test(html), { calcArgs, html });
+  globalThis.invAmlExtraAdd();
+  const it = list[0];
+  check('…➕ Put the extra on my Pull List → 2 cs of 95-1-1=10 @ C1=2-2-2 for Big Company, shipment STAR-AMLX, taken for everyone ("🏷 extra 95-1-1=10 Box 3-2, 3-3"); the Stock Out notes say which boxes',
+    list.length === 1 && it.cases === '2' && it.dest === 'company' && it.forPart === '95-1-1=10' && it.awdShipment === 'STAR-AMLX' && it.awdClaims.length === 1
+      && it.amlNote === '🏷 EXTRA labels 95-1-1=10: Box 3-2, 3-3 (labels left over, no product grabbed for them yet)' && it.amlExtra.seqs.join() === '3-2,3-3'
+      && posts.length === 1 && posts[0].area === '🏷 extra 95-1-1=10 Box 3-2, 3-3' && posts[0].lines[0].cases === 2 && posts[0].lines[0].ships[0] === 'STAR-AMLX' && html === '', { it, posts });
+  globalThis.invAmlOpen('00201952611628558002'); await wait(); globalThis.invAmlScan('00201952611628558003');
+  check('…the same labels scanned again → "Box 3-2 — already grabbed as extra (on your Pull List)", no grab button (never grabbed twice)',
+    /Box 3-2 — already grabbed as extra \(on your Pull List\)/.test(html) && /Box 3-3 — already grabbed as extra/.test(html) && !/inv-aml-xcalc|inv-aml-xadd/.test(html), html);
+  globalThis.invAmlClose(); list.length = 0;
+  // another phone: the claim on the server keeps the boxes (area not cut), and once sent, the Stock Out notes say which boxes
+  await post('/awd/claim', { area: posts[0].area, at: new Date().toISOString(), lines: posts[0].lines });
+  const cl = ((await get('/awd/claim')).claims || []).find(c => c.id === posts[0].lines[0].id) || {};
+  check('server: the claim keeps "🏷 extra 95-1-1=10 Box 3-2, 3-3" whole (other areas still cut at 20)', cl.area === '🏷 extra 95-1-1=10 Box 3-2, 3-3', cl);
+  ship = await get('/awd/ship-send?open=1');
+  globalThis.invAmlOpen('00201952611628558003'); await wait();
+  check('…phone 2 scans Box 3-3 → "already grabbed as extra (on TS\'s Pull List)" — no grab button', /Box 3-3 — already grabbed as extra \(on [^)]*Pull List\)/.test(html) && !/inv-aml-xcalc/.test(html), html);
+  globalThis.invAmlClose();
+  await post('/awd/claim', { close: [posts[0].lines[0].id], how: 'test' });
+  await post('/inventory/log', { type: 'OUT', partNum: '95-1-1=10', sku: '95-1-1', location: 'C1=2-2-2', cases: 2, initials: 'TS', notes: '[BIG COMPANY for 95-1-1=10] [AWD: STAR-AMLX] [' + it.amlNote + '] ' });
+  ship = await get('/awd/ship-send?open=1');
+  const gx = (ship.grabbed || []).find(x => x.extra && (x.ships || []).includes('STAR-AMLX')) || {};
+  globalThis.invAmlOpen('00201952611628558002'); await wait();
+  check('…✓ Grabbed (Stock Out sent): the server reads the boxes from its notes (95-1-1=10, 3-2 + 3-3) → scanning Box 3-2 again: "already grabbed as extra (grabbed)"',
+    gx.extra && gx.extra.part === '95-1-1=10' && gx.extra.seqs.join() === '3-2,3-3' && gx.cases === 2 && /Box 3-2 — already grabbed as extra \(grabbed\)/.test(html) && !/inv-aml-xcalc/.test(html), { gx, html });
+  globalThis.invAmlClose();
+  ['invAmlIsLabel', 'invAmlOpen', 'invAmlScan', 'invAmlNPad', 'invAmlClose', 'invAmlAdd', 'invAmlExtraCalc', 'invAmlExtraAdd', 'invAmlScanBox'].forEach(k => { delete globalThis[k]; });
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-AMLX'"); sq.exec("DELETE FROM awd_claim"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-AMLX]%'").run();
+}
+
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has
 // the parent part # there), then scan the shelving column barcode where they put it. Match → all good; not a match → a warning and a voice
 // 'Not match', they need to confirm, then check where they put them".
