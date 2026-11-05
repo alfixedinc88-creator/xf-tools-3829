@@ -1765,7 +1765,11 @@ async function awdBoxPallet(request, url, env, session) {
     boxes.forEach(b => { const r = x.by[b.sscc], w = was[b.sscc]; if (!r || !w) return;
       ['relabel', 'recount'].forEach(k => { if (!w[k]) return; const f = fix[k]; f.all++;
         if (r.kind === 'pallet') f.onPallet++; else if (r.kind === 'ok') f.ready++; else if (r.kind === (k === 'relabel' ? 'rebag' : 'split')) f.waiting++; }); });
-    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const w = was[b.sscc] || {}; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: b.name || '', loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b), relabel: !!w.relabel, recount: !!w.recount, note: r.note || '' };
+    // 🏷 Owner (2026-11-05): "the info there I want to see name" — each label's product name (the label's own, else SKU Mgr's for that part #)
+    const nm = {}; try { const P = [...new Set(boxes.filter(b => !b.name).map(b => String(b.part || '').trim().toUpperCase()).filter(Boolean))];
+      for (let i = 0; i < P.length; i += 90) { const c = P.slice(i, i + 90); ((await env.DB.prepare(`SELECT UPPER(TRIM(part_num)) p, MAX(name) n FROM master_list WHERE UPPER(TRIM(part_num)) IN (${c.map(() => '?').join(',')}) AND COALESCE(name,'') != '' GROUP BY UPPER(TRIM(part_num))`).bind(...c).all()).results || []).forEach(r => { nm[r.p] = r.n; }); } } catch (_) {}
+    const nameOf = b => b.name || nm[String(b.part || '').trim().toUpperCase()] || '';
+    boxes.forEach(b => { const r = x.by[b.sscc]; if (!r) return; const w = was[b.sscc] || {}; const o = { sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, units: b.units, name: nameOf(b), loc: b.loc || '', by: r.by_user, at: r.at, product: r.product_part, cases: casesOf(b), relabel: !!w.relabel, recount: !!w.recount, note: r.note || '' };
       if (r.kind === 'pallet') (pallets[r.pallet] = pallets[r.pallet] || []).push(o); else if (kinds[r.kind]) kinds[r.kind].push(o); });
     const onPallets = Object.values(pallets).reduce((a, l) => a + l.length, 0);
     // 📷 owner (2026-10-27): "what is on which pallet — in photos like the boxes, easy to see"
@@ -1773,7 +1777,7 @@ async function awdBoxPallet(request, url, env, session) {
     return J({ ok: true, shipment: sh, photos, boxes: boxes.length, prev: boxes.filter(b => b.prev).length, scanned: Object.keys(x.by).length, onPallets,
       pallets: Object.keys(pallets).map(Number).sort((a, b) => a - b).map(n => ({ pallet: n, boxes: pallets[n], relabel: pallets[n].filter(o => o.relabel).length, recount: pallets[n].filter(o => o.recount).length })), fix, split: kinds.split, rebag: kinds.rebag, mismatch: kinds.mismatch, off: kinds.off, ready: kinds.ok,
       // Owner (2026-10-28): "PREVIOUS PACKED still has to be scanned and put on our pallets to ship" — not scanned yet counts them too (prev: true)
-      notYet: boxes.filter(b => !x.by[b.sscc]).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, loc: b.loc || '', prev: !!b.prev })) });
+      notYet: boxes.filter(b => !x.by[b.sscc]).map(b => ({ sscc: b.sscc, seq: b.seq, part: b.part, sku: b.sku, name: nameOf(b), loc: b.loc || '', prev: !!b.prev })) });
   }
   const b = await request.json().catch(() => ({}));
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
