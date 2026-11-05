@@ -109,6 +109,8 @@ document.addEventListener('input', function (e) {
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' },
         { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' },
         { key: 'notpallet', label: '…⚠ Labels not on a pallet yet (which ones)', sel: '.inv-bc-notpal' },
+        { key: 'bctotlist', label: '…👆 Tap ON a pallet / NOT on a pallet yet / labels in all → the list', sel: '#inv-bc-totlist' },
+        { key: 'bcreprint', label: '…🖨 Print the Amazon labels from those lists', sel: '.inv-bc-pr1, .inv-bc-prall' },
         { key: 'palsec', label: '…🟫 Pallets section (relabel / recount totals + each PALLET)', sel: '.inv-bc-pals' } ] },
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [

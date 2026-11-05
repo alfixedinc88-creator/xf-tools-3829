@@ -11964,6 +11964,50 @@ console.log('\n📜 Big Company label popup: who grabbed / when / which pallet �
   sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-HIST1]%'").run(); sq.prepare("DELETE FROM master_list WHERE part_num = '98-1-1=10'").run();
 }
 
+console.log('\n👆 Box check Pallets: tap ON a pallet / NOT on a pallet yet / labels in all → the list, 🖨 print the Amazon labels right there');
+{
+  // Owner (2026-11-05): "under the 'pallets . which labels are not on a pallet yet' for the 'labels on a pallet' 'not on a pallet yet' 'labels in
+  // all' I want we able to click on it, to see what is in what … 'not on a pallet yet' showing what is not in pallet, and right next to it we
+  // able just click on the button to print the amazon labels".
+  const { readFileSync: rfP } = await import('node:fs');
+  const ihP = rfP(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), axP = rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const code = ihP.slice(ihP.indexOf('  var BC_NOTPAL = {'), ihP.indexOf('  // 🖨 PALLET labels: big'));
+  const bx = (sscc, seq, part, x) => Object.assign({ sscc, seq, part, sku: part + '-', loc: 'C1=1-1-1', by: 'NB', at: '2026-11-05T15:00:00Z' }, x || {});
+  const D = { ok: true, shipment: 'STAR-PAL1', boxes: 5, onPallets: 2, pallets: [{ pallet: 1, boxes: [bx('201952611628561001', '1-1', '91-1-1=10')] }, { pallet: 2, boxes: [bx('201952611628561002', '1-2', '91-1-1=10')] }],
+    ready: [bx('201952611628561003', '2-1', '92-2-2=5')], split: [], rebag: [], mismatch: [], off: [], notYet: [bx('201952611628561004', '2-2', '92-2-2=5', { by: '' }), bx('201952611628561005', '3-1', '93-3-3=2', { by: '' })] };
+  const els = { 'inv-bc-totlist': { innerHTML: '' } }, flashes = [], acts = [], printed = [], BXC = { palData: D };
+  const store = { last: { shipment: 'STAR-PAL1', groups: [{ ssccs: ['201952611628561001'], pages: [{ url: 'P1', w: 4, h: 6 }] }, { ssccs: ['201952611628561004'], pages: [{ url: 'P4a', w: 4, h: 6 }, { url: 'P4b', w: 4, h: 6 }] }] },
+    idx: [{ at: 1, shipment: 'STAR-PAL1' }, { at: 9, shipment: 'OTHER' }], 'h:1': { groups: [{ ssccs: ['201952611628561003'], pages: [{ url: 'P3', w: 4, h: 6 }] }] }, 'h:9': { groups: [{ ssccs: ['201952611628561005'], pages: [{ url: 'WRONG', w: 4, h: 6 }] }] } };
+  const idb = { open() { const q = {}; setTimeout(() => { q.result = { transaction: () => ({ objectStore: () => ({ get(k) { const r = {}; setTimeout(() => { r.result = store[k]; r.onsuccess && r.onsuccess(); }); return r; } }) }) }; q.onsuccess(); }); return q; } };
+  const win = { open: () => { const w = { html: '', document: { write(h) { w.html += h; }, open() { w.html = ''; }, close() {} }, close() { w.closed = true; } }; printed.push(w); return w; } };
+  const envP = { g: id => els[id] || null, ckE: v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'), xfrFmtT: v => 'T(' + v + ')', BXC, document: { querySelectorAll: () => [] },
+    window: win, invFlash: (m, t) => flashes.push(t + ': ' + m), W: '', wFetch: (u, o) => { acts.push([u, JSON.parse(o.body)]); return Promise.resolve({}); }, indexedDB: idb, localStorage: { getItem: () => null, setItem() {} } };
+  new Function(...Object.keys(envP), code)(...Object.values(envP));
+  const wait = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 2)); };
+  check('the 3 tiles can be tapped (▸ tap to see) and open their list right under them',
+    /class="inv-bc-tile" data-k="' \+ k \+ '" role="button"[^;]*onclick="invBcTotShow\(/.test(ihP) && /tile\(on, '🟫 labels ON a pallet', 'var\(--green\)', 'on'\) \+ tile\(L\.length, '⚠ NOT on a pallet yet', L\.length \? '#d97706' : 'var\(--text3\)', 'not'\) \+ tile\(all, '📦 labels in all', '#7c3aed', 'all'\)/.test(ihP)
+      && /<div id="inv-bc-totlist">' \+ invBcTotList\(d\) \+ '<\/div>'/.test(ihP) && /sel: '#inv-bc-totlist'/.test(axP) && /sel: '\.inv-bc-pr1, \.inv-bc-prall'/.test(axP), null);
+  win.invBcTotShow('not'); let h = els['inv-bc-totlist'].innerHTML;
+  check('⚠ NOT on a pallet yet → its 3 labels (Box 2-1 labeled — NO PALLET, Box 2-2 + 3-1 not scanned yet), each with 🖨, + "🖨 Print all 3"; none of the pallet ones',
+    (h.match(/class="inv-bc-tl"/g) || []).length === 3 && (h.match(/class="inv-bc-pr1"/g) || []).length === 3 && /🖨 Print all 3 not-on-a-pallet Amazon labels/.test(h)
+      && /Box 2-1<\/b>[\s\S]*labeled — NO PALLET scanned/.test(h) && /Box 3-1<\/b>[\s\S]*not scanned yet/.test(h) && !/Box 1-1</.test(h), h);
+  win.invBcTotShow('on'); h = els['inv-bc-totlist'].innerHTML;
+  check('🟫 ON a pallet → PALLET 1 (Box 1-1) and PALLET 2 (Box 1-2), who / when', /🟫 PALLET 1 — 1 label<\/summary>[\s\S]*Box 1-1/.test(h) && /🟫 PALLET 2 — 1 label<\/summary>[\s\S]*Box 1-2/.test(h) && /NB T\(2026-11-05T15:00:00Z\)/.test(h) && (h.match(/class="inv-bc-tl"/g) || []).length === 2, h);
+  win.invBcTotShow('all'); h = els['inv-bc-totlist'].innerHTML;
+  check('📦 labels in all → all 5 (each once): 🟫 2 on a pallet · ⚠ 3 not yet', (h.match(/class="inv-bc-tl"/g) || []).length === 5 && /🟫 2 on a pallet · ⚠ 3 not yet/.test(h), h);
+  win.invBcTotShow('all');
+  check('…tap the same tile again → closed', els['inv-bc-totlist'].innerHTML === '', null);
+  win.invBcReprint(['201952611628561003', '201952611628561004', '201952611628561005']); await wait();
+  const w1 = printed[0];
+  check('🖨 Print all 3 → one print: the saved Amazon labels of Box 2-1 (an older saved set of this shipment) + Box 2-2 (2 pages); Box 3-1 not saved here → said, never another shipment\'s label; kept (label_reprint, who / which boxes)',
+    printed.length === 1 && (w1.html.match(/<img src="/g) || []).length === 3 && /P3/.test(w1.html) && /P4a/.test(w1.html) && /P4b/.test(w1.html) && !/WRONG/.test(w1.html) && /window\.print\(\)/.test(w1.html) && /@page\{size:4in 6in/.test(w1.html)
+      && flashes.some(f => /2 Amazon labels sent to print · ⚠ 1 not saved on this device \(93-3-3=2 3-1\)/.test(f))
+      && acts.length === 1 && acts[0][0] === '/awd/activity' && acts[0][1].action === 'label_reprint' && acts[0][1].detail.labels === 2 && acts[0][1].detail.boxes.join() === '92-2-2=5 2-1,92-2-2=5 2-2' && acts[0][1].detail.from === 'Stock Out Big Company', { html: w1.html.slice(0, 300), flashes, acts });
+  win.invBcReprint(['201952611628561005']); await wait();
+  check('🖨 a label not saved on this device → the print window closes and it says where to print (office computer / upload the PDF in AWD Planner)',
+    printed[1].closed && /not saved on THIS device — print on the office computer that uploaded the label PDF/.test(flashes[flashes.length - 1]) && acts.length === 1, flashes);
+}
+
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has
 // the parent part # there), then scan the shelving column barcode where they put it. Match → all good; not a match → a warning and a voice
 // 'Not match', they need to confirm, then check where they put them".
