@@ -1545,6 +1545,91 @@ async function awdLabelMap(request, url, env, session) {
 // its place (they know the PREVIOUS PACKED boxes). + what was already grabbed for each (Stock Out notes "[AWD: name]", not Rejected), so
 // nothing is listed to grab twice. POST { done: name } / { reopen: name } → kept (who / when) in awd_ship_done.
 const AWD_TAG_NAME = n => String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60);
+// 🏷 Owner (2026-11-05): "show those info when people scan that, like who already grab, when, or it was in the pallet, which pallet who and
+// when". GET /awd/label-info?shipment=&part= → for ONE part # of ONE shipment: every Stock Out grabbed for it (who, when, spot, cases, how,
+// pending / approved), the spots on a Pull List now (who, since), and each label's box: on which PALLET / labeled / packing room, who, when.
+async function awdLabelInfo(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const U = x => String(x || '').trim().toUpperCase(), K = p => U(p).replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, ''));
+  const sh = String(url.searchParams.get('shipment') || '').trim().slice(0, 80), part = K(url.searchParams.get('part'));
+  if (!sh || !part) return J({ ok: false, error: 'Which shipment and part #?' });
+  const tag = AWD_TAG_NAME(sh), since = new Date(Date.now() - 30 * 86400000).toISOString();
+  await invLogEnsureColumns(env);
+  const grabs = [];
+  ((await env.DB.prepare(`SELECT id, timestamp, grabbed_at, added_at, initials, part_num, location, cases, notes, status, spot_before, spot_after FROM inventory_log
+      WHERE type = 'OUT' AND notes LIKE ? AND timestamp >= ? ORDER BY timestamp`).bind('%[AWD:%' + tag + '%', since).all().catch(() => ({ results: [] }))).results || []).forEach(r => {
+    const n = r.notes || '', m = /\[AWD:([^\]]*)\]/.exec(n), f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(n);
+    if (!m || m[1].split('|').map(AWD_TAG_NAME).indexOf(tag) < 0) return;
+    if (K(f ? f[1] : r.part_num) !== part) return;
+    const how = /\[🏷 EXTRA labels[^\]]*\]/.test(n) ? '🏷 extra labels' : /\[🏷 Amazon label[^\]]*\]/.test(n) ? '🏷 label scanned' : '📦 AWD list';
+    grabs.push({ id: r.id, at: r.grabbed_at || r.timestamp, by: r.initials || '', part: U(r.part_num), loc: r.location || '', cases: +r.cases || 0, status: r.status || '',
+      none: /\[NONE FOUND ON SHELF\]/.test(n), how, spotBefore: r.spot_before, spotAfter: r.spot_after,
+      note: ((/\[(🏷 [^\]]*)\]/.exec(n) || [])[1] || '').slice(0, 160) });
+  });
+  const claims = (await awdClaimsOpen(env).catch(() => [])).filter(c => K(c.forPart || c.part) === part && (c.ships || []).map(AWD_TAG_NAME).indexOf(tag) >= 0)
+    .map(c => ({ by: c.by, at: c.at, part: c.part, loc: c.loc, cases: c.cases, area: c.area }));
+  let boxes = [];
+  try {
+    const L = ((await env.DB.prepare('SELECT sscc, sku, part, seq FROM awd_label_map WHERE shipment = ?').bind(sh).all()).results || []).filter(b => K(b.part || b.sku) === part);
+    const S = ((await env.DB.prepare('SELECT * FROM awd_box_scan WHERE shipment = ? ORDER BY id').bind(sh).all().catch(() => ({ results: [] }))).results || []), by = {};
+    S.forEach(r => { by[r.sscc] = r; });
+    boxes = L.map(b => { const r = by[b.sscc]; return { sscc: b.sscc, seq: b.seq, kind: r ? r.kind : '', pallet: r ? r.pallet : null, by: r ? r.by_user : '', at: r ? r.at : '', note: r ? (r.note || '') : '' }; });
+  } catch (_) {}
+  return J({ ok: true, shipment: sh, part, grabs, claims, boxes });
+}
+// 📜 Owner (2026-11-05): "give me the history under the 'Stock out big company', I want to see all the detail like who, when, where, how they
+// grab it and also need to showing on that aisle at that time what we have before and after, need to make sure it was match to our 'sku mgr'".
+// GET /inventory/bigco-history?days=N (Admin / Owner) → every Big Company Stock Out (newest first): who, when (put on the list / grabbed /
+// approved), spot, cases, how (notes), the spot's cases before → after, the part # total before → after, and the check:
+//   spot: before − taken = after (a shelf never goes below 0 — said in ℹ), part total: the History warning if any,
+//   SKU Mgr now: the spot's cases in SKU Mgr now — must equal "after" when nothing else changed that spot since (later changes are listed).
+async function invBigCoHistory(url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const roles = (session && session.roles) || [];
+  if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only' }, 403);
+  await invLogEnsureColumns(env);
+  const days = Math.max(1, Math.min(90, parseInt(url.searchParams.get('days') || '1', 10) || 1)), cutoff = nyDaysStartUTC(days);
+  const U = x => String(x || '').trim().toUpperCase();
+  const rows = ((await env.DB.prepare(`SELECT id, timestamp, added_at, grabbed_at, initials, part_num, location, cases, notes, status, verified_by, verified_at, name, master_id,
+      spot_before, spot_after, total_before, total_after, total_warning, cancelled_at FROM inventory_log
+      WHERE type = 'OUT' AND timestamp >= ? AND COALESCE(notes,'') LIKE '%[BIG COMPANY%' AND COALESCE(notes,'') NOT LIKE '%[AUDIT]%' ORDER BY timestamp DESC, id DESC LIMIT 800`).bind(cutoff).all()).results || []);
+  const parts = [...new Set(rows.map(r => U(r.part_num)).filter(Boolean))], now = {}, later = {};
+  for (let i = 0; i < parts.length; i += 90) { const c = parts.slice(i, i + 90), q = c.map(() => '?').join(',');
+    ((await env.DB.prepare(`SELECT part_num, location, cases FROM master_list WHERE UPPER(TRIM(part_num)) IN (${q})`).bind(...c).all()).results || [])
+      .forEach(m => { const k = U(m.part_num) + '|' + U(m.location); now[k] = _n((now[k] || 0) + (parseFloat(m.cases) || 0)); });
+    // every change since the oldest row on those part #s (any type: Stock In / Out / Transfer / SKU Mgr edit), to tell what came after a row
+    ((await env.DB.prepare(`SELECT id, timestamp, type, part_num, location, overwrite_loc, paired_location, cases, initials, status FROM inventory_log
+        WHERE timestamp >= ? AND UPPER(TRIM(part_num)) IN (${q}) AND COALESCE(status,'') NOT IN ('Rejected','Cancelled') AND cancelled_at IS NULL ORDER BY timestamp, id`).bind(cutoff, ...c).all()).results || [])
+      .forEach(x => { [x.location, x.overwrite_loc, x.paired_location].filter(Boolean).map(U).filter((v, j, a) => a.indexOf(v) === j).forEach(l => {
+        const k = U(x.part_num) + '|' + l; (later[k] = later[k] || []).push({ id: x.id, at: x.timestamp, type: x.type, cases: +x.cases || 0, by: x.initials || '', status: x.status || '' }); }); });
+  }
+  const out = rows.map(r => {
+    const k = U(r.part_num) + '|' + U(r.location), n = r.notes || '', st = String(r.status || ''), approved = /approv|verif/i.test(st) && !r.cancelled_at;
+    const none = /\[NONE FOUND ON SHELF\]/.test(n), taken = none ? 0 : (+r.cases || 0);
+    const after = (later[k] || []).filter(x => x.at > r.timestamp || (x.at === r.timestamp && x.id > r.id));
+    const o = { id: r.id, at: r.timestamp, addedAt: r.added_at, grabbedAt: r.grabbed_at, by: r.initials || '', part: U(r.part_num), name: r.name || '', loc: r.location || '', cases: +r.cases || 0,
+      notes: n, status: st, verifiedBy: r.verified_by || '', verifiedAt: r.verified_at || '', none, cancelled: !!r.cancelled_at,
+      spotBefore: r.spot_before, spotAfter: r.spot_after, totalBefore: r.total_before, totalAfter: r.total_after, totalWarning: r.total_warning || '',
+      skuNow: now[k] != null ? now[k] : 0, laterN: after.length, laterList: after.slice(0, 6) };
+    if (r.cancelled_at) o.check = { kind: 'off', txt: 'Cancelled — nothing taken off' };
+    else if (/reject/i.test(st)) o.check = { kind: 'off', txt: 'Rejected — nothing taken off' };
+    else if (!approved) o.check = { kind: 'wait', txt: 'after approval' };
+    else if (r.spot_before == null || r.spot_after == null) o.check = { kind: 'old', txt: '⚠ spot before → after not recorded (Stock Outs approved before 2026-11-05)' };
+    else {
+      const want = _n(Math.max(0, r.spot_before - taken)), bad = [];
+      if (Math.abs(want - r.spot_after) > 0.001) bad.push('spot should be ' + _n(r.spot_before) + ' − ' + _n(taken) + ' = ' + want + ', but it is ' + _n(r.spot_after));
+      if (/^⚠/.test(r.total_warning || '')) bad.push(r.total_warning);
+      if (!after.length && Math.abs(o.skuNow - r.spot_after) > 0.001) bad.push('SKU Mgr now has ' + o.skuNow + ' cs at ' + (r.location || '?') + ', not ' + _n(r.spot_after) + ' (changed without a record?)');
+      o.check = bad.length ? { kind: 'bad', txt: '⚠ ' + bad.join(' · ') }
+        : { kind: 'ok', txt: '✅ ' + _n(r.spot_before) + ' − ' + _n(taken) + ' = ' + _n(r.spot_after) + (r.spot_before < taken - 0.001 ? ' (ℹ the shelf only had ' + _n(r.spot_before) + ')' : '')
+          + (after.length ? ' · changed ' + after.length + '× since · SKU Mgr now ' + o.skuNow + ' cs' : ' = SKU Mgr now ✅') };
+    }
+    return o;
+  });
+  const T = { rows: out.length, cases: _n(out.filter(o => !o.none && o.check.kind !== 'off').reduce((a, o) => a + o.cases, 0)), ok: out.filter(o => o.check.kind === 'ok').length,
+    bad: out.filter(o => o.check.kind === 'bad').length, wait: out.filter(o => o.check.kind === 'wait').length, old: out.filter(o => o.check.kind === 'old').length };
+  return J({ ok: true, days, cutoff, rows: out, tot: T });
+}
 async function awdShipOpen(env, url) {
   const days = 14, since = new Date(Date.now() - days * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
@@ -6077,6 +6162,9 @@ async function ensureTotalTrackingColumns(env) {
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_scope TEXT').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_before REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_after REAL').run().catch(()=>{});
+  // 📍 the one SPOT's cases before → after (owner 2026-11-05: "on that aisle at that time what we have before and after")
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN spot_before REAL').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN spot_after REAL').run().catch(()=>{});
   // Pieces too (owner): the Each/Case of the box this entry moved, and the
   // whole inventory in pieces before → after it.
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN pcs_each REAL').run().catch(()=>{});
@@ -6358,6 +6446,9 @@ async function inventoryVerify(request, env) {
           ? `\u26a0 ${partNum} total should be ${_n(totalBefore)} ${change < 0 ? '\u2212' : '+'} ${_n(Math.abs(change))} = ${_n(expectedAfter)}, but it is ${_n(totalAfter)}. Another change to ${partNum} landed at the same moment, or the entry hit a different shelf \u2014 check ${partNum}'s shelves.`
           : info;
         await invSaveTotals(env, [item.d1Id], totalBefore, totalAfter, note, valBefore);
+        // 📍 Owner (2026-11-05): the spot (that aisle / shelf) before → after too — no SKU Mgr row there = 0 cases
+        if (item.d1Id) { const rowAfter = await invRowCases(env, item.masterId, partNum, shelf).catch(() => null);
+          await env.DB.prepare('UPDATE inventory_log SET spot_before=?, spot_after=? WHERE id=?').bind(rowBefore == null ? 0 : _n(rowBefore), rowAfter == null ? 0 : _n(rowAfter), item.d1Id).run().catch(() => {}); }
       }
     } catch(e) { console.error('[verify-totals] failed:', e.message); if (resultData.ok) await invSaveTotalsFailed(env, [item.d1Id], e.message); }
   }
@@ -11012,6 +11103,8 @@ const _app = {
     // 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who".
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
+    if (url.pathname === '/awd/label-info' && method === 'GET') return await awdLabelInfo(url, env);
+    if (url.pathname === '/inventory/bigco-history' && method === 'GET') return await invBigCoHistory(url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
     // 🧑‍💼 Office (owner 2026-11-02): every channel's messages / returns / cancellations / feedback / account health, and who handled each, how fast
@@ -18487,7 +18580,7 @@ async function d1Strict(env, sql, params, first) {
 let _invLogReady = false;
 async function invLogEnsureColumns(env) {
   if (_invLogReady || !env.DB) return;
-  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL', 'pcs_each REAL', 'wh_pcs_before REAL', 'wh_pcs_after REAL'])
+  for (const c of ['spot_before REAL', 'spot_after REAL', 'added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL', 'pcs_each REAL', 'wh_pcs_before REAL', 'wh_pcs_after REAL'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
   // ⚡ Owner (2026-11-03, before the container transfer: "make sure all at fast speed, sometime it was slow"): two partial indexes —
