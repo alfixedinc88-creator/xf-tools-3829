@@ -9405,27 +9405,91 @@ function _psAlSchedHtml(c) {
   var nwS = _psAlSegs(c.noWaitTimes, true), pS = _psAlSegs(c.pauseTimes, true), sfS = c.scanFormOn === false || c.scanFormOn === 'false' ? [] : _psAlSegs(c.scanFormTimes, false);
   var perDay = [];
   for (var d = 0; d < 7; d++) {
-    var ev = {};
-    var add = function(at, txt) { (ev[at] = ev[at] || []).push(txt); };
+    var ev = {}, refs = {};
+    // ✏️ each time remembers which rule made it (field · which part · from / to / at) so a tap on it changes that rule (owner 2026-11-05)
+    var add = function(at, txt, ref) { (ev[at] = ev[at] || []).push(txt); if (ref) (refs[at] = refs[at] || []).push(ref); };
     var stopped = function(t) { return pS.some(function(x) { return x.days.indexOf(d) >= 0 && t >= x.from && t < x.to; }); };
-    pS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS'); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again'); });
-    sfS.forEach(function(x) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made'); });
-    nwS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; var mn = x.min != null ? x.min : nw;
-      add(x.from, mn ? '⏩ No ' + wait + '-min wait — new orders wait ' + mn + ' min (to catch a merge), then print' : '⚡ No wait — an order prints as soon as it comes in');
+    pS.forEach(function(x, i) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS', { f: 'pauseTimes', i: i, k: 'from' }); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again', { f: 'pauseTimes', i: i, k: 'to' }); });
+    sfS.forEach(function(x, i) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made', { f: 'scanFormTimes', i: i, k: 'at' }); });
+    nwS.forEach(function(x, i) { if (x.days.indexOf(d) < 0) return; var mn = x.min != null ? x.min : nw;
+      add(x.from, mn ? '⏩ No ' + wait + '-min wait — new orders wait ' + mn + ' min (to catch a merge), then print' : '⚡ No wait — an order prints as soon as it comes in', { f: 'noWaitTimes', i: i, k: 'from' });
       var next = nwS.some(function(y) { return y !== x && y.days.indexOf(d) >= 0 && y.from === x.to; }); // the next no-wait time starts right then
-      if (x.to < 1440 && !next && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait'); }); // printing stopped then anyway → not said
+      if (x.to < 1440 && !next && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait', { f: 'noWaitTimes', i: i, k: 'to' }); }); // printing stopped then anyway → not said
     var keys = Object.keys(ev).map(Number).sort(function(a, b) { return a - b; });
-    perDay.push(keys.map(function(k) { return '<tr><td style="padding:2px 10px 2px 0;white-space:nowrap;font-weight:700;font-family:var(--mono);vertical-align:top">' + e(_psAlHm(k)) + '</td><td style="padding:2px 0">' + ev[k].map(e).join(' · ') + '</td></tr>'; }).join(''));
+    perDay.push(keys.map(function(k) { return '<tr><td class="ps-sched-t" data-at="' + k + '" data-refs="' + e(encodeURIComponent(JSON.stringify(refs[k] || []))) + '" onclick="psAlSchedTap(this)" title="Tap to change this time"'
+      + ' style="padding:2px 10px 2px 0;white-space:nowrap;font-weight:700;font-family:var(--mono);vertical-align:top;cursor:pointer;color:var(--accent);text-decoration:underline dotted">' + e(_psAlHm(k)) + '</td><td style="padding:2px 0">' + ev[k].map(e).join(' · ') + '</td></tr>'; }).join(''));
   }
   // days with the same day in a row → one group (Mon–Fri, …)
   var order = [1, 2, 3, 4, 5, 6, 0], groups = [];
   order.forEach(function(d) { var g = groups[groups.length - 1]; if (g && g.html === perDay[d]) g.days.push(d); else groups.push({ days: [d], html: perDay[d] }); });
   var name = function(ds) { return ds.length === 1 ? _PS_DAYN[ds[0]] : _PS_DAYN[ds[0]].slice(0, 3) + '–' + _PS_DAYN[ds[ds.length - 1]].slice(0, 3); };
   return '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Any other time: an order waits <b>' + wait + ' min</b> after the newest order for that person (so orders to merge come together), then prints.</div>'
-    + groups.map(function(g) { return '<div style="margin-top:6px"><div style="font-weight:800">' + e(name(g.days)) + '</div>' + (g.html ? '<table style="border-collapse:collapse;font-size:13px">' + g.html + '</table>' : '<div style="color:var(--text3)">Prints all day (normal wait).</div>') + '</div>'; }).join('')
+    + '<div style="font-size:12px;color:var(--accent);margin-bottom:2px">✏️ Tap a time to change it right there.</div>'
+    + groups.map(function(g) { return '<div class="ps-sched-g" data-days="' + g.days.join(',') + '" data-name="' + e(name(g.days)) + '" style="margin-top:6px"><div style="font-weight:800">' + e(name(g.days)) + '</div>' + (g.html ? '<table style="border-collapse:collapse;font-size:13px">' + g.html + '</table>' : '<div style="color:var(--text3)">Prints all day (normal wait).</div>') + '</div>'; }).join('')
     + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Print Log: labels printed after 5:30 pm (Mon–Fri) count for the next business day in 📦 Ship-day count.</div>';
 }
 function _psAlSchedRender(c) { var el = document.getElementById('ps-al-sched'); if (el && c) el.innerHTML = _psAlSchedHtml(c); }
+// ✏️ Owner (2026-11-05): "I want to change the time by clicking on the time, right there — the one we have was so confusing".
+// Days → the same text the server keeps ("Mon-Fri", "Sat", "Mon,Wed").
+function _psAlDayTxt(days) {
+  var nm = function(d) { return _PS_DAYN[d].slice(0, 3); }, ds = days.slice().sort(function(a, b) { return ((a + 6) % 7) - ((b + 6) % 7); });
+  var run = ds.length > 2 && ds.every(function(d, i) { return i === 0 || (ds[i - 1] + 1) % 7 === d; });
+  return run ? nm(ds[0]) + '-' + nm(ds[ds.length - 1]) : ds.map(nm).join(',');
+}
+function _psAlHm24(n) { return Math.floor(n / 60) + ':' + (n % 60 < 10 ? '0' : '') + (n % 60); }
+function _psAlSegsTxt(segs, ranges) {
+  return segs.filter(function(x) { return x.days.length; }).map(function(x) { return _psAlDayTxt(x.days) + ' ' + (ranges ? _psAlHm24(x.from) + '-' + _psAlHm24(x.to) + (x.min != null ? '=' + x.min : '') : _psAlHm24(x.at)); }).join('; ');
+}
+// The schedule c with the times in refs moved to newMin — on the tapped days only (a rule for more days is split: those days get the
+// new time, the other days keep theirs), or on every day the rule is for (all). → { ok, cfg: { pauseTimes, noWaitTimes, scanFormTimes }, error }
+function _psAlSchedApply(c, refs, days, newMin, all) {
+  var S = { pauseTimes: _psAlSegs(c.pauseTimes, true), noWaitTimes: _psAlSegs(c.noWaitTimes, true), scanFormTimes: _psAlSegs(c.scanFormTimes, false) };
+  var err = '';
+  refs.forEach(function(r) {
+    var seg = S[r.f] && S[r.f][r.i]; if (!seg) { err = 'That time is not in the rules any more — open the page again'; return; }
+    var target = seg, other = seg.days.filter(function(d) { return days.indexOf(d) < 0; });
+    if (!all && other.length) { target = JSON.parse(JSON.stringify(seg)); target.days = seg.days.filter(function(d) { return days.indexOf(d) >= 0; }); seg.days = other; S[r.f].push(target); }
+    target[r.k] = newMin;
+    if (r.k !== 'at' && !(target.from < target.to && target.to <= 1440)) err = (r.f === 'pauseTimes' ? 'Auto print must STOP before it STARTS again' : 'The no-wait time must start before it ends') + ' (' + _psAlHm(target.from) + ' → ' + _psAlHm(target.to) + ')';
+  });
+  if (err) return { ok: false, error: err };
+  return { ok: true, cfg: { pauseTimes: _psAlSegsTxt(S.pauseTimes, true), noWaitTimes: _psAlSegsTxt(S.noWaitTimes, true), scanFormTimes: _psAlSegsTxt(S.scanFormTimes, false) } };
+}
+var _PS_SCHED_WHAT = { pauseTimes: { from: '⏸ Auto print STOPS', to: '▶ Auto print STARTS again' }, noWaitTimes: { from: '⏩ No-wait time starts', to: '↩ Back to the normal wait' }, scanFormTimes: { at: '📄 Scan form made' } };
+window.psAlSchedTap = function(td) {
+  if (!td || !_psAlConfig) return;
+  var old = document.querySelector('.ps-sched-edit'); if (old) { var was = old.previousSibling; old.remove(); if (was === td.parentNode) return; } // tap again → closed
+  var refs = []; try { refs = JSON.parse(decodeURIComponent(td.getAttribute('data-refs') || '%5B%5D')); } catch (e) {}
+  if (!refs.length) return;
+  var g = td.closest('.ps-sched-g'), days = String(g ? g.getAttribute('data-days') : '').split(',').filter(function(x) { return x !== ''; }).map(Number), gname = g ? g.getAttribute('data-name') : '';
+  var at = +td.getAttribute('data-at'), segAll = { pauseTimes: _psAlSegs(_psAlConfig.pauseTimes, true), noWaitTimes: _psAlSegs(_psAlConfig.noWaitTimes, true), scanFormTimes: _psAlSegs(_psAlConfig.scanFormTimes, false) };
+  var wider = refs.map(function(r) { var x = segAll[r.f] && segAll[r.f][r.i]; return x && x.days.some(function(d) { return days.indexOf(d) < 0; }) ? x.days : null; }).filter(Boolean)[0];
+  var tr = document.createElement('tr'); tr.className = 'ps-sched-edit';
+  tr.innerHTML = '<td colspan="2" style="padding:6px 0 8px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px;border:1.5px solid var(--accent);border-radius:8px;background:var(--bg2)">'
+    + '<input type="time" class="ps-sched-new" value="' + _psAlHm24(at).replace(/^(\d):/, '0$1:') + '" style="font-size:16px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px">'
+    + (refs.length > 1 ? refs.map(function(r, j) { return '<label style="font-size:12px"><input type="checkbox" class="ps-sched-ref" data-j="' + j + '" checked> ' + _psAlEsc((_PS_SCHED_WHAT[r.f] || {})[r.k] || r.f) + '</label>'; }).join(' ')
+      : '<span style="font-size:12px;color:var(--text2)">' + _psAlEsc((_PS_SCHED_WHAT[refs[0].f] || {})[refs[0].k] || '') + '</span>')
+    + '<button class="ps-btn-sm" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="psAlSchedTapSave(this,false)">✓ Save for ' + _psAlEsc(gname) + '</button>'
+    + (wider ? '<button class="ps-btn-sm" onclick="psAlSchedTapSave(this,true)">✓ Save for every day it is on (' + _psAlEsc(wider.length === 7 ? 'every day' : _psAlDayTxt(wider)) + ')</button>' : '')
+    + '<button class="ps-btn-sm" onclick="this.closest(\'.ps-sched-edit\').remove()">✕</button><span class="ps-sched-msg" style="font-size:12px"></span></div></td>';
+  tr._ps = { refs: refs, days: days, at: at, gname: gname, wider: wider };
+  td.parentNode.parentNode.insertBefore(tr, td.parentNode.nextSibling);
+  var inp = tr.querySelector('.ps-sched-new'); if (inp) inp.focus();
+};
+window.psAlSchedTapSave = async function(btn, all) {
+  var tr = btn.closest('.ps-sched-edit'), o = tr && tr._ps; if (!o) return;
+  var msg = tr.querySelector('.ps-sched-msg'), v = (tr.querySelector('.ps-sched-new') || {}).value || '', m = v.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) { msg.style.color = 'var(--red)'; msg.textContent = 'Pick a time'; return; }
+  var nm = (+m[1]) * 60 + (+m[2]);
+  var refs = o.refs.length > 1 ? o.refs.filter(function(r, j) { var c = tr.querySelector('.ps-sched-ref[data-j="' + j + '"]'); return c && c.checked; }) : o.refs;
+  if (!refs.length) { msg.style.color = 'var(--red)'; msg.textContent = 'Tick what to move'; return; }
+  var res = _psAlSchedApply(_psAlConfig, refs, o.days, nm, all);
+  if (!res.ok) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + res.error; return; }
+  var what = refs.map(function(r) { return (_PS_SCHED_WHAT[r.f] || {})[r.k] || r.f; }).join(' + ');
+  if (!confirm(what + '\n' + _psAlHm(o.at) + ' → ' + _psAlHm(nm) + '\nfor ' + (all && o.wider ? _psAlDayTxt(o.wider) : o.gname) + '\n\nSave? (kept in the Auto Label log: who / when)')) return;
+  btn.disabled = true; msg.style.color = 'var(--text3)'; msg.textContent = 'Saving…';
+  try { await psAlSaveConfig(res.cfg); } finally { btn.disabled = false; }
+};
 function _psAlSchedVals() { var c = {}; document.querySelectorAll('#ps-al-sched-editor [data-sk]').forEach(function(x) { c[x.getAttribute('data-sk')] = x.value; }); return c; }
 window.psAlSchedEdit = function() {
   var ed = document.getElementById('ps-al-sched-editor'), c = _psAlConfig || {}; if (!ed) return;

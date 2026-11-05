@@ -12221,6 +12221,44 @@ console.log('\n📦 AWD shipments ready: boxes already packed in Box check come 
   sq.exec("DELETE FROM master_list WHERE base_sku = '65-5-5'; DELETE FROM awd_label_map WHERE shipment = 'STAR-PACK1'; DELETE FROM awd_box_scan WHERE shipment = 'STAR-PACK1'"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-PACK1]%'").run();
 }
 
+// Owner (2026-11-05, screenshot of 🗓 Auto print schedule): "I want to be able to change the time by clicking on the time, then change it right
+// there — the one we have was so confusing".
+console.log('\n🗓 Auto print schedule: tap a time → change it right there (only those days, or every day the rule is on)');
+{
+  const { readFileSync: rfA } = await import('node:fs');
+  const ph = rfA(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fnA = n => { const a = ph.indexOf('function ' + n + '('); return ph.slice(a, ph.indexOf('\n}\n', a) + 3); };
+  const lib = new Function('_psAlEsc', ph.match(/var _PS_DAYN = [^\n]*\n/)[0] + ['_psAlDays', '_psAlMin', '_psAlSegs', '_psAlHm', '_psAlClock', '_psAlSchedHtml', '_psAlDayTxt', '_psAlHm24', '_psAlSegsTxt', '_psAlSchedApply'].map(fnA).join('\n')
+    + '; return { html: _psAlSchedHtml, apply: _psAlSchedApply };')(v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'));
+  const C = { waitMinutes: 30, noWaitMinutes: 3, noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0', pauseTimes: 'Mon-Fri 16:30-17:30; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05', scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 20:45; Sun 20:45', scanFormOn: true };
+  const h = lib.html(C);
+  const refsAt = (k) => { const m = h.match(new RegExp('class="ps-sched-t" data-at="' + k + '" data-refs="([^"]+)"')); return m ? JSON.parse(decodeURIComponent(m[1])) : null; };
+  const r1650 = refsAt(990);
+  check('the schedule: every time is a tap (✏️ "Tap a time to change it right there"); 4:30 pm (Mon–Fri) knows it is ⏸ STOPS + 📄 Scan form; days are kept on each group',
+    /✏️ Tap a time to change it right there/.test(h) && /onclick="psAlSchedTap\(this\)"/.test(h) && r1650 && r1650.length === 2 && r1650.some(r => r.f === 'pauseTimes' && r.k === 'from') && r1650.some(r => r.f === 'scanFormTimes' && r.k === 'at')
+      && /class="ps-sched-g" data-days="1,2,3,4,5" data-name="Mon–Fri"/.test(h), r1650);
+  const MF = [1, 2, 3, 4, 5];
+  const a1 = lib.apply(C, [{ f: 'pauseTimes', i: 0, k: 'from' }], MF, 16 * 60 + 45, false);
+  const a2 = lib.apply(C, [{ f: 'pauseTimes', i: 1, k: 'from' }], MF, 20 * 60 + 45, false);
+  const a3 = lib.apply(C, [{ f: 'pauseTimes', i: 1, k: 'from' }], MF, 20 * 60 + 45, true);
+  const a4 = lib.apply(C, [{ f: 'pauseTimes', i: 0, k: 'from' }], MF, 18 * 60, false);
+  const a5 = lib.apply(C, [{ f: 'scanFormTimes', i: 1, k: 'at' }], MF, 21 * 60, false);
+  check('…Mon–Fri ⏸ STOPS 4:30 → 4:45 pm: "Mon-Fri 16:45-17:30" (the rest unchanged); 8:30 pm STOPS (a Sun–Sat rule) for Mon–Fri only → Mon-Fri 20:45, Sun / Sat keep 20:30; for every day → Sun–Sat 20:45; STOPS after STARTS → refused with why; 📄 8:45 → 9:00 pm Mon–Fri',
+    a1.ok && /^Mon-Fri 16:45-17:30; /.test(a1.cfg.pauseTimes) && a1.cfg.noWaitTimes === 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0'
+      && a2.ok && /Sat,Sun 20:30-24:00/.test(a2.cfg.pauseTimes) && /Mon-Fri 20:45-24:00/.test(a2.cfg.pauseTimes)
+      && a3.ok && /Mon-Sun 20:45-24:00/.test(a3.cfg.pauseTimes) && !/20:30/.test(a3.cfg.pauseTimes)
+      && !a4.ok && /must STOP before it STARTS again/.test(a4.error) && a5.ok && /Mon-Fri 21:00/.test(a5.cfg.scanFormTimes) && /Mon-Fri 16:30/.test(a5.cfg.scanFormTimes), { a1, a2, a3, a4, a5 });
+  // the server keeps it as written (same parser), and records who
+  const before = (await get('/veeqo/autolabel/config')).config;
+  const sv = await post('/veeqo/autolabel/config', { config: a2.cfg }); const after = (await get('/veeqo/autolabel/config')).config;
+  check('…saved through the server: Mon–Fri stops at 8:45 pm, Sat / Sun at 8:30 pm (the server reads what the page wrote); kept in the Auto Label log with who',
+    sv.ok && /Mon-Fri 20:45-24:00/.test(after.pauseTimes) && /Sat,Sun 20:30-24:00|Sun,Sat 20:30-24:00/.test(after.pauseTimes)
+      && !!sq.prepare("SELECT id FROM autolabel_log WHERE action = 'config' AND detail LIKE ? ORDER BY id DESC").get('%20:45-24:00%'), after.pauseTimes);
+  await post('/veeqo/autolabel/config', { config: { pauseTimes: before.pauseTimes, noWaitTimes: before.noWaitTimes, scanFormTimes: before.scanFormTimes } });
+  check('…the page: tap a time → a time box + ✓ Save for <these days> (+ ✓ Save for every day it is on, when the rule is for more days), confirm, then saved with the other rules; the old ✏️ Change times stays',
+    /window\.psAlSchedTap = function/.test(ph) && /✓ Save for every day it is on \(/.test(ph) && /await psAlSaveConfig\(res\.cfg\)/.test(ph) && /id="ps-al-sched-edit-btn" onclick="psAlSchedEdit\(\)"/.test(ph), null);
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
