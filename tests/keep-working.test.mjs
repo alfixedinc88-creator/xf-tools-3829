@@ -2551,14 +2551,24 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15
   // Owner (2026-10-08): Saturday no 30-min wait from 12:45 pm until printing stops at 1:45 pm.
   // Owner (2026-10-16) changed the times: Mon–Fri 3:30–4 pm 3 min, from 4 pm none; Sat 12:30–1 pm 3 min, from 1 pm none.
   const fw = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitWindow'].map(grab).join('\n') + '; return autolabelNoWaitWindow;')();
-  const DEF = 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0';
+  // Owner (2026-11-05) changed it again: "from 5:30 – 8:30 pm must have the 30-min wait, and Saturday after 3 pm to 8:30 pm too" → the
+  // no-wait time ends where auto print stops (Mon–Fri 4:30 pm, Sat 1:45 pm). (Before: no wait from 4 pm / Sat 1 pm until midnight.)
+  const DEF = 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-16:30=0; Sat 12:30-13:00=3; Sat 13:00-13:45=0';
   const W = t => { const w = fw({ noWaitTimes: DEF }, new Date(t)); return w ? w.min : 30; };
-  check('…the owner\'s times (2026-10-16), New York: Mon 3:29 pm 30 min · 3:30 pm 3 min · 3:59 pm 3 min · 4:00 pm no wait · 11:59 pm no wait · Tue 12:00 am 30 min',
-    W('2026-10-12T19:29:00Z') === 30 && W('2026-10-12T19:30:00Z') === 3 && W('2026-10-12T19:59:00Z') === 3 && W('2026-10-12T20:00:00Z') === 0 && W('2026-10-13T03:59:00Z') === 0 && W('2026-10-13T04:00:00Z') === 30, null);
-  check('…Sat 12:29 pm 30 min · 12:30 pm 3 min · 1:00 pm no wait; Sunday 4 pm 30 min; Fri 4:15 pm no wait; winter (Dec Mon 3:35 pm) 3 min; written the same way after a save; it is the default',
-    W('2026-10-17T16:29:00Z') === 30 && W('2026-10-17T16:30:00Z') === 3 && W('2026-10-17T17:00:00Z') === 0 && W('2026-10-18T20:00:00Z') === 30 && W('2026-10-16T20:15:00Z') === 0
-    && W('2026-12-07T20:35:00Z') === 3 && f.autolabelNoWaitClean(' mon-fri 15:30-16:00 = 3 ;MON-FRI 16:00-24:00=0; sat 12:30-13:00=3 min; sat 13:00-24:00=0') === DEF
+  check('…the owner\'s times, New York: Mon 3:29 pm 30 min · 3:30 pm 3 min · 3:59 pm 3 min · 4:00 pm no wait · 4:29 pm no wait · 5:30 pm 30 min · 8:29 pm 30 min · Tue 12:00 am 30 min',
+    W('2026-10-12T19:29:00Z') === 30 && W('2026-10-12T19:30:00Z') === 3 && W('2026-10-12T19:59:00Z') === 3 && W('2026-10-12T20:00:00Z') === 0 && W('2026-10-12T20:29:00Z') === 0
+    && W('2026-10-12T21:30:00Z') === 30 && W('2026-10-13T00:29:00Z') === 30 && W('2026-10-13T04:00:00Z') === 30, null);
+  check('…Sat 12:29 pm 30 min · 12:30 pm 3 min · 1:00 pm no wait · 3:00 pm 30 min; Sunday 4 pm 30 min; Fri 4:15 pm no wait; winter (Dec Mon 3:35 pm) 3 min; written the same way after a save; it is the default',
+    W('2026-10-17T16:29:00Z') === 30 && W('2026-10-17T16:30:00Z') === 3 && W('2026-10-17T17:00:00Z') === 0 && W('2026-10-17T19:00:00Z') === 30 && W('2026-10-18T20:00:00Z') === 30 && W('2026-10-16T20:15:00Z') === 0
+    && W('2026-12-07T20:35:00Z') === 3 && f.autolabelNoWaitClean(' mon-fri 15:30-16:00 = 3 ;MON-FRI 16:00-16:30=0; sat 12:30-13:00=3 min; sat 13:00-13:45=0') === DEF
     && ws.indexOf("noWaitTimes: '" + DEF + "'") >= 0 && f.autolabelNoWaitClean('Mon-Fri 15:45-17:00; Sat 12:45-13:45') === 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', null);
+  // …the saved rules are put right once: every no-wait time ends where auto print stops that day (the owner's own times kept otherwise)
+  const fe = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitEndAtPause'].map(grab).join('\n') + '; return autolabelNoWaitEndAtPause;')();
+  const PAUSE = 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05';
+  check('…the saved no-wait times are cut where auto print stops (once, logged): "Mon-Fri 16:00-24:00=0; Sat 13:00-24:00=0" → Mon-Fri 16:00-16:30, Sat 13:00-13:45; a Mon-Sat time splits by its own stop; no stop after it → unchanged',
+    fe('Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-24:00=0; Sat 12:30-13:00=3; Sat 13:00-24:00=0', PAUSE) === DEF
+      && fe('Mon-Sat 16:00-24:00=0', PAUSE) === 'Mon-Fri 16:00-16:30=0; Sat 16:00-20:30=0' && fe('Sun 10:00-12:00=0', PAUSE) === 'Sun 10:00-12:00=0'
+      && /autolabel_rules_nowait_stop_1105/.test(ws), { a: fe('Mon-Sat 16:00-24:00=0', PAUSE) });
   // A run inside a no-wait time: a 5-minute-old order is not held back; outside it, it waits.
   const realFetch = globalThis.fetch;
   const items = [{ quantity: 1, sellable: { id: 1201, sku_code: '1=NW', weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '1-1-1' }] } }];
@@ -12403,6 +12413,10 @@ console.log('\n🗓 Auto print schedule: tap a time → change it right there (o
   check('the schedule: every time is a tap (✏️ "Tap a time to change it right there"); 4:30 pm (Mon–Fri) knows it is ⏸ STOPS + 📄 Scan form; days are kept on each group',
     /✏️ Tap a time to change it right there/.test(h) && /onclick="psAlSchedTap\(this\)"/.test(h) && r1650 && r1650.length === 2 && r1650.some(r => r.f === 'pauseTimes' && r.k === 'from') && r1650.some(r => r.f === 'scanFormTimes' && r.k === 'at')
       && /class="ps-sched-g" data-days="1,2,3,4,5" data-name="Mon–Fri"/.test(h), r1650);
+  // Owner (2026-11-05): "from 5:30 pm I didn't see the 30-min wait — is there?" → 30-min wait after the restart, and the schedule says it
+  const hN = lib.html({ ...C, noWaitTimes: 'Mon-Fri 15:30-16:00=3; Mon-Fri 16:00-16:30=0; Sat 12:30-13:00=3; Sat 13:00-13:45=0', pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05' }).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  check('…the schedule says the wait when auto print starts again: Mon–Fri 5:30 pm and Sat 3:00 pm "▶ Auto print STARTS again — orders wait 30 min"; 4:00 pm still ⚡ no wait',
+    /5:30 pm ▶ Auto print STARTS again — orders wait 30 min/.test(hN) && /3:00 pm ▶ Auto print STARTS again — orders wait 30 min/.test(hN) && /4:00 pm ⚡ No wait/.test(hN), hN.slice(0, 800));
   const MF = [1, 2, 3, 4, 5];
   const a1 = lib.apply(C, [{ f: 'pauseTimes', i: 0, k: 'from' }], MF, 16 * 60 + 45, false);
   const a2 = lib.apply(C, [{ f: 'pauseTimes', i: 1, k: 'from' }], MF, 20 * 60 + 45, false);
