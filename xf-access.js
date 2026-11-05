@@ -105,6 +105,7 @@ document.addEventListener('input', function (e) {
         { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
         { key: 'amlscan', label: '🏷 Scan a Big Company label → Pull List (labels not grabbed yet / extra labels)', sel: '#inv-amlscan-card' },
         { key: 'amlinfo', label: '…🏷 label popup: 📜 who grabbed it, when, where (+ each box\'s pallet)', sel: '.inv-aml-info' },
+        { key: 'bcitem', label: '🔎 Look up an item — what we have, labels, who grabbed it', sel: '#inv-bcitem-card' },
         { key: 'bcohist', label: '📜 Big Company history — who, when, where, spot before → after vs SKU Mgr (Admin only)', sel: '#inv-bcohist-card' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' },
         { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' },

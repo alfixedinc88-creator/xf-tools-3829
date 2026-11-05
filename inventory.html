@@ -675,6 +675,17 @@ window.invCredLogin = async function() {
     <input id="inv-amlscan-inp" type="text" autocomplete="off" placeholder="scan the Big Company label…" onkeydown="if(event.key==='Enter'){event.preventDefault();invAmlScanBox(this);}"
       style="width:100%;box-sizing:border-box;padding:11px;border:2px solid var(--border);border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">
   </div>
+  <!-- 🔎 Owner (2026-11-05): "for the 'stock out big company' we be able to search by the item to see what we have and total of how many case we
+       have, and where when and who doing it, done or not done" — Big Company only. -->
+  <div class="icard" id="inv-bcitem-card" style="display:none;border:2px solid #0369A1">
+    <div style="font-weight:800;color:#0369A1">🔎 Look up an item — what we have, labels, who grabbed it</div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <input id="inv-bcitem-inp" type="text" autocomplete="off" placeholder="part # (30-3-4 = every pack size, 30-3-4=10X = that one)" onkeydown="if(event.key==='Enter'){event.preventDefault();invBcItemGo(this.value);}"
+        style="flex:1;min-width:0;padding:10px;border:2px solid var(--border);border-radius:10px;font-size:15px;font-family:var(--mono);background:var(--bg);color:var(--text)">
+      <button type="button" onclick="invBcItemGo(document.getElementById('inv-bcitem-inp').value)" style="padding:10px 14px;border-radius:10px;border:none;background:#0369A1;color:#fff;font-weight:800;cursor:pointer">Search</button>
+    </div>
+    <div id="inv-bcitem-out" style="font-size:12.5px"></div>
+  </div>
   <!-- 🗜 Owner (2026-10-30): "for Box check I want this part to show, we are going to use it a lot" — the title, the on a pallet / not yet line,
        📦 Next box and the scan box always show; only the pallets / labels-not-on-a-pallet list and the day's count fold away (tap to open). -->
   <div class="icard" id="inv-boxcheck-card" style="display:none;border:2px solid #7c3aed">
@@ -2277,6 +2288,7 @@ window.invCredLogin = async function() {
     if (awdSh && awdSh.open && mode === "out" && invStockOutDest === 'company' && window.AWDS && typeof window.invAwdShipLoad === 'function') window.invAwdShipLoad(); // ready to grab right away (saved list at once)
     var bxC = g("inv-boxcheck-card"); if (bxC) bxC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     var amC = g("inv-amlscan-card"); if (amC) amC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
+    var biC = g("inv-bcitem-card"); if (biC) biC.style.display = (mode === "out" && invStockOutDest === 'company') ? "block" : "none";
     var bhC = g("inv-bcohist-card"); if (bhC) bhC.style.display = (mode === "out" && invStockOutDest === 'company' && window.invBcoIsAdmin && window.invBcoIsAdmin()) ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
@@ -2755,9 +2767,16 @@ window.invCredLogin = async function() {
       return box('🟫 Labels ON a pallet — ' + P.length + ' pallet' + (P.length === 1 ? '' : 's'), 'var(--green)', P.map(function(p) { var B = all.filter(function(x) { return x.k === 'pallet' && String(x.pal) === String(p.pallet); });
         return '<details class="inv-bc-tlpal" open style="margin-top:4px"><summary style="cursor:pointer;font-weight:800">🟫 PALLET ' + ckE(p.pallet) + ' — ' + B.length + ' label' + (B.length === 1 ? '' : 's') + '</summary>' + B.map(function(x) { return row(x, true); }).join('') + '</details>'; }).join(''));
     }
+    // 🔢 Owner (2026-11-05): "under the 'not on a pallet yet' I want it to showing total of how many labels for that item too" — a line on top of
+    // each item: how many of its labels are in this list, out of all its labels in the shipment (and how many are on a pallet)
+    var byItem = function(L) { var out = '', cur = null; L.forEach(function(x) { var P = String(x.b.part || '').toUpperCase();
+      if (P !== cur) { cur = P; var mine = L.filter(function(y) { return String(y.b.part || '').toUpperCase() === P; }), its = all.filter(function(y) { return String(y.b.part || '').toUpperCase() === P; }), onP = its.filter(function(y) { return y.k === 'pallet'; }).length;
+        out += '<div class="inv-bc-item" data-part="' + ckE(P) + '" style="margin-top:6px;padding:4px 6px;border-radius:7px;background:var(--bg3);font-size:12.5px"><b style="font-family:var(--mono)">' + ckE(P) + '</b>' + (x.b.name ? ' <span style="color:var(--text2)">' + ckE(x.b.name) + '</span>' : '')
+          + ' — <b>' + (k === 'not' ? mine.length + ' of ' + its.length + ' label' + (its.length === 1 ? '' : 's') + ' not on a pallet' : its.length + ' label' + (its.length === 1 ? '' : 's')) + '</b> <span style="color:var(--text3)">· 🟫 ' + onP + ' on a pallet · ⚠ ' + (its.length - onP) + ' not yet</span></div>'; }
+      out += row(x, true); }); return out; };
     if (k === 'not') { var N1 = all.filter(function(x) { return x.k !== 'pallet'; });
-      return box('⚠ NOT on a pallet yet — ' + N1.length + ' label' + (N1.length === 1 ? '' : 's'), '#b45309', N1.length ? prAll(N1, 'not-on-a-pallet') + N1.map(function(x) { return row(x, true); }).join('') : '<div style="color:var(--green);font-weight:700;margin-top:4px">✅ Every label is on a pallet</div>'); }
-    return box('📦 Labels in all — ' + all.length, '#7c3aed', '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">🟫 ' + all.filter(function(x) { return x.k === 'pallet'; }).length + ' on a pallet · ⚠ ' + all.filter(function(x) { return x.k !== 'pallet'; }).length + ' not yet</div>' + all.map(function(x) { return row(x, true); }).join(''));
+      return box('⚠ NOT on a pallet yet — ' + N1.length + ' label' + (N1.length === 1 ? '' : 's'), '#b45309', N1.length ? prAll(N1, 'not-on-a-pallet') + byItem(N1) : '<div style="color:var(--green);font-weight:700;margin-top:4px">✅ Every label is on a pallet</div>'); }
+    return box('📦 Labels in all — ' + all.length, '#7c3aed', '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">🟫 ' + all.filter(function(x) { return x.k === 'pallet'; }).length + ' on a pallet · ⚠ ' + all.filter(function(x) { return x.k !== 'pallet'; }).length + ' not yet</div>' + byItem(all));
   }
   // 🖨 the exact Amazon label (with our template), from the labels the AWD Planner saved on THIS device (its 💾 saved labels + 🕘 the last 10
   // sets). Labels made since 2026-10-28 carry their SSCCs; older ones are matched by SKU + Box N-k only when that is exact (same as the Planner).
@@ -3093,6 +3112,47 @@ window.invCredLogin = async function() {
   function invAwdIsAdmin() { return !!(typeof INV_CRED_USER !== 'undefined' && INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0)); }
   // 🕘 Shipment history (Admin / Owner — the server says no to anyone else): every shipment of the last 90 days — what it needed (📤 sent /
   // 🏷 labels), ✅ Done by who / when, and every Stock Out grabbed for it (part #, spot, cases, who, when, status). Read only.
+  // 🔎 Look up an item (owner 2026-11-05): SKU Mgr stock (each spot + total cases), its Amazon labels in the shipments (on a PALLET = done / not yet,
+  // who, when), every Big Company grab (who, when, where, cases, approved / waiting) and what is on a Pull List now — from /awd/item.
+  window.invBcItemGo = function(v) {
+    var out = g('inv-bcitem-out'), q = String(v || '').trim(); if (!out) return; if (!q) { out.innerHTML = ''; return; }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { out.innerHTML = '<div style="color:var(--red);margin-top:6px">📶 No WiFi — the item can only be looked up with WiFi</div>'; return; }
+    out.innerHTML = '<div style="margin-top:6px">⏳ Looking up ' + ckE(q) + '…</div>';
+    wFetch(W + '/awd/item?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { out.innerHTML = '<div style="color:var(--red);margin-top:6px">' + ckE((d && d.error) || 'Could not look it up') + '</div>'; return; }
+      out.innerHTML = invBcItemHtml(d);
+    }).catch(function() { out.innerHTML = '<div style="color:var(--red);margin-top:6px">📶 Could not look it up — check WiFi</div>'; });
+  };
+  var INV_BCI_KIND = { pallet: '🟫 PALLET', ok: '✅ labeled — no PALLET yet', rebag: '✂ in the packing room', split: '🔢 to recount / separate', mismatch: '❌ not a match', off: '📤 taken off its pallet' };
+  function invBcItemHtml(d) {
+    var T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }, n = function(v) { return xfrN(v); }, t = d.tot || {};
+    var sec = function(title, color, inner) { return '<div class="inv-bci-sec" style="margin-top:8px;border:2px solid ' + color + ';border-radius:10px;padding:6px 8px;background:var(--bg2)"><div style="font-weight:800;color:' + color + '">' + title + '</div>' + inner + '</div>'; };
+    var line = function(h, bad) { return '<div style="padding:3px 0;border-bottom:1px dashed var(--border)' + (bad ? ';opacity:.6' : '') + '">' + h + '</div>'; };
+    var h = '<div style="margin-top:8px;font-size:15px"><b style="font-family:var(--mono);color:#0369A1">' + ckE(d.q) + '</b>' + (d.exact ? '' : ' <span style="color:var(--text3);font-size:12px">(every pack size)</span>') + (d.name ? '<div style="font-size:12.5px;color:var(--text2)">' + ckE(d.name) + '</div>' : '') + '</div>'
+      + '<div class="inv-bci-tot" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
+      + ['<b>' + n(t.cases) + '</b> cs on our shelves<br><span style="font-weight:400">' + t.spots + ' spot' + (t.spots === 1 ? '' : 's') + '</span>', '<b>' + t.labels + '</b> Amazon label' + (t.labels === 1 ? '' : 's') + '<br><span style="font-weight:400">🟫 ' + t.onPallet + ' on a pallet · ⚠ ' + (t.labels - t.onPallet) + ' not yet</span>',
+         '<b>' + n(t.grabbed) + '</b> cs grabbed for Big Company<br><span style="font-weight:400">' + (t.waiting ? '⏳ ' + t.waiting + ' waiting for approval' : 'last 30 days') + '</span>'].map(function(x) { return '<div style="flex:1;min-width:100px;padding:6px;border-radius:9px;background:var(--bg3);text-align:center;font-size:12px">' + x + '</div>'; }).join('') + '</div>';
+    // 📦 what we have (SKU Mgr)
+    var byP = {}; (d.stock || []).forEach(function(x) { (byP[x.part] = byP[x.part] || []).push(x); });
+    h += sec('📦 What we have (SKU Mgr) — ' + n(t.cases) + ' cs', 'var(--green)', !d.stock.length ? '<div style="color:var(--text3)">No stock in SKU Mgr.</div>' : Object.keys(byP).map(function(p) { var L = byP[p], c = L.reduce(function(a, x) { return a + x.cases; }, 0);
+      return '<div style="margin-top:4px"><b style="font-family:var(--mono)">' + ckE(p) + '</b> — <b>' + n(c) + ' cs</b>' + (L[0].each ? ' <span style="color:var(--text3)">(' + n(L[0].each) + ' pcs a case)</span>' : '') + '</div>'
+        + L.map(function(x) { return line('📍 <b style="font-family:var(--mono)">' + ckE(x.loc) + '</b> · ' + n(x.cases) + ' cs'); }).join(''); }).join(''));
+    // 🏷 the Amazon labels, by shipment: done (on a pallet) or not
+    var byS = {}; (d.labels || []).forEach(function(b) { (byS[b.shipment] = byS[b.shipment] || []).push(b); });
+    h += sec('🏷 Amazon labels — ' + t.labels + ' · 🟫 ' + t.onPallet + ' done (on a pallet) · ⚠ ' + (t.labels - t.onPallet) + ' not done', '#7c3aed', !t.labels ? '<div style="color:var(--text3)">No Amazon label of it in the last 30 days.</div>' : Object.keys(byS).map(function(sh) {
+      var L = byS[sh], on = L.filter(function(b) { return b.onPallet; }).length, S = (d.ships || []).filter(function(x) { return x.shipment === sh; })[0] || {};
+      return '<details class="inv-bci-ship" ' + (S.done ? '' : 'open ') + 'style="margin-top:4px"><summary style="cursor:pointer;font-weight:700">' + ckE(sh) + ' — ' + L.length + ' label' + (L.length === 1 ? '' : 's') + ' · 🟫 ' + on + ' on a pallet · ' + (L.length - on ? '<span style="color:#b45309">⚠ ' + (L.length - on) + ' not yet</span>' : '<span style="color:var(--green)">✅ all on pallets</span>')
+        + (S.done ? ' · <span style="color:var(--green)">✅ shipment Done by ' + ckE(S.done.by || '?') + ' ' + T(S.done.at) + '</span>' : '') + '</summary>'
+        + L.map(function(b) { var st = b.onPallet ? '<b style="color:var(--green)">✅ done — 🟫 PALLET ' + ckE(b.pallet) + '</b>' : b.kind ? '<b style="color:#b45309">⏳ not done — ' + ckE(INV_BCI_KIND[b.kind] || b.kind) + '</b>' : '<b style="color:#b45309">⬜ not done — not scanned yet</b>';
+          return line('<b>Box ' + ckE(b.seq) + '</b> <span style="font-family:var(--mono)">' + ckE(b.part) + '</span>' + (b.prev ? ' <span style="color:#0e7490;font-weight:800">PREVIOUS PACKED</span>' : '') + ' · ' + st + (b.by ? ' · by ' + ckE(b.by) + ' ' + T(b.at) : '')); }).join('') + '</details>'; }).join(''));
+    // ✓ who grabbed it, when, where — done (approved) or waiting
+    h += sec('✓ Grabbed for Big Company — ' + n(t.grabbed) + ' cs (last 30 days)', '#0369A1', !d.grabs.length ? '<div style="color:var(--text3)">Nothing grabbed for Big Company in the last 30 days.</div>' : d.grabs.map(function(x) {
+      var off = x.none || /reject|cancel/i.test(x.status), st = x.none ? '✗ None Found (nothing taken)' : /reject/i.test(x.status) ? '✗ rejected — not taken' : /cancel/i.test(x.status) ? '✗ cancelled' : x.done ? '✅ done (approved' + (x.verifiedBy ? ' by ' + ckE(x.verifiedBy) : '') + ')' : '⏳ waiting for approval';
+      return line('<b>' + ckE(x.by || '?') + '</b> · ' + T(x.at) + ' · <b style="font-family:var(--mono)">' + n(x.cases) + ' cs × ' + ckE(x.part) + '</b> @ <b style="font-family:var(--mono)">' + ckE(x.loc) + '</b>' + (x.forPart && x.forPart !== x.part ? ' for ' + ckE(x.forPart) : '')
+        + (x.ships.length ? ' · ' + ckE(x.ships.join(', ')) : '') + ' · ' + ckE(x.how) + (x.spotBefore != null && x.spotAfter != null ? ' · spot ' + n(x.spotBefore) + ' → ' + n(x.spotAfter) : '') + ' · <b style="color:' + (x.done && !off ? 'var(--green)' : off ? 'var(--text3)' : '#b45309') + '">' + st + '</b>', off); }).join(''));
+    if ((d.claims || []).length) h += sec('👤 On a Pull List now (not grabbed yet)', '#b45309', d.claims.map(function(c) { return line('<b>' + ckE(c.by || '?') + '</b> · since ' + T(c.at) + ' · <b style="font-family:var(--mono)">' + n(c.cases) + ' cs × ' + ckE(c.part) + '</b> @ <b style="font-family:var(--mono)">' + ckE(c.loc) + '</b>' + ((c.ships || []).length ? ' · ' + ckE(c.ships.join(', ')) : '')); }).join(''));
+    return h;
+  }
   // 📜 Big Company history (owner 2026-11-05) — every Big Company Stock Out: who, when, where, how, the spot before → after, the part # total
   // before → after, and ✅ / ⚠ against SKU Mgr (worked out on the server: /inventory/bigco-history).
   window.invBcoIsAdmin = function() { return invAwdIsAdmin(); };
@@ -3636,6 +3696,7 @@ window.invCredLogin = async function() {
       var bx = g('inv-boxcheck-card'); if (bx) bx.style.display = dest === 'company' ? 'block' : 'none';
       var aws = g('inv-awdship-card'); if (aws) aws.style.display = dest === 'company' ? 'block' : 'none';
       var amc = g('inv-amlscan-card'); if (amc) amc.style.display = dest === 'company' ? 'block' : 'none';
+      var bic = g('inv-bcitem-card'); if (bic) bic.style.display = dest === 'company' ? 'block' : 'none';
       var bhc = g('inv-bcohist-card'); if (bhc) bhc.style.display = dest === 'company' && window.invBcoIsAdmin() ? 'block' : 'none';
       if (typeof invSsApply === 'function') invSsApply(dest); // 🗜 Scan or Search folds on Big Company only
       invRenderPullList(); if (typeof invLoadAllPulls === 'function') invLoadAllPulls(); if (typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount(); // 🔀 this tab's own list
@@ -17898,6 +17959,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261105c"></script>
+<script src="xf-access.js?v=20261105d"></script>
 </body>
 </html>

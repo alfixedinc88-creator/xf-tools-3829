@@ -1630,6 +1630,53 @@ async function invBigCoHistory(url, env, session) {
     bad: out.filter(o => o.check.kind === 'bad').length, wait: out.filter(o => o.check.kind === 'wait').length, old: out.filter(o => o.check.kind === 'old').length };
   return J({ ok: true, days, cutoff, rows: out, tot: T });
 }
+// 🔎 Owner (2026-11-05): "for the 'stock out big company' we be able to search by the item to see what we have and total of how many case we
+// have, and where when and who doing it, done or not done". GET /awd/item?q=30-3-4 (every pack size) or 30-3-4=10X (that part # only) →
+//   stock: SKU Mgr (each spot, cases, Each/Case) + the total cases; labels: the Amazon box labels of it in the shipments of the last 30 days,
+//   each with where it is now (🟫 PALLET N = done / not yet = not done, who, when) and whether the shipment is ✅ Done; grabs: every Big
+//   Company Stock Out of it in the last 30 days (who, when, spot, cases, shipment, approved / waiting); claims: on a Pull List now.
+async function awdItemLookup(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const U = x => String(x || '').trim().toUpperCase(), K = p => U(p).replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, ''));
+  const q = K(url.searchParams.get('q')).slice(0, 60); if (!q) return J({ ok: false, error: 'Type or scan a part #' });
+  const exact = q.includes('='), base = q.split('=')[0], hit = p => { const k = K(p); return exact ? k === q : k.split('=')[0] === base; };
+  await invLogEnsureColumns(env);
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const stock = ((await env.DB.prepare(`SELECT id, part_num, location, cases, units_per_case, name FROM master_list WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ORDER BY part_num, location`)
+    .bind(exact ? q : base, base + '=%').all()).results || []).filter(m => hit(m.part_num) && (parseFloat(m.cases) || 0) > 0)
+    .map(m => ({ part: U(m.part_num), loc: m.location || '', cases: _n(parseFloat(m.cases) || 0), each: +m.units_per_case || 0, name: m.name || '' }));
+  const name = (stock.find(x => x.name) || {}).name || '';
+  let labels = [], ships = {};
+  try {
+    const L = ((await env.DB.prepare(`SELECT sscc, shipment, sku, part, seq, units, prev, name, loc, at FROM awd_label_map WHERE at >= ? AND (UPPER(part) LIKE ? OR UPPER(sku) LIKE ?)`).bind(since, base + '%', base + '%').all()).results || [])
+      .filter(b => hit(b.part || b.sku));
+    const sh = [...new Set(L.map(b => b.shipment))], by = {};
+    for (const n of sh) { ((await env.DB.prepare('SELECT * FROM awd_box_scan WHERE shipment = ? ORDER BY id').bind(n).all().catch(() => ({ results: [] }))).results || []).forEach(r => { by[r.sscc] = r; }); }
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run();
+    const last = {}; ((await env.DB.prepare('SELECT shipment, action, at, by_user FROM awd_ship_done ORDER BY id').all()).results || []).forEach(r => { last[r.shipment] = r; });
+    sh.forEach(n => { const d = last[n], lat = L.filter(b => b.shipment === n).reduce((a, b) => String(b.at) > a ? String(b.at) : a, '');
+      ships[n] = { shipment: n, labelsAt: lat, done: d && d.action === 'done' && String(d.at) >= lat ? { at: d.at, by: d.by_user } : null }; });
+    const nv = x => String(x || '').split('-').map(v => parseInt(v, 10) || 0);
+    labels = L.map(b => { const r = by[b.sscc]; return { sscc: b.sscc, shipment: b.shipment, part: U(b.part || b.sku), seq: b.seq, units: +b.units || 0, prev: !!b.prev, loc: b.loc || '',
+      kind: r ? r.kind : '', pallet: r ? r.pallet : null, by: r ? r.by_user : '', at: r ? r.at : '', onPallet: !!(r && r.kind === 'pallet') }; })
+      .sort((a, b) => String(a.shipment).localeCompare(String(b.shipment)) || a.part.localeCompare(b.part) || (nv(a.seq)[0] - nv(b.seq)[0]) || (nv(a.seq)[1] - nv(b.seq)[1]));
+  } catch (e) { console.error('[awd item] labels', e.message); }
+  const grabs = [];
+  ((await env.DB.prepare(`SELECT id, timestamp, grabbed_at, initials, part_num, location, cases, notes, status, verified_by, verified_at, spot_before, spot_after, cancelled_at FROM inventory_log
+      WHERE type = 'OUT' AND timestamp >= ? AND COALESCE(notes,'') LIKE '%[BIG COMPANY%' AND (UPPER(part_num) LIKE ? OR UPPER(notes) LIKE ?) ORDER BY timestamp DESC LIMIT 300`).bind(since, base + '%', '%' + base + '%').all()).results || []).forEach(r => {
+    const n = r.notes || '', f = /\[BIG COMPANY for ([^\]=\s]+(?:=[^\]\s]*)?)/.exec(n), m = /\[AWD:([^\]]*)\]/.exec(n);
+    if (!hit(r.part_num) && !(f && hit(f[1]))) return;
+    const st = String(r.status || '');
+    grabs.push({ id: r.id, at: r.grabbed_at || r.timestamp, by: r.initials || '', part: U(r.part_num), forPart: f ? K(f[1]) : '', loc: r.location || '', cases: +r.cases || 0,
+      ships: m ? m[1].split('|').map(AWD_TAG_NAME).filter(Boolean) : [], none: /\[NONE FOUND ON SHELF\]/.test(n), status: r.cancelled_at ? 'Cancelled' : st,
+      done: !r.cancelled_at && /approv|verif/i.test(st), verifiedBy: r.verified_by || '', spotBefore: r.spot_before, spotAfter: r.spot_after,
+      how: /\[🏷 EXTRA labels/.test(n) ? '🏷 extra labels' : /\[🏷 Amazon label/.test(n) ? '🏷 label scanned' : m ? '📦 AWD list' : '🔎 Scan or Search' });
+  });
+  const claims = (await awdClaimsOpen(env).catch(() => [])).filter(c => hit(c.forPart || c.part) || hit(c.part)).map(c => ({ by: c.by, at: c.at, part: c.part, loc: c.loc, cases: c.cases, ships: c.ships }));
+  const T = { cases: _n(stock.reduce((a, x) => a + x.cases, 0)), spots: stock.length, labels: labels.length, onPallet: labels.filter(b => b.onPallet).length,
+    grabbed: _n(grabs.filter(g => !g.none && g.status !== 'Cancelled' && !/reject/i.test(g.status)).reduce((a, g) => a + g.cases, 0)), waiting: grabs.filter(g => !g.done && !g.none && !/reject|cancel/i.test(g.status)).length };
+  return J({ ok: true, q, exact, name, stock, labels, ships: Object.values(ships), grabs, claims, tot: T });
+}
 async function awdShipOpen(env, url) {
   const days = 14, since = new Date(Date.now() - days * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
@@ -11108,6 +11155,7 @@ const _app = {
     if (url.pathname === '/awd/ship-history' && (method === 'GET' || method === 'POST')) return await awdShipHistory(request, url, env, session);
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     if (url.pathname === '/awd/label-info' && method === 'GET') return await awdLabelInfo(url, env);
+    if (url.pathname === '/awd/item' && method === 'GET') return await awdItemLookup(url, env);
     if (url.pathname === '/inventory/bigco-history' && method === 'GET') return await invBigCoHistory(url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
