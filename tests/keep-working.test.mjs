@@ -11956,6 +11956,32 @@ console.log('\n📜 Big Company label popup: who grabbed / when / which pallet �
       (o.match(/class="inv-bcoh-row"/g) || []).length === 2 && /<b>NB<\/b> · T\(/.test(o) && /1 cs × 98-1-1=10<\/b> @ <b[^>]*>C3=1-1-1<\/b>/.test(o) && /📦 AWD shipment STAR-HIST1 · 🏷 extra labels \(98-1-1=10: Box 5-3\)/.test(o)
         && /📍 spot C3=1-1-1: <b>6 → 4 cs<\/b> · part total \(every spot\): 8 → 6 cs · SKU Mgr now at this spot: <b>5 cs<\/b>/.test(o) && /⚠ SKU Mgr now has 5 cs/.test(o) && /showing 2/.test(o), o.slice(0, 2500));
     ['invBcoIsAdmin', 'invBcoHistLoad', 'invBcoHistDraw'].forEach(k => { delete globalThis[k]; }); }
+  // 🔎 Owner (2026-11-05): "search by the item to see what we have and total of how many case we have, and where when and who doing it, done or not done"
+  { sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('97-7-7','Cap 1 inch','97-7-7=10','C2=3-3-3',4,100), ('97-7-7','Cap 1 inch','97-7-7=10','C5=1-1-1',1.5,100), ('97-7-7','Cap 1 inch','97-7-7=5X','BO=1-1-1',2,50), ('97-7-77','Other','97-7-77=10','C1=9-9-9',9,10)").run();
+    const mC2 = sq.prepare("SELECT id FROM master_list WHERE part_num = '97-7-7=10' AND location = 'C2=3-3-3'").get().id;
+    await post('/awd/label-map', { shipment: 'STAR-ITEM1', labels: [{ sscc: '201952611628563001', sku: '97-7-7=10-', part: '97-7-7=10', seq: '1-1', units: 10, loc: 'C2=3-3-3' },
+      { sscc: '201952611628563002', sku: '97-7-7=10-', part: '97-7-7=10', seq: '1-2', units: 10, loc: 'C2=3-3-3' }, { sscc: '201952611628563003', sku: '97-7-77=10-', part: '97-7-77=10', seq: '1-1', units: 10 }] });
+    await post('/awd/box-pallet', { sscc: '201952611628563001', kind: 'pallet', pallet: 3, _requestId: 'it-1' });
+    const so = await post('/inventory/log', { type: 'OUT', partNum: '97-7-7=10', sku: '97-7-7', location: 'C2=3-3-3', cases: 1, initials: 'TS', masterId: mC2, notes: '[BIG COMPANY for 97-7-7=10] [AWD: STAR-ITEM1] ' });
+    await approve(so);
+    const d = await get('/awd/item?q=97-7-7'), d2 = await get('/awd/item?q=97-7-7=5X');
+    const g0 = (d.grabs || [])[0] || {}, b1 = (d.labels || []).find(b => b.seq === '1-1') || {}, b2 = (d.labels || []).find(b => b.seq === '1-2') || {};
+    check('server /awd/item?q=97-7-7 (every pack size, never 97-7-77): SKU Mgr 3 + 1.5 + 2 = 6.5 cs in 3 spots (after TS took 1 of 4 at C2); 2 labels (Box 1-1 done — PALLET 3, Box 1-2 not yet); TS grabbed 1 cs @ C2=3-3-3, done (approved), spot 4 → 3; =5X alone → 2 cs, 1 spot',
+      d.ok && d.tot.cases === 6.5 && d.tot.spots === 3 && !d.stock.some(x => /97-7-77/.test(x.part)) && d.name === 'Cap 1 inch' && d.tot.labels === 2 && d.tot.onPallet === 1 && b1.onPallet && b1.pallet === 3 && !b2.onPallet && !b2.kind
+        && d.grabs.length === 1 && g0.by === 'TS' && g0.cases === 1 && g0.loc === 'C2=3-3-3' && g0.done && g0.spotBefore === 4 && g0.spotAfter === 3 && g0.ships[0] === 'STAR-ITEM1' && d.tot.grabbed === 1
+        && d2.tot.cases === 2 && d2.tot.spots === 1 && d2.tot.labels === 0, { tot: d.tot, d2: d2.tot, g0, b1, b2 });
+    const code = ihH.slice(ihH.indexOf('  // 🔎 Look up an item (owner 2026-11-05)'), ihH.indexOf('  // 📜 Big Company history (owner 2026-11-05)'));
+    const els = { 'inv-bcitem-out': { innerHTML: '' } };
+    new Function('g', 'W', 'wFetch', 'ckE', 'xfrN', 'xfrFmtT', 'window', code)(id => els[id] || null, '', u => Promise.resolve({ json: () => get(u) }), v => String(v == null ? '' : v), v => Math.round((parseFloat(v) || 0) * 1000) / 1000, v => 'T(' + v + ')', globalThis);
+    globalThis.invBcItemGo('97-7-7'); for (let i = 0; i < 40 && !/inv-bci-tot/.test(els['inv-bcitem-out'].innerHTML); i++) await new Promise(r => setTimeout(r, 10));
+    const o = els['inv-bcitem-out'].innerHTML;
+    check('🔎 Look up an item card: totals (6.5 cs on our shelves · 3 spots · 2 Amazon labels 🟫 1 on a pallet ⚠ 1 not yet · 1 cs grabbed); 📦 each spot; 🏷 Box 1-1 "✅ done — 🟫 PALLET 3", Box 1-2 "⬜ not done"; ✓ TS · when · 1 cs × 97-7-7=10 @ C2=3-3-3 · ✅ done',
+      /<b>6\.5<\/b> cs on our shelves/.test(o) && /3 spots/.test(o) && /<b>2<\/b> Amazon labels/.test(o) && /🟫 1 on a pallet · ⚠ 1 not yet/.test(o) && /<b>1<\/b> cs grabbed for Big Company/.test(o)
+        && /📍 <b[^>]*>C5=1-1-1<\/b> · 1\.5 cs/.test(o) && /97-7-7=5X<\/b> — <b>2 cs<\/b>/.test(o) && /Box 1-1<\/b>[^]*?✅ done — 🟫 PALLET 3/.test(o) && /Box 1-2<\/b>[^]*?⬜ not done — not scanned yet/.test(o)
+        && /<b>TS<\/b> · T\([^)]*\) · <b[^>]*>1 cs × 97-7-7=10<\/b> @ <b[^>]*>C2=3-3-3<\/b>[^]*?✅ done \(approved/.test(o) && /id="inv-bcitem-card"/.test(ihH) && /sel: '#inv-bcitem-card'/.test(axH), o.slice(0, 3000));
+    delete globalThis.invBcItemGo;
+    sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-ITEM1'"); sq.exec("DELETE FROM awd_box_scan WHERE shipment = 'STAR-ITEM1'"); sq.prepare("DELETE FROM inventory_log WHERE notes LIKE '%[AWD: STAR-ITEM1]%'").run();
+    sq.prepare("DELETE FROM master_list WHERE part_num LIKE '97-7-7%'").run(); }
   check('the card sits on Stock Out Big Company, Admin / Owner only, and has its 🧩 Pages & Tabs check marks (history + the popup\'s 📜 list); Scan card says "Big Company label"',
     /<details class="icard" id="inv-bcohist-card" style="display:none;/.test(ihH) && /var bhC = g\("inv-bcohist-card"\); if \(bhC\) bhC\.style\.display = \(mode === "out" && invStockOutDest === 'company' && window\.invBcoIsAdmin && window\.invBcoIsAdmin\(\)\)/.test(ihH)
       && /var bhc = g\('inv-bcohist-card'\); if \(bhc\) bhc\.style\.display = dest === 'company' && window\.invBcoIsAdmin\(\)/.test(ihH) && /sel: '#inv-bcohist-card'/.test(axH) && /sel: '\.inv-aml-info'/.test(axH)
@@ -12017,6 +12043,12 @@ console.log('\n👆 Box check Pallets: tap ON a pallet / NOT on a pallet yet / l
   const bp = await get('/awd/box-pallet?shipment=STAR-NAME1'), ny = (bp.notYet || [])[0] || {}, onp = (((bp.pallets || [])[0] || {}).boxes || [])[0] || {};
   check('server: a label with no name of its own gets SKU Mgr\'s ("Union 1 inch" — not scanned yet); one with its own name keeps it (on PALLET 4)', ny.name === 'Union 1 inch' && onp.name === 'Union 1" (label)', { ny, onp });
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'STAR-NAME1'"); sq.exec("DELETE FROM awd_box_scan WHERE shipment = 'STAR-NAME1'"); sq.prepare("DELETE FROM master_list WHERE part_num = '94-4-4=10'").run();
+  // Owner (2026-11-05): "under the 'not on a pallet yet' I want it to showing total of how many labels for that item too"
+  BXC.totView = ''; win.invBcTotShow('not'); h = els['inv-bc-totlist'].innerHTML;
+  check('⚠ NOT on a pallet yet: a line on top of each item — 92-2-2=5 "2 of 2 labels not on a pallet · 🟫 0 on a pallet", 93-3-3=2 "1 of 1"; 📦 in all: 91-1-1=10 "2 labels · 🟫 2 on a pallet · ⚠ 0 not yet"',
+    /data-part="92-2-2=5"[^>]*><b[^>]*>92-2-2=5<\/b> <span[^>]*>Tee 1\/2&quot;<\/span> — <b>2 of 2 labels not on a pallet<\/b> <span[^>]*>· 🟫 0 on a pallet · ⚠ 2 not yet/.test(h) && /data-part="93-3-3=2"[\s\S]*?<b>1 of 1 label not on a pallet<\/b>/.test(h)
+      && (h.match(/class="inv-bc-tl"/g) || []).length === 3 && !/data-part="91-1-1=10"/.test(h)
+      && (() => { BXC.totView = ''; win.invBcTotShow('all'); const a = els['inv-bc-totlist'].innerHTML; return /data-part="91-1-1=10"[\s\S]*?<b>2 labels<\/b> <span[^>]*>· 🟫 2 on a pallet · ⚠ 0 not yet/.test(a) && (a.match(/class="inv-bc-item"/g) || []).length === 3; })(), h);
 }
 
 // Owner (2026-10-30): "for Inventory add one more tab, Put on Shelving: they scan the box they are going to put on the shelving (each shelf has

@@ -3787,4 +3787,9 @@ XFLang.add({
   "times · notes": "horas · notas"
 });
 
+// ── Stock Out Big Company: 🔎 Look up an item (2026-11-05)
+XFLang.add({
+  "🔎 Look up an item — what we have, labels, who grabbed it": "🔎 Buscar un artículo — lo que tenemos, etiquetas, quién lo recogió"
+});
+
 XFLang._ready();
