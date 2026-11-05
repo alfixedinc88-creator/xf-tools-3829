@@ -103,6 +103,7 @@ document.addEventListener('input', function (e) {
         { key: 'awdshipdone', label: '…✅ Done button (takes a shipment off the list)', sel: '.inv-awdship-done' },
         { key: 'awdshiphist', label: '…🕘 Shipment history (Admin only)', sel: '#inv-awdship-hist' },
         { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
+        { key: 'amlscan', label: '🏷 Scan an Amazon label → Pull List (labels not grabbed yet / extra labels)', sel: '#inv-amlscan-card' },
         { key: 'boxcheck', label: '🔍 Box check (scan the box label, then the product)', sel: '#inv-boxcheck-card' },
         { key: 'boxpallets', label: '…📦 Boxes on each PALLET (tally) + 🖨 PALLET labels', sel: '#inv-bc-pallets, #inv-bc-plabels' },
         { key: 'notpallet', label: '…⚠ Labels not on a pallet yet (which ones)', sel: '.inv-bc-notpal' },
