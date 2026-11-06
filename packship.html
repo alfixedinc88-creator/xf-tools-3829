@@ -4981,7 +4981,7 @@ function _psRenderOrderLookupCard(o, opts) {
     + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
     // 🔎 Owner (2026-11-06): what Auto Label kept for this label — bought / printed, every step, Cancellation list, the market's cancel
     + ((o.notes || []).length ? '<div class="ps-ol-notes" style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fffbeb;border:1px solid #f59e0b;font-size:12px;line-height:1.5;color:var(--text)">'
-      + o.notes.map(function(x) { return _psAlEsc(psOlNoPrice(x)); }).join('<br>') + '</div>' : '')
+      + psOlNotesHtml(o.notes) + '</div>' : '')
     + itemsHtml
     + histHtml
     + '</div>';
@@ -9350,6 +9350,22 @@ function psOlNoPrice(t) {
     .replace(/\s*[—-]\s*needs \$\s?[\d,]+(?:\.\d+)?/g, '')
     .replace(/\s*\$\s?\d[\d,]*(?:\.\d+)?/g, '')
     .replace(/\(\s+/g, '(').replace(/ {2,}/g, ' ');
+}
+// 💲 Owner (2026-11-06): "the price we can have there, just hiding it, when we want to see we can click to open to see" — each line shows
+// without its price; a line with a price also has its full text, hidden. "💲 Show prices" (on that card only) shows them, "🙈 Hide" hides
+// them again. Hidden every time the card is drawn, so a screenshot never has them unless someone tapped.
+function psOlNotesHtml(notes) {
+  var any = false, h = (notes || []).map(function(x) { var np = psOlNoPrice(x);
+    if (np === String(x == null ? '' : x)) return _psAlEsc(x);
+    any = true; return '<span class="ps-ol-np">' + _psAlEsc(np) + '</span><span class="ps-ol-wp" style="display:none">' + _psAlEsc(x) + '</span>'; }).join('<br>');
+  return h + (any ? '<div style="margin-top:4px"><a href="#" class="ps-ol-ptog" onclick="psOlPriceToggle(this);return false" style="font-size:11px;color:var(--text3)">💲 Show prices</a></div>' : '');
+}
+function psOlPriceToggle(a) {
+  var box = a && a.closest ? a.closest('.ps-ol-notes') : null; if (!box) return;
+  var show = a.textContent.indexOf('Show') >= 0;
+  Array.prototype.forEach.call(box.querySelectorAll('.ps-ol-np'), function(e) { e.style.display = show ? 'none' : ''; });
+  Array.prototype.forEach.call(box.querySelectorAll('.ps-ol-wp'), function(e) { e.style.display = show ? '' : 'none'; });
+  a.textContent = show ? '🙈 Hide prices' : '💲 Show prices';
 }
 function _psAlEsc(v) {
   return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
