@@ -23579,6 +23579,7 @@ async function shipOrderLookup(url, env) {
       weightLb: r.weight_lb != null ? r.weight_lb : null,
     });
   }
+  try { await shipOrderLookupLabels(env, qStripped, isTracking, results); } catch (e) { console.error('[order-lookup labels]', e.message); }
   results.sort((a,b) => b.date.localeCompare(a.date));
   const debugInfo = {
     totalRows: rows.length,
@@ -23587,6 +23588,58 @@ async function shipOrderLookup(url, env) {
     sampleDate: rows.length ? (rows[0].date || '') : '',
   };
   return cors(new Response(JSON.stringify({ ok: true, q: raw, results: results.slice(0,50), debug: debugInfo }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// 🔎 Owner (2026-11-06): "tracking 9334610990370311028492, eBay order 02-15262-72498 — they tried to cancel it, we didn't stop it, and the
+// tracking # and Pack & Ship → Order Lookup both show nothing — why, what happened?". Order Lookup read only the shipping log
+// (ship_manifest_log), which gets a label when it is scanned at Picking / Packing or when Veeqo shows the order SHIPPED — a label bought and then
+// cancelled (or never scanned) was in neither. Now it also reads what Auto Label keeps for every label: when it was bought / printed (or held),
+// everything Auto Label did with that order, the 🗑 Cancellation list, and what the market said about cancelling it — one card with all of it.
+async function shipOrderLookupLabels(env, qS, isTracking, results) {
+  const N = x => String(x || '').trim().toUpperCase().replace(/[\s-]/g, ''), ny = v => { try { return v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (_) { return v || ''; } };
+  const all = async (sql, b) => { try { return await d1All(env, sql, b); } catch (_) { return []; } };
+  const since = new Date(Date.now() - 120 * 864e5).toISOString();
+  const T = "UPPER(REPLACE(REPLACE(tracking, ' ', ''), '-', ''))", O = "UPPER(REPLACE(REPLACE(order_number, ' ', ''), '-', ''))";
+  let labels = isTracking ? await all(`SELECT * FROM label_print_queue WHERE ${T} = ? ORDER BY id DESC LIMIT 10`, [qS])
+    : qS.length >= 6 ? await all(`SELECT * FROM label_print_queue WHERE created_at >= ? AND ${O} LIKE ? ORDER BY id DESC LIMIT 20`, [since, '%' + qS + '%']) : [];
+  // a cancelled order with no label bought: still say what the market said (order # search)
+  const seenByOrder = async on => all("SELECT * FROM channel_cancel_seen WHERE UPPER(REPLACE(order_num, '-', '')) = ? ORDER BY first_seen", [N(on)]);
+  let cfg = null; try { cfg = await autolabelLoadConfig(env); } catch (_) {}
+  const notesFor = async (tracking, orderNum, label, inLog) => {
+    const n = [], t = N(tracking), on = N(orderNum);
+    if (label) n.push(`🤖 Label bought ${ny(label.created_at)} (Auto Label)` + (label.printed_at ? ` · 🖨 printed ${ny(label.printed_at)}${label.printed_by ? ' by ' + label.printed_by : ''}` : label.cancel_hold ? ` · 🛑 NOT printed — ${label.cancel_hold}` : ' · ⏳ not printed yet'));
+    const log = await all(`SELECT ts, action, reason FROM autolabel_log WHERE (${t ? T + ' = ?' : '0'}${on ? ' OR ' + O + ' = ?' : ''}) ORDER BY id DESC LIMIT 12`, [t, on].filter(Boolean));
+    log.reverse().forEach(r => n.push(`📜 ${ny(r.ts)} · ${r.action}${r.reason ? ' — ' + String(r.reason).slice(0, 160) : ''}`));
+    const cl = t ? await all(`SELECT timestamp, requested_by, reason, status FROM ship_order_cancel_log WHERE ${T} = ? ORDER BY id`, [t]) : [];
+    cl.forEach(r => n.push(`🗑 On the Cancellation list ${ny(r.timestamp)} by ${r.requested_by || '?'} — ${r.status || ''}${r.reason ? ': ' + String(r.reason).slice(0, 120) : ''}`));
+    const seen = on ? await seenByOrder(orderNum) : [];
+    const H = { added_to_cancel_list: 'put on the 🗑 Cancellation list', not_printed: 'no label at that time', already_shipped: 'already shipped then — NOT stopped', not_in_veeqo: 'not found in Veeqo then' };
+    seen.forEach(r => n.push(`❗ ${r.channel} says cancelled (${r.state}) — first seen ${ny(r.first_seen)} — ${H[r.handled] || r.handled || ''}`));
+    if (seen.length && !cl.length && cfg && !cfg.cancelWatch) n.push('⚠ Auto Label → "Cancellation watch" is OFF — a cancelled order that already has a label is NOT put on the 🗑 Cancellation list, so Picking / Packing are not stopped. Tick it to stop them.');
+    else if (seen.length && !cl.length && label) n.push('⚠ The market cancelled it but it is NOT on the 🗑 Cancellation list — Picking / Packing were not stopped.');
+    if (!inLog) n.push('⚠ Not in the shipping log: never scanned at Picking / Packing and Veeqo never showed it shipped — that is why the search found nothing before.');
+    return n;
+  };
+  const have = new Set(results.map(r => N(r.tracking)));
+  for (const l of labels) {
+    const t = N(l.tracking); if (!t || have.has(t)) continue; have.add(t);
+    const who = (await all(`SELECT customer FROM autolabel_log WHERE ${T} = ? AND customer != '' ORDER BY id DESC LIMIT 1`, [t]))[0];
+    results.push({ date: String(l.created_at || '').slice(0, 10), tracking: l.tracking, orderNum: l.order_number || '', channel: l.channel || '', carrier: l.carrier || '', service: l.service || '',
+      shipToState: '', reconcileStatus: 'Not in shipping log', customerName: (who && who.customer) || '', city: '', zip: '', lineItems: [], address1: '', address2: '', weightLb: null,
+      fromLabels: true, notes: await notesFor(l.tracking, l.order_number, l, false) });
+  }
+  // what we found in the shipping log gets the same story (a few cards only)
+  if (results.length <= 5) for (const r of results) if (!r.fromLabels) {
+    const l = (await all(`SELECT * FROM label_print_queue WHERE ${T} = ? ORDER BY id DESC LIMIT 1`, [N(r.tracking)]))[0] || null;
+    const n = (await notesFor(r.tracking, r.orderNum, l, true)); if (n.length) r.notes = n;
+  }
+  // an order # with no label and nothing in the log, but a market cancellation on record
+  if (!results.length && !isTracking && qS.length >= 6) {
+    const seen = await seenByOrder(qS);
+    if (seen.length) results.push({ date: String(seen[0].first_seen || '').slice(0, 10), tracking: seen[0].tracking || '', orderNum: seen[0].order_num, channel: seen[0].channel, carrier: '', service: '',
+      shipToState: '', reconcileStatus: 'Cancelled', customerName: '', city: '', zip: '', lineItems: [], address1: '', address2: '', weightLb: null, fromLabels: true,
+      notes: await notesFor(seen[0].tracking, seen[0].order_num, null, false) });
+  }
 }
 
 // ── GET /ship/package?tracking= ──────────────────────────────────────────
@@ -31376,8 +31429,12 @@ async function autolabelHandleNewCancels(env, cancels, cfg) {
   for (const c of cancels.all) {
     const num = autolabelOrderNum(c.num);
     const seen = await d1First(env, 'SELECT handled FROM channel_cancel_seen WHERE channel=? AND order_num=?', [c.channel, num]);
-    if (seen) { await d1Run(env, 'UPDATE channel_cancel_seen SET last_seen=?, state=? WHERE channel=? AND order_num=?', [now, c.state, c.channel, num]); continue; }
-    if (lookups >= 15) break;
+    // 🔁 Owner (2026-11-06, eBay 02-15262-72498: "they tried to cancel it, we didn't stop it"): a cancellation first seen with NO label yet was
+    // never looked at again — a label bought afterwards (by hand, or the cancel request taken back and asked again) was never stopped.
+    // Still cancelled and no label then → looked at again (after the new ones, a few a run) until a label shows up.
+    const recheck = !!seen && seen.handled === 'not_printed';
+    if (seen) { await d1Run(env, 'UPDATE channel_cancel_seen SET last_seen=?, state=? WHERE channel=? AND order_num=?', [now, c.state, c.channel, num]); if (!recheck) continue; }
+    if (lookups >= 15 || (recheck && lookups >= 10)) { if (recheck) continue; break; }
 
     let order = c.order || null;
     if (!order) {
@@ -31406,6 +31463,10 @@ async function autolabelHandleNewCancels(env, cancels, cfg) {
         handled = 'added_to_cancel_list';
       } else if (tracking) { handled = 'already_shipped'; }
       else { handled = 'not_printed'; out.notPrinted++; }
+    }
+    if (recheck) { // only a change is written (a label now) — the first row stays as it was seen
+      if (handled !== 'not_printed') { await d1Run(env, 'UPDATE channel_cancel_seen SET handled=?, tracking=? WHERE channel=? AND order_num=?', [handled, tracking, c.channel, num]); out.recheckedLabel = (out.recheckedLabel || 0) + 1; }
+      continue;
     }
     await d1Run(env,
       `INSERT OR IGNORE INTO channel_cancel_seen (channel, order_num, state, first_seen, last_seen, veeqo_order_id, tracking, handled)
