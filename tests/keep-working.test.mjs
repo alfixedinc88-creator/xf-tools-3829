@@ -12460,7 +12460,7 @@ console.log('\n🔎 Order Lookup finds every label Auto Label bought (even never
   await post('/veeqo/autolabel/config', { config: { cancelWatch: cw0 } });
   const { readFileSync: rfO } = await import('node:fs');
   const ph = rfO(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfO(workerPath, 'utf8');
-  check('…the Order Lookup card shows that story (yellow box)', /class="ps-ol-notes"/.test(ph) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(psOlNoPrice\(x\)\); \}\)/.test(ph) /* owner 2026-11-06: every line still shown, without the label price */, null);
+  check('…the Order Lookup card shows that story (yellow box)', /class="ps-ol-notes"/.test(ph) && /\+ psOlNotesHtml\(o\.notes\) \+ '<\/div>'/.test(ph) /* owner 2026-11-06: every line still shown, the label price hidden until 💲 Show prices */, null);
   // 🔁 the cancel was first seen with NO label → the next runs look again; a label now → on the 🗑 Cancellation list (Picking / Packing stop)
   const grabW = n => (wk.match(new RegExp('async function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const run = new Function('d1First', 'd1Run', 'veeqoFetch', 'veeqoExtractTracking', 'normalizeShipTracking', 'shipTodayKey', 'autolabelLog', 'veeqoExtractChannel', 'veeqoExtractCustomerName', 'autolabelOrderNum',
@@ -13127,7 +13127,17 @@ console.log('\n💲 Order lookup card: no label price (screenshots go to custome
     a === '📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS but 6 days (needs 2 or less))' && b === '📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS only cheaper)'
       && c === '📜 Nov 5 · bought — UPS cheaper than USPS, 2 day(s)' && d === '📜 Nov 5 · low_value — Label cost is high for this order — check before shipping'
       && e === '📜 Nov 5 · express_only — Only express services from Veeqo (e.g. Priority Mail Express) — not bought, buy & print by hand' && f === '🤖 Label bought Nov 5, 2:49 PM (Auto Label) · 🖨 printed Nov 5, 2:50 PM by PRIN'
-      && ![a, b, c, d, e].some(x => /\$/.test(x)) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(psOlNoPrice\(x\)\); \}\)/.test(ph), { a, b, c, d, e });
+      && ![a, b, c, d, e].some(x => /\$/.test(x)) && /\+ psOlNotesHtml\(o\.notes\) \+ '<\/div>'/.test(ph), { a, b, c, d, e });
+  // Owner (2026-11-06): "the price we can have there, just hiding it, when we want to see we can click to open to see"
+  const nh = new Function('_psAlEsc', ph.slice(ph.indexOf('function psOlNotesHtml('), ph.indexOf('function psOlNoPrice(')) + ph.slice(ph.indexOf('function psOlNoPrice('), ph.indexOf('function _psAlEsc(')) + '; return { psOlNotesHtml, psOlPriceToggle };')(v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;'));
+  const notes = ['🤖 Label bought Nov 5, 2:49 PM (Auto Label) · 🖨 printed Nov 5, 2:50 PM by PRIN', '📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS $7.68 but 6 days (needs 2 or less))'];
+  const hh = nh.psOlNotesHtml(notes), hNo = nh.psOlNotesHtml([notes[0]]);
+  const mk = cls => ({ style: { display: cls === 'np' ? '' : 'none' } }), nps = [mk('np')], wps = [mk('wp')], box = { querySelectorAll: q => q === '.ps-ol-np' ? nps : wps }, link = { textContent: '💲 Show prices', closest: () => box };
+  nh.psOlPriceToggle(link); const shown = nps[0].style.display === 'none' && wps[0].style.display === '' && link.textContent === '🙈 Hide prices';
+  nh.psOlPriceToggle(link); const hidden = nps[0].style.display === '' && wps[0].style.display === 'none' && link.textContent === '💲 Show prices';
+  check('…the price is kept, just hidden: shown without it, the full line hidden next to it, "💲 Show prices" opens it on that card and "🙈 Hide prices" hides it again; a card with no price has no button',
+    /<span class="ps-ol-np">📜 Nov 5, 2:49 PM · bought — USPS preferred \(UPS but 6 days/.test(hh) && /<span class="ps-ol-wp" style="display:none">📜 Nov 5, 2:49 PM · bought — USPS preferred \(UPS \$7\.68 but 6 days/.test(hh)
+      && /💲 Show prices/.test(hh) && hh.startsWith('🤖 Label bought') && !/ps-ol-ptog/.test(hNo) && shown && hidden, hh);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
