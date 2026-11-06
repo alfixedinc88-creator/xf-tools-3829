@@ -12460,7 +12460,7 @@ console.log('\n🔎 Order Lookup finds every label Auto Label bought (even never
   await post('/veeqo/autolabel/config', { config: { cancelWatch: cw0 } });
   const { readFileSync: rfO } = await import('node:fs');
   const ph = rfO(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfO(workerPath, 'utf8');
-  check('…the Order Lookup card shows that story (yellow box)', /class="ps-ol-notes"/.test(ph) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(x\); \}\)/.test(ph), null);
+  check('…the Order Lookup card shows that story (yellow box)', /class="ps-ol-notes"/.test(ph) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(psOlNoPrice\(x\)\); \}\)/.test(ph) /* owner 2026-11-06: every line still shown, without the label price */, null);
   // 🔁 the cancel was first seen with NO label → the next runs look again; a label now → on the 🗑 Cancellation list (Picking / Packing stop)
   const grabW = n => (wk.match(new RegExp('async function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const run = new Function('d1First', 'd1Run', 'veeqoFetch', 'veeqoExtractTracking', 'normalizeShipTracking', 'shipTodayKey', 'autolabelLog', 'veeqoExtractChannel', 'veeqoExtractCustomerName', 'autolabelOrderNum',
@@ -13107,6 +13107,27 @@ console.log('\n⏱ Picking / Packing time: one label = one order; ⏱ time an or
     /<b>5<\/b><span>× 1 item<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 30 sec<\/span>/.test(el.innerHTML) && /× 1 item over 13 lb<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 1.5 min/.test(el.innerHTML)
       && /× 2 items<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 60 sec/.test(el.innerHTML) && /average time an order \(one label, however many pieces\)/.test(el.innerHTML)
       && /var pace = \(typeof _psPaceOn !== 'undefined' && _psPaceOn && _psPaceAdmin\(\)\) \? _psPaceBySize\(scans\) : null;/.test(ph), el.innerHTML);
+}
+
+console.log('\n💲 Order lookup card: no label price (screenshots go to customers)');
+{
+  // Owner (2026-11-06, photo of order #21-15369-69682): "hide the price of the label, sometime we screen shoot it to show our customers,
+  // don't want to show them how much is our label cost us".
+  const { readFileSync: rfN } = await import('node:fs');
+  const ph = rfN(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fnSrc = ph.slice(ph.indexOf('function psOlNoPrice('), ph.indexOf('function _psAlEsc('));
+  const np = new Function(fnSrc + '; return psOlNoPrice;')();
+  const a = np('📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS $7.68 but 6 days (needs 2 or less))');
+  const b = np('📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS only $0.30 cheaper — needs $0.50)');
+  const c = np('📜 Nov 5 · bought — UPS $1.25 cheaper than USPS, 2 day(s)');
+  const d = np('📜 Nov 5 · low_value — Label $8.20 vs order $12.99 — check before shipping');
+  const e = np('📜 Nov 5 · express_only — Only express services from Veeqo (e.g. Priority Mail Express $28.40) — not bought, buy & print by hand');
+  const f = np('🤖 Label bought Nov 5, 2:49 PM (Auto Label) · 🖨 printed Nov 5, 2:50 PM by PRIN');
+  check('the order card\'s notes never show a $ amount (the photo\'s line → "USPS preferred (UPS but 6 days (needs 2 or less))"); everything else stays word for word',
+    a === '📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS but 6 days (needs 2 or less))' && b === '📜 Nov 5, 2:49 PM · bought — USPS preferred (UPS only cheaper)'
+      && c === '📜 Nov 5 · bought — UPS cheaper than USPS, 2 day(s)' && d === '📜 Nov 5 · low_value — Label cost is high for this order — check before shipping'
+      && e === '📜 Nov 5 · express_only — Only express services from Veeqo (e.g. Priority Mail Express) — not bought, buy & print by hand' && f === '🤖 Label bought Nov 5, 2:49 PM (Auto Label) · 🖨 printed Nov 5, 2:50 PM by PRIN'
+      && ![a, b, c, d, e].some(x => /\$/.test(x)) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(psOlNoPrice\(x\)\); \}\)/.test(ph), { a, b, c, d, e });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

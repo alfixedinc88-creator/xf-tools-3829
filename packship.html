@@ -4981,7 +4981,7 @@ function _psRenderOrderLookupCard(o, opts) {
     + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
     // 🔎 Owner (2026-11-06): what Auto Label kept for this label — bought / printed, every step, Cancellation list, the market's cancel
     + ((o.notes || []).length ? '<div class="ps-ol-notes" style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fffbeb;border:1px solid #f59e0b;font-size:12px;line-height:1.5;color:var(--text)">'
-      + o.notes.map(function(x) { return _psAlEsc(x); }).join('<br>') + '</div>' : '')
+      + o.notes.map(function(x) { return _psAlEsc(psOlNoPrice(x)); }).join('<br>') + '</div>' : '')
     + itemsHtml
     + histHtml
     + '</div>';
@@ -9341,6 +9341,16 @@ var _PS_AL_LABELS = {
   has_label:  ['🏷 Has label', 'var(--text3)']
 };
 
+// 💲 Owner (2026-11-06): "hide the price of the label, sometime we screen shoot it to show our customers, don't want to show them how much is
+// our label cost us" — the Order lookup card never shows a dollar amount (the label's or a carrier's rate). Only what is SHOWN changes: Auto
+// Label's record (📜 Labels bought, the office's Auto Label screens) keeps every price.
+function psOlNoPrice(t) {
+  return String(t == null ? '' : t)
+    .replace(/Label \$\s?[\d,]+(?:\.\d+)? vs order \$\s?[\d,]+(?:\.\d+)?/g, 'Label cost is high for this order')
+    .replace(/\s*[—-]\s*needs \$\s?[\d,]+(?:\.\d+)?/g, '')
+    .replace(/\s*\$\s?\d[\d,]*(?:\.\d+)?/g, '')
+    .replace(/\(\s+/g, '(').replace(/ {2,}/g, ' ');
+}
 function _psAlEsc(v) {
   return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
