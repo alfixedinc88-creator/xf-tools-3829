@@ -13140,5 +13140,23 @@ console.log('\n💲 Order lookup card: no label price (screenshots go to custome
       && /💲 Show prices/.test(hh) && hh.startsWith('🤖 Label bought') && !/ps-ol-ptog/.test(hNo) && shown && hidden, hh);
 }
 
+// Owner (2026-11-06): "Stock Out Shelving — put the cases, scan the part #, it takes a while to be added to our Pull List".
+// The scan's one server call (/inventory/lookup) waited for the whole UPC Google Sheet first, then ran ~6 reads one after another.
+console.log('\n⚡ Stock Out scan → Pull List: the lookup no longer waits on the UPC sheet when the database knows the code; its reads run together');
+{
+  const { readFileSync: rfL } = await import('node:fs');
+  const ws = rfL(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  const fn = ws.slice(ws.indexOf('async function inventoryLookup(url, env) {'), ws.indexOf('async function inventoryNameSearch(url, env) {'));
+  check('the UPC sheet is only waited for when nothing in the database matched (const upcRows = partNum ? [] : await …); never awaited first',
+    /const upcSheetP = invUpcSheetCached\(env\)\.catch/.test(fn) && /const upcRows = partNum \? \[\] : \(\(await upcSheetP\)\.values \|\| \[\]\);/.test(fn) && !/await invUpcSheetCached\(env\)/.test(fn), null);
+  check('…AWD holds, FBA listings (+ their sales), pallets, None Found, whole cases and the photo are read at the same time; the AWD hold still comes off each spot',
+    /await Promise\.all\(\[heldP, fbaP, palletP, noneFoundP, caseOfP, photoP\]\)/.test(fn) && /await Promise\.all\(fbaParts\.map\(async f =>/.test(fn)
+      && fn.indexOf('loc.heldCases = Math.min(loc.adjustedCases, h.cases)') > fn.indexOf('await Promise.all([heldP'), null);
+  // the same answer: a part # scan still finds its spots, pending taken off, and the FBA / pallet / none-found fields are there
+  const lk = await get('/inventory/lookup?code=23-2-3');
+  check('…a part # scan still answers with its spots (pending / holds taken off) and the pick info the Pull List needs',
+    lk.partNum && Array.isArray(lk.locations) && lk.locations.length > 0 && lk.locations.every(l => 'adjustedCases' in l && 'pendingCases' in l) && Array.isArray(lk.fbaParts) && typeof lk.caseOf === 'object' && 'photo' in lk, lk);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

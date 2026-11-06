@@ -5462,8 +5462,9 @@ async function inventoryLookup(url, env) {
   // 1. Look up in UPC sheet: col A=SKU, col B=PartNum/variant, col C=inside UPC, col D=outside UPC
   // Owner (2026-10-08): "Transfer — every scan is a little slow, we wait for the next thing to show up". The 5,000-row
   // Google Sheet was downloaded on EVERY scan; it is kept for 60 s now (UPCs linked in the app are in D1, read live below).
-  const upcData = await invUpcSheetCached(env);
-  const upcRows = upcData.values || [];
+  // ⚡ Owner (2026-11-06, Stock Out Shelving: "put the cases, scan the part #, it takes a while to be added to our Pull List"): the
+  // sheet is asked for at once but only waited for when the database (UPCs saved in SKU Mgr / the UPC table) didn't find the code.
+  const upcSheetP = invUpcSheetCached(env).catch(() => ({ values: [] }));
 
   let partNum = null;
   let sku     = null;
@@ -5484,7 +5485,8 @@ async function inventoryLookup(url, env) {
     const tp = t && String(t.sku || '').trim().toUpperCase();
     if (tp && !(upcEd.byPart.has(tp) && !upcEd.byPart.get(tp).z.includes(codeNorm))) { partNum = sku = String(t.sku).trim(); insideUpc = t.inside_upc || null; outsideUpc = t.outside_upc || null; }
   }
-  for (const row of (partNum ? [] : upcRows)) {
+  const upcRows = partNum ? [] : ((await upcSheetP).values || []);
+  for (const row of upcRows) {
     const outside = String(row[3] || '').trim();
     const inside  = String(row[2] || '').trim();
     const variant = String(row[1] || '').trim();  // col B = the real SKU/part number string
@@ -5636,22 +5638,20 @@ async function inventoryLookup(url, env) {
   const variants = Array.from(partNums).sort();
   const isMultiVariant = variants.length > 1 && partNum.toUpperCase() === baseSku;
 
-  const held = env.DB ? await awdHeldMap(env).catch(() => ({})) : {};
+  // ⚡ These reads don't depend on each other: they run at the same time (was one after another) — the same answers.
+  const heldP = env.DB ? awdHeldMap(env).catch(() => ({})) : Promise.resolve({});
   for (const loc of locations) {
     const pk = (loc.partNum || '').toUpperCase() + '|' + (loc.location || '').toUpperCase();
     const pending = pendingMapLookup[pk] || 0;
     loc.pendingCases  = pending;
     loc.adjustedCases = Math.max(0, (parseFloat(loc.cases) || 0) - pending);
-    // 🔒 cases a locked AWD shipment still needs here are held: every other Stock Out sees that many fewer (owner 2026-10-27)
-    const h = held[(loc.partNum || '').toUpperCase() + '|' + spotKey(loc.location)];
-    if (h && h.cases > 0) { loc.heldCases = Math.min(loc.adjustedCases, h.cases); loc.heldFor = h.ships; loc.adjustedCases = Math.max(0, loc.adjustedCases - h.cases); }
   }
 
   // Our FBA listings' part #s for this item (cleaned, and through part #
   // corrections) — Stock Out → Shelving keeps these (and the same bag size
   // when they run low) for FBA, so they don't have to be rebagged.
   const fbaParts = [];
-  if (env.DB && baseSku) {
+  const fbaP = (async () => { if (env.DB && baseSku) {
     try {
       const B = String(baseSku).toUpperCase();
       const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all().catch(() => ({ results: [] }))).results || [])
@@ -5680,20 +5680,20 @@ async function inventoryLookup(url, env) {
       // in line with how fast it sells.
       Object.keys(alias).forEach(raw => { if (seen[alias[raw]]) seen[alias[raw]].raws.add(raw); });
       const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
-      for (const f of fbaParts) {
+      await Promise.all(fbaParts.map(async f => {
         const raws = [...f.raws].slice(0, 50);
         const r = await env.DB.prepare(`SELECT SUM(units_ordered) AS u FROM amazon_sales_weekly WHERE period_start >= ? AND UPPER(sku) IN (${raws.map(() => '?').join(',')})`)
           .bind(since, ...raws).first().catch(() => null);
         f.sold90 = (r && parseFloat(r.u)) || 0;
         delete f.raws;
-      }
+      }));
     } catch (_) {}
-  }
+  } })();
 
   // Boxes still on a 📦 Received container's pallets at each spot (not moved
   // off in 🚢 Container here yet) — Stock Out picks shelf spots before these:
   // pallets stacked against each other are hard to get at.
-  if (env.DB && locations.length) {
+  const palletP = (async () => { if (env.DB && locations.length) {
     try {
       const where = await palletWhereFor(env, [...new Set(locations.map(l => String(l.partNum || '').toUpperCase()))]);
       for (const loc of locations) {
@@ -5704,9 +5704,9 @@ async function inventoryLookup(url, env) {
         if (n > 0) loc.palletBoxes = Math.round(n * 1000) / 1000;
       }
     } catch (_) {}
-  }
+  } })();
   // ⚠ A spot someone marked None Found (Pull List) that nobody has counted since → Stock Out uses it last (owner 2026-10-29).
-  if (env.DB && locations.length) {
+  const noneFoundP = (async () => { if (env.DB && locations.length) {
     try {
       const open = (await invNoneFoundList(env, { days: 30, parts: locations.map(l => l.partNum) })).filter(x => !x.checked);
       for (const loc of locations) {
@@ -5714,20 +5714,25 @@ async function inventoryLookup(url, env) {
         if (x) loc.noneFound = { by: x.by, at: x.at };
       }
     } catch (_) {}
-  }
+  } })();
 
   // 📦 Owner (2026-10-17, 30-4-6=100X: "that's a case — when Amazon / we order 30-4-6=100X we just ship a whole case of
   // 30-4-6=10X"): this item's part #s sold as a whole case of another (Reorder 📦) → Stock Out Big Company takes whole cases of it.
   const caseOf = {};
-  if (env.DB && baseSku) {
+  const caseOfP = (async () => { if (env.DB && baseSku) {
     try {
       const B = String(baseSku).toUpperCase(), like = B.replace(/[\\%_]/g, '\\$&') + '=%';
       ((await env.DB.prepare(`SELECT part, target FROM reorder_case_of WHERE UPPER(part) LIKE ? ESCAPE '\\'`).bind(like).all()).results || [])
         .forEach(r => { caseOf[String(r.part).toUpperCase()] = String(r.target).toUpperCase(); });
     } catch (_) {}
+  } })();
+  const photoP = productPhotoMap(env, [baseSku]).then(m => m[baseSku] || '').catch(() => '');
+  const [held, , , , , photo] = await Promise.all([heldP, fbaP, palletP, noneFoundP, caseOfP, photoP]);
+  for (const loc of locations) {
+    // 🔒 cases a locked AWD shipment still needs here are held: every other Stock Out sees that many fewer (owner 2026-10-27)
+    const h = held[(loc.partNum || '').toUpperCase() + '|' + spotKey(loc.location)];
+    if (h && h.cases > 0) { loc.heldCases = Math.min(loc.adjustedCases, h.cases); loc.heldFor = h.ships; loc.adjustedCases = Math.max(0, loc.adjustedCases - h.cases); }
   }
-  let photo = '';
-  try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
     insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked, caseOf, ...(amazonCode ? { amazonCode } : {})
