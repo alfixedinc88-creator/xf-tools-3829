@@ -12439,6 +12439,46 @@ console.log('\n🗓 Auto print schedule: tap a time → change it right there (o
     /window\.psAlSchedTap = function/.test(ph) && /✓ Save for every day it is on \(/.test(ph) && /await psAlSaveConfig\(res\.cfg\)/.test(ph) && /id="ps-al-sched-edit-btn" onclick="psAlSchedEdit\(\)"/.test(ph), null);
 }
 
+// Owner (2026-11-06): "tracking 9334610990370311028492, eBay order 02-15262-72498 — they tried to cancel it before; 1. we didn't stop the
+// cancellation 2. the tracking # and Pack & Ship → Order Lookup both show nothing — check why and what happened".
+console.log('\n🔎 Order Lookup finds every label Auto Label bought (even never scanned / cancelled) and tells its story; cancels seen with no label are checked again');
+{
+  await get('/veeqo/autolabel/config'); await get('/ship/order-lookup?q=XXINIT'); // tables
+  const T = '9334610990370311099901', O = '02-99262-72401';
+  sq.prepare("DELETE FROM channel_cancel_seen WHERE order_num = ?").run(O);
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by) VALUES (?, 'eBay', ?, 'USPS', 'Ground Advantage', ?, ?, 'station')").run(O, T, '2026-11-03T15:00:00Z', '2026-11-03T15:02:00Z');
+  sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, customer, action, tracking, reason) VALUES (?, '2026-11-03', ?, 'Pat Buyer', 'bought', ?, 'USPS Ground Advantage $4.40')").run('2026-11-03T15:00:00Z', O, T);
+  sq.prepare("INSERT INTO channel_cancel_seen (channel, order_num, state, first_seen, last_seen, veeqo_order_id, tracking, handled) VALUES ('ebay', ?, 'CANCEL_REQUESTED', ?, ?, '7001', '', 'not_printed')").run(O, '2026-11-03T14:50:00Z', '2026-11-03T14:50:00Z');
+  const cw0 = (await get('/veeqo/autolabel/config')).config.cancelWatch;
+  await post('/veeqo/autolabel/config', { config: { cancelWatch: false } });
+  const byT = await get('/ship/order-lookup?q=' + T), byO = await get('/ship/order-lookup?q=' + O);
+  const cT = (byT.results || [])[0] || {}, cO = (byO.results || [])[0] || {}, nt = (cT.notes || []).join('\n');
+  check('the tracking # (bought by Auto Label, never scanned, never "shipped" in Veeqo) is found now: eBay 02-99262-72401, Pat Buyer; its story: bought + printed when, every Auto Label step, eBay said cancel requested (no label at that time), "Cancellation watch is OFF", "Not in the shipping log — why the search found nothing"',
+    cT.tracking === T && cT.orderNum === O && cT.customerName === 'Pat Buyer' && cT.reconcileStatus === 'Not in shipping log' && /🤖 Label bought .* · 🖨 printed .* by station/.test(nt)
+      && /📜 .* · bought — USPS Ground Advantage/.test(nt) && /❗ ebay says cancelled \(CANCEL_REQUESTED\) — first seen .* — no label at that time/.test(nt) && /Cancellation watch" is OFF/.test(nt) && /Not in the shipping log/.test(nt)
+      && cO.tracking === T, { cT, n: (byO.results || []).length });
+  await post('/veeqo/autolabel/config', { config: { cancelWatch: cw0 } });
+  const { readFileSync: rfO } = await import('node:fs');
+  const ph = rfO(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfO(workerPath, 'utf8');
+  check('…the Order Lookup card shows that story (yellow box)', /class="ps-ol-notes"/.test(ph) && /o\.notes\.map\(function\(x\) \{ return _psAlEsc\(x\); \}\)/.test(ph), null);
+  // 🔁 the cancel was first seen with NO label → the next runs look again; a label now → on the 🗑 Cancellation list (Picking / Packing stop)
+  const grabW = n => (wk.match(new RegExp('async function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
+  const run = new Function('d1First', 'd1Run', 'veeqoFetch', 'veeqoExtractTracking', 'normalizeShipTracking', 'shipTodayKey', 'autolabelLog', 'veeqoExtractChannel', 'veeqoExtractCustomerName', 'autolabelOrderNum',
+    grabW('autolabelHandleNewCancels') + '; return autolabelHandleNewCancels;')((e, q, b) => sq.prepare(q).get(...(b || [])) || null, (e, q, b) => sq.prepare(q).run(...(b || [])),
+      async () => [{ id: 7001, number: O, shipped_at: null, allocations: [] }], o => o._t || '', t => String(t).toUpperCase(), () => '2026-11-06', async () => {}, () => 'eBay', () => 'Pat Buyer', n => String(n || '').trim().toUpperCase().replace(/^#/, ''));
+  const C = { all: [{ channel: 'ebay', num: O, state: 'CANCEL_REQUESTED' }] };
+  const o1 = await run({}, C, {}); const s1 = sq.prepare("SELECT handled FROM channel_cancel_seen WHERE order_num = ?").get(O);
+  const run2 = new Function('d1First', 'd1Run', 'veeqoFetch', 'veeqoExtractTracking', 'normalizeShipTracking', 'shipTodayKey', 'autolabelLog', 'veeqoExtractChannel', 'veeqoExtractCustomerName', 'autolabelOrderNum',
+    grabW('autolabelHandleNewCancels') + '; return autolabelHandleNewCancels;')((e, q, b) => sq.prepare(q).get(...(b || [])) || null, (e, q, b) => sq.prepare(q).run(...(b || [])),
+      async () => [{ id: 7001, number: O, shipped_at: null, _t: T, allocations: [] }], o => o._t || '', t => String(t).toUpperCase(), () => '2026-11-06', async () => {}, () => 'eBay', () => 'Pat Buyer', n => String(n || '').trim().toUpperCase().replace(/^#/, ''));
+  const o2 = await run2({}, C, {}); const s2 = sq.prepare("SELECT handled, tracking FROM channel_cancel_seen WHERE order_num = ?").get(O);
+  const cl = sq.prepare("SELECT status, requested_by, reason FROM ship_order_cancel_log WHERE UPPER(tracking) = ?").get(T) || {};
+  check('…eBay cancel first seen with no label (not_printed) → looked at again each run: still no label → unchanged; a label now → put on the 🗑 Cancellation list ("void the label"), the record says added_to_cancel_list with the tracking',
+    !o1.recheckedLabel && s1.handled === 'not_printed' && o2.recheckedLabel === 1 && s2.handled === 'added_to_cancel_list' && s2.tracking === T && cl.status === 'pending' && cl.requested_by === 'AUTO' && /void the label/.test(cl.reason || ''), { o1, o2, s2, cl });
+  sq.prepare("DELETE FROM label_print_queue WHERE tracking = ?").run(T); sq.prepare("DELETE FROM autolabel_log WHERE tracking = ?").run(T);
+  sq.prepare("DELETE FROM channel_cancel_seen WHERE order_num = ?").run(O); sq.prepare("DELETE FROM ship_order_cancel_log WHERE UPPER(tracking) = ?").run(T);
+}
+
 // Owner (2026-10-30, a hand-drawn map + photos): "draw a shelving map, so when they scan the package, e.g. 202-#-#, we show them on the map
 // where to put it — easy for the new people".
 console.log('\n🗺 Put on Shelf: the shelf map, the shelf of the part # lit up (202-#-# → 202)');
