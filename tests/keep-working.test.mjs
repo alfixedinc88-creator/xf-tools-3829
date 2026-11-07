@@ -13183,5 +13183,33 @@ console.log('\n⏱ Labels scanned in a batch (seconds apart) are not timed — n
   check('…the package sizes don\'t time batch scans either (no "⏱" on MG\'s 1 item chip)', Object.keys(B.bySize(sc)).length === 0, B.bySize(sc));
 }
 
+console.log('\n🕐 Packing: the REAL count of packages each person scanned in each clock hour');
+{
+  // Owner (2026-11-07): "how you coming out with Mayra can pack 130 an hour? is that real 1 hour packing hours? or just more like in math …
+  // 2. I want I can see every one can packed per hour too".
+  const { readFileSync: rfH2 } = await import('node:fs');
+  const ph = rfH2(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ax = rfH2(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('function _psNyHour('), ph.indexOf('// ── Per-person scan-history detail modal'));
+  const el = { style: {}, innerHTML: '' };
+  const api = new Function('document', '_psPaceOn', '_psPaceAdmin', '_psScanSummaryByUser', '_psAlEsc', 'PS_PACE_GAP_MIN', src + '; return { _psPackHours, _psPackHoursPaint };')(
+    { getElementById: () => el }, true, () => true, null, v => String(v), 10);
+  // New York, 2026-11-06 (EST, UTC−5): MAYRA 8:40–8:59 (12, part hour) · 9:00–9:59 (55) · 10–10:59 (61) · 11–11:20 (20, part hour); KL 9:00–9:30 (30, only one hour)
+  const at = (h, m, s) => new Date(Date.UTC(2026, 10, 6, h + 5, m, s || 0)).toISOString();
+  const run = (h, from, n, to) => Array.from({ length: n }, (_, i) => at(h, from + Math.floor(i * (to - from) / n), (i * 7) % 60));
+  const byUser = { MAYRA: { ts: [].concat(run(8, 40, 12, 59), run(9, 0, 55, 59), run(10, 0, 61, 59), run(11, 0, 20, 20)) }, KL: { ts: run(9, 0, 30, 30) } };
+  const H = api._psPackHours(byUser, ['MAYRA', 'KL']), m = H.rows.find(r => r.name === 'MAYRA'), k = H.rows.find(r => r.name === 'KL');
+  check('real hours (New York time): MAYRA 8 AM 12 · 9 AM 55 · 10 AM 61 · 11 AM 20 → best hour 61 (10 AM), full-hour average 58 (9 + 10 AM; the first / last part hours left out); KL only one hour → no full hour yet',
+    H.hours.join() === '8,9,10,11' && m.c[8] === 12 && m.c[9] === 55 && m.c[10] === 61 && m.c[11] === 20 && m.best.n === 61 && m.best.h === 10 && m.avg === 58 && m.fullN === 2
+      && k.c[9] === 30 && k.avg === null && k.best.n === 30, { H });
+  const api2 = new Function('document', '_psPaceOn', '_psPaceAdmin', '_psScanSummaryByUser', '_psAlEsc', 'PS_PACE_GAP_MIN', src + '; return { _psPackHoursPaint };')({ getElementById: () => el }, true, () => true, byUser, v => String(v), 10);
+  api2._psPackHoursPaint(['MAYRA', 'KL']); const h = el.innerHTML;
+  check('…the table (Admin / Owner, with ⏱ Show pace): a column for each hour, part hours with * , "Best hour 61 (10 AM)", "58 an hour (2 full hours)"; KL "no full hour yet"; a 🧩 Pages & Tabs mark',
+    el.style.display === 'block' && /<th[^>]*>8 AM<\/th><th[^>]*>9 AM<\/th><th[^>]*>10 AM<\/th><th[^>]*>11 AM<\/th>/.test(h) && /12\*<\/span>/.test(h) && /<b>55<\/b>/.test(h) && /<b>61<\/b> <span[^>]*>\(10 AM\)<\/span>/.test(h)
+      && /<b>58<\/b> an hour <span[^>]*>\(2 full hours\)<\/span>/.test(h) && /no full hour yet/.test(h) && /_psPackHoursPaint\(names\);\n\}/.test(ph) && /sel: '#ps-pack-hours'/.test(ax), h.slice(0, 1500));
+  const api3 = new Function('document', '_psPaceOn', '_psPaceAdmin', '_psScanSummaryByUser', '_psAlEsc', 'PS_PACE_GAP_MIN', src + '; return { _psPackHoursPaint };')({ getElementById: () => el }, false, () => true, byUser, v => String(v), 10);
+  api3._psPackHoursPaint(['MAYRA']);
+  check('…hidden until an Admin / Owner taps ⏱ Show pace', el.style.display === 'none' && el.innerHTML === '', null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

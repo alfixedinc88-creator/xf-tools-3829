@@ -198,6 +198,7 @@ document.addEventListener('input', function (e) {
         { key: 'summary', label: 'Scanned Today / by person', sel: '#ps-scan-summary' },
         { key: 'pacebtn', label: '⏱ Show pace (Admin / Owner)', sel: '#ps-scan-summary .ps-pace-btn' },
         { key: 'pacenote', label: '📌 Note: Mayra can pack 130 an hour (Admin / Owner)', sel: '#ps-pack-pace-note' },
+        { key: 'packhours', label: '🕐 Packed each hour — the real count per person (Admin / Owner, with ⏱ Show pace)', sel: '#ps-pack-hours' },
         { key: 'itemcount', label: 'Package-size breakdown', sel: '#ps-scan-itemcount-breakdown' },
         { key: 'list', label: 'Today\'s Scans', sel: '#ps-panel-scan > .ps-section-header:has(#ps-scan-cnt-label), #ps-panel-scan > .ps-filter-row, #ps-scan-list' },
         { key: 'debug', label: 'debug link', sel: '#ps-panel-scan span[onclick*="psShowDebug"]' } ] },
