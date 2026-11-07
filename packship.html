@@ -4461,7 +4461,7 @@ function _psPaceBySize(scans) {
   (scans || []).forEach(function(s) { var t = Date.parse(s.timestamp); if (isNaN(t)) return; (per[s.initials || 'Unassigned'] = per[s.initials || 'Unassigned'] || []).push({ t: t, s: s }); });
   Object.keys(per).forEach(function(who) {
     var seen = {}, L = per[who].sort(function(a, b) { return a.t - b.t; }).filter(function(x) { var k = String(x.s.tracking || '').toUpperCase(); if (k && seen[k]) return false; if (k) seen[k] = 1; return true; });
-    for (var i = 1; i < L.length; i++) { var d = L[i].t - L[i - 1].t; if (!(d > 0 && d < PS_PACE_GAP_MIN * 60000)) continue;
+    for (var i = 1; i < L.length; i++) { var d = L[i].t - L[i - 1].t; if (!(d >= PS_PACE_BATCH_SEC * 1000 && d < PS_PACE_GAP_MIN * 60000)) continue; // a batch scan (seconds apart) isn't timed
       var k = _psSizeKey(L[i].s), o = out[k] = out[k] || { n: 0, ms: 0 }; o.n++; o.ms += d; }
   });
   return out;
@@ -4576,20 +4576,24 @@ window.psCloseItemCountDetail = function() {
 // I like to see how fast they go, and everyone else can see it too". Only steady work counts: the time between one scan and the next
 // when it is under 10 minutes (a longer gap = a break, lunch, other work — left out). Average = that time ÷ those packages;
 // per hour = 60 ÷ the average. Shown once there are 5+ steady scans (too few to say otherwise).
-var PS_PACE_GAP_MIN = 10, PS_PACE_MIN_N = 5;
+// 📦 Owner (2026-11-07, photo: MG "2 sec an order · 2222 orders an hour"): labels scanned one right after another (a stack scanned in a
+// batch, before or after picking) say nothing about how long an order took. A gap under PS_PACE_BATCH_SEC is "scanned in a batch":
+// not timed. Too few timed orders → "scanned in a batch — time not known", never a made-up speed.
+var PS_PACE_GAP_MIN = 10, PS_PACE_MIN_N = 5, PS_PACE_BATCH_SEC = 10;
 function _psPace(ts) {
   var t = (ts || []).map(function(x) { return Date.parse(x); }).filter(function(x) { return !isNaN(x); }).sort(function(a, b) { return a - b; });
-  var ms = 0, n = 0;
-  for (var i = 1; i < t.length; i++) { var d = t[i] - t[i - 1]; if (d > 0 && d < PS_PACE_GAP_MIN * 60000) { ms += d; n++; } }
-  if (n < PS_PACE_MIN_N || !ms) return null;
+  var ms = 0, n = 0, batch = 0;
+  for (var i = 1; i < t.length; i++) { var d = t[i] - t[i - 1]; if (d > 0 && d < PS_PACE_BATCH_SEC * 1000) { batch++; continue; } if (d > 0 && d < PS_PACE_GAP_MIN * 60000) { ms += d; n++; } }
+  if (n < PS_PACE_MIN_N || !ms) return batch >= PS_PACE_MIN_N ? { batchOnly: true, batch: batch } : null;
   var avg = ms / n / 60000;
-  return { n: n, avgMin: Math.round(avg * 100) / 100, perHour: Math.round(60 / avg) };
+  return { n: n, avgMin: Math.round(avg * 100) / 100, perHour: Math.round(60 / avg), batch: batch };
 }
 function _psPaceHtml(u) {
   if (!_psPaceOn || !_psPaceAdmin()) return ''; // hidden unless an Admin / Owner tapped ⏱ Show pace
   var p = _psPace(u && u.ts); if (!p) return '';
+  if (p.batchOnly) return '<span class="ps-scan-summary-chip-pace" title="These labels were scanned seconds apart (a stack scanned in a batch) — the scans can\'t tell how long each order took" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--text3);white-space:nowrap">⏱ scanned in a batch — time not known</span>';
   var sec = Math.round(p.avgMin * 60);
-  return '<span class="ps-scan-summary-chip-pace" title="One label = one order, however many pieces. Steady work only: ' + p.n + ' orders less than ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out)" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
+  return '<span class="ps-scan-summary-chip-pace" title="One label = one order, however many pieces. Steady work only: ' + p.n + ' orders timed, ' + PS_PACE_BATCH_SEC + ' sec to ' + PS_PACE_GAP_MIN + ' min after the one before (breaks left out' + (p.batch ? '; ' + p.batch + ' scanned in a batch, under ' + PS_PACE_BATCH_SEC + ' sec, not timed' : '') + ')" style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--green);white-space:nowrap">⏱ '
     + (sec < 90 ? sec + ' sec' : p.avgMin + ' min') + ' an order · ' + p.perHour + ' orders an hour</span>';
 }
 function _psRenderPersonChips() {
