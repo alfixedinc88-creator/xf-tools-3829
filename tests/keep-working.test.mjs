@@ -13211,5 +13211,54 @@ console.log('\n🕐 Packing: the REAL count of packages each person scanned in e
   check('…hidden until an Admin / Owner taps ⏱ Show pace', el.style.display === 'none' && el.innerHTML === '', null);
 }
 
+console.log('\n🧭 Pack & Ship → Picking by scan: scan the label → where to grab → every bag counted');
+{
+  // Owner (2026-11-07): "added one more tab for 'picking by scan' … scan the shipping label, the system shows where to grab them … scan our
+  // package or our part # to make sure it is the right product … and the quantities" → "do it without the scale first, scan the label, scan the columns item".
+  const { readFileSync: rfK } = await import('node:fs');
+  const rd = f => rfK(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const ph = rd('packship.html'), inv = rd('inventory.html'), sm = rd('shelf-map.js'), ax = rd('xf-access.js'), sw = rd('sw.js'), wk = rd('worker/src/index.js');
+  const invSlice = inv.slice(inv.indexOf('  var INV_SHELF_MAP = {'), inv.indexOf('  window.invShelfMapHtml = invShelfMapHtml;'));
+  check('the shelf map is the SAME as Put on Shelf (shelf-map.js = inventory.html, word for word) and Pack & Ship loads it', invSlice.length > 500 && sm.includes(invSlice) && /<script src="shelf-map\.js/.test(ph), invSlice.length);
+  check('a 🧭 Picking by scan tab + panel, a 🧩 Pages & Tabs mark, works offline (page + record queued)', /id="ps-tab-pickscan"/.test(ph) && /id="ps-panel-pickscan"/.test(ph) && /sel: '#ps-tab-pickscan'/.test(ax)
+    && /'\/ship\/pick-verify'/.test(sw) && /'shelf-map\.js'/.test(sw), null);
+  check('the Worker keeps every order (asked / scanned / typed / wrong scans, who, when; de-duped) and shows 🧭 in the order\'s Activity History', /path === '\/ship\/pick-verify'/.test(wk) && /claimRequestId[\s\S]{0,4000}ship_pick_verify|ship_pick_verify[\s\S]{0,4000}claimRequestId/.test(wk) && /Picked by scan/.test(wk), null);
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const els = {}; const el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', textContent: '', focus() {} });
+  const posts = []; let said = []; let promptAns = null;
+  const pkg = { found: true, order: { orderNum: '111-222' }, items: [
+    { sku: 'XFB10=3/4', qty: 2, partNum: '24-1-8=10X', parent: '24-1-8', name: '3/4 elbow', spots: [{ location: 'C1=24-1-8', cases: 3 }], upcs: [{ inside: '000123456789', outside: '' }] },
+    { sku: 'XFB25', qty: 1, partNum: '8-8-8=25', parent: '8-8-8', name: 'tee', spots: [{ location: 'BO=8-8-8', cases: 1 }], upcs: [] } ] };
+  const fetchF = url => Promise.resolve({ json: () => Promise.resolve(/\/ship\/package/.test(url) ? pkg : /lookup/.test(url) ? { partNum: /999/.test(url) ? '30-3-4=10' : '' } : {}) });
+  const post = (url, body) => { posts.push({ url, body }); return Promise.resolve(/\/ship\/pick$/.test(url) ? { ok: true } : { ok: true }); };
+  const win = {};
+  new Function('window', 'document', 'fetch', '_psPostWithTimeout', 'PS_WORKER', 'psCredToken', 'psInitials', 'psNormalizeTracking', '_psCancelOrderCache', 'psShowCancelOrderAlert', '_psAlEsc', '_psBeep', '_psSpeakAlert', '_psSkuMultiplier', 'xfShelfMapHtml', 'xfShelfNo', 'xfShelfName', 'confirm', 'prompt', 'navigator', src)(
+    win, { getElementById: el }, fetchF, post, 'W', 'T', 'KL', v => /^1Z/.test(v) ? v : null, {}, () => {}, v => String(v), () => {}, t => said.push(t), () => 1,
+    p => '<map ' + p + '>', p => String(p).split('-')[0], () => '', () => true, () => promptAns, {});
+  const tick = () => new Promise(r => setTimeout(r, 0));
+  const scan = async v => { win.psPksScan(v); for (let i = 0; i < 6; i++) await tick(); };
+  await scan('24-1-8=10X'); check('…an item before the label → "Scan the SHIPPING LABEL first"', /SHIPPING LABEL first/.test(el('ps-pks-msg').innerHTML), el('ps-pks-msg').innerHTML);
+  await scan('1Z999AA10123456784');
+  const html0 = el('ps-pks-out').innerHTML;
+  check('…the label → picked (same as 🧺 Picking, with who) and the items in WALKING order (BO 8-8-8 before C1 24-1-8): 2 × 10 = 20 pcs, 1 × 25 = 25 pcs, on the shelf map',
+    posts.some(p => /\/ship\/pick$/.test(p.url) && p.body.initials === 'KL') && html0.indexOf('8-8-8=25') < html0.indexOf('24-1-8=10X') && /= <b>20 pcs<\/b>/.test(html0) && /= <b>25 pcs<\/b>/.test(html0) && /<map 8-8-8>/.test(html0), html0.slice(0, 400));
+  said = []; await scan('999000111222');
+  check('…a wrong item (30-3-4, not on the order) → ❌ WRONG ITEM, "Wrong item" said, nothing counted', /WRONG ITEM/.test(el('ps-pks-msg').innerHTML) && said.includes('Wrong item') && !/<b>[1-9]\d* of/.test(el('ps-pks-out').innerHTML), el('ps-pks-msg').innerHTML);
+  await scan('C1=24-1-8'); check('…the shelf (column) label → "Right shelf", shelf ✓', /Right shelf/.test(el('ps-pks-msg').innerHTML) && /shelf ✓/.test(el('ps-pks-out').innerHTML), el('ps-pks-msg').innerHTML);
+  await scan('000123456789'); await scan('24-1-8=10X');
+  check('…two bags of 10 (the bag UPC, then the part #) → 24-1-8 20 of 20 pcs ✅', /<b>20 of 20 pcs<\/b>/.test(el('ps-pks-out').innerHTML), el('ps-pks-out').innerHTML.slice(0, 600));
+  said = []; await scan('24-1-8=10X'); check('…a third bag → ⚠ TOO MANY, not counted', /TOO MANY/.test(el('ps-pks-msg').innerHTML) && !/21|30 of 20/.test(el('ps-pks-out').innerHTML), el('ps-pks-msg').innerHTML);
+  await scan('8-8-8=100'); check('…a bag of 100 for 25 pcs → "open it, take 25 pcs, ✋ type the count", not counted', /bag of <b>100<\/b>[\s\S]*only <b>25<\/b>/.test(el('ps-pks-msg').innerHTML) && /<b>0 of 25 pcs<\/b>/.test(el('ps-pks-out').innerHTML), el('ps-pks-msg').innerHTML);
+  promptAns = '30'; const ln = 1 - 0; win.psPksType(0); check('…✋ typing more than needed (30 of 25) → refused', /more than the 25/.test(el('ps-pks-msg').innerHTML), el('ps-pks-msg').innerHTML);
+  promptAns = '25'; win.psPksType(0); for (let i = 0; i < 4; i++) await tick();
+  const rec = posts.find(p => /pick-verify/.test(p.url));
+  check('…✋ 25 typed → ✅ ALL PICKED; the record: complete, 8-8-8 25/25 (25 typed), 24-1-8 20/20 (20 scanned, shelf ✓), 1 wrong scan, who-proof _requestId',
+    /ALL PICKED/.test(el('ps-pks-msg').innerHTML) && rec && rec.body.complete === true && rec.body.tracking === '1Z999AA10123456784' && rec.body.orderNum === '111-222'
+      && JSON.stringify(rec.body.lines.map(l => [l.partNum, l.need, l.got, l.scanned, l.typed, l.spotOk])) === JSON.stringify([['8-8-8=25', 25, 25, 0, 25, false], ['24-1-8=10X', 20, 20, 20, 0, true]])
+      && rec.body.wrong.length === 1 && /^pks-/.test(rec.body._requestId), rec && rec.body);
+  // pieces add up: asked 45 = scanned 20 + typed 25; the wrong / too-many / too-big bags counted 0
+  const L = rec.body.lines; check('…pieces add up: asked 45 pcs = scanned 20 + typed 25 = got 45 (wrong / too many / too big bags: 0)', L.reduce((a, l) => a + l.need, 0) === 45 && L.reduce((a, l) => a + l.scanned + l.typed, 0) === 45 && L.reduce((a, l) => a + l.got, 0) === 45, L);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

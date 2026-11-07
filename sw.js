@@ -41,7 +41,7 @@ const SHELL_ASSETS = [
 const BASE = '/xf-tools-3829/';
 const OFFLINE_PAGES = ['index.html', 'inventory.html', 'packship.html', 'warehouse.html', 'upc.html', 'labelprint.html', 'lights.html',
   'reorder.html', 'awd.html', 'repricer.html', 'sales.html', 'receivepo.html', 'ldash.html', 'profit.html', 'office.html', 'imagemaker.html', 'training.html',
-  'xfitting-admin.html', 'xf-access.js', 'xf-lang.js', 'xf-lang-es.js', 'xf-signout.js', 'manifest.json', 'icon-192x192.png', 'icon-512x512.png'];
+  'xfitting-admin.html', 'xf-access.js', 'shelf-map.js', 'xf-lang.js', 'xf-lang-es.js', 'xf-signout.js', 'manifest.json', 'icon-192x192.png', 'icon-512x512.png'];
 // Fonts and libraries pages load from these sites (Excel, barcodes, charts…): saved after the first use, used offline.
 const LIB_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'unpkg.com'];
 const LIB_CACHE = 'xfitting-libs';
@@ -56,6 +56,7 @@ const DATA_MAX = 600;
 const QUEUEABLE_PATHS = [
   '/inventory/log',
   '/inventory/transfer',
+  '/ship/pick-verify', // 🧭 Picking by scan: the order's check, saved with no WiFi, sent once (owner 2026-11-07)
 ];
 
 self.addEventListener('install', e => {

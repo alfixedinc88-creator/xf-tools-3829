@@ -1141,6 +1141,7 @@ body {
 <!-- Tab bar -->
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-picking"  onclick="psSwitchTab('picking')">🧺 Picking</div>
+  <div class="ps-tabitem"        id="ps-tab-pickscan" onclick="psSwitchTab('pickscan')">🧭 Picking by scan</div>
   <div class="ps-tabitem"        id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Packing</div>
   <div class="ps-tabitem"        id="ps-tab-labelcheck"  onclick="psSwitchTab('labelcheck')">🏷️ Label Check</div>
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">🚐 Close Batch</div>
@@ -1299,6 +1300,18 @@ body {
         <div class="ps-empty-title">No picks yet today</div>
         <div class="ps-empty-sub">Start scanning orders to pick — each pick saves instantly.</div>
       </div>
+    </div>
+  </div>
+
+  <!-- 🧭 Picking by scan (owner 2026-11-07): scan the shipping label → where to grab each item on the shelf map → scan each bag to count it -->
+  <div class="ps-panel" id="ps-panel-pickscan">
+    <div class="ps-card">
+      <div style="font-size:16px;font-weight:800">🧭 Picking by scan</div>
+      <div id="ps-pks-step" style="font-size:18px;font-weight:800;margin:6px 0">1️⃣ Scan the SHIPPING LABEL</div>
+      <input id="ps-pks-inp" type="text" autocomplete="off" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();psPksScan(this.value);}"
+        style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;background:var(--bg);color:var(--text)">
+      <div id="ps-pks-msg" style="margin-top:8px"></div>
+      <div id="ps-pks-out"></div>
     </div>
   </div>
 
@@ -6358,6 +6371,7 @@ window.psSwitchTab = function(name) {
     psPickSummaryDate = null;
     psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount(); psLoadCancelOrders();
   }
+  if (name === 'pickscan')    { psPksFocus(); psLoadCancelOrders(); }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); psCbLoadScanForms(); }
   if (name === 'labelcheck')  { psLcFocus(); }
   if (name === 'cancellation') { psLoadCancelOrders(); psLoadAutoCancels(); }
@@ -6602,6 +6616,146 @@ function _psProcessPick(raw) {
     _psToast('Save error — ' + e.message, 'err');
     _psLoadPickProduct(tracking);
   });
+}
+
+// ── 🧭 Picking by scan ───────────────────────────────────────────────────
+// Owner (2026-11-07): "Pack & Ship, one more tab 'picking by scan': when we get an order, scan the shipping label, the system shows where
+// to grab them (the same map as Put on Shelf); at the spot they scan our package or our part # to make sure it is the right product …
+// and the quantities" → "do it without the scale first: scan the label, and scan the column / the item".
+// 1️⃣ the shipping label → recorded as a pick (the same as 🧺 Picking: double picks, cancelled orders) and every item of the order, in
+// walking order, with its shelf on the map. 2️⃣ at the shelf: the shelf (column) label = "right shelf ✓" (optional); each bag scanned
+// counts its pieces toward the order (a bag of 10 = 10 pcs; the wrong item → ❌ buzz + "wrong item", never counted; too many → said, not
+// counted; a bag bigger than what is left → "open it, take N pcs, ✋ type the count"). ✋ No barcode / from an open bag: type the pieces
+// (kept as typed). Every order is kept: what was asked, scanned, typed, the wrong scans, who / when (🧭 in the order's Activity History).
+var PKS = null;
+function psPksPack(part) { var m = /=\s*(\d+)/.exec(String(part || '')); return m ? parseInt(m[1], 10) || 0 : 0; }
+function psPksParent(p) { return String(p || '').trim().toUpperCase().split('=')[0].replace(/[A-Z]+$/, '').replace(/-+$/, ''); }
+function psPksDigits(c) { return String(c || '').replace(/\D/g, '').replace(/^0+/, ''); }
+var PS_PKS_AREAS = ['BO', '2FL', 'FRONT', 'BSMT', 'PR', 'GARAGE', 'C1', 'C2', 'BARN', 'C3', 'C4', 'C5'];
+function psPksWalkKey(l) { // walking order by the first spot it is kept at (Front → Middle → Back), then the part #
+  var loc = String(((l.spots || [])[0] || {}).location || '').toUpperCase(), a = loc.split('=')[0], i = PS_PKS_AREAS.indexOf(a);
+  return [loc ? (i < 0 ? 50 : i) : 99, loc, l.parent];
+}
+function psPksCmp(x, y) { var a = psPksWalkKey(x), b = psPksWalkKey(y); for (var k = 0; k < 3; k++) { if (a[k] < b[k]) return -1; if (a[k] > b[k]) return 1; } return 0; }
+window.psPksFocus = function() { var i = document.getElementById('ps-pks-inp'); if (i) i.focus(); };
+function psPksSay(t) { try { if (typeof _psSpeakAlert === 'function') _psSpeakAlert(t); } catch (e) {} }
+function psPksBuzz() { try { if (navigator.vibrate) navigator.vibrate([350, 100, 350]); } catch (e) {} try { if (typeof _psBeep === 'function') _psBeep(220, 450); } catch (e) {} }
+function psPksMsg(html, kind) { var m = document.getElementById('ps-pks-msg'); if (!m) return; var c = { ok: 'var(--green)', bad: 'var(--red)', warn: '#b45309' }[kind] || 'var(--text2)';
+  m.innerHTML = '<div style="padding:10px 12px;border-radius:10px;font-weight:800;font-size:15px;border:2px solid ' + c + ';color:' + c + ';background:var(--bg2)">' + html + '</div>'; }
+function psPksStep(t) { var s = document.getElementById('ps-pks-step'); if (s) s.textContent = t; }
+window.psPksScan = function(v) {
+  v = String(v || '').trim(); var inp = document.getElementById('ps-pks-inp'); if (inp) inp.value = ''; if (!v) return;
+  var tr = typeof psNormalizeTracking === 'function' ? psNormalizeTracking(v) : '';
+  if (tr) { // a shipping label (UPS / USPS — the same check as 🧺 Picking)
+    if (PKS && PKS.tracking === tr) { psPksMsg('This order is open — scan the items', 'warn'); return; }
+    if (PKS && !PKS.done && PKS.lines.some(function(l) { return l.got > 0; }) && !confirm('Order ' + (PKS.orderNum || PKS.tracking) + ' is not finished. Start the new label? (it is kept as not finished)')) return;
+    if (PKS && !PKS.done) psPksSave(false, 'left for another label');
+    return psPksStart(tr);
+  }
+  if (!PKS || PKS.done) { psPksMsg('1️⃣ Scan the SHIPPING LABEL first', 'warn'); return; }
+  psPksItem(v);
+};
+function psPksStart(tr) {
+  var out = document.getElementById('ps-pks-out');
+  var ce = (typeof _psCancelOrderCache !== 'undefined') && _psCancelOrderCache[tr];
+  if (ce && typeof psShowCancelOrderAlert === 'function') { psShowCancelOrderAlert(ce, 'picking'); return; } // 🗑 marked for cancellation → stop
+  PKS = { tracking: tr, orderNum: '', lines: [], wrong: [], startedAt: new Date().toISOString(), done: false, loading: true };
+  psPksStep('⏳ Reading the order…'); psPksMsg('', ''); if (out) out.innerHTML = '';
+  var me = PKS;
+  _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tr, initials: psInitials }).then(function(d) {
+    if (d && d.duplicate) psPksMsg('⚠ Already picked ' + _psAlEsc((d.scannedDate || '') + ' ' + (typeof psFmtTime === 'function' ? psFmtTime(d.scannedAt) : '')) + (d.initials ? ' by ' + _psAlEsc(d.initials) : '') + ' — check it is not picked twice', 'warn');
+  }).catch(function() {}).then(function() {
+    return fetch(PS_WORKER + '/ship/package?tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); });
+  }).then(function(d) {
+    if (PKS !== me) return;
+    me.loading = false;
+    if (!d || !d.found || !(d.items || []).length) { psPksStep('1️⃣ Scan the SHIPPING LABEL'); PKS = null;
+      psPksMsg('No items found for ' + _psAlEsc(tr) + ' yet — pick it on 🧺 Picking (it can link the order), then scan it here again', 'bad'); return; }
+    me.orderNum = (d.order && d.order.orderNum) || '';
+    me.lines = d.items.map(function(it) {
+      var pack = psPksPack(it.partNum) || (typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1) || 1;
+      var codes = {}; (it.upcs || []).forEach(function(u) { [u.inside, u.outside].forEach(function(c) { c = psPksDigits(c); if (c) codes[c] = 1; }); });
+      return { sku: it.sku, partNum: it.partNum || '', parent: psPksParent(it.parent || it.partNum || it.bin || it.sku), name: it.name || '', image: it.image || '', qty: it.qty, unit: pack,
+        need: Math.round(it.qty * pack * 100) / 100, got: 0, scanned: 0, typed: 0, spotOk: false, spots: it.spots || [], codes: codes };
+    }).sort(psPksCmp);
+    me.cur = 0; psPksRender(); psPksStep('2️⃣ Go to the shelf — scan the shelf (column) label, then each bag');
+  }).catch(function(e) { if (PKS === me) { PKS = null; psPksStep('1️⃣ Scan the SHIPPING LABEL'); psPksMsg('📶 Could not read the order — check WiFi and scan the label again', 'bad'); } });
+}
+// one scan at the shelf: the shelf / spot label, or an item (bag UPC, box UPC, part #)
+function psPksItem(v) {
+  var me = PKS, code = String(v).trim().toUpperCase(), dig = psPksDigits(code);
+  var spotHit = me.lines.filter(function(l) { return l.spots.some(function(s) { return String(s.location).toUpperCase() === code; }) || (code.indexOf('=') < 0 && /^\d+(-\d+)+$/.test(code) && l.parent === code); })[0];
+  if (spotHit && !(dig.length >= 8 && spotHit.codes[dig])) { spotHit.spotOk = true; me.cur = me.lines.indexOf(spotHit); psPksMsg('📍 Right shelf for ' + _psAlEsc(spotHit.partNum || spotHit.sku) + ' — now scan each bag', 'ok'); psPksRender(); return; }
+  if (/^[A-Z0-9]+=\d/.test(code) && code.indexOf('-') > 0 && !/^\d/.test(code)) { psPksBuzz(); psPksSay('Wrong shelf'); psPksMsg('❌ ' + _psAlEsc(code) + ' — nothing for this order on that shelf', 'bad'); me.wrong.push({ code: code, part: '', at: new Date().toISOString() }); return; }
+  var local = null; me.lines.forEach(function(l) { if (dig.length >= 8 && l.codes[dig]) local = l.partNum || l.parent; });
+  var p = local ? Promise.resolve(local) : /^\d+(-\d+)+/.test(code) ? Promise.resolve(code)
+    : fetch(PS_WORKER + '/inventory/lookup?lite=1&code=' + encodeURIComponent(code), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) { return (d && d.partNum) || ''; }).catch(function() { return null; });
+  p.then(function(part) {
+    if (PKS !== me) return;
+    if (part === null) { psPksMsg('📶 Could not check ' + _psAlEsc(code) + ' — scan it again', 'warn'); return; }
+    var par = psPksParent(part), cands = me.lines.filter(function(l) { return l.parent === par; });
+    var l = cands.filter(function(x) { return x.got < x.need; })[0] || cands[0];
+    if (!part || !l) { psPksBuzz(); psPksSay('Wrong item'); me.wrong.push({ code: code, part: part || '', at: new Date().toISOString() });
+      psPksMsg('❌ WRONG ITEM — ' + _psAlEsc(part || code) + ' is not on this order. Put it back.', 'bad'); return; }
+    me.cur = me.lines.indexOf(l);
+    var pk = psPksPack(part) || l.unit, left = Math.round((l.need - l.got) * 100) / 100;
+    if (left <= 0) { psPksBuzz(); psPksSay('Too many'); psPksMsg('⚠ TOO MANY — ' + _psAlEsc(l.partNum || l.sku) + ' already has all ' + l.need + ' pcs. Put this one back.', 'bad'); psPksRender(); return; }
+    if (pk > left) { psPksBuzz(); psPksMsg('📦 This is a bag of <b>' + pk + '</b> — the order needs only <b>' + left + '</b> more pcs. Open it, take ' + left + ' pcs, then tap ✋ Type the count.', 'warn'); psPksRender(); return; }
+    l.got = Math.round((l.got + pk) * 100) / 100; l.scanned = Math.round((l.scanned + pk) * 100) / 100;
+    psPksMsg('✅ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + l.got + ' of ' + l.need + ' pcs', 'ok'); try { if (typeof _psBeep === 'function') _psBeep(880, 70); } catch (e) {}
+    psPksAfter();
+  });
+}
+// ✋ no barcode / from an open bag: the pieces taken (kept as typed)
+window.psPksType = function(i) {
+  var l = PKS && PKS.lines[i]; if (!l) return; var left = Math.round((l.need - l.got) * 100) / 100;
+  var v = prompt('✋ ' + (l.partNum || l.sku) + ' — how many PIECES did you take? (' + left + ' still needed)', String(left)); if (v == null) return;
+  var n = Math.round((parseFloat(v) || 0) * 100) / 100; if (!(n > 0)) return;
+  if (n > left) { psPksBuzz(); psPksMsg('⚠ ' + n + ' is more than the ' + left + ' pcs still needed — count again', 'bad'); return; }
+  l.got = Math.round((l.got + n) * 100) / 100; l.typed = Math.round((l.typed + n) * 100) / 100; PKS.cur = i;
+  psPksMsg('✋ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + n + ' pcs typed · ' + l.got + ' of ' + l.need, 'ok'); psPksAfter();
+};
+window.psPksUndo = function(i) { var l = PKS && PKS.lines[i]; if (!l || !l.got || !confirm('Start ' + (l.partNum || l.sku) + ' again (0 of ' + l.need + ')?')) return; l.got = 0; l.scanned = 0; l.typed = 0; psPksRender(); };
+window.psPksPick = function(i) { if (PKS && PKS.lines[i]) { PKS.cur = i; psPksRender(); } };
+function psPksAfter() {
+  var me = PKS; if (!me) return;
+  var cur = me.lines[me.cur]; if (cur && cur.got >= cur.need) { var nx = me.lines.filter(function(x) { return x.got < x.need; })[0]; if (nx) me.cur = me.lines.indexOf(nx); }
+  if (me.lines.every(function(l) { return l.got >= l.need; })) {
+    me.done = true; psPksSave(true, ''); psPksStep('1️⃣ Scan the next SHIPPING LABEL'); psPksSay('All picked');
+    psPksMsg('✅ ALL PICKED — ' + me.lines.length + ' item' + (me.lines.length === 1 ? '' : 's') + ' for ' + _psAlEsc(me.orderNum || me.tracking) + '. Scan the next label.', 'ok');
+  }
+  psPksRender();
+}
+window.psPksStop = function() {
+  if (!PKS || PKS.done) return; var why = prompt('✕ Stop this order without every item? Why (kept in the record)', 'not enough on the shelf'); if (why == null) return;
+  psPksSave(false, why); PKS.done = true; psPksStep('1️⃣ Scan the next SHIPPING LABEL'); psPksMsg('✕ Stopped — kept as NOT finished: ' + _psAlEsc(why), 'warn'); psPksRender();
+};
+function psPksSave(complete, note) {
+  var me = PKS; if (!me || me.saved) return; me.saved = true;
+  _psPostWithTimeout(PS_WORKER + '/ship/pick-verify', { tracking: me.tracking, orderNum: me.orderNum, startedAt: me.startedAt, doneAt: new Date().toISOString(), complete: !!complete, note: note || '',
+    lines: me.lines.map(function(l) { return { sku: l.sku, partNum: l.partNum, need: l.need, got: l.got, scanned: l.scanned, typed: l.typed, spotOk: l.spotOk }; }), wrong: me.wrong,
+    _requestId: 'pks-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }).catch(function() {});
+}
+function psPksRender() {
+  var out = document.getElementById('ps-pks-out'), me = PKS; if (!out) return; if (!me) { out.innerHTML = ''; return; }
+  var e = _psAlEsc, cur = me.lines[me.cur];
+  var head = '<div style="font-size:13px;color:var(--text2);margin:6px 0">📦 ' + e(me.orderNum ? 'Order ' + me.orderNum + ' · ' : '') + '<span style="font-family:var(--mono)">' + e(me.tracking) + '</span> · '
+    + me.lines.filter(function(l) { return l.got >= l.need; }).length + ' of ' + me.lines.length + ' items done</div>';
+  var rows = me.lines.map(function(l, i) {
+    var done = l.got >= l.need, on = i === me.cur && !me.done, pct = l.need ? Math.min(100, Math.round(l.got / l.need * 100)) : 0, loc = (l.spots[0] || {}).location || '';
+    return '<div class="ps-pks-line" onclick="psPksPick(' + i + ')" style="display:flex;gap:10px;align-items:center;padding:8px;margin:6px 0;border-radius:10px;cursor:pointer;border:2px solid ' + (done ? 'var(--green)' : on ? 'var(--accent)' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : 'var(--bg2)') + '">'
+      + (l.image ? '<img src="' + e(l.image) + '" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:#fff;flex:0 0 56px">' : '<div style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:24px">📦</div>')
+      + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:900;font-size:16px">' + (done ? '✅ ' : '') + e(l.partNum || l.sku) + '</div>'
+      + '<div style="font-size:12px;color:var(--text2)">' + e(l.name) + '</div>'
+      + '<div style="font-size:13px;margin-top:2px"><b>' + l.qty + '</b> × ' + l.unit + ' pcs = <b>' + l.need + ' pcs</b>' + (loc ? ' · 📍 <b style="font-family:var(--mono)">' + e(loc) + '</b>' : '') + (l.spotOk ? ' <span style="color:var(--green);font-weight:700">· shelf ✓</span>' : '') + '</div>'
+      + '<div style="height:8px;border-radius:5px;background:var(--bg3);margin-top:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (done ? 'var(--green)' : 'var(--accent)') + '"></div></div>'
+      + '<div style="font-size:12px;margin-top:2px"><b>' + l.got + ' of ' + l.need + ' pcs</b>' + (l.typed ? ' <span style="color:#b45309">(' + l.typed + ' typed)</span>' : '') + '</div></div>'
+      + (!done && !me.done ? '<button type="button" onclick="event.stopPropagation();psPksType(' + i + ')" style="padding:7px 9px;border-radius:8px;border:1.5px solid #b45309;background:var(--bg);color:#b45309;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">✋ No barcode /<br>open bag</button>' : '')
+      + (l.got && !me.done ? '<button type="button" onclick="event.stopPropagation();psPksUndo(' + i + ')" title="Start this item again" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text3);cursor:pointer">↺</button>' : '') + '</div>';
+  }).join('');
+  var map = cur && !me.done && typeof xfShelfMapHtml === 'function' ? '<div style="margin-top:6px"><div style="font-size:13px;font-weight:800">🗺 ' + e(cur.partNum || cur.sku) + ' → shelf <span style="font-family:var(--mono);font-size:20px">' + e(xfShelfNo(cur.parent) || cur.parent) + '</span>'
+    + (xfShelfName(xfShelfNo(cur.parent)) ? ' (' + e(xfShelfName(xfShelfNo(cur.parent))) + ')' : '') + (cur.spots.length ? ' · 📍 ' + cur.spots.slice(0, 4).map(function(s) { return e(s.location) + ' (' + s.cases + ' cs)'; }).join(' · ') : '') + '</div>' + xfShelfMapHtml(cur.parent) + '</div>' : '';
+  out.innerHTML = head + rows + (!me.done ? '<div style="text-align:right;margin-top:4px"><button type="button" onclick="psPksStop()" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text3);cursor:pointer;font-size:12px">✕ Stop (not every item)</button></div>' : '') + map;
 }
 
 // ── Picking product card ────────────────────────────────────────────────
@@ -11913,5 +12067,6 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
+<script src="shelf-map.js?v=20261107a"></script>
 <script src="xf-access.js?v=20261107a"></script>
 </html>

@@ -180,6 +180,7 @@ document.addEventListener('input', function (e) {
         { key: 'addlisting', label: '+ Add a missing listing', sel: '#inv-panel-soldout button[onclick="soToggleAdd()"], #so-add' },
         { key: 'log', label: '📜 Quantity changes', sel: '#inv-panel-soldout > .icard:has(#so-log)' } ] }] },
     { key: 'packship', file: 'packship.html', name: '📦 Pack & Ship', needs: 'any sign-in', card: card('packship.html'), tabs: [
+      { key: 'pickscan', label: '🧭 Picking by scan', sel: '#ps-tab-pickscan' },
       { key: 'picking', label: '🧺 Picking', sel: '#ps-tab-picking', parts: [
         { key: 'voice', label: '🔊 Alert voice', sel: '#ps-panel-picking div:has(> #ps-pick-voice-select)' },
         { key: 'nostockbtn', label: '⚠ Report out of stock', sel: '#ps-pick-nostock-submit-wrap' },
