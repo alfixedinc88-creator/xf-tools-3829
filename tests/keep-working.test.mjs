@@ -13158,5 +13158,30 @@ console.log('\n⚡ Stock Out scan → Pull List: the lookup no longer waits on t
     lk.partNum && Array.isArray(lk.locations) && lk.locations.length > 0 && lk.locations.every(l => 'adjustedCases' in l && 'pendingCases' in l) && Array.isArray(lk.fbaParts) && typeof lk.caseOf === 'object' && 'photo' in lk, lk);
 }
 
+// Owner (2026-11-07, photo): MG "30 USPS · ⏱ 2 sec an order · 2222 orders an hour" — her labels were scanned ~2 s apart (a stack
+// scanned in a batch); the gap between scans can't be how long an order took.
+console.log('\n⏱ Labels scanned in a batch (seconds apart) are not timed — no more "2 sec an order · 2222 an hour"');
+{
+  const { readFileSync: rfB } = await import('node:fs');
+  const ph = rfB(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('var PS_HEAVY_LB_THRESHOLD = 13;'), ph.indexOf('var _psItemCountModalOpen = false;'))
+    + ph.slice(ph.indexOf('// 📦 Owner (2026-11-07, photo: MG'), ph.indexOf('function _psRenderPersonChips() {'));
+  const el = { innerHTML: '' };
+  const B = new Function('document', 'var _psPaceOn = true, _psItemCountSource = {}; function _psPaceAdmin() { return true; }' + src + '; return { pace: _psPace, html: _psPaceHtml, bySize: _psPaceBySize };')({ getElementById: () => el });
+  const at = sec => new Date(Date.UTC(2026, 10, 7, 14, 0, 0) + sec * 1000).toISOString();
+  const mg = []; for (let i = 0; i < 30; i++) mg.push(at(i * 1.6)); // 30 labels, 1.6 s apart
+  const p1 = B.pace(mg), h1 = B.html({ ts: mg });
+  check('MG: 30 labels 1.6 s apart → "⏱ scanned in a batch — time not known", never "2 sec an order · 2222 orders an hour"',
+    p1 && p1.batchOnly && p1.batch === 29 && /scanned in a batch — time not known/.test(h1) && !/orders an hour/.test(h1), { p1, h1 });
+  // a real picker: 8 orders 40 s apart, then a stack of 6 scanned 2 s apart → 7 timed at 40 s, the batch left out
+  const kl = []; for (let i = 0; i < 8; i++) kl.push(at(i * 40)); for (let i = 1; i <= 6; i++) kl.push(at(7 * 40 + i * 2));
+  const p2 = B.pace(kl);
+  check('…a steady picker (orders 40 s apart) + a stack scanned 2 s apart → 7 gaps timed at 40 sec an order, 90 an hour; the 6 batch gaps not timed',
+    p2 && !p2.batchOnly && p2.n === 7 && p2.batch === 6 && /⏱ 40 sec an order · 90 orders an hour/.test(B.html({ ts: kl })), p2);
+  // …and the package sizes leave batch scans out too
+  const sc = mg.map((t, i) => ({ initials: 'MG', tracking: 'M' + i, timestamp: t, itemCount: 1, weightLb: 2 }));
+  check('…the package sizes don\'t time batch scans either (no "⏱" on MG\'s 1 item chip)', Object.keys(B.bySize(sc)).length === 0, B.bySize(sc));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
