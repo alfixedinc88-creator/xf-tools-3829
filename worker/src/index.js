@@ -23647,6 +23647,38 @@ async function shipOrderLookupLabels(env, qS, isTracking, results) {
   }
 }
 
+// 🧭 /ship/pick-verify — Owner (2026-11-07): "Pack & Ship, one more tab 'picking by scan': scan the shipping label, the system shows where to
+// grab them (the Put on Shelf map), at the spot they scan our package / part # to make sure it is the right product … and the quantities".
+// POST { tracking, orderNum, startedAt, doneAt, complete, lines:[{ sku, partNum, need, got, scanned, typed, spotOk }], wrong:[{ code, part, at }],
+// note, _requestId } — one record per order (saved on the phone with no WiFi, sent once). GET ?tracking= → its records.
+async function shipPickVerifyTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ship_pick_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking TEXT, order_num TEXT, by_user TEXT,
+    started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)`).run();
+}
+async function shipPickVerifyRows(env, tracking) {
+  try { await shipPickVerifyTable(env); return (await env.DB.prepare('SELECT * FROM ship_pick_verify WHERE UPPER(tracking) = ? ORDER BY id').bind(String(tracking || '').toUpperCase()).all()).results || []; } catch (_) { return []; }
+}
+async function shipPickVerify(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await shipPickVerifyTable(env);
+  if (request.method === 'GET') return J({ ok: true, records: await shipPickVerifyRows(env, normalizeShipTracking(url.searchParams.get('tracking') || '')) });
+  const b = await request.json().catch(() => ({}));
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const c = await claimRequestId(env, rid, 'ship/pick-verify'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+  const t = normalizeShipTracking(b.tracking || '');
+  if (!t) return J({ ok: false, error: 'Which label?' }, 400);
+  const by = String((session && (session.displayName || session.username)) || b.by || '?').slice(0, 40), T = v => v && !isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 60).map(l => ({ sku: String(l.sku || '').slice(0, 80), partNum: String(l.partNum || '').slice(0, 60), need: +l.need || 0, got: +l.got || 0,
+    scanned: +l.scanned || 0, typed: +l.typed || 0, spotOk: !!l.spotOk }));
+  const wrong = (Array.isArray(b.wrong) ? b.wrong : []).slice(0, 60).map(w => ({ code: String(w.code || '').slice(0, 60), part: String(w.part || '').slice(0, 60), at: T(w.at) }));
+  await env.DB.prepare('INSERT INTO ship_pick_verify (tracking, order_num, by_user, started_at, done_at, complete, lines, wrong, note, at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(t, String(b.orderNum || '').slice(0, 60), by, T(b.startedAt), T(b.doneAt) || new Date().toISOString(), b.complete ? 1 : 0, JSON.stringify(lines), JSON.stringify(wrong), String(b.note || '').slice(0, 200), new Date().toISOString()).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'pick_verify', { tracking: t, complete: !!b.complete, lines: lines.length, wrong: wrong.length }).catch(() => {});
+  const res = { ok: true };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
+
 // ── GET /ship/package?tracking= ──────────────────────────────────────────
 // 🏷️ Label Check (owner): scan a shipping label → what is in that package,
 // every item with all we know about it (photo, part #, name, how many,
@@ -23809,6 +23841,13 @@ async function shipTrackingHistory(url, env) {
       });
     }
   }
+  // 🧭 Picked by scan (owner 2026-11-07): each item checked by its barcode, counted to the order's quantity
+  for (const r of await shipPickVerifyRows(env, clean)) {
+    let lines = [], wrong = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {} try { wrong = JSON.parse(r.wrong || '[]'); } catch (_) {}
+    const sc = lines.reduce((a, l) => a + (l.scanned || 0), 0), ty = lines.reduce((a, l) => a + (l.typed || 0), 0);
+    events.push({ type: 'pick-verify', icon: '🧭', label: r.complete ? 'Picked by scan — every item checked' : 'Picked by scan — NOT finished', at: r.done_at || r.started_at || '', by: r.by_user || '',
+      detail: lines.map(l => (l.partNum || l.sku) + ' ' + (l.got || 0) + '/' + (l.need || 0) + ' pcs').join(' · ') + ` · ${sc} pcs scanned, ${ty} typed` + (wrong.length ? ` · ⚠ ${wrong.length} wrong scan(s)` : '') + (r.note ? ' · ' + r.note : '') });
+  }
   for (const r of (nostocks.results || [])) {
     events.push({
       type: 'nostock', icon: '🚫', label: 'No Stock Found', at: r.timestamp || '', by: r.reported_by || '',
@@ -23842,6 +23881,8 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     // 🔗 Owner (2026-10-26): "the label we print in stamps.com not show up anything in our app" — link the label to its order #.
     if (path === '/ship/link-order'   && method === 'POST') return await shipLinkOrder(request, env, session);
     // Packing / Picking show the items from our saved copy right away, while the scan is still being saved.
+    // 🧭 Picking by scan (owner 2026-11-07): one record per order picked by scan — what was asked, scanned, typed, wrong scans, who / when
+    if (path === '/ship/pick-verify') return await shipPickVerify(request, url, env, session);
     if (path === '/ship/items'        && method === 'GET')  { const o = await shipLocalOrder(env, normalizeShipTracking(url.searchParams.get('tracking') || ''));
       return cors(new Response(JSON.stringify({ ok: true, found: !!o, orderNum: o ? o.orderNum : '', lineItems: o ? o.items : null }), { headers: { 'Content-Type': 'application/json' } })); }
     if (path === '/ship/scans'        && method === 'GET')  return await shipGetScans(url, env);
