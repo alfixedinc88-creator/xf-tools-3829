@@ -10698,7 +10698,7 @@ const TM_KEEP = new Set([
 ]);
 // Routes that change things outside the app (can't be erased afterwards).
 const TM_BLOCK = new Set([
-  '/amazon/listing-create', '/amazon/update-price', '/amazon/variation-create', '/amazon/titles-feed-submit',
+  '/amazon/listing-create', '/amazon/update-price', '/amazon/price-set', '/amazon/variation-create', '/amazon/titles-feed-submit',
   '/ebay/listing-publish', '/ebay/variation-publish', '/ebay/offer-delete', '/ebay/update-price', '/ebay/location-create',
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
@@ -11161,6 +11161,11 @@ const _app = {
     if (url.pathname === '/awd/label-map' && (method === 'GET' || method === 'POST')) return await awdLabelMap(request, url, env, session);
     if (url.pathname === '/awd/label-info' && method === 'GET') return await awdLabelInfo(url, env);
     if (url.pathname === '/awd/item' && method === 'GET') return await awdItemLookup(url, env);
+    if (url.pathname === '/amazon/prices' && method === 'GET') return await amazonPrices(url, env, session);
+    if (url.pathname === '/amazon/prices-load' && method === 'POST') return await amazonPricesLoad(request, env, session);
+    if (url.pathname === '/amazon/price-info' && method === 'POST') return await amazonPriceInfo(request, env, session);
+    if (url.pathname === '/amazon/price-ref' && method === 'POST') return await amazonPriceRef(request, env, session);
+    if (url.pathname === '/amazon/price-set' && method === 'POST') return await amazonPriceSet(request, env, session);
     if (url.pathname === '/inventory/bigco-history' && method === 'GET') return await invBigCoHistory(url, env, session);
     // 📤 Owner (2026-10-25): Shipment Builder → "Send to Stock Out Big Company" — what to grab for this shipment, before any label.
     if (url.pathname === '/awd/ship-send' && (method === 'GET' || method === 'POST')) return await awdShipSend(request, env, session, url);
@@ -22233,6 +22238,181 @@ async function amazonTitlesFeedReport(url, env) {
   }
 }
 
+// 💲 Owner (2026-11-09): "due to this year shipping fees increase recently, a lot of our listing under $13, need to increase the price now …
+// a system, I can change the price here, added that to 'profit check' added one more tab … remember Amazon have a business price too and
+// minimum price … and max we don't have to, but still give me the number if that listing have one, so when we increase the price we will not
+// listing higher then that price, it will cost it to flag it, and make sure if Amazon there's any rules not to increase the price too much".
+//   GET  /amazon/prices                → every Amazon listing (from Amazon's listings report) + what is known of its offer (business / min / max)
+//   POST /amazon/prices-load {cursor}  → read Amazon's listings report again (steps: ask → wait → read)
+//   POST /amazon/price-info {skus}     → each SKU's live offer from Amazon (price, business price + quantity discounts, min, max, issues)
+//   POST /amazon/price-ref {asins}     → Amazon's reference prices (90-day typical "Was price", Competitive Price Threshold, featured offer)
+//   POST /amazon/price-set {sku, price, business?, min?, confirmBig?} → changes ONLY those numbers: the offer is read fresh from Amazon and
+//        written back whole (max, quantity discounts … kept). Refused above the Maximum price, under the Minimum, a business price not under
+//        the price. Kept: who / when / old → new / Amazon's answer (amz_price_log). Admin / Owner / "price" permission only.
+const APX_BIG_JUMP = 0.30; // a price raised more than 30 % at once must be confirmed (Amazon flags "potential pricing errors" — no number published)
+function apxMid(env) { return env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER'; }
+function apxJ(o, st) { return cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } })); }
+function apxCan(session) { const r = (session && session.roles) || []; return r.includes('admin') || r.includes('owner') || r.includes('price'); }
+function apxMgmt(session) { const r = (session && session.roles) || []; return r.includes('mgmt') || apxCan(session); }
+async function apxTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amz_price_list (sku TEXT PRIMARY KEY, asin TEXT, title TEXT, price REAL, qty INTEGER, channel TEXT, status TEXT, loaded_at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amz_price_info (sku TEXT PRIMARY KEY, price REAL, business REAL, min REAL, max REAL, qd TEXT, product_type TEXT, issues TEXT, at TEXT)').run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS amz_price_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, sku TEXT, asin TEXT, old_price REAL, new_price REAL,
+    old_business REAL, new_business REAL, old_min REAL, new_min REAL, max REAL, ok INTEGER, result TEXT, detail TEXT)`).run();
+}
+async function apxHd(env) { return { 'x-amz-access-token': await getAmazonToken(env), 'x-amz-date': new Date().toISOString().replace(/[:\-.]/g, '').slice(0, 15) + 'Z', 'Content-Type': 'application/json' }; }
+const apxNum = v => { const n = parseFloat(v); return isNaN(n) ? null : Math.round(n * 100) / 100; };
+function apxVal(arr) { const s = arr && arr[0] && arr[0].schedule && arr[0].schedule[0]; return s ? apxNum(s.value_with_tax != null ? s.value_with_tax : s.value) : null; }
+// an offer (purchasable_offer) → the numbers: price / min / max (everyone), business price + quantity discounts (B2B)
+function apxOffer(po, mid) {
+  const L = (po || []).filter(o => !o.marketplace_id || o.marketplace_id === mid);
+  const all = L.find(o => !o.audience || o.audience === 'ALL'), b2b = L.find(o => o.audience === 'B2B');
+  const qdS = b2b && b2b.quantity_discount_plan && b2b.quantity_discount_plan[0] && b2b.quantity_discount_plan[0].schedule && b2b.quantity_discount_plan[0].schedule[0];
+  return { price: apxVal(all && all.our_price), min: apxVal(all && all.minimum_seller_allowed_price), max: apxVal(all && all.maximum_seller_allowed_price),
+    business: apxVal(b2b && b2b.our_price), qd: qdS ? { type: String(qdS.discount_type || '').toLowerCase(), levels: (qdS.levels || []).map(l => ({ from: +l.lower_bound || 0, value: apxNum(l.value) })) } : null };
+}
+async function apxGetItem(env, sku) {
+  const r = await fetch(`https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}/${encodeURIComponent(sku)}?marketplaceIds=${apxMid(env)}&includedData=summaries,attributes,issues`, { headers: await apxHd(env) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Amazon: ' + JSON.stringify(d.errors || d).slice(0, 240));
+  return d;
+}
+function apxInfoOf(d, mid) {
+  const s = (d.summaries || []).find(x => x.marketplaceId === mid) || (d.summaries || [])[0] || {};
+  const o = apxOffer((d.attributes || {}).purchasable_offer, mid);
+  return Object.assign(o, { productType: s.productType || '', asin: s.asin || '', status: (s.status || []).join(', '),
+    issues: (d.issues || []).filter(i => /ERROR|WARNING/i.test(i.severity || '')).map(i => (i.severity === 'ERROR' ? '❌ ' : '⚠ ') + String(i.message || '').slice(0, 200)).slice(0, 5) });
+}
+async function apxSaveInfo(env, sku, i) {
+  await env.DB.prepare('INSERT OR REPLACE INTO amz_price_info (sku, price, business, min, max, qd, product_type, issues, at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(sku, i.price, i.business, i.min, i.max, i.qd ? JSON.stringify(i.qd) : null, i.productType || '', JSON.stringify(i.issues || []), new Date().toISOString()).run();
+}
+// the checks (the page shows the same ones before anything is sent)
+function apxCheck(cur, want) {
+  const bad = [], warn = [], price = want.price;
+  if (!(price > 0) || price > 9999) bad.push('Type a price above $0');
+  const min = want.min != null ? want.min : cur.min, biz = want.business != null ? want.business : cur.business;
+  if (cur.max != null && price > cur.max) bad.push(`Over this listing's Maximum price $${cur.max.toFixed(2)} — Amazon would make it inactive. Change the Maximum in Seller Central first if you really want more.`);
+  if (min != null && price < min) bad.push(`Under the Minimum price $${min.toFixed(2)} — Amazon would make it inactive`);
+  if (want.min != null && cur.max != null && want.min > cur.max) bad.push(`The Minimum $${want.min.toFixed(2)} can't be above the Maximum $${cur.max.toFixed(2)}`);
+  if (biz != null && price > 0 && biz >= price) bad.push(`The Business price $${biz.toFixed(2)} must be LOWER than the price $${price.toFixed(2)} (Amazon's rule)`);
+  if (want.business != null && cur.qd && cur.qd.type === 'fixed' && cur.qd.levels.some(l => l.value != null && l.value >= want.business))
+    bad.push('A quantity discount tier is not lower than the new Business price — every tier must be lower; change the tiers in Seller Central');
+  if (cur.price > 0 && price > cur.price * (1 + APX_BIG_JUMP)) warn.push(`+${Math.round((price / cur.price - 1) * 100)}% in one step — Amazon may flag a big jump as a "potential pricing error" and take the offer down; raise it in smaller steps if you can`);
+  return { bad, warn };
+}
+async function amazonPrices(url, env, session) {
+  if (!apxMgmt(session)) return apxJ({ ok: false, error: 'Management access required' }, 403);
+  await apxTables(env);
+  const rows = (await env.DB.prepare('SELECT l.*, i.business, i.min, i.max, i.qd, i.issues, i.at info_at, i.price live_price FROM amz_price_list l LEFT JOIN amz_price_info i ON i.sku = l.sku').all()).results || [];
+  const log = (await env.DB.prepare('SELECT * FROM amz_price_log ORDER BY id DESC LIMIT 300').all()).results || [];
+  const at = rows.reduce((a, r) => (r.loaded_at || '') > a ? r.loaded_at : a, '');
+  return apxJ({ ok: true, loadedAt: at || null, canChange: apxCan(session), bigJump: APX_BIG_JUMP,
+    rows: rows.map(r => ({ sku: r.sku, asin: r.asin, title: r.title, price: r.live_price != null ? r.live_price : r.price, qty: r.qty, fba: /AMAZON/i.test(r.channel || ''), status: r.status,
+      info: r.info_at ? { business: r.business, min: r.min, max: r.max, qd: r.qd ? JSON.parse(r.qd) : null, issues: JSON.parse(r.issues || '[]'), at: r.info_at } : null })), log });
+}
+// Amazon's listings report: every listing with its price, quantity, channel and status (the same report Listing watch reads)
+async function amazonPricesLoad(request, env, session) {
+  if (!apxMgmt(session)) return apxJ({ ok: false, error: 'Management access required' }, 403);
+  if (!env.AMAZON_SELLER_ID) return apxJ({ ok: false, error: 'AMAZON_SELLER_ID not set' });
+  await apxTables(env);
+  const b = await request.json().catch(() => ({})), cur = String(b.cursor || ''), hd = await apxHd(env), mid = apxMid(env);
+  if (!cur) {
+    const r = await fetch('https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports', { method: 'POST', headers: hd, body: JSON.stringify({ reportType: 'GET_MERCHANT_LISTINGS_ALL_DATA', marketplaceIds: [mid] }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.reportId) return apxJ({ ok: false, error: 'Amazon would not make the listings report: ' + JSON.stringify(d.errors || d).slice(0, 200) });
+    return apxJ({ ok: true, next: 'R:' + d.reportId, msg: 'Amazon is making the listings report…' });
+  }
+  if (cur.startsWith('R:')) {
+    const r = await fetch(`https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports/${cur.slice(2)}`, { headers: hd });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.processingStatus === 'DONE' && d.reportDocumentId) return apxJ({ ok: true, next: 'D:' + d.reportDocumentId, msg: 'Report ready — reading it…' });
+    if (!r.ok || /CANCELLED|FATAL/.test(d.processingStatus || '')) return apxJ({ ok: false, error: 'Amazon could not make the report (' + (d.processingStatus || r.status) + ') — try again' });
+    await new Promise(res => setTimeout(res, 5000));
+    return apxJ({ ok: true, next: cur, msg: 'Amazon is still making the report (1–5 min)…' });
+  }
+  const docId = cur.slice(2), dr = await fetch(`https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/documents/${docId}`, { headers: hd });
+  const dd = await dr.json().catch(() => ({}));
+  if (!dr.ok || !dd.url) return apxJ({ ok: false, error: 'Amazon report document: ' + JSON.stringify(dd.errors || dd).slice(0, 200) });
+  const raw = await (await fetch(dd.url)).arrayBuffer(); let text;
+  const u8 = new Uint8Array(raw.slice(0, 2));
+  if (dd.compressionAlgorithm === 'GZIP' || (u8[0] === 0x1f && u8[1] === 0x8b)) text = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  else text = new TextDecoder().decode(raw);
+  const lines = text.split(/\r?\n/).filter(l => l.trim()), h = (lines[0] || '').split('\t').map(x => x.trim().toLowerCase()), ix = n => h.findIndex(x => n.includes(x));
+  const c = { sku: ix(['seller-sku', 'sku']), asin: ix(['asin1', 'asin']), qty: ix(['quantity']), title: ix(['item-name']), ch: ix(['fulfillment-channel']), price: ix(['price']), st: ix(['status']) };
+  if (c.sku < 0) return apxJ({ ok: false, error: 'Amazon report: no seller-sku column' });
+  const now = new Date().toISOString(), rows = lines.slice(1).map(l => l.split('\t')).filter(v => (v[c.sku] || '').trim());
+  await env.DB.prepare('DELETE FROM amz_price_list').run();
+  for (let i = 0; i < rows.length; i += 50) {
+    const part = rows.slice(i, i + 50);
+    await env.DB.batch(part.map(v => env.DB.prepare('INSERT OR REPLACE INTO amz_price_list (sku, asin, title, price, qty, channel, status, loaded_at) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(v[c.sku].trim(), c.asin >= 0 ? (v[c.asin] || '').trim() : '', c.title >= 0 ? (v[c.title] || '').trim().slice(0, 200) : '', c.price >= 0 ? apxNum(v[c.price]) : null,
+        c.qty >= 0 ? parseInt(v[c.qty], 10) || 0 : 0, c.ch >= 0 ? (v[c.ch] || '').trim() : '', c.st >= 0 ? (v[c.st] || '').trim() : '', now)));
+  }
+  return apxJ({ ok: true, next: null, done: true, count: rows.length });
+}
+async function amazonPriceInfo(request, env, session) {
+  if (!apxMgmt(session)) return apxJ({ ok: false, error: 'Management access required' }, 403);
+  if (!env.AMAZON_SELLER_ID) return apxJ({ ok: false, error: 'AMAZON_SELLER_ID not set' });
+  await apxTables(env);
+  const b = await request.json().catch(() => ({})), skus = (Array.isArray(b.skus) ? b.skus : []).map(s => String(s || '').trim()).filter(Boolean).slice(0, 10), out = {}, mid = apxMid(env);
+  for (const sku of skus) {
+    try { const i = apxInfoOf(await spApiRetry(() => apxGetItem(env, sku), 2, 1500), mid); await apxSaveInfo(env, sku, i); out[sku] = Object.assign({ at: new Date().toISOString() }, i); }
+    catch (e) { out[sku] = { error: e.message }; }
+  }
+  return apxJ({ ok: true, info: out });
+}
+// Amazon's reference prices (Product Pricing getCompetitiveSummary, up to 20 ASINs at once; Amazon allows about one call every 30 seconds)
+async function amazonPriceRef(request, env, session) {
+  if (!apxMgmt(session)) return apxJ({ ok: false, error: 'Management access required' }, 403);
+  const b = await request.json().catch(() => ({})), mid = apxMid(env);
+  const asins = [...new Set((Array.isArray(b.asins) ? b.asins : []).map(a => String(a || '').trim().toUpperCase()).filter(a => /^[A-Z0-9]{10}$/.test(a)))].slice(0, 20);
+  if (!asins.length) return apxJ({ ok: false, error: 'No ASIN' });
+  const r = await fetch('https://sellingpartnerapi-na.amazon.com/batches/products/pricing/2022-05-01/items/competitiveSummary', { method: 'POST', headers: await apxHd(env),
+    body: JSON.stringify({ requests: asins.map(a => ({ asin: a, marketplaceId: mid, includedData: ['featuredBuyingOptions', 'referencePrices'], method: 'GET', uri: '/products/pricing/2022-05-01/items/competitiveSummary' })) }) });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 429) return apxJ({ ok: false, error: 'Amazon allows this about once every 30 seconds — wait a little and try again', retry: true });
+  if (!r.ok) return apxJ({ ok: false, error: 'Amazon: ' + JSON.stringify(d.errors || d).slice(0, 240) });
+  const out = {};
+  (d.responses || []).forEach(x => { const bd = x.body || {}, a = bd.asin || (x.request && x.request.asin) || ''; if (!a) return;
+    const ref = {}; (bd.referencePrices || []).forEach(p => { if (p && p.name) ref[p.name] = apxNum(p.price && p.price.amount); });
+    let featured = null; (bd.featuredBuyingOptions || []).forEach(o => (o.segmentedFeaturedOffers || []).forEach(f => { const v = apxNum(f.listingPrice && f.listingPrice.amount); if (v != null && (featured == null || v < featured)) featured = v; }));
+    out[a] = { was: ref.WasPrice != null ? ref.WasPrice : null, cpt: ref.CompetitivePriceThreshold != null ? ref.CompetitivePriceThreshold : null, featured, error: bd.errors ? JSON.stringify(bd.errors).slice(0, 160) : null }; });
+  return apxJ({ ok: true, ref: out });
+}
+async function amazonPriceSet(request, env, session) {
+  if (!apxCan(session)) return apxJ({ ok: false, error: 'Only Admin / Owner (or the "price" permission) can change prices' }, 403);
+  if (!env.AMAZON_SELLER_ID) return apxJ({ ok: false, error: 'AMAZON_SELLER_ID not set' });
+  await apxTables(env);
+  const b = await request.json().catch(() => ({})), sku = String(b.sku || '').trim(), who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), mid = apxMid(env);
+  if (!sku) return apxJ({ ok: false, error: 'Which SKU?' }, 400);
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const c = await claimRequestId(env, rid, 'amazon/price-set'); if (c.isDuplicate) return apxJ(c.cachedResponse || { ok: true, duplicate: true }); }
+  const done = async res => { if (rid) await recordRequestResult(env, rid, res); return apxJ(res); };
+  const want = { price: apxNum(b.price), business: b.business === '' || b.business == null ? null : apxNum(b.business), min: b.min === '' || b.min == null ? null : apxNum(b.min) };
+  let item; try { item = await apxGetItem(env, sku); } catch (e) { return done({ ok: false, error: e.message }); }
+  const cur = apxInfoOf(item, mid), chk = apxCheck(cur, want);
+  if (chk.bad.length) return done({ ok: false, refused: true, error: chk.bad.join(' · '), cur });
+  if (chk.warn.length && !b.confirmBig) return done({ ok: false, needConfirm: true, error: chk.warn.join(' · '), cur });
+  // the offer as Amazon has it, with only these numbers changed (max, quantity discounts, everything else kept)
+  const po = JSON.parse(JSON.stringify(((item.attributes || {}).purchasable_offer) || [])), set = (o, k, v) => { o[k] = [{ schedule: [{ value_with_tax: v }] }]; };
+  let all = po.find(o => (!o.marketplace_id || o.marketplace_id === mid) && (!o.audience || o.audience === 'ALL'));
+  if (!all) { all = { marketplace_id: mid, currency: 'USD', audience: 'ALL' }; po.push(all); }
+  set(all, 'our_price', want.price); if (want.min != null) set(all, 'minimum_seller_allowed_price', want.min);
+  if (want.business != null) { let b2b = po.find(o => (!o.marketplace_id || o.marketplace_id === mid) && o.audience === 'B2B');
+    if (!b2b) { b2b = { marketplace_id: mid, currency: 'USD', audience: 'B2B' }; po.push(b2b); } set(b2b, 'our_price', want.business); }
+  const r = await fetch(`https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}/${encodeURIComponent(sku)}?marketplaceIds=${mid}`, {
+    method: 'PATCH', headers: await apxHd(env), body: JSON.stringify({ productType: cur.productType || 'PRODUCT', patches: [{ op: 'replace', path: '/attributes/purchasable_offer', value: po }] }) });
+  const d = await r.json().catch(() => ({}));
+  const errs = (d.issues || []).filter(i => i.severity === 'ERROR'), ok = r.ok && d.status !== 'INVALID' && !errs.length;
+  const result = ok ? 'Sent — Amazon accepted it (' + (d.status || 'ACCEPTED') + '); the price shows on Amazon in about 5–15 minutes' : 'Amazon refused: ' + (errs.map(i => i.message).join(' · ') || JSON.stringify(d.errors || d).slice(0, 300));
+  await env.DB.prepare('INSERT INTO amz_price_log (at, by_user, sku, asin, old_price, new_price, old_business, new_business, old_min, new_min, max, ok, result, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(new Date().toISOString(), who, sku, cur.asin || '', cur.price, want.price, cur.business, want.business != null ? want.business : cur.business, cur.min, want.min != null ? want.min : cur.min, cur.max,
+      ok ? 1 : 0, result.slice(0, 500), JSON.stringify({ warn: chk.warn, status: d.status, submissionId: d.submissionId, issues: d.issues || [] }).slice(0, 2000)).run();
+  if (ok) { await env.DB.prepare('UPDATE amz_price_list SET price = ? WHERE sku = ?').bind(want.price, sku).run().catch(() => {});
+    await apxSaveInfo(env, sku, Object.assign({}, cur, { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min })).catch(() => {}); }
+  return done({ ok, result, before: { price: cur.price, business: cur.business, min: cur.min, max: cur.max }, after: { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min, max: cur.max }, warn: chk.warn });
+}
 async function amazonUpdatePrice(request, env) {
   try {
     const { asin, newPrice, dryRun } = await request.json().catch(() => ({}));

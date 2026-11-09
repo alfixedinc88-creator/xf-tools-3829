@@ -13260,5 +13260,73 @@ console.log('\n🧭 Pack & Ship → Picking by scan: scan the label → where to
   const L = rec.body.lines; check('…pieces add up: asked 45 pcs = scanned 20 + typed 25 = got 45 (wrong / too many / too big bags: 0)', L.reduce((a, l) => a + l.need, 0) === 45 && L.reduce((a, l) => a + l.scanned + l.typed, 0) === 45 && L.reduce((a, l) => a + l.got, 0) === 45, L);
 }
 
+console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / business price / big jumps checked, only the price changed, every change kept');
+{
+  // Owner (2026-11-09): "a lot of our listing under $13, need to increase the price now … I can change the price here, added that to 'profit check' added one
+  // more tab … Amazon have a business price too and minimum price … and max … so when we increase the price we will not listing higher then that price … and
+  // make sure if Amazon there's any rules not to increase the price too much".
+  const realFetch = globalThis.fetch, sent = [];
+  Object.assign(env, { AMAZON_SELLER_ID: 'SELLER1', AMAZON_CLIENT_ID: 'c', AMAZON_CLIENT_SECRET: 's', AMAZON_REFRESH_TOKEN: 'r' });
+  const offer = () => [{ marketplace_id: 'ATVPDKIKX0DER', currency: 'USD', audience: 'ALL', our_price: [{ schedule: [{ value_with_tax: 9.99 }] }],
+      minimum_seller_allowed_price: [{ schedule: [{ value_with_tax: 8 }] }], maximum_seller_allowed_price: [{ schedule: [{ value_with_tax: 14 }] }] },
+    { marketplace_id: 'ATVPDKIKX0DER', currency: 'USD', audience: 'B2B', our_price: [{ schedule: [{ value_with_tax: 9.49 }] }],
+      quantity_discount_plan: [{ schedule: [{ discount_type: 'fixed', levels: [{ lower_bound: 5, value: 9 }] }] }] }];
+  globalThis.fetch = async (u, o = {}) => { u = String(u); const J = x => new Response(JSON.stringify(x));
+    if (u.includes('/auth/o2/token')) return J({ access_token: 'tok', expires_in: 3600 });
+    if (u.includes('/listings/2021-08-01/items/SELLER1/') && (o.method || 'GET') === 'PATCH') { sent.push(JSON.parse(o.body)); return J({ sku: 'T1', status: 'ACCEPTED', submissionId: 'sub1', issues: [] }); }
+    if (u.includes('/listings/2021-08-01/items/SELLER1/')) return J({ sku: 'T1', summaries: [{ marketplaceId: 'ATVPDKIKX0DER', asin: 'B0TEST0001', productType: 'PIPE_FITTING', status: ['BUYABLE'] }], attributes: { purchasable_offer: offer() }, issues: [] });
+    if (u.includes('/competitiveSummary')) return J({ responses: [{ status: { statusCode: 200 }, body: { asin: 'B0TEST0001', referencePrices: [{ name: 'WasPrice', price: { amount: 10.49 } }, { name: 'CompetitivePriceThreshold', price: { amount: 12.75 } }],
+      featuredBuyingOptions: [{ segmentedFeaturedOffers: [{ listingPrice: { amount: 9.99 } }] }] } }] });
+    if (u.endsWith('/reports/2021-06-30/reports')) return J({ reportId: 'REP1' });
+    if (u.includes('/reports/2021-06-30/reports/REP1')) return J({ processingStatus: 'DONE', reportDocumentId: 'DOC1' });
+    if (u.includes('/reports/2021-06-30/documents/DOC1')) return J({ url: 'https://doc.example/1' });
+    if (u === 'https://doc.example/1') return new Response('item-name\tseller-sku\tprice\tquantity\tasin1\tfulfillment-channel\tstatus\nElbow 1/2\tT1\t9.99\t50\tB0TEST0001\tDEFAULT\tActive\nTee 3/4\tT2\t14.50\t0\tB0TEST0002\tAMAZON_NA\tActive\n');
+    return realFetch(u, o); };
+  try {
+    let d = await post('/amazon/prices-load', {}); d = await post('/amazon/prices-load', { cursor: d.next }); d = await post('/amazon/prices-load', { cursor: d.next });
+    const pl = await get('/amazon/prices'), t1 = (pl.rows || []).find(r => r.sku === 'T1') || {}, t2 = (pl.rows || []).find(r => r.sku === 'T2') || {};
+    check('↻ Load Amazon listings: Amazon\'s listings report → every listing with its price (T1 $9.99 FBM, T2 $14.50 FBA); Admin can change',
+      d.done && d.count === 2 && t1.price === 9.99 && !t1.fba && t2.price === 14.5 && t2.fba && pl.canChange === true, { d, pl: pl.rows });
+    const inf = (await post('/amazon/price-info', { skus: ['T1'] })).info.T1 || {};
+    check('each listing\'s live offer: price $9.99 · business $9.49 (+ a fixed quantity tier) · Minimum $8.00 · Maximum $14.00',
+      inf.price === 9.99 && inf.business === 9.49 && inf.min === 8 && inf.max === 14 && inf.qd && inf.qd.type === 'fixed' && inf.qd.levels[0].value === 9, inf);
+    const over = await post('/amazon/price-set', { sku: 'T1', price: 14.5 }), under = await post('/amazon/price-set', { sku: 'T1', price: 7.5 }),
+      biz = await post('/amazon/price-set', { sku: 'T1', price: 11.5, business: 11.6 }), tier = await post('/amazon/price-set', { sku: 'T1', price: 11, business: 8.95 });
+    check('refused — never sent: over the Maximum $14 ("Amazon would make it inactive"), under the Minimum $8, a business price not LOWER than the price, a business price at / under a quantity tier',
+      over.refused && /Maximum price \$14\.00/.test(over.error) && under.refused && /Minimum price \$8\.00/.test(under.error) && biz.refused && /must be LOWER/.test(biz.error) && tier.refused && /tier/.test(tier.error) && sent.length === 0, { over, under, biz, tier });
+    const big = await post('/amazon/price-set', { sku: 'T1', price: 13.5 });
+    check('+35% at once → not sent, asks once more ("potential pricing error")', big.needConfirm && /\+35%/.test(big.error) && /potential pricing error/.test(big.error) && sent.length === 0, big);
+    const okSet = await post('/amazon/price-set', { sku: 'T1', price: 13.5, confirmBig: true, _requestId: 'px-t1' }), again = await post('/amazon/price-set', { sku: 'T1', price: 13.5, confirmBig: true, _requestId: 'px-t1' });
+    const po = sent[0] && sent[0].patches[0].value, all = (po || []).find(o => o.audience === 'ALL') || {}, b2b = (po || []).find(o => o.audience === 'B2B') || {};
+    const lg = sq.prepare("SELECT * FROM amz_price_log WHERE sku = 'T1' AND ok = 1").all();
+    check('OK → ONE change sent (the same tap again is not sent twice): only the price → $13.50; Minimum $8, Maximum $14, business $9.49 and its quantity tier kept as they were; product type kept',
+      okSet.ok && again.ok && sent.length === 1 && sent[0].productType === 'PIPE_FITTING' && sent[0].patches[0].op === 'replace' && sent[0].patches[0].path === '/attributes/purchasable_offer'
+        && all.our_price[0].schedule[0].value_with_tax === 13.5 && all.minimum_seller_allowed_price[0].schedule[0].value_with_tax === 8 && all.maximum_seller_allowed_price[0].schedule[0].value_with_tax === 14
+        && b2b.our_price[0].schedule[0].value_with_tax === 9.49 && b2b.quantity_discount_plan[0].schedule[0].levels[0].value === 9, { okSet, sent });
+    check('…kept in 🕘 History: TS · T1 · $9.99 → $13.50 · business $9.49 · min $8 · max $14 · "Amazon accepted it"; the list shows $13.50',
+      lg.length === 1 && lg[0].by_user === 'TS' && lg[0].old_price === 9.99 && lg[0].new_price === 13.5 && lg[0].new_business === 9.49 && lg[0].new_min === 8 && lg[0].max === 14 && /accepted/.test(lg[0].result)
+        && ((await get('/amazon/prices')).rows.find(r => r.sku === 'T1') || {}).price === 13.5, lg);
+    const b2 = await post('/amazon/price-set', { sku: 'T1', price: 12, business: 11.5 }), body2 = sent[1] && sent[1].patches[0].value;
+    check('price + business price together (business lower, above the tier) → both sent, the rest kept',
+      b2.ok && ((body2 || []).find(o => o.audience === 'B2B') || {}).our_price[0].schedule[0].value_with_tax === 11.5 && ((body2 || []).find(o => o.audience === 'ALL') || {}).our_price[0].schedule[0].value_with_tax === 12, b2);
+    const rf = (await post('/amazon/price-ref', { asins: ['B0TEST0001'] })).ref || {};
+    check('🔎 Amazon\'s reference prices: Was price (90-day typical) $10.49 · Competitive Price Threshold $12.75 · featured offer $9.99',
+      rf.B0TEST0001 && rf.B0TEST0001.was === 10.49 && rf.B0TEST0001.cpt === 12.75 && rf.B0TEST0001.featured === 9.99, rf);
+    const { readFileSync: rfX } = await import('node:fs'), wsrc = rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+    check('only Admin / Owner / "price" permission can change a price (server), and 🧪 Test mode never sends one',
+      /async function amazonPriceSet[\s\S]{0,120}if \(!apxCan\(session\)\) return apxJ\(\{ ok: false, error: 'Only Admin \/ Owner/.test(wsrc) && /'\/amazon\/update-price', '\/amazon\/price-set',/.test(wsrc), null);
+  } finally { globalThis.fetch = realFetch; ['AMAZON_SELLER_ID', 'AMAZON_CLIENT_ID', 'AMAZON_CLIENT_SECRET', 'AMAZON_REFRESH_TOKEN'].forEach(k => { delete env[k]; }); }
+  // the page: the same checks before anything is sent
+  const { readFileSync: rfP } = await import('node:fs'), pf = rfP(fileURLToPath(new URL('../profit.html', import.meta.url)), 'utf8');
+  const chkSrc = pf.slice(pf.indexOf('function pxN('), pf.indexOf('async function pxGet(')) + pf.slice(pf.indexOf('function pxCheck('), pf.indexOf('function pxCheckHtml('));
+  const C = new Function('PX', 'PXE', 'PXREF', chkSrc + '; return function(r){ return pxCheck(r); };');
+  const row = { sku: 'T1', asin: 'B0TEST0001', price: 9.99, info: { business: 9.49, min: 8, max: 14, qd: { type: 'fixed', levels: [{ from: 5, value: 9 }] } } };
+  const pc = (e, ref) => C({ bigJump: 0.3 }, { T1: e }, ref || {})(row);
+  const a = pc({ price: '14.50' }), b = pc({ price: '11.00' }), c = pc({ price: '13.50' }), dd = pc({ price: '13.00' }, { B0TEST0001: { was: 10.49, cpt: 12.75 } }), e2 = pc({ price: '11', business: '11.2' });
+  check('page checks (same as the server, before sending): over the Maximum ❌, a fine +10% ✅ "$9.99 → $11.00 (+10.1%)", +35% ⚠, above the Competitive Price Threshold ⚠ (may lose the Buy Box), business not lower ❌; a 💲 Change prices tab with 🧩 marks',
+    a.bad.some(x => /Maximum \$14\.00/.test(x)) && !b.bad.length && !b.warn.length && b.ok[0] === '✅ $9.99 → $11.00 (+10.1%)' && c.warn.some(x => /\+35%/.test(x)) && dd.warn.some(x => /Competitive Price Threshold \$12\.75/.test(x))
+      && e2.bad.some(x => /LOWER/.test(x)) && /id="pf-tabbtn-price"/.test(pf) && /sel: '#pf-tabbtn-price, #pf-tab-price'/.test(rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), { a, b, c, dd, e2 });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

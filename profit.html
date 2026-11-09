@@ -84,6 +84,14 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
 .muted { color:var(--text3); font-size:12px; }
 .mono { font-family:var(--mono); }
 #pf-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1d23; color:#fff; font-size:12.5px; padding:10px 18px; border-radius:100px; opacity:0; transition:opacity .3s; z-index:9999; pointer-events:none; }
+.pftabs { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+.pftabs button { font-family:inherit; font-size:14px; font-weight:700; padding:9px 16px; border-radius:9px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.pftabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+.pxwrap { background:var(--bg2); border:1px solid var(--border); border-radius:10px; overflow:auto; box-shadow:var(--shadow); max-height:70vh; }
+.pxwrap td input { width:76px; font-family:var(--mono); padding:5px 7px; }
+.pxwrap td.msg { white-space:normal; min-width:220px; max-width:360px; text-align:left; font-size:12px; }
+.px-bad { color:var(--red); font-weight:700; } .px-warn { color:var(--orange); } .px-ok { color:var(--green); }
+tr.px-chg td { background:#fffbea; }
 @media (max-width: 800px) { .detail-grid { grid-template-columns: 1fr; } #pf-search { width:100%; } .wrap { padding:14px 12px 60px; } .topbar { padding:0 12px; } }
   </style>
 <script src="xf-lang.js?v=20261005a"></script>
@@ -116,6 +124,9 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
   </div>
 
   <div class="wrap">
+    <!-- 💲 Owner (2026-11-09): "added that to 'profit check' added one more tab for that" -->
+    <div class="pftabs" id="pf-tabs"><button type="button" id="pf-tabbtn-profit" class="on" onclick="pfTab('profit')">📊 Profit</button><button type="button" id="pf-tabbtn-price" onclick="pfTab('price')">💲 Change prices</button></div>
+    <div id="pf-tab-profit">
     <div class="note blue" style="margin-bottom:14px">
       <b>Do we make or lose money on each listing?</b> Amazon only for now. For every listing: what the buyer paid,
       minus Amazon's fees, minus the shipping label (FBM orders), minus what the product cost us.
@@ -189,6 +200,45 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
         <span id="pf-sync-msg" class="muted"></span>
       </div>
       <details><summary class="muted" style="cursor:pointer">History (who pulled data / changed settings)</summary><div id="pf-log" class="muted" style="margin-top:6px"></div></details>
+    </div>
+    </div>
+    <div id="pf-tab-price" style="display:none">
+      <div class="note yellow" id="px-rules" style="margin-bottom:12px">
+        <b>💲 Change Amazon prices.</b> Type the new price (and business price / minimum if you want), check the row turns ✅, tick it, then <b>Change on Amazon</b>.
+        Amazon shows the new price in about 5–15 minutes. Every change is kept (who, when, old → new, Amazon's answer) in 🕘 History below.
+        <details style="margin-top:6px"><summary>📜 Amazon's rules this checks</summary><ul style="margin:6px 0 0 18px;line-height:1.6">
+          <li><b>Maximum price</b> (only if the listing has one): a price above it makes the listing <b>inactive</b> — the app won't send it.</li>
+          <li><b>Minimum price</b> (not required by Amazon; only if the listing has one): a price below it makes the listing inactive — the app won't send it.</li>
+          <li><b>Business price</b> must be <b>lower</b> than the price; every quantity-discount tier must be lower again — the app won't send it otherwise.</li>
+          <li><b>Big jumps</b>: Amazon's Fair Pricing Policy takes down offers it sees as a "potential pricing error" (priced well above recent prices). Amazon does not publish a %; raising more than <b>30%</b> at once needs a second OK here — smaller steps are safer.</li>
+          <li><b>Was price</b> = what buyers paid on Amazon over the last 90 days (typical). <b>Competitive Price Threshold</b> = other stores' price: above it the listing can lose the Buy Box (it stays up). Tap 🔎 to get them.</li>
+        </ul></details>
+      </div>
+      <div class="controls">
+        <button class="btn" id="px-load" onclick="pxLoad()">↻ Load Amazon listings</button>
+        <span id="px-loaded" class="muted"></span>
+        <input type="text" id="px-search" placeholder="Search SKU, ASIN or title…" oninput="pxPage=0;pxRender()" style="width:220px">
+        <label>Price under $ <input type="number" id="px-under" value="13" min="0" step="0.5" style="width:70px" oninput="pxPage=0;pxRender()"></label>
+        <select id="px-ch" onchange="pxPage=0;pxRender()"><option value="">FBA + FBM</option><option value="fba">FBA</option><option value="fbm">FBM</option></select>
+        <label><input type="checkbox" id="px-active" checked onchange="pxPage=0;pxRender()"> Active only</label>
+      </div>
+      <div class="controls" id="px-bulk">
+        <span class="muted">Ticked rows:</span>
+        <label>+ $ <input type="number" id="px-add" step="0.01" min="0" style="width:70px" placeholder="1.00"></label>
+        <span class="muted">or</span>
+        <label>+ <input type="number" id="px-pct" step="1" min="0" style="width:60px" placeholder="10"> %</label>
+        <label><input type="checkbox" id="px-99"> end in .99</label>
+        <button class="btn" onclick="pxBulkFill()">Fill new price</button>
+        <button class="btn" onclick="pxRef()">🔎 Amazon's reference prices (this page)</button>
+        <button class="btn btn-primary" id="px-apply" onclick="pxApply()">💾 Change on Amazon</button>
+        <span id="px-msg" class="muted"></span>
+      </div>
+      <div class="pxwrap"><table id="px-table"><thead><tr>
+        <th class="l"><input type="checkbox" id="px-all" onclick="pxTickAll(this.checked)"></th><th class="l">SKU · title</th><th>Ship</th><th>Price now</th><th>Business</th><th>Min</th><th>Max</th>
+        <th title="Amazon: 90-day typical price paid (Was price) · Competitive Price Threshold (other stores)">Was · Threshold</th><th title="From the 📊 Profit tab (last period)">Sold · profit/unit</th>
+        <th>New price</th><th>New business</th><th>New min</th><th class="l">Check</th></tr></thead><tbody id="px-body"><tr><td colspan="13" class="l muted">Tap ↻ Load Amazon listings.</td></tr></tbody></table></div>
+      <div class="controls" style="margin-top:8px"><button class="btn" onclick="pxPage=Math.max(0,pxPage-1);pxRender()">◀</button><span id="px-pageinfo" class="muted"></span><button class="btn" onclick="pxPage++;pxRender()">▶</button></div>
+      <div class="panel"><h3>🕘 Price change history</h3><div id="px-log" class="muted">—</div></div>
     </div>
   </div>
 </div>
@@ -481,6 +531,154 @@ function renderSync() {
   }).join('') || 'Nothing yet.';
 }
 
+
+// ── 💲 Change prices (owner 2026-11-09) — Amazon. Reads / writes through the main worker (it has the Amazon seller account), the server
+// checks every number again before anything is sent, and keeps who / when / old → new.
+window.pfTab = function (t) {
+  ['profit', 'price'].forEach(function (k) { document.getElementById('pf-tab-' + k).style.display = k === t ? '' : 'none'; document.getElementById('pf-tabbtn-' + k).classList.toggle('on', k === t); });
+  if (t === 'price' && !PX) pxGet();
+};
+async function wapi(path, opts) {
+  opts = opts || {}; opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, { 'X-Cred-Token': TOKEN || '' });
+  var r = await fetch(WORKER_URL + path, opts);
+  if (r.status === 401) { signedOut(); throw new Error('Please sign in again'); }
+  var d = await r.json().catch(function () { return { ok: false, error: 'Bad reply (' + r.status + ')' }; });
+  return d;
+}
+var PX = null, pxPage = 0, PX_PER = 40, PXE = {}, PXREF = {}, PXRES = {}, PXTICK = {};
+function pxN(v) { return v == null || v === '' ? '—' : '$' + (+v).toFixed(2); }
+async function pxGet() {
+  var d = await wapi('/amazon/prices'); if (!d.ok) { document.getElementById('px-body').innerHTML = '<tr><td colspan="13" class="l neg">⚠ ' + esc(d.error || 'Could not load') + '</td></tr>'; return; }
+  PX = d; document.getElementById('px-loaded').textContent = d.loadedAt ? 'Listings from Amazon: ' + new Date(d.loadedAt).toLocaleString() + ' · ' + d.rows.length + ' listings' : 'Not loaded yet';
+  document.getElementById('px-apply').style.display = d.canChange ? '' : 'none';
+  if (!d.canChange) document.getElementById('px-msg').textContent = 'Only Admin / Owner can change prices — you can look.';
+  pxRender(); pxLog();
+}
+window.pxLoad = async function () {
+  var b = document.getElementById('px-load'), m = document.getElementById('px-loaded'), cur = '';
+  b.disabled = true;
+  try { for (var i = 0; i < 80; i++) { var d = await wapi('/amazon/prices-load', { method: 'POST', body: JSON.stringify({ cursor: cur }) });
+      if (!d.ok) throw new Error(d.error || 'failed'); m.textContent = d.msg || ''; if (d.done) { toast('✅ ' + d.count + ' Amazon listings loaded'); break; } cur = d.next; }
+    PX = null; await pxGet();
+  } catch (e) { m.textContent = '⚠ ' + e.message; } finally { b.disabled = false; }
+};
+function pxProfitOf(sku) { if (!DATA || !DATA.rows) return null; var r = DATA.rows.find(function (x) { return x.sku === sku; }); return r || null; }
+function pxRows() {
+  if (!PX) return [];
+  var q = document.getElementById('px-search').value.trim().toUpperCase(), un = parseFloat(document.getElementById('px-under').value), ch = document.getElementById('px-ch').value, act = document.getElementById('px-active').checked;
+  return PX.rows.filter(function (r) {
+    if (act && r.status && !/active/i.test(r.status)) return false;
+    if (ch === 'fba' && !r.fba) return false; if (ch === 'fbm' && r.fba) return false;
+    if (un > 0 && !(r.price != null && r.price < un)) return false;
+    if (q && (r.sku + ' ' + (r.asin || '') + ' ' + (r.title || '')).toUpperCase().indexOf(q) < 0) return false;
+    return true;
+  }).sort(function (a, b) { return (a.price || 0) - (b.price || 0) || a.sku.localeCompare(b.sku); });
+}
+// the same checks as the server (it checks again before sending)
+function pxCheck(r) {
+  var e = PXE[r.sku] || {}, i = r.info || {}, bad = [], warn = [], ok = [];
+  var np = e.price === '' || e.price == null ? null : +e.price, nb = e.business === '' || e.business == null ? null : +e.business, nm = e.min === '' || e.min == null ? null : +e.min;
+  if (np == null && nb == null && nm == null) return null;
+  if (!r.info) return { bad: ['⏳ reading this listing\'s business / min / max from Amazon…'], warn: [], ok: [] };
+  var price = np != null ? np : r.price, min = nm != null ? nm : i.min, biz = nb != null ? nb : i.business;
+  if (!(price > 0)) bad.push('Type a price above $0');
+  if (i.max != null && price > i.max) bad.push('Over the Maximum ' + pxN(i.max) + ' — Amazon would make it inactive');
+  if (min != null && price < min) bad.push('Under the Minimum ' + pxN(min) + ' — Amazon would make it inactive');
+  if (nm != null && i.max != null && nm > i.max) bad.push('Minimum above the Maximum');
+  if (biz != null && biz >= price) bad.push('Business ' + pxN(biz) + ' must be LOWER than the price ' + pxN(price));
+  if (nb != null && i.qd && i.qd.type === 'fixed' && i.qd.levels.some(function (l) { return l.value != null && l.value >= nb; })) bad.push('A quantity-discount tier is not lower than the new business price');
+  if (r.price > 0 && price > r.price * (1 + (PX.bigJump || 0.3))) warn.push('+' + Math.round((price / r.price - 1) * 100) + '% at once — Amazon may flag a big jump; asks once more');
+  var rf = PXREF[r.asin];
+  if (rf && rf.cpt != null && price > rf.cpt) warn.push('Above the Competitive Price Threshold ' + pxN(rf.cpt) + ' — may lose the Buy Box');
+  if (rf && rf.was != null && price > rf.was * (1 + (PX.bigJump || 0.3))) warn.push('Well above the 90-day Was price ' + pxN(rf.was));
+  if (!bad.length) { var pc = r.price > 0 ? Math.round((price / r.price - 1) * 1000) / 10 : null; ok.push('✅ ' + pxN(r.price) + ' → ' + pxN(price) + (pc != null ? ' (' + (pc >= 0 ? '+' : '') + pc + '%)' : '')); }
+  return { bad: bad, warn: warn, ok: ok, price: price };
+}
+function pxCheckHtml(r) {
+  var res = PXRES[r.sku]; if (res) return '<span class="' + (res.ok ? 'px-ok' : 'px-bad') + '">' + esc(res.text) + '</span>';
+  var c = pxCheck(r); if (!c) return (r.info && r.info.issues && r.info.issues.length) ? '<span class="px-warn">' + esc(r.info.issues.join(' · ')) + '</span>' : '';
+  return c.bad.map(function (x) { return '<div class="px-bad">❌ ' + esc(x) + '</div>'; }).join('') + c.warn.map(function (x) { return '<div class="px-warn">⚠ ' + esc(x) + '</div>'; }).join('') + c.ok.map(function (x) { return '<div class="px-ok">' + esc(x) + '</div>'; }).join('');
+}
+window.pxRender = function () {
+  var L = pxRows(), pages = Math.max(1, Math.ceil(L.length / PX_PER)); if (pxPage >= pages) pxPage = pages - 1;
+  var P = L.slice(pxPage * PX_PER, pxPage * PX_PER + PX_PER);
+  document.getElementById('px-pageinfo').textContent = L.length + ' listing' + (L.length === 1 ? '' : 's') + ' · page ' + (pxPage + 1) + ' of ' + pages;
+  if (!PX) return;
+  document.getElementById('px-body').innerHTML = !P.length ? '<tr><td colspan="13" class="l muted">' + (PX.rows.length ? 'No listing matches.' : 'Tap ↻ Load Amazon listings.') + '</td></tr>' : P.map(function (r) {
+    var i = r.info || {}, e = PXE[r.sku] || {}, rf = PXREF[r.asin], pr = pxProfitOf(r.sku), k = esc(JSON.stringify(r.sku)), inp = function (f, v) { return '<input type="number" step="0.01" min="0" value="' + esc(v == null ? '' : v) + '" oninput="pxEdit(' + k + ',\'' + f + '\',this.value)">'; };
+    return '<tr class="' + (pxCheck(r) ? 'px-chg' : '') + '"><td class="l"><input type="checkbox" id="px-ck-' + esc(r.sku) + '" ' + (PXTICK[r.sku] ? 'checked ' : '') + 'onclick="PXTICK[' + k + ']=this.checked"></td>'
+      + '<td class="l sku"><b class="mono">' + esc(r.sku) + '</b> <span class="muted mono">' + esc(r.asin || '') + '</span><div class="muted" style="white-space:normal;max-width:300px">' + esc((r.title || '').slice(0, 90)) + '</div></td>'
+      + '<td>' + (r.fba ? 'FBA' : 'FBM') + '</td><td class="num"><b>' + pxN(r.price) + '</b></td>'
+      + '<td class="num">' + (r.info ? pxN(i.business) + (i.qd && i.qd.levels && i.qd.levels.length ? '<div class="muted">' + i.qd.levels.length + ' qty tier' + (i.qd.levels.length === 1 ? '' : 's') + '</div>' : '') : '<span class="muted">…</span>') + '</td>'
+      + '<td class="num">' + (r.info ? pxN(i.min) : '<span class="muted">…</span>') + '</td><td class="num">' + (r.info ? pxN(i.max) : '<span class="muted">…</span>') + '</td>'
+      + '<td class="num">' + (rf ? pxN(rf.was) + ' · ' + pxN(rf.cpt) : '<span class="muted">—</span>') + '</td>'
+      + '<td class="num">' + (pr ? pr.units + ' · <span class="' + mcls(pr.perUnit) + '">' + money(pr.perUnit) + '</span>' : '<span class="muted">—</span>') + '</td>'
+      + '<td>' + inp('price', e.price) + '</td><td>' + inp('business', e.business) + '</td><td>' + inp('min', e.min) + '</td>'
+      + '<td class="msg" id="px-msg-' + esc(r.sku) + '">' + pxCheckHtml(r) + '</td></tr>';
+  }).join('');
+  pxInfoFor(P.filter(function (r) { return !r.info; }).map(function (r) { return r.sku; }));
+};
+window.pxEdit = function (sku, f, v) { (PXE[sku] = PXE[sku] || {})[f] = v; delete PXRES[sku]; if (v !== '') PXTICK[sku] = true;
+  var r = PX.rows.find(function (x) { return x.sku === sku; }), el = document.getElementById('px-msg-' + sku), ck = document.getElementById('px-ck-' + sku);
+  if (ck && v !== '') ck.checked = true; if (el && r) { el.innerHTML = pxCheckHtml(r); var tr = el.parentNode; if (tr) tr.className = pxCheck(r) ? 'px-chg' : ''; } };
+window.pxTickAll = function (on) { pxRows().slice(pxPage * PX_PER, pxPage * PX_PER + PX_PER).forEach(function (r) { PXTICK[r.sku] = on; }); pxRender(); };
+var _pxInfoBusy = false;
+async function pxInfoFor(skus) {
+  if (_pxInfoBusy || !skus.length) return; _pxInfoBusy = true;
+  try { for (var i = 0; i < skus.length; i += 10) { var d = await wapi('/amazon/price-info', { method: 'POST', body: JSON.stringify({ skus: skus.slice(i, i + 10) }) }); if (!d.ok) break;
+      Object.keys(d.info).forEach(function (s) { var r = PX.rows.find(function (x) { return x.sku === s; }); if (r && !d.info[s].error) { r.info = d.info[s]; if (d.info[s].price != null) r.price = d.info[s].price; } else if (r) r.info = { issues: ['⚠ ' + d.info[s].error] }; }); }
+  } catch (e) {} finally { _pxInfoBusy = false; }
+  pxRender();
+}
+window.pxBulkFill = function () {
+  var add = parseFloat(document.getElementById('px-add').value), pct = parseFloat(document.getElementById('px-pct').value), e99 = document.getElementById('px-99').checked, n = 0;
+  if (!(add > 0) && !(pct > 0)) { toast('Type + $ or + %'); return; }
+  PX.rows.forEach(function (r) { if (!PXTICK[r.sku] || !(r.price > 0)) return; var v = add > 0 ? r.price + add : r.price * (1 + pct / 100);
+    if (e99) v = Math.floor(v) + 0.99; (PXE[r.sku] = PXE[r.sku] || {}).price = (Math.round(v * 100) / 100).toFixed(2); delete PXRES[r.sku]; n++; });
+  toast(n ? 'New price filled on ' + n + ' row(s) — check them, then 💾 Change on Amazon' : 'Tick the rows first'); pxRender();
+};
+var _pxRefAt = 0;
+window.pxRef = async function () {
+  var P = pxRows().slice(pxPage * PX_PER, pxPage * PX_PER + PX_PER).map(function (r) { return r.asin; }).filter(function (a) { return a && !PXREF[a]; });
+  if (!P.length) { toast('Already here for this page'); return; }
+  var m = document.getElementById('px-msg');
+  for (var i = 0; i < P.length; i += 20) {
+    var wait = 31000 - (Date.now() - _pxRefAt); if (wait > 0) { m.textContent = '⏳ Amazon allows this once every 30 seconds — ' + Math.ceil(wait / 1000) + ' s…'; await new Promise(function (r) { setTimeout(r, wait); }); }
+    _pxRefAt = Date.now(); m.textContent = '🔎 Asking Amazon…';
+    var d = await wapi('/amazon/price-ref', { method: 'POST', body: JSON.stringify({ asins: P.slice(i, i + 20) }) });
+    if (!d.ok) { m.textContent = '⚠ ' + (d.error || 'failed'); return; }
+    Object.keys(d.ref).forEach(function (a) { PXREF[a] = d.ref[a]; }); pxRender();
+  }
+  m.textContent = '✅ Reference prices in';
+};
+window.pxApply = async function () {
+  if (!PX || !PX.canChange) return;
+  var L = PX.rows.filter(function (r) { return PXTICK[r.sku] && pxCheck(r); }), m = document.getElementById('px-msg');
+  if (!L.length) { toast('Tick the rows with a new price first'); return; }
+  var bad = L.filter(function (r) { return pxCheck(r).bad.length; });
+  if (bad.length) { toast('❌ ' + bad.length + ' ticked row(s) still have a red problem — fix or untick them'); return; }
+  var big = L.filter(function (r) { return pxCheck(r).warn.length; });
+  if (!confirm('Change ' + L.length + ' price(s) on Amazon now?\n\n' + L.slice(0, 15).map(function (r) { var c = pxCheck(r); return r.sku + ': ' + pxN(r.price) + ' → ' + pxN(c.price); }).join('\n') + (L.length > 15 ? '\n…' : '')
+    + (big.length ? '\n\n⚠ ' + big.length + ' have a warning (big jump / above Amazon\'s reference). OK = send them too.' : ''))) return;
+  var okN = 0, badN = 0;
+  for (var i = 0; i < L.length; i++) { var r = L[i], e = PXE[r.sku] || {}; m.textContent = '💾 ' + (i + 1) + ' of ' + L.length + ' — ' + r.sku;
+    var d = await wapi('/amazon/price-set', { method: 'POST', body: JSON.stringify({ sku: r.sku, price: e.price === '' || e.price == null ? r.price : +e.price, business: e.business === '' ? null : e.business, min: e.min === '' ? null : e.min,
+      confirmBig: true, _requestId: 'pxset-' + r.sku + '-' + Date.now() }) }).catch(function (x) { return { ok: false, error: x.message }; });
+    PXRES[r.sku] = { ok: !!d.ok, text: d.ok ? '✅ ' + (d.result || 'sent') : '❌ ' + (d.error || d.result || 'failed') };
+    if (d.ok) { okN++; r.price = d.after.price; if (r.info) { r.info.business = d.after.business; r.info.min = d.after.min; } delete PXE[r.sku]; PXTICK[r.sku] = false; } else badN++;
+    pxRender(); }
+  m.textContent = '✅ ' + okN + ' sent to Amazon' + (badN ? ' · ❌ ' + badN + ' refused (see the rows)' : '') + ' — Amazon shows them in about 5–15 min';
+  pxLogLoad();
+};
+async function pxLogLoad() { var d = await wapi('/amazon/prices'); if (d.ok) { PX.log = d.log; pxLog(); } }
+function pxLog() {
+  var L = (PX && PX.log) || [];
+  document.getElementById('px-log').innerHTML = !L.length ? 'No price changed here yet.' : '<div style="overflow:auto;max-height:340px"><table class="mini"><tr><th class="l">When</th><th class="l">Who</th><th class="l">SKU</th><th>Price</th><th>Business</th><th>Min</th><th>Max</th><th class="l">Amazon</th></tr>'
+    + L.map(function (x) { var ch = function (a, b) { return a === b ? pxN(b) : pxN(a) + ' → <b>' + pxN(b) + '</b>'; };
+      return '<tr><td class="l">' + esc(new Date(x.at).toLocaleString()) + '</td><td class="l">' + esc(x.by_user) + '</td><td class="l mono">' + esc(x.sku) + '</td><td class="num">' + ch(x.old_price, x.new_price) + '</td><td class="num">' + ch(x.old_business, x.new_business) + '</td>'
+        + '<td class="num">' + ch(x.old_min, x.new_min) + '</td><td class="num">' + pxN(x.max) + '</td><td class="l" style="white-space:normal;max-width:360px">' + (x.ok ? '<span class="px-ok">✅</span> ' : '<span class="px-bad">❌</span> ') + esc(x.result) + '</td></tr>'; }).join('') + '</table></div>';
+}
+
 window.pfSync = async function (restart) {
   var b1 = document.getElementById('pf-sync-btn'), b2 = document.getElementById('pf-sync90-btn'), msg = document.getElementById('pf-sync-msg');
   b1.disabled = b2.disabled = true;
@@ -514,6 +712,6 @@ window.pfSync = async function (restart) {
 })();
 </script>
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261107a"></script>
+<script src="xf-access.js?v=20261109a"></script>
 </body>
 </html>

@@ -378,7 +378,11 @@ document.addEventListener('input', function (e) {
       { key: 'shipping', label: '📦 Shipping Today', sel: '#ldash-mid-row > div:has(> #ldash-ship-content)' },
       { key: 'sales', label: '💰 Sales Snapshot', sel: '#ldash-mid-row > div:has(> #ldash-sales-content)' },
       { key: 'invhealth', label: '📋 Inventory Health', sel: '#ldash-app div:has(> #ldash-ih-content)' } ] },
-    { key: 'profit', file: 'profit.html', name: '💵 Profit Check', needs: 'Mgmt', card: card('profit.html'), tabs: [], parts: [
+    { key: 'profit', file: 'profit.html', name: '💵 Profit Check', needs: 'Mgmt', card: card('profit.html'), tabs: [
+      // 💲 Owner (2026-11-09): "added that to 'profit check' added one more tab for that"
+      { key: 'pricetab', label: '💲 Change prices (Amazon)', sel: '#pf-tabbtn-price, #pf-tab-price', parts: [
+        { key: 'priceapply', label: '💾 Change on Amazon (Admin / Owner — the server checks too)', sel: '#px-apply' },
+        { key: 'pricehist', label: '🕘 Price change history', sel: '#pf-tab-price .panel' } ] } ], parts: [
       { key: 'cards', label: 'Summary cards', sel: '#pf-cards' },
       { key: 'notes', label: 'Notes', sel: '#pf-notes' },
       { key: 'table', label: 'Listings table', sel: '#pf-app .tablewrap' },
