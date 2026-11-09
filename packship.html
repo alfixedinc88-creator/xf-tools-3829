@@ -2298,15 +2298,28 @@ body {
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" id="ps-vstock-on" onchange="psVstockSave()" style="width:20px;height:20px"> <span id="ps-vstock-onlbl">On</span></label>
         </div>
         <div style="font-size:12px;color:var(--text2);margin:6px 0 10px;line-height:1.5">Veeqo won't print a label for an item that ran out. <b>Every day at 3 AM</b> (New York time) the system checks every item in Veeqo: when its stock is <b>at or below</b> the first number, it is set to the second one — no more "Add inventory" by hand. <b>▶ Check now</b> checks every item right away. Only use this while store stock sync is <b>off</b> in Veeqo (the stores never see this number).</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:13px">
+        <!-- ♾ Owner (2026-11-09): "we don't need Veeqo doing the quantities control — change all of them to infinite (and Shopify too)" -->
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;color:var(--green)"><input type="checkbox" id="ps-vstock-inf" onchange="psVstockSave()" style="width:20px;height:20px"> ♾ Every Veeqo item Infinite (no stock control in Veeqo) — all now, then new items every day at 3 AM</label>
+        <div id="ps-vstock-num" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:13px">
           At or below <input type="number" id="ps-vstock-below" min="0" style="width:80px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
           → set to <input type="number" id="ps-vstock-to" min="1" style="width:90px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
           <button class="ps-btn-sm" onclick="psVstockSave()">Save</button>
-          <button class="ps-btn-sm" id="ps-vstock-run-btn" onclick="psVstockRun()">▶ Check now</button>
         </div>
+        <div style="margin-bottom:10px"><button class="ps-btn-sm" id="ps-vstock-run-btn" onclick="psVstockRun()">▶ Check now</button></div>
         <div id="ps-vstock-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);margin-bottom:6px"></div>
         <details><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">Changes made (newest first)</summary>
           <div id="ps-vstock-log" style="margin-top:6px;max-height:320px;overflow:auto;font-size:12px"></div></details>
+        <!-- ♾ Shopify: every variant not counted (infinite); 🚫 Sold Out at 0 counts it again at 0 (owner 2026-11-09) -->
+        <div id="ps-shopinf" style="margin-top:10px;border-top:1px solid var(--border2);padding-top:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer;color:var(--green)"><input type="checkbox" id="ps-shopinf-on" onchange="psShopInfSave()" style="width:20px;height:20px"> ♾ Shopify: every item infinite (quantity not counted)</label>
+            <button class="ps-btn-sm" id="ps-shopinf-run" onclick="psShopInfRun()">▶ Run now</button>
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin:4px 0 6px;line-height:1.5">All now, then new products every day at 3 AM. A Shopify item set to <b>0</b> in 🚫 Sold Out is counted again at 0 (can't be bought) and left that way; set above 0 → infinite again.</div>
+          <div id="ps-shopinf-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);margin-bottom:6px"></div>
+          <details><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">Shopify changes (newest first)</summary>
+            <div id="ps-shopinf-log" style="margin-top:6px;max-height:280px;overflow:auto;font-size:12px"></div></details>
+        </div>
         <!-- 🔍 Check every item: read-only list of each Veeqo item — set to Infinite or not, stock, last error. Changes nothing. -->
         <div style="margin-top:10px;border-top:1px solid var(--border2);padding-top:10px">
           <button class="ps-btn-sm" id="ps-vsi-btn" onclick="psVsiLoad()">🔍 Check every item (Infinite or not)</button>
@@ -9045,35 +9058,71 @@ window.psVstockLoad = async function() {
     document.getElementById('ps-vstock-onlbl').textContent = d.config.on ? 'On' : 'Off';
     document.getElementById('ps-vstock-below').value = d.config.below;
     document.getElementById('ps-vstock-to').value = d.config.to;
+    var inf = d.config.infinite !== false;
+    document.getElementById('ps-vstock-inf').checked = inf;
+    document.getElementById('ps-vstock-num').style.display = inf ? 'none' : 'flex';
+    psShopInfShow(d.shopify);
     var lr = d.lastRun;
-    document.getElementById('ps-vstock-status').innerHTML = (lr ? 'Last check ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' item(s) looked at · <b style="color:var(--green)">' + lr.updated + ' set to ' + psVsE(d.config.to) + '</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
+    document.getElementById('ps-vstock-status').innerHTML = (lr ? 'Last check ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' item(s) looked at · <b style="color:var(--green)">' + lr.updated + ' set to ' + (inf ? '♾ Infinite' : psVsE(d.config.to)) + '</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
       + (d.passActive ? ' · <b>checking every item now…</b> (page ' + psVsE(d.nextPage) + ')' : d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) + ' · next: 3 AM' : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '')
       + (lr && lr.failed && lr.firstError && !d.lastError ? '<br><span style="color:var(--red)">Why it failed (Veeqo said): ' + psVsE(lr.firstError) + '</span>' : '')
       + (lr && lr.skippedWarehouses && lr.skippedWarehouses.length ? '<br><span style="color:var(--red)">Skipped (Veeqo refuses changes there): ' + psVsE(lr.skippedWarehouses.join(' · ')) + '</span>' : '')
       + (lr && lr.stopped === 'limit' && d.passActive ? '<br><span style="color:var(--text2)">More items to check — it keeps going by itself every 30 min, or tap ▶ Check now again.</span>' : '');
     document.getElementById('ps-vstock-log').innerHTML = (d.log || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.log.map(function(x) {
       return '<tr style="border-top:1px solid var(--border2)"><td style="padding:4px 6px;white-space:nowrap;color:var(--text3)">' + psVsE(psVsT(x.ts)) + '</td>'
-        + (x.sku ? '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku) + '</td><td style="padding:4px 6px">' + (x.new_physical != null ? psVsE(x.old_available) + ' → <b>' + psVsE(x.new_physical - (x.old_physical - x.old_available)) + '</b>' : '<b style="color:var(--red)">' + psVsE(x.note) + '</b>') + '</td>'
+        + (x.sku ? '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku) + '</td><td style="padding:4px 6px">' + (/^♾/.test(x.note || '') ? psVsE(x.old_available) + ' → <b style="color:var(--green)">♾ Infinite</b>' : x.new_physical != null ? psVsE(x.old_available) + ' → <b>' + psVsE(x.new_physical - (x.old_physical - x.old_available)) + '</b>' : '<b style="color:var(--red)">' + psVsE(x.note) + '</b>') + '</td>'
           : '<td colspan="2" style="padding:4px 6px;color:var(--text2)">' + psVsE(x.note) + '</td>')
         + '<td style="padding:4px 6px;color:var(--text3)">' + psVsE(x.by_user) + '</td></tr>'; }).join('') + '</table>' : '<div style="color:var(--text3)">No changes yet</div>';
   } catch (e) { document.getElementById('ps-vstock-status').textContent = '✗ Load failed'; }
 };
 window.psVstockSave = async function() {
-  var body = { on: document.getElementById('ps-vstock-on').checked, below: document.getElementById('ps-vstock-below').value, to: document.getElementById('ps-vstock-to').value };
+  var body = { on: document.getElementById('ps-vstock-on').checked, below: document.getElementById('ps-vstock-below').value, to: document.getElementById('ps-vstock-to').value, infinite: document.getElementById('ps-vstock-inf').checked };
   try {
     var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), d = await r.json();
     if (!d.ok) { _psToast(d.error || 'Not saved', 'error'); return; }
-    _psToast('Saved: ' + (d.config.on ? 'On' : 'Off') + ' · at or below ' + d.config.below + ' → ' + d.config.to); psVstockLoad();
+    _psToast('Saved: ' + (d.config.on ? 'On' : 'Off') + ' · ' + (d.config.infinite ? '♾ every item Infinite' : 'at or below ' + d.config.below + ' → ' + d.config.to)); psVstockLoad();
   } catch (e) { _psToast('Not saved — network error', 'error'); }
 };
 window.psVstockRun = async function() {
   var btn = document.getElementById('ps-vstock-run-btn'); btn.disabled = true; btn.textContent = '⏳ Checking…';
   try {
     var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ run: true }) }), d = await r.json();
-    if (d.ok) _psToast('Checked ' + d.checked + ' item(s) · ' + d.updated + ' set back up' + (d.failed ? ' · ' + d.failed + ' failed' + (d.stopped === 'errors' ? ' — stopped, see why below' : '') : ''), d.failed ? 'error' : undefined);
+    if (d.ok) _psToast('Checked ' + d.checked + ' item(s) · ' + d.updated + ' set ' + (document.getElementById('ps-vstock-inf').checked ? 'to ♾ Infinite' : 'back up') + (d.failed ? ' · ' + d.failed + ' failed' + (d.stopped === 'errors' ? ' — stopped, see why below' : '') : ''), d.failed ? 'error' : undefined);
     else _psToast(d.error || d.skipped || 'Not run', 'error');
   } catch (e) { _psToast('Check failed — network error', 'error'); }
   btn.disabled = false; btn.textContent = '▶ Check now'; psVstockLoad();
+};
+
+// ♾ Shopify: every variant not counted (infinite) — status, switch, run now (owner 2026-11-09)
+function psShopInfShow(sh) {
+  var st = document.getElementById('ps-shopinf-status'); if (!st) return;
+  if (!sh || sh.error) { st.textContent = sh && sh.error ? '✗ ' + sh.error : ''; return; }
+  document.getElementById('ps-shopinf-on').checked = !!sh.on;
+  var lr = sh.lastRun;
+  st.innerHTML = (lr ? 'Last run ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' looked at · <b style="color:var(--green)">' + lr.updated + ' set to ♾</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
+    + (sh.passActive ? ' · <b>going through every item now…</b>' : sh.lastFullPass ? ' · every item done ' + psVsE(psVsT(sh.lastFullPass)) + ' · next: 3 AM' : '')
+    + (sh.kept ? ' · 🚫 ' + sh.kept + ' sold out (counted at 0)' : '') + (sh.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(sh.lastError) + '</span>' : '');
+  document.getElementById('ps-shopinf-log').innerHTML = (sh.log || []).length ? '<table style="width:100%;border-collapse:collapse">' + sh.log.map(function(x) {
+    return '<tr style="border-top:1px solid var(--border2)"><td style="padding:4px 6px;white-space:nowrap;color:var(--text3)">' + psVsE(psVsT(x.ts)) + '</td>'
+      + '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku || '') + '</td>'
+      + '<td style="padding:4px 6px">' + psVsE(x.note || '') + (x.old_qty != null && /^♾ inf/.test(x.note || '') ? ' <span style="color:var(--text3)">(was ' + psVsE(x.old_qty) + ')</span>' : '') + '</td>'
+      + '<td style="padding:4px 6px;color:var(--text3)">' + psVsE(x.by_user) + '</td></tr>'; }).join('') + '</table>' : '<div style="color:var(--text3)">No changes yet</div>';
+}
+window.psShopInfSave = async function() {
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/shopify-infinite', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ on: document.getElementById('ps-shopinf-on').checked }) }), d = await r.json();
+    if (!d.ok) { _psToast(d.error || 'Not saved', 'error'); return; }
+    _psToast('Shopify ♾ ' + (d.shopify && d.shopify.on ? 'On' : 'Off')); psShopInfShow(d.shopify);
+  } catch (e) { _psToast('Not saved — network error', 'error'); }
+};
+window.psShopInfRun = async function() {
+  var btn = document.getElementById('ps-shopinf-run'); btn.disabled = true; btn.textContent = '⏳ Running…';
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/shopify-infinite', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ run: true }) }), d = await r.json();
+    if (d.ok) _psToast('Shopify: ' + d.checked + ' looked at · ' + d.updated + ' set to ♾' + (d.failed ? ' · ' + d.failed + ' failed' : '') + (d.wrapped ? ' · every item done' : ' · more next run'), d.failed ? 'error' : undefined);
+    else _psToast(d.error || d.skipped || 'Not run', 'error');
+  } catch (e) { _psToast('Run failed — network error', 'error'); }
+  btn.disabled = false; btn.textContent = '▶ Run now'; psVstockLoad();
 };
 
 // 🔍 Check every item — read-only: Infinite or not, stock, last top-up error.

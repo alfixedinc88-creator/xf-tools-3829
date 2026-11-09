@@ -1117,6 +1117,8 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
       const e = stock[m[1]]; e.physical_stock_level = b.physical_stock_level; e.available_stock_level = b.physical_stock_level - e.allocated_stock_level; return new Response('{}'); }
     return realFetch(u, o); };
   env.VEEQO_API_KEY = 'k';
+  // ♾ Infinite is the default since 2026-11-09 (owner); these checks are the 88 → 888 mode, which is ♾ off
+  sq.exec("CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)"); sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('veeqo_stock_topup', ?)").run(JSON.stringify({ infinite: false }));
   const r1 = await post('/veeqo/stock-topup', { run: true });
   check('at or below 88 → set so 888 are available (88 with 2 on orders → 890; 0 with 3 on orders → 891); 500 and infinite left alone',
     r1.ok && puts.length === 2 && puts.some(p => p.id === 11 && p.wh === 5 && p.to === 890) && puts.some(p => p.id === 14 && p.to === 891), { r1, puts });
@@ -13339,6 +13341,70 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',
     c2.bad.length === 1 && /^T1-FBA: Over the Maximum \$18\.00/.test(c2.bad[0]) && c3.bad.some(x => /LOWER/.test(x)) && c4.warn.some(x => /Competitive Price Threshold \$12\.75/.test(x))
       && /id="px-fillall" onclick="pxFillAll\(\)"/.test(pf) && /id="px-pct" step="1" min="1" value="75"/.test(pf) && /id="pf-tabbtn-price"/.test(pf) && /sel: '#pf-tabbtn-price, #pf-tab-price'/.test(rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), { c2, c3, c4 });
+}
+
+// Owner (2026-11-09): "we don't need Veeqo doing the quantities control — change all the Veeqo quantities to infinite; and our
+// Shopify store all infinite too". Sold Out at 0 on Shopify → counted again at 0 (owner's pick).
+console.log('\n♾ Veeqo + Shopify infinite: every item Infinite / not counted; Sold Out 0 → Shopify counted at 0; Listing Watch ignores it');
+{
+  const realFetch = globalThis.fetch, vputs = [], supd = [], sset = [];
+  const ve = { 21: { physical_stock_level: 40, allocated_stock_level: 0, available_stock_level: 40 }, 22: { physical_stock_level: 0, allocated_stock_level: 0, available_stock_level: 0, infinite: true },
+    23: { physical_stock_level: 5, allocated_stock_level: 1, available_stock_level: 4 } };
+  const vprods = () => [{ id: 9, title: 'Elbow', sellables: [21, 22, 23].map(id => ({ id, sku_code: 'V-' + id, stock_entries: [{ warehouse_id: 7, ...ve[id] }] })) }];
+  const sv = { 'gid://shopify/InventoryItem/1': { id: 'gid://shopify/ProductVariant/1', sku: '30-3-4=10', tracked: true, q: 12 },
+    'gid://shopify/InventoryItem/2': { id: 'gid://shopify/ProductVariant/2', sku: '30-3-4=5', tracked: false, q: 0 },
+    'gid://shopify/InventoryItem/3': { id: 'gid://shopify/ProductVariant/3', sku: '31-1-1=2', tracked: true, q: 3 } };
+  const node = k => ({ id: sv[k].id, sku: sv[k].sku, title: 'Default Title', inventoryQuantity: sv[k].q, product: { id: 'gid://shopify/Product/9', title: 'Stub' },
+    inventoryItem: { id: k, tracked: sv[k].tracked, inventoryLevels: { edges: [{ node: { location: { id: 'gid://shopify/Location/1', name: 'NJ' }, quantities: [{ name: 'available', quantity: sv[k].q }] } }] } } });
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.veeqo.com/products')) return J(/page=1&/.test(u) ? vprods() : []);
+    const m = u.match(/api\.veeqo\.com\/sellables\/(\d+)\/warehouses\/(\d+)\/stock_entry/);
+    if (m && o && o.method === 'PUT') { const b = JSON.parse(o.body).stock_entry; vputs.push({ id: +m[1], ...b }); if (b.infinite) ve[m[1]].infinite = true; return new Response('{}'); }
+    if (u.includes('/admin/oauth/access_token')) return J({ access_token: 's', expires_in: 3600 });
+    if (u.includes('/graphql.json')) { const b = JSON.parse(o.body), q = b.query;
+      if (/inventoryItemUpdate/.test(q)) { supd.push({ id: b.variables.id, tracked: b.variables.input.tracked }); sv[b.variables.id].tracked = b.variables.input.tracked; return J({ data: { inventoryItemUpdate: { inventoryItem: { id: b.variables.id }, userErrors: [] } } }); }
+      if (/inventorySetQuantities/.test(q)) { b.variables.input.quantities.forEach(x => { sset.push(x); sv[x.inventoryItemId].q = x.quantity; }); return J({ data: { inventorySetQuantities: { userErrors: [] } } }); }
+      if (/productVariants\(first: 100, after/.test(q)) return J({ data: { productVariants: { pageInfo: { hasNextPage: false, endCursor: null }, edges: Object.keys(sv).map(k => ({ node: node(k) })) } } });
+      if (/productVariants\(first: 20, query/.test(q)) { const want = String(b.variables.q).replace(/^sku:/, '').replace(/"/g, ''); return J({ data: { productVariants: { edges: Object.keys(sv).filter(k => sv[k].sku === want).map(k => ({ node: node(k) })) } } }); }
+    }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k'; env.SHOPIFY_STORE_DOMAIN = env.SHOPIFY_STORE_DOMAIN || 'shop.example.com'; env.SHOPIFY_CLIENT_ID = env.SHOPIFY_CLIENT_ID || 'c'; env.SHOPIFY_CLIENT_SECRET = env.SHOPIFY_CLIENT_SECRET || 's';
+  sq.prepare("DELETE FROM app_config WHERE key IN ('veeqo_stock_topup', 'shopify_infinite')").run();
+  sq.prepare("DELETE FROM veeqo_stock_log").run();
+  // Veeqo: the default is ♾ — every item that isn't Infinite yet becomes Infinite; its old stock on record
+  const v1 = await post('/veeqo/stock-topup', { run: true }), vl = sq.prepare("SELECT sku, old_available, note FROM veeqo_stock_log WHERE note = '♾ set to Infinite' ORDER BY id").all();
+  check('Veeqo: V-21 (40) and V-23 (4 available) → ♾ Infinite (only {infinite:true} sent); V-22 already Infinite left alone; each one\'s old stock kept with "♾ set to Infinite"',
+    v1.ok && vputs.length === 2 && vputs.every(p => p.infinite === true && p.physical_stock_level === undefined) && !vputs.some(p => p.id === 22)
+      && JSON.stringify(vl.map(r => [r.sku, r.old_available])) === '[["V-21",40],["V-23",4]]', { v1, vputs, vl });
+  const v2 = await post('/veeqo/stock-topup', { run: true });
+  check('…run again → nothing to change (all Infinite); the card says ♾ is on', v2.ok && vputs.length === 2 && (await get('/veeqo/stock-topup')).config.infinite === true, { v2, vputs });
+  // Shopify: every counted variant → not counted (infinite); its old quantity on record
+  const s1 = await post('/veeqo/shopify-infinite', { run: true });
+  const sl = sq.prepare("SELECT sku, old_qty FROM shopify_inv_log WHERE note = '♾ infinite (not counted)' ORDER BY id").all();
+  check('Shopify: 30-3-4=10 (12) and 31-1-1=2 (3) → not counted (♾); 30-3-4=5 already infinite left alone; old quantities kept',
+    s1.ok && s1.wrapped && JSON.stringify(supd) === JSON.stringify([{ id: 'gid://shopify/InventoryItem/1', tracked: false }, { id: 'gid://shopify/InventoryItem/3', tracked: false }])
+      && JSON.stringify(sl.map(r => [r.sku, r.old_qty])) === '[["30-3-4=10",12],["31-1-1=2",3]]', { s1, supd, sl });
+  // Sold Out shows ♾ for an infinite Shopify item
+  const q1 = await post('/inventory/soldout/qty', { items: [{ platform: 'Shopify', listingId: '9', sku: '30-3-4=10' }] });
+  check('🚫 Sold Out "Now:" for an infinite Shopify item → "♾ infinite (not counted)", no number', q1.results && q1.results[0].qty == null && /♾ infinite/.test(q1.results[0].detail), q1);
+  // Sold Out 0 → counted again at 0 and kept out of the pass; above 0 → infinite again
+  supd.length = 0;
+  const so0 = await post('/inventory/soldout/set-qty', { quantity: 0, by: 'TS', items: [{ platform: 'Shopify', listingId: '9', sku: '30-3-4=10', title: 'Stub' }] });
+  const kept = sq.prepare("SELECT COUNT(*) n FROM shopify_inv_keep WHERE inventory_item_id = 'gid://shopify/InventoryItem/1'").get().n;
+  const s2 = await post('/veeqo/shopify-infinite', { run: true });
+  check('Sold Out 0 → 30-3-4=10 counted again (tracked) and set to 0 — can\'t be bought; the daily ♾ pass leaves it alone',
+    so0.ok && supd.length === 1 && supd[0].tracked === true && sv['gid://shopify/InventoryItem/1'].tracked === true && sv['gid://shopify/InventoryItem/1'].q === 0 && kept === 1 && s2.updated === 0, { so0, supd, kept, s2 });
+  const so5 = await post('/inventory/soldout/set-qty', { quantity: 5, by: 'TS', items: [{ platform: 'Shopify', listingId: '9', sku: '30-3-4=10', title: 'Stub' }] });
+  check('…set to 5 → back to ♾ infinite (not counted), off the Sold Out list; every step on record',
+    so5.ok && sv['gid://shopify/InventoryItem/1'].tracked === false && sq.prepare("SELECT COUNT(*) n FROM shopify_inv_keep").get().n === 0
+      && sq.prepare("SELECT COUNT(*) n FROM shopify_inv_log WHERE sku = '30-3-4=10' AND note IN ('🚫 Sold Out: counted again at 0', '♾ back to infinite (set to 5)')").get().n === 2, so5);
+  // Listing Watch: an infinite Shopify item is saved with no quantity — never "at 0", never "has stock" for another channel
+  const { readFileSync: rfI } = await import('node:fs');
+  const ws = rfI(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('Listing Watch: an infinite Shopify variant → no quantity (never "Shopify at 0", never "Shopify has 888" for eBay / Amazon / Walmart)',
+    /qty: v\.inventoryItem && v\.inventoryItem\.tracked === false \? Infinity : \(v\.inventoryQuantity \|\| 0\) \}\)\);/.test(ws) && /Number\.isFinite\(\+i\.qty\) \? \+i\.qty : null/.test(ws), null);
+  globalThis.fetch = realFetch;
+  sq.prepare("DELETE FROM app_config WHERE key IN ('veeqo_stock_topup', 'shopify_infinite')").run();
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
