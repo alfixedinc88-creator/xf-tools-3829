@@ -12091,6 +12091,10 @@ const _app = {
     if (!testOn) ctx.waitUntil(vstockRun(env, { now: event.scheduledTime || Date.now() }).then(
       r => { if (r && r.updated) console.log('[cron] veeqo stock top-up', JSON.stringify({ checked: r.checked, updated: r.updated, failed: r.failed })); },
       e => console.error('[cron] veeqo stock top-up FAILED', e && e.message)));
+    // ♾ Shopify: every variant not counted (infinite) — right away, then daily at 3 AM New York (owner 2026-11-09)
+    if (!testOn) ctx.waitUntil(shopInfRun(env, { now: event.scheduledTime || Date.now() }).then(
+      r => { if (r && r.updated) console.log('[cron] shopify infinite', JSON.stringify({ checked: r.checked, updated: r.updated, failed: r.failed })); },
+      e => console.error('[cron] shopify infinite FAILED', e && e.message)));
     if (!testOn) ctx.waitUntil(autolabelCron(env).then(
       r => { if (!r || !r.skipped) console.log('[cron] autolabel', JSON.stringify(r)); },
       e => console.error('[cron] autolabel FAILED', e && e.message)
@@ -30460,7 +30464,7 @@ async function handleVeeqoRoute(url, method, request, env, session) {
   if (path === '/veeqo/stock-topup' && method === 'GET') {
     const c = await vstockLoad(env);
     const log = await d1All(env, 'SELECT * FROM veeqo_stock_log ORDER BY id DESC LIMIT 200');
-    return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, passActive: !!c.passActive, nextPage: c.page || 1, lastError: c.lastError || '', log });
+    return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to, infinite: c.infinite !== false }, shopify: await shopInfStatus(env), lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, passActive: !!c.passActive, nextPage: c.page || 1, lastError: c.lastError || '', log });
   }
   // GET /veeqo/stock-topup/items?page=N — read-only list of every Veeqo item
   // per warehouse: is it set to Infinite, how much is available, and the
@@ -30479,12 +30483,23 @@ async function handleVeeqoRoute(url, method, request, env, session) {
       catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); }
     }
     const below = b.below != null ? parseInt(b.below, 10) : c.below, to = b.to != null ? parseInt(b.to, 10) : c.to;
-    if (!(below >= 0) || !(to > below) || to > 99999) return veeqoResp({ ok: false, error: 'Set "at or below" lower than "set to" (e.g. 88 → 888)' }, 400);
-    const next = { ...c, on: b.on != null ? !!b.on : c.on, below, to };
+    const infinite = b.infinite != null ? !!b.infinite : c.infinite !== false;
+    if (!infinite && (!(below >= 0) || !(to > below) || to > 99999)) return veeqoResp({ ok: false, error: 'Set "at or below" lower than "set to" (e.g. 88 → 888)' }, 400);
+    const next = { ...c, on: b.on != null ? !!b.on : c.on, below, to, infinite, ...(infinite && c.infinite === false ? { infStarted: null } : {}) };
     await vstockSave(env, next);
     await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, by_user, note) VALUES (?,?,?,?,?)')
-      .bind(new Date().toISOString(), '', '', who, `Settings: ${next.on ? 'ON' : 'OFF'} · at or below ${below} → set to ${to}`).run();
-    return veeqoResp({ ok: true, config: { on: next.on, below, to } });
+      .bind(new Date().toISOString(), '', '', who, `Settings: ${next.on ? 'ON' : 'OFF'} · ${infinite ? '♾ every item Infinite' : `at or below ${below} → set to ${to}`}`).run();
+    return veeqoResp({ ok: true, config: { on: next.on, below, to, infinite } });
+  }
+
+  // ♾ Shopify: every variant not counted (infinite); Sold Out at 0 counts it again (owner 2026-11-09)
+  if (path === '/veeqo/shopify-infinite' && method === 'POST') {
+    const b = await request.json().catch(() => ({})), who = String(session.displayName || session.username || 'mgmt').slice(0, 40);
+    if (b.run) { try { return veeqoResp(await shopInfRun(env, { manual: true, by: who, maxUpdates: 120 })); } catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); } }
+    const c = await shopInfLoad(env), on = b.on != null ? !!b.on : c.on;
+    await shopInfSave(env, { ...c, on, ...(on && !c.on ? { started: null } : {}) });
+    await env.DB.prepare('INSERT INTO shopify_inv_log (ts, by_user, note) VALUES (?,?,?)').bind(new Date().toISOString(), who, `Settings: ♾ Shopify infinite ${on ? 'ON' : 'OFF'}`).run();
+    return veeqoResp({ ok: true, shopify: await shopInfStatus(env) });
   }
 
   // Auto Label + channel cancellation watch (mgmt only, like the rest above)
@@ -33335,7 +33350,10 @@ async function autolabelSaveLastRun(env, result) {
 // 3 AM New York time — a full pass over every item, spread over the cron
 // ticks until it reaches the last page. ▶ Check now starts a full pass too.
 const VSTOCK_KEY = 'veeqo_stock_topup';
-const VSTOCK_DEFAULTS = { on: true, below: 88, to: 888 };
+// ♾ Owner (2026-11-09): "we don't need Veeqo doing the quantities control — change all the Veeqo quantities to infinite; we take
+// the market listing down for sold out, so no order comes for it". infinite: every Veeqo item in every warehouse is set to
+// Infinite (a full pass right away, then every day at 3 AM for new items); its old stock is kept in veeqo_stock_log first.
+const VSTOCK_DEFAULTS = { on: true, below: 88, to: 888, infinite: true };
 async function vstockTables(env) {
   await autolabelEnsureTables(env);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS veeqo_stock_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, title TEXT,
@@ -33349,9 +33367,9 @@ async function vstockLoad(env) {
 async function vstockSave(env, c) { await autolabelSetKey(env, VSTOCK_KEY, JSON.stringify(c)); }
 // One stock change in Veeqo. A 2xx with an empty / non-JSON body still counts
 // as done (Veeqo saved it). Too many requests (429) → wait, then try once more.
-async function vstockPut(env, sellableId, wid, physical, wait) {
+async function vstockPut(env, sellableId, wid, physical, wait, infinite) {
   const path = `/sellables/${sellableId}/warehouses/${wid}/stock_entry`;
-  const body = JSON.stringify({ stock_entry: { physical_stock_level: physical, infinite: false } });
+  const body = JSON.stringify({ stock_entry: infinite ? { infinite: true } : { physical_stock_level: physical, infinite: false } });
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(VEEQO_BASE + path, { method: 'PUT', body, headers: {
       'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } });
@@ -33373,6 +33391,8 @@ async function vstockRun(env, o) {
   const now = o.now ? new Date(o.now) : new Date();
   const nyDay = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   const nyHour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' }).format(now), 10);
+  const inf = c.infinite !== false;
+  if (inf && !c.infStarted && !c.passActive) { c.passActive = true; c.page = 1; c.infStarted = now.toISOString(); } // ♾ turned on → every item right away
   if (!c.passActive) {
     // A full pass starts: the first time ever, every day at 3 AM (New York), or on ▶ Check now.
     const first = !c.lastFullPass && !c.firstStarted, at3 = nyHour === 3 && c.lastPassDay !== nyDay;
@@ -33380,7 +33400,7 @@ async function vstockRun(env, o) {
     c.passActive = true; c.page = 1; c.firstStarted = true; if (at3) c.lastPassDay = nyDay;
   }
   const below = Number(c.below), to = Number(c.to), maxPages = o.maxPages || 10, maxUpdates = o.maxUpdates || 60, by = o.by || 'auto';
-  if (!(to > below)) return { skipped: 'bad settings' };
+  if (!inf && !(to > below)) return { skipped: 'bad settings' };
   let page = o.fromStart ? 1 : (parseInt(c.page, 10) || 1), checked = 0, updated = 0, failed = 0, wrapped = false, stopped = '', inARow = 0, firstError = '';
   const changes = [], whFails = {}, whSkipped = {}, wait = o.wait || vstockSleep;
   c.lastError = '';
@@ -33395,19 +33415,19 @@ async function vstockRun(env, o) {
           checked++;
           const phys = Number(se.physical_stock_level) || 0, alloc = Math.max(0, Number(se.allocated_stock_level) || 0);
           const avail = se.available_stock_level != null ? Number(se.available_stock_level) : phys - alloc;
-          if (avail > below) continue;
+          if (!inf && avail > below) continue; // ♾ mode: every item that isn't Infinite yet
           if (updated + failed >= maxUpdates || stopped) { stopped = stopped || 'limit'; continue; }
-          const newPhys = to + alloc; // so what's available becomes `to`
+          const newPhys = inf ? null : to + alloc; // so what's available becomes `to`
           const wid = se.warehouse_id || (se.warehouse && se.warehouse.id);
           const sku = String(sb.sku_code || '').slice(0, 80), title = String(p.title || sb.title || '').slice(0, 120);
           if (whSkipped[wid]) continue; // Veeqo keeps refusing this warehouse this run — don't hammer it
           try {
             if (updated + failed > 0) await wait(250); // stay under Veeqo's rate limit
-            await vstockPut(env, sb.id, wid, newPhys, wait);
+            await vstockPut(env, sb.id, wid, newPhys, wait, inf);
             updated++; inARow = 0;
             await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
-              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, newPhys, by, '').run();
-            changes.push({ sku, from: avail, to: newPhys - alloc });
+              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, newPhys, by, inf ? '♾ set to Infinite' : '').run();
+            changes.push({ sku, from: avail, to: inf ? '∞' : newPhys - alloc });
           } catch (e) {
             failed++; inARow++;
             const msg = String(e.message || e).slice(0, 180);
@@ -33465,6 +33485,89 @@ async function vstockItems(env, page) {
     out.next++;
   }
   return out;
+}
+
+// ── ♾ Shopify: every variant not counted = infinite (owner 2026-11-09) ──
+// "For our Shopify store change all the quantities to infinite also." Shopify's "Track quantity" off = always sellable. A full
+// pass right away, then every day at 3 AM (New York) for new products; a few pages a cron tick, the cursor kept. A variant
+// 🚫 Sold Out set to 0 is counted again at 0 (so it can't be bought) and kept out of the pass (shopify_inv_keep) until it is set
+// above 0 again. Every change kept in shopify_inv_log (SKU, was counted / quantity, who, when).
+const SHOPINF_KEY = 'shopify_infinite';
+async function shopInfTables(env) {
+  await autolabelEnsureTables(env);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS shopify_inv_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, title TEXT, variant_id TEXT,
+    inventory_item_id TEXT, old_tracked INTEGER, old_qty INTEGER, new_tracked INTEGER, by_user TEXT, note TEXT)`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS shopify_inv_keep (inventory_item_id TEXT PRIMARY KEY, sku TEXT, at TEXT, by_user TEXT)').run();
+}
+async function shopInfLoad(env) {
+  await shopInfTables(env);
+  let c = {}; try { c = JSON.parse(await autolabelGetKey(env, SHOPINF_KEY) || '{}') || {}; } catch (_) {}
+  return { on: true, cursor: null, ...c };
+}
+async function shopInfSave(env, c) { await autolabelSetKey(env, SHOPINF_KEY, JSON.stringify(c)); }
+async function shopInfStatus(env) {
+  try {
+    const c = await shopInfLoad(env);
+    const log = await d1All(env, 'SELECT ts, sku, title, old_tracked, old_qty, new_tracked, by_user, note FROM shopify_inv_log ORDER BY id DESC LIMIT 100');
+    const kept = ((await d1First(env, 'SELECT COUNT(*) n FROM shopify_inv_keep')) || {}).n || 0;
+    return { on: !!c.on, passActive: !!c.passActive, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, lastError: c.lastError || '', kept, log };
+  } catch (e) { return { error: e.message }; }
+}
+async function shopInfSetTracked(env, inventoryItemId, tracked) {
+  const m = `mutation($id: ID!, $input: InventoryItemInput!) { inventoryItemUpdate(id: $id, input: $input) { inventoryItem { id tracked } userErrors { field message } } }`;
+  const d = await shopifyGraphQL(env, m, { id: inventoryItemId, input: { tracked } });
+  const errs = (d.inventoryItemUpdate && d.inventoryItemUpdate.userErrors) || [];
+  if (errs.length) throw new Error(errs.map(e => e.message).join(' | '));
+}
+async function shopInfRun(env, o) {
+  o = o || {};
+  const c = await shopInfLoad(env);
+  if (!c.on && !o.manual) return { skipped: 'off' };
+  const now = o.now ? new Date(o.now) : new Date();
+  const nyDay = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const nyHour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' }).format(now), 10);
+  if (!c.passActive) {
+    const first = !c.started, at3 = nyHour === 3 && c.lastPassDay !== nyDay;
+    if (!(o.manual || first || at3)) return { skipped: 'waits for 3 AM' };
+    c.passActive = true; c.cursor = null; c.started = c.started || now.toISOString(); if (at3) c.lastPassDay = nyDay;
+  }
+  const by = o.by || 'auto', maxPages = o.maxPages || 5, maxUpdates = o.maxUpdates || 60, wait = o.wait || vstockSleep;
+  const keep = new Set((await d1All(env, 'SELECT inventory_item_id FROM shopify_inv_keep')).map(r => r.inventory_item_id));
+  const q = `query($after: String) { productVariants(first: 100, after: $after) { pageInfo { hasNextPage endCursor }
+    edges { node { id sku title inventoryQuantity product { title } inventoryItem { id tracked } } } } }`;
+  let checked = 0, updated = 0, failed = 0, wrapped = false, stopped = '', firstError = '';
+  c.lastError = '';
+  for (let n = 0; n < maxPages && !stopped; n++) {
+    let pv;
+    try { pv = (await shopifyGraphQL(env, q, { after: c.cursor || null })).productVariants || {}; }
+    catch (e) { c.lastError = String(e.message || e).slice(0, 200); break; }
+    const nodes = (pv.edges || []).map(e => e.node);
+    const todo = nodes.filter(v => { checked++; return v.inventoryItem && v.inventoryItem.tracked && !keep.has(v.inventoryItem.id); });
+    if (updated + failed + todo.length > maxUpdates) { stopped = 'limit'; break; } // this page next time, whole (nothing skipped)
+    for (const v of todo) {
+      const sku = String(v.sku || '').slice(0, 80), title = String((v.product && v.product.title) || '').slice(0, 120) + (v.title && v.title !== 'Default Title' ? ' — ' + v.title : '');
+      try {
+        if (updated + failed > 0) await wait(150);
+        await shopInfSetTracked(env, v.inventoryItem.id, false);
+        updated++;
+        await env.DB.prepare('INSERT INTO shopify_inv_log (ts, sku, title, variant_id, inventory_item_id, old_tracked, old_qty, new_tracked, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
+          .bind(new Date().toISOString(), sku, title, v.id, v.inventoryItem.id, 1, Number.isFinite(+v.inventoryQuantity) ? +v.inventoryQuantity : null, 0, by, '♾ infinite (not counted)').run();
+      } catch (e) {
+        failed++; const msg = String(e.message || e).slice(0, 180); if (!firstError) firstError = `${sku}: ${msg}`;
+        await env.DB.prepare('INSERT INTO shopify_inv_log (ts, sku, title, variant_id, inventory_item_id, old_tracked, by_user, note) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(new Date().toISOString(), sku, title, v.id, v.inventoryItem.id, 1, by, 'FAILED: ' + msg).run().catch(() => {});
+        if (failed >= 10) { stopped = 'errors'; break; }
+      }
+    }
+    if (stopped) break;
+    const pi = pv.pageInfo || {};
+    if (!pi.hasNextPage) { c.cursor = null; c.passActive = false; c.lastFullPass = new Date().toISOString(); wrapped = true; break; }
+    c.cursor = pi.endCursor;
+  }
+  if (stopped === 'errors') c.lastError = 'Stopped after 10 failures — Shopify said: ' + firstError;
+  c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped, stopped, firstError };
+  await shopInfSave(env, c);
+  return { ok: true, checked, updated, failed, wrapped, stopped, firstError };
 }
 
 async function autolabelCron(env) {
@@ -35095,7 +35198,7 @@ async function _soWalmart(env, it, qty) {
 // in a SKU), so: exact SKU search, then the SKU without quotes, then the
 // product ID from the sheet, then the title. A product found whose SKU is
 // NOT this SKU is reported plainly (so "Now: ?" always says why).
-const _SO_SHOPIFY_VARIANT = `id sku title product { id title } inventoryItem { id
+const _SO_SHOPIFY_VARIANT = `id sku title product { id title } inventoryItem { id tracked
   inventoryLevels(first: 10) { edges { node { location { id name } quantities(names: ["available"]) { name quantity } } } } }`;
 async function _soShopifyFind(env, it) {
   const want = String(it.sku || '').trim().toUpperCase();
@@ -35152,6 +35255,10 @@ async function _soShopify(env, it, qty) {
     }
   }
   if (!quantities.length) return { ok: false, error: 'Variant is not stocked at any Shopify location' };
+  // ♾ Owner (2026-11-09): Shopify items are infinite (not counted). Sold Out (0) → counted again at 0, so it can't be bought, and
+  // kept out of the infinite pass; above 0 → the number is saved, then it goes back to infinite.
+  await shopInfTables(env);
+  if (qty === 0) for (const v of variants) if (v.inventoryItem && v.inventoryItem.tracked === false) await shopInfSetTracked(env, v.inventoryItem.id, true);
   // Shopify API 2026-07 requires an @idempotent key on this mutation (real
   // error: "The @idempotent directive is required for this mutation"); a
   // fresh key per change, so a retried request can't apply twice.
@@ -35166,7 +35273,27 @@ async function _soShopify(env, it, qty) {
       quantities: quantities.map(({ changeFromQuantity, ...rest }) => rest) } });
   }
   const errs = (res.inventorySetQuantities && res.inventorySetQuantities.userErrors) || [];
-  return { ok: !errs.length, error: errs.length ? errs.map(e => e.message).join(' | ') : null, detail: `${quantities.length} location(s)` };
+  let inf = '';
+  if (!errs.length) for (const v of variants) {
+    if (!v.inventoryItem) continue;
+    const id = v.inventoryItem.id, now = new Date().toISOString();
+    if (qty === 0) {
+      await env.DB.prepare('INSERT OR REPLACE INTO shopify_inv_keep (inventory_item_id, sku, at, by_user) VALUES (?,?,?,?)').bind(id, String(v.sku || ''), now, 'Sold Out').run();
+      await env.DB.prepare('INSERT INTO shopify_inv_log (ts, sku, variant_id, inventory_item_id, old_tracked, new_tracked, by_user, note) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(now, String(v.sku || ''), v.id, id, v.inventoryItem.tracked === false ? 0 : 1, 1, 'Sold Out', '🚫 Sold Out: counted again at 0').run();
+      inf = ' · counted at 0 (not infinite)';
+    } else {
+      await env.DB.prepare('DELETE FROM shopify_inv_keep WHERE inventory_item_id = ?').bind(id).run();
+      const c = await shopInfLoad(env);
+      if (c.on && v.inventoryItem.tracked !== false) {
+        try { await shopInfSetTracked(env, id, false); inf = ' · ♾ infinite again';
+          await env.DB.prepare('INSERT INTO shopify_inv_log (ts, sku, variant_id, inventory_item_id, old_tracked, old_qty, new_tracked, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)')
+            .bind(now, String(v.sku || ''), v.id, id, 1, qty, 0, 'Sold Out', '♾ back to infinite (set to ' + qty + ')').run();
+        } catch (e) { inf = ' · ⚠ still counted (' + String(e.message || e).slice(0, 80) + ')'; }
+      }
+    }
+  }
+  return { ok: !errs.length, error: errs.length ? errs.map(e => e.message).join(' | ') : null, detail: `${quantities.length} location(s)${inf}` };
 }
 
 // ── Current quantity on each listing (read only) ──────────────────────────
@@ -35254,6 +35381,8 @@ async function _soQtyShopify(env, it) {
   const f = await _soShopifyFind(env, it);
   const variants = f.variants;
   if (!variants.length) return { error: f.error };
+  // ♾ not counted (infinite) = always sellable
+  if (variants.every(v => v.inventoryItem && v.inventoryItem.tracked === false)) return { qty: null, detail: '♾ infinite (not counted)' };
   const levels = [];
   variants.forEach(v => ((v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.edges) || [])
     .forEach(e => levels.push({ loc: e.node.location.name, qty: ((e.node.quantities || []).find(x => x.name === 'available') || {}).quantity || 0 })));
@@ -35521,13 +35650,13 @@ async function lwPageWalmart(env, cursor) {
 
 async function lwPageShopify(env, cursor) {
   const q = `query($after: String) { productVariants(first: 100, after: $after, query: "product_status:active") {
-    pageInfo { hasNextPage endCursor } edges { node { id sku title inventoryQuantity product { title } } } } }`;
+    pageInfo { hasNextPage endCursor } edges { node { id sku title inventoryQuantity product { title } inventoryItem { tracked } } } } }`;
   const d = await shopifyGraphQL(env, q, { after: cursor || null });
   const pv = d.productVariants || {};
   const items = (pv.edges || []).map(e => e.node).filter(v => v.sku).map(v => ({
     listingId: String(v.id).split('/').pop(), sku: v.sku,
     title: v.product && v.product.title ? v.product.title + (v.title && v.title !== 'Default Title' ? ' — ' + v.title : '') : '',
-    qty: v.inventoryQuantity || 0 }));
+    qty: v.inventoryItem && v.inventoryItem.tracked === false ? Infinity : (v.inventoryQuantity || 0) })); // ♾ not counted: never low, saved as no quantity
   const more = pv.pageInfo && pv.pageInfo.hasNextPage;
   return { items, next: more ? pv.pageInfo.endCursor : null, done: !more };
 }
