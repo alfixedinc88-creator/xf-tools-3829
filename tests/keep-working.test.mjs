@@ -13316,16 +13316,29 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
     check('only Admin / Owner / "price" permission can change a price (server), and 🧪 Test mode never sends one',
       /async function amazonPriceSet[\s\S]{0,120}if \(!apxCan\(session\)\) return apxJ\(\{ ok: false, error: 'Only Admin \/ Owner/.test(wsrc) && /'\/amazon\/update-price', '\/amazon\/price-set',/.test(wsrc), null);
   } finally { globalThis.fetch = realFetch; ['AMAZON_SELLER_ID', 'AMAZON_CLIENT_ID', 'AMAZON_CLIENT_SECRET', 'AMAZON_REFRESH_TOKEN'].forEach(k => { delete env[k]; }); }
-  // the page: the same checks before anything is sent
+  // the page: the same checks before anything is sent. Owner (2026-11-09, 2nd): "give me your prefer price so i can just click on it, like it say 75% … business
+  // price, it just do $0.03 then what we offer in regular price … same ASIN only have to show up once, when we change one price, it auto change both or all the ASIN listing"
   const { readFileSync: rfP } = await import('node:fs'), pf = rfP(fileURLToPath(new URL('../profit.html', import.meta.url)), 'utf8');
-  const chkSrc = pf.slice(pf.indexOf('function pxN('), pf.indexOf('async function pxGet(')) + pf.slice(pf.indexOf('function pxCheck('), pf.indexOf('function pxCheckHtml('));
-  const C = new Function('PX', 'PXE', 'PXREF', chkSrc + '; return function(r){ return pxCheck(r); };');
-  const row = { sku: 'T1', asin: 'B0TEST0001', price: 9.99, info: { business: 9.49, min: 8, max: 14, qd: { type: 'fixed', levels: [{ from: 5, value: 9 }] } } };
-  const pc = (e, ref) => C({ bigJump: 0.3 }, { T1: e }, ref || {})(row);
-  const a = pc({ price: '14.50' }), b = pc({ price: '11.00' }), c = pc({ price: '13.50' }), dd = pc({ price: '13.00' }, { B0TEST0001: { was: 10.49, cpt: 12.75 } }), e2 = pc({ price: '11', business: '11.2' });
-  check('page checks (same as the server, before sending): over the Maximum ❌, a fine +10% ✅ "$9.99 → $11.00 (+10.1%)", +35% ⚠, above the Competitive Price Threshold ⚠ (may lose the Buy Box), business not lower ❌; a 💲 Change prices tab with 🧩 marks',
-    a.bad.some(x => /Maximum \$14\.00/.test(x)) && !b.bad.length && !b.warn.length && b.ok[0] === '✅ $9.99 → $11.00 (+10.1%)' && c.warn.some(x => /\+35%/.test(x)) && dd.warn.some(x => /Competitive Price Threshold \$12\.75/.test(x))
-      && e2.bad.some(x => /LOWER/.test(x)) && /id="pf-tabbtn-price"/.test(pf) && /sel: '#pf-tabbtn-price, #pf-tab-price'/.test(rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), { a, b, c, dd, e2 });
+  const code = pf.slice(pf.indexOf('var PX = null, pxPage = 0'), pf.indexOf('async function pxLogLoad()'));
+  const T = new Function('window', 'document', 'esc', 'toast', 'money', 'mcls', 'DATA', 'wapi', code + '; return { set: function (p) { PX = p; }, E: PXE, REF: PXREF, pxGroups, pxSuggest, pxCheck, pxWantFor };')(
+    {}, { getElementById: () => null }, v => String(v), () => {}, v => '$' + v, () => '', null, async () => ({ ok: true }));
+  const rows = [{ sku: 'T1', asin: 'B0TEST0001', price: 9.99, fba: false, info: { business: 9.49, min: 8, max: 19, qd: null } },
+    { sku: 'T1-FBA', asin: 'B0TEST0001', price: 9.99, fba: true, info: { business: null, min: null, max: 18, qd: null } },
+    { sku: 'T3', asin: 'B0TEST0003', price: 5, fba: false, info: { business: 4.9, min: null, max: 7.5, qd: null } }];
+  const G = T.pxGroups(rows); T.set({ rows, groups: G, bigJump: 0.3 });
+  const g1 = G.find(g => g.asin === 'B0TEST0001'), g3 = G.find(g => g.asin === 'B0TEST0003');
+  const s1 = T.pxSuggest(g1, 75, false), s1b = T.pxSuggest(g1, 75, true), s3 = T.pxSuggest(g3, 75, false);
+  check('one row per ASIN (B0TEST0001 = T1 FBM + T1-FBA together); 💡 suggested = price now + 75%: $9.99 → $17.48 ($17.99 with .99); never above the lowest Maximum ($5 + 75% = $8.75 → stops at Max $7.50)',
+    G.length === 2 && g1.rows.length === 2 && s1.price === 17.48 && !s1.capped && s1b.price === 17.99 && s3.price === 7.5 && s3.capped, { G: G.map(g => g.key), s1, s1b, s3 });
+  T.E[g1.key] = { price: '17.48' };
+  const w1 = T.pxWantFor(g1, g1.rows[0]), w2 = T.pxWantFor(g1, g1.rows[1]), c1 = T.pxCheck(g1);
+  check('…the new price goes to BOTH SKUs of the ASIN; the business price follows at $0.03 less ($17.45) on the SKU that has one (the FBA SKU without one gets none); +75% asks once more; "✅ $9.99 → $17.48 (+75%) on all 2 SKUs"',
+    w1.price === 17.48 && w1.business === 17.45 && w2.price === 17.48 && w2.business === null && !c1.bad.length && c1.warn.some(x => /\+75%/.test(x)) && c1.ok[0] === '✅ $9.99 → $17.48 (+75%) on all 2 SKUs', { w1, w2, c1 });
+  T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
+  T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
+  check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',
+    c2.bad.length === 1 && /^T1-FBA: Over the Maximum \$18\.00/.test(c2.bad[0]) && c3.bad.some(x => /LOWER/.test(x)) && c4.warn.some(x => /Competitive Price Threshold \$12\.75/.test(x))
+      && /id="px-fillall" onclick="pxFillAll\(\)"/.test(pf) && /id="px-pct" step="1" min="1" value="75"/.test(pf) && /id="pf-tabbtn-price"/.test(pf) && /sel: '#pf-tabbtn-price, #pf-tab-price'/.test(rfP(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), { c2, c3, c4 });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
