@@ -13506,15 +13506,21 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
     hk.ok && top(th2.pack) === 'MG:154,AN:154,YY:100' && top(th3.pack).startsWith('FP:170') && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log").get().c >= 6, { th2: th2.pack.top, th3: th3.pack.top });
   const pkH2 = await call('/ship/speed-hide', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: '{"who":"MG"}' });
   check('…a picker can\'t take anyone off (403); FP and DB are not put back on by the next load', pkH2.status === 403 && (await get('/ship/speed-top')).hidden.length === 2, pkH2.status);
-  const pkT = await call('/ship/speed-top', { headers: { 'X-Cred-Token': pk.token } });
-  check('only Admin / Owner see the Top 3 (a picker → 403)', pkT.status === 403, pkT.status);
+  // 👀 Owner (later): "show the top 3 ranking to everyone, only showing like that"
+  const pkT = await (await call('/ship/speed-top', { headers: { 'X-Cred-Token': pk.token } })).json();
+  const pkHr = await call('/ship/speed-hour?kind=pack&who=KL&start=' + encodeURIComponent(D2 + 'T03:00:00.000Z'), { headers: { 'X-Cred-Token': pk.token } });
+  check('everyone sees the Top 3 (a picker gets the 3 names, numbers and times) — but not who was taken off, and tapping for the orders stays Admin / Owner (403)',
+    pkT.ok && pkT.pack.top.length === 3 && Object.keys(pkT.pack.top[0]).sort().join(',') === 'end,n,start,who' && !pkT.hidden && pkHr.status === 403 && (await call('/ship/speed-top')).status === 401, { pkT, hr: pkHr.status });
   // every package size has a time
   const psS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   const fmt = new Function(psS.match(/function _psPaceFmt\(o\) \{[^\n]*\}/)[0] + '; return _psPaceFmt;')();
   check('package sizes: 1 or 2 orders timed show their time too ("41 sec (1 timed)", "35 sec (2 timed)"), 3+ as before ("23 sec"); none timed → "⏱ not timed" with why',
     fmt({ n: 1, ms: 41000 }) === '41 sec (1 timed)' && fmt({ n: 2, ms: 70000 }) === '35 sec (2 timed)' && fmt({ n: 3, ms: 69000 }) === '23 sec' && fmt(null) === '' && /⏱ not timed<\/span>/.test(psS), null);
   const xaS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
-  check('page: 🏆 card on 📦 Packing and 🧭 Picking by scan (Admin / Owner), tap a record → its orders; 🧩 check marks',
+  check('page: workers see only the 3 cards (no ✕, no tap, no notes); Admin / Owner also get ✕, tap for orders, "taken off" and the notes',
+    /var adm = _psPaceAdmin\(\); \/\/ workers: only the 3 cards/.test(psS) && /\(adm \? ' role="button" tabindex="0" onclick="psSpeedHour\(/.test(psS) && /\(!adm \? '' : '<span class="ps-speed-hide"/.test(psS)
+      && /\(adm && \(_psSpeedTop\.hidden \|\| \[\]\)\.length/.test(psS) && /if \(!psCredToken\) \{ els\.forEach/.test(psS), null);
+  check('page: 🏆 card on 📦 Packing and 🧭 Picking by scan, tap a record → its orders (Admin / Owner); 🧩 check marks',
     /id="ps-speed-top-pack"/.test(psS) && /id="ps-speed-top-pickscan"/.test(psS) && /onclick="psSpeedHour\(/.test(psS) && /\/ship\/speed-hour\?kind=/.test(psS) && /sel: '#ps-speed-top-pack'/.test(xaS) && /sel: '#ps-speed-top-pickscan'/.test(xaS), null);
   sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SP%'; DELETE FROM ship_pick_verify WHERE tracking LIKE 'PKS%'; DELETE FROM ship_manifest_log WHERE tracking = 'SPeKL0'; DELETE FROM speed_best2; DELETE FROM speed_hidden; DELETE FROM speed_hidden_log");
 }

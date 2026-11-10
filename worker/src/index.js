@@ -23904,7 +23904,10 @@ async function shipSpeedHide(request, env, session) {
 }
 async function shipSpeedTop(env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
-  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
+  // 👀 Owner (2026-11-10): "show the top 3 ranking to everyone, only showing like that" — everyone signed in sees the 3 names, numbers and
+  // times; who was taken off the board, tap-for-orders and ✕ stay Admin / Owner only.
+  if (!session) return J({ ok: false, error: 'Sign in' }, 401);
+  const isAdm = (session.roles || []).some(r => r === 'admin' || r === 'owner');
   await ensureShipD1Tables(env); await shipPickVerifyTable(env);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who))').run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run();
@@ -23938,7 +23941,8 @@ async function shipSpeedTop(env, session) {
     out[kind] = { top, people: all.length, stillReading: more };
   }
   const hid = ((await env.DB.prepare('SELECT who, by_user AS by, at, why FROM speed_hidden ORDER BY at DESC').all()).results) || [];
-  return J({ ok: true, ...out, hidden: hid });
+  if (!isAdm) { for (const k of Object.keys(out)) out[k] = { top: out[k].top.map(r => ({ who: r.who, n: r.n, start: r.start, end: r.end })) }; return J({ ok: true, ...out, admin: false }); }
+  return J({ ok: true, ...out, hidden: hid, admin: true });
 }
 // 🏆 Tap a Top 3 record (owner 2026-11-10: "click on it to see what's in the order and average how long for those packages"): every order of
 // that person in that 60 minutes — when, order #, label, what was in it (our saved copy of the order), and how long each took:
