@@ -13520,6 +13520,19 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   check('page: workers see only the 3 cards (no ✕, no tap, no notes); Admin / Owner also get ✕, tap for orders, "taken off" and the notes',
     /var adm = _psPaceAdmin\(\); \/\/ workers: only the 3 cards/.test(psS) && /\(adm \? ' role="button" tabindex="0" onclick="psSpeedHour\(/.test(psS) && /\(!adm \? '' : '<span class="ps-speed-hide"/.test(psS)
       && /\(adm && \(_psSpeedTop\.hidden \|\| \[\]\)\.length/.test(psS) && /if \(!psCredToken\) \{ els\.forEach/.test(psS), null);
+  // Owner (2026-11-10): "how come there no average time for package now … when I click on MG name, before I know have the time"
+  {
+    const code = psS.slice(psS.indexOf('function _psSizeKey(s) {'), psS.indexOf('var _psItemCountModalOpen = false;'));
+    const els = {}, mk = id => (els[id] = els[id] || { innerHTML: '' });
+    const run = (admin, on, id) => { const f = new Function('document', '_psPaceAdmin', '_psPaceOn', 'PS_HEAVY_LB_THRESHOLD', 'PS_PACE_BATCH_SEC', 'PS_PACE_GAP_MIN', '_psItemCountSource',
+      code + '; _psRenderItemCountBreakdown(arguments[7], "' + id + '"); return document.getElementById("' + id + '").innerHTML;');
+      const scans = []; for (let k = 0; k < 8; k++) scans.push({ initials: 'MG', tracking: 'T' + k, timestamp: new Date(Date.parse('2026-11-10T16:00:00Z') + k * 25000).toISOString(), itemCount: k === 5 ? 1 : k === 6 ? 3 : 1, weightLb: k === 5 ? 14 : 2 });
+      return f({ getElementById: mk }, () => admin, on, 13, 10, 10, {}, scans); };
+    check('tap a name (the person\'s window): Admin / Owner see the ⏱ time on every package size even with ⏱ Show pace off; the main page still follows the switch; a worker never sees times',
+      /⏱ 25 sec/.test(run(true, false, 'ps-person-modal-itemcount-breakdown')) && /⏱ 25 sec \(1 timed\)/.test(run(true, false, 'ps-person-modal-itemcount-breakdown'))
+        && !/⏱/.test(run(true, false, 'ps-scan-itemcount-breakdown')) && /⏱/.test(run(true, true, 'ps-scan-itemcount-breakdown'))
+        && !/⏱/.test(run(false, true, 'ps-person-modal-itemcount-breakdown')) && !/⏱/.test(run(false, false, 'ps-pick-person-modal-itemcount-breakdown')), run(true, false, 'ps-person-modal-itemcount-breakdown'));
+  }
   check('page: 🏆 card on 📦 Packing and 🧭 Picking by scan, tap a record → its orders (Admin / Owner); 🧩 check marks',
     /id="ps-speed-top-pack"/.test(psS) && /id="ps-speed-top-pickscan"/.test(psS) && /onclick="psSpeedHour\(/.test(psS) && /\/ship\/speed-hour\?kind=/.test(psS) && /sel: '#ps-speed-top-pack'/.test(xaS) && /sel: '#ps-speed-top-pickscan'/.test(xaS), null);
   sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SP%'; DELETE FROM ship_pick_verify WHERE tracking LIKE 'PKS%'; DELETE FROM ship_manifest_log WHERE tracking = 'SPeKL0'; DELETE FROM speed_best2; DELETE FROM speed_hidden; DELETE FROM speed_hidden_log");
