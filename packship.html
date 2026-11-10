@@ -6356,7 +6356,7 @@ function _psSpeedHourLbl(start) { var t = Date.parse(start); if (isNaN(t)) retur
 var _psSpeedTopAt = 0;
 window.psLoadSpeedTop = function(kind, quiet) { // both cards from one call; quiet = only if not loaded in the last 2 min
   var els = ['pack', 'pickscan'].map(function(k) { return document.getElementById('ps-speed-top-' + k); });
-  if (!_psPaceAdmin() || !psCredToken) { els.forEach(function(e) { if (e) e.style.display = 'none'; }); return; }
+  if (!psCredToken) { els.forEach(function(e) { if (e) e.style.display = 'none'; }); return; } // 👀 everyone signed in sees the Top 3 (owner 2026-11-10)
   if (quiet && Date.now() - _psSpeedTopAt < 120000) return; _psSpeedTopAt = Date.now();
   els.forEach(function(e) { if (!e) return; e.style.display = 'block'; if (!e.innerHTML) e.innerHTML = '<div style="font-size:12px;color:var(--text3)">🏆 loading the Top 3…</div>'; });
   fetch(PS_WORKER + '/ship/speed-top', { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) {
@@ -6366,21 +6366,23 @@ window.psLoadSpeedTop = function(kind, quiet) { // both cards from one call; qui
 };
 function _psSpeedTopPaint(kind) {
   var el = document.getElementById('ps-speed-top-' + kind), D = _psSpeedTop[kind]; if (!el || !D) return;
+  var adm = _psPaceAdmin(); // workers: only the 3 cards (owner: "only showing like that"); Admin / Owner: + ✕, tap for orders, the notes
   var medal = ['🥇', '🥈', '🥉'], today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   el.innerHTML = '<div style="border:1.5px solid #d4a017;background:var(--bg2);border-radius:10px;padding:8px 12px">'
     + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13px;flex:1">🏆 Top 3 — most orders in 60 minutes (' + (kind === 'pack' ? '📦 Packing' : '🧭 Picking by scan') + ')</b>'
-    + '<span onclick="psLoadSpeedTop(\'' + kind + '\')" style="cursor:pointer;font-size:12px;color:var(--accent)">↻</span><span style="font-size:10px;color:var(--text3)">only Admin / Owner see this</span></div>'
+    + '<span onclick="psLoadSpeedTop(\'' + kind + '\')" style="cursor:pointer;font-size:12px;color:var(--accent)">↻</span>' + (adm ? '<span style="font-size:10px;color:var(--text3)">everyone sees the 3 names · ✕ and tap are Admin / Owner only</span>' : '') + '</div>'
     + (D.top.length ? '<div style="display:flex;flex-wrap:wrap;gap:8px">' + D.top.map(function(r, i) {
         var nd = new Date(Date.parse(r.start)).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today;
-        return '<div class="ps-speed-top-row" role="button" tabindex="0" onclick="psSpeedHour(\'' + kind + '\',' + i + ')" title="Tap: every order of that hour — what was in it, how long each took" style="flex:1 1 200px;cursor:pointer;padding:6px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg)">'
-          + '<span class="ps-speed-hide" onclick="event.stopPropagation();psSpeedHide(\'' + _psAlEsc(r.who).replace(/'/g, '') + '\')" title="Not working here any more — take off the board (record kept; ↩ put back any time)" style="float:right;font-size:11px;color:var(--text3);cursor:pointer">✕</span>'
+        return '<div class="ps-speed-top-row"' + (adm ? ' role="button" tabindex="0" onclick="psSpeedHour(\'' + kind + '\',' + i + ')" title="Tap: every order of that hour — what was in it, how long each took"' : '') + ' style="flex:1 1 200px;cursor:pointer;padding:6px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg)">'
+          + (!adm ? '' : '<span class="ps-speed-hide" onclick="event.stopPropagation();psSpeedHide(\'' + _psAlEsc(r.who).replace(/'/g, '') + '\')" title="Not working here any more — take off the board (record kept; ↩ put back any time)" style="float:right;font-size:11px;color:var(--text3);cursor:pointer">✕</span>')
           + '<div style="font-size:15px;font-weight:800">' + medal[i] + ' ' + _psAlEsc(r.who) + ' <span style="font-family:var(--mono);color:var(--accent)">' + r.n + '</span> <span style="font-size:11px;font-weight:600;color:var(--text3)">an hour</span>' + (nd ? ' <span style="font-size:10px;font-weight:800;color:#b45309">NEW TODAY</span>' : '') + '</div>'
           + '<div style="font-size:11px;color:var(--text3)">' + _psSpeedHourLbl(r.start) + '</div></div>'; }).join('') + '</div>'
       : '<div style="font-size:12px;color:var(--text3)">No hour on record yet.</div>')
-    + (D.stillReading ? '<div style="font-size:11px;color:#b45309;margin-top:4px">⏳ Still reading older days — tap ↻ in a moment for the full board.</div>' : '')
-    + ((_psSpeedTop.hidden || []).length ? '<details class="ps-speed-hidden" style="font-size:11px;color:var(--text3);margin-top:4px"><summary style="cursor:pointer">🙈 ' + _psSpeedTop.hidden.length + ' taken off the board (not working here)</summary>'
+    + (adm && D.stillReading ? '<div style="font-size:11px;color:#b45309;margin-top:4px">⏳ Still reading older days — tap ↻ in a moment for the full board.</div>' : '')
+    + (adm && (_psSpeedTop.hidden || []).length ? '<details class="ps-speed-hidden" style="font-size:11px;color:var(--text3);margin-top:4px"><summary style="cursor:pointer">🙈 ' + _psSpeedTop.hidden.length + ' taken off the board (not working here)</summary>'
       + _psSpeedTop.hidden.map(function(h) { return '<div>' + _psAlEsc(h.who) + ' — ' + _psAlEsc(h.why || '') + ' · ' + _psAlEsc(h.by || '') + ' <a href="javascript:void 0" onclick="psSpeedHide(\'' + _psAlEsc(h.who).replace(/'/g, '') + '\', true)">↩ put back</a></div>'; }).join('') + '</details>' : '')
-    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did in any 60 minutes in a row (from any minute — not a clock hour). One label = one order; ' + (kind === 'pack' ? 'a stack of 3+ labels scanned seconds apart (scanned in one go) counts once. ' : '') + 'A record stays until someone beats it; a tie keeps who did it first.</div></div>';
+    + (!adm ? '</div>' : '')
+    + (!adm ? '' : '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did in any 60 minutes in a row (from any minute — not a clock hour). One label = one order; ' + (kind === 'pack' ? 'a stack of 3+ labels scanned seconds apart (scanned in one go) counts once. ' : '') + 'A record stays until someone beats it; a tie keeps who did it first.</div></div>');
 }
 window.psSpeedHide = function(who, undo) {
   if (!undo && !confirm('Take ' + who + ' off the Top 3 boards (not working here any more)?\n\nTheir record is kept — ↩ put back any time.')) return;
