@@ -22310,9 +22310,13 @@ async function amazonPrices(url, env, session) {
   await apxTables(env);
   const rows = (await env.DB.prepare('SELECT l.*, i.business, i.min, i.max, i.qd, i.issues, i.at info_at, i.price live_price FROM amz_price_list l LEFT JOIN amz_price_info i ON i.sku = l.sku').all()).results || [];
   const log = (await env.DB.prepare('SELECT * FROM amz_price_log ORDER BY id DESC LIMIT 300').all()).results || [];
+  // 📅 Owner (2026-11-10): "recording the time and date when we just updated, then next week we will try to increase it again" — each SKU's last
+  // price change that Amazon accepted (when, who, old → new), from the whole record (not only the 300 shown)
+  const lastBy = {}; ((await env.DB.prepare('SELECT l.sku, l.at, l.by_user, l.old_price, l.new_price FROM amz_price_log l JOIN (SELECT sku, MAX(id) mid FROM amz_price_log WHERE ok = 1 GROUP BY sku) m ON m.mid = l.id').all()).results || [])
+    .forEach(x => { lastBy[x.sku] = { at: x.at, by: x.by_user, old: x.old_price, new: x.new_price }; });
   const at = rows.reduce((a, r) => (r.loaded_at || '') > a ? r.loaded_at : a, '');
   return apxJ({ ok: true, loadedAt: at || null, canChange: apxCan(session), bigJump: APX_BIG_JUMP,
-    rows: rows.map(r => ({ sku: r.sku, asin: r.asin, title: r.title, price: r.live_price != null ? r.live_price : r.price, qty: r.qty, fba: /AMAZON/i.test(r.channel || ''), status: r.status,
+    rows: rows.map(r => ({ last: lastBy[r.sku] || null, sku: r.sku, asin: r.asin, title: r.title, price: r.live_price != null ? r.live_price : r.price, qty: r.qty, fba: /AMAZON/i.test(r.channel || ''), status: r.status,
       info: r.info_at ? { business: r.business, min: r.min, max: r.max, qd: r.qd ? JSON.parse(r.qd) : null, issues: JSON.parse(r.issues || '[]'), at: r.info_at } : null })), log });
 }
 // Amazon's listings report: every listing with its price, quantity, channel and status (the same report Listing watch reads)

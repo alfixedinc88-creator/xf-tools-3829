@@ -13308,6 +13308,10 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
     check('…kept in 🕘 History: TS · T1 · $9.99 → $13.50 · business $9.49 · min $8 · max $14 · "Amazon accepted it"; the list shows $13.50',
       lg.length === 1 && lg[0].by_user === 'TS' && lg[0].old_price === 9.99 && lg[0].new_price === 13.5 && lg[0].new_business === 9.49 && lg[0].new_min === 8 && lg[0].max === 14 && /accepted/.test(lg[0].result)
         && ((await get('/amazon/prices')).rows.find(r => r.sku === 'T1') || {}).price === 13.5, lg);
+    { const pl2 = await get('/amazon/prices'), L = ((pl2.rows || []).find(r => r.sku === 'T1') || {}).last || {}, L2 = ((pl2.rows || []).find(r => r.sku === 'T2') || {}).last;
+      // Owner (2026-11-10): "recording the time and date when we just updated, then next week we will try to increase it again"
+      check('📅 each listing carries its last change Amazon accepted: T1 — when, TS, $9.99 → $13.50 (refused / not-sent tries don\'t count); T2 never changed → none',
+        L.by === 'TS' && L.old === 9.99 && L.new === 13.5 && /^\d{4}-\d{2}-\d{2}T/.test(L.at || '') && L2 === null, { L, L2 }); }
     const b2 = await post('/amazon/price-set', { sku: 'T1', price: 12, business: 11.5 }), body2 = sent[1] && sent[1].patches[0].value;
     check('price + business price together (business lower, above the tier) → both sent, the rest kept',
       b2.ok && ((body2 || []).find(o => o.audience === 'B2B') || {}).our_price[0].schedule[0].value_with_tax === 11.5 && ((body2 || []).find(o => o.audience === 'ALL') || {}).our_price[0].schedule[0].value_with_tax === 12, b2);
@@ -13322,8 +13326,8 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   // price, it just do $0.03 then what we offer in regular price … same ASIN only have to show up once, when we change one price, it auto change both or all the ASIN listing"
   const { readFileSync: rfP } = await import('node:fs'), pf = rfP(fileURLToPath(new URL('../profit.html', import.meta.url)), 'utf8');
   const code = pf.slice(pf.indexOf('var PX = null, pxPage = 0'), pf.indexOf('async function pxLogLoad()'));
-  const T = new Function('window', 'document', 'esc', 'toast', 'money', 'mcls', 'DATA', 'wapi', code + '; return { set: function (p) { PX = p; }, E: PXE, REF: PXREF, pxGroups, pxSuggest, pxCheck, pxWantFor };')(
-    {}, { getElementById: () => null }, v => String(v), () => {}, v => '$' + v, () => '', null, async () => ({ ok: true }));
+  const T = new Function('window', 'document', 'esc', 'toast', 'money', 'mcls', 'DATA', 'wapi', 'USER', code + '; return { set: function (p) { PX = p; }, E: PXE, REF: PXREF, STEP: PX_STEP, pxGroups, pxSuggest, pxCheck, pxWantFor, pxLastHtml };')(
+    {}, { getElementById: () => null }, v => String(v), () => {}, v => '$' + v, () => '', null, async () => ({ ok: true }), null);
   const rows = [{ sku: 'T1', asin: 'B0TEST0001', price: 9.99, fba: false, info: { business: 9.49, min: 8, max: 19, qd: null } },
     { sku: 'T1-FBA', asin: 'B0TEST0001', price: 9.99, fba: true, info: { business: null, min: null, max: 18, qd: null } },
     { sku: 'T3', asin: 'B0TEST0003', price: 5, fba: false, info: { business: 4.9, min: null, max: 7.5, qd: null } }];
@@ -13332,6 +13336,14 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   const s1 = T.pxSuggest(g1, 75, false), s1b = T.pxSuggest(g1, 75, true), s3 = T.pxSuggest(g3, 75, false);
   check('one row per ASIN (B0TEST0001 = T1 FBM + T1-FBA together); 💡 suggested = price now + 75%: $9.99 → $17.48 ($17.99 with .99); never above the lowest Maximum ($5 + 75% = $8.75 → stops at Max $7.50)',
     G.length === 2 && g1.rows.length === 2 && s1.price === 17.48 && !s1.capped && s1b.price === 17.99 && s3.price === 7.5 && s3.capped, { G: G.map(g => g.key), s1, s1b, s3 });
+  { const st1 = T.pxSuggest(g1, T.STEP, false), st3 = T.pxSuggest(g3, T.STEP, false);
+    g1.rows[0].last = { at: new Date(Date.now() - 2 * 864e5).toISOString(), by: 'TS', old: 7.99, new: 9.99 }; g1.rows[1].last = { at: new Date(Date.now() - 9 * 864e5).toISOString(), by: 'NB', old: 7.5, new: 9.99 };
+    const lh = T.pxLastHtml(g1), pfS = pf;
+    check('⬆ +30% next to 💡: $9.99 → $12.99 (never above the Maximum: $5 → $6.50, under T3\'s $7.50); 📅 Last changed = the newest of the ASIN\'s SKUs (TS, $7.99 → $9.99, 2 days ago); "Hide ones changed in the last 7 days"; ⬆ Fill all +30%',
+      T.STEP === 30 && st1.price === 12.99 && !st1.capped && st3.price === 6.5 && !st3.capped && /📅 [^<]*· TS<div>\$7\.99 → <b>\$9\.99<\/b> · <span class="muted">2 days ago<\/span>/.test(lh)
+        && /id="px-recent"/.test(pfS) && /if \(rec\) \{ var L = pxGLast\(g\); if \(L && Date\.now\(\) - Date\.parse\(L\.at\) < PX_RECENT_DAYS \* 864e5\) return false; \}/.test(pfS)
+        && /onclick="pxFillAll\(PX_STEP\)">⬆ Fill all shown \+30%/.test(pfS) && /onclick="pxUseSuggest\(' \+ k \+ ',PX_STEP\)">⬆ \+' \+ PX_STEP/.test(pfS), { st1, st3, lh });
+    delete g1.rows[0].last; delete g1.rows[1].last; }
   T.E[g1.key] = { price: '17.48' };
   const w1 = T.pxWantFor(g1, g1.rows[0]), w2 = T.pxWantFor(g1, g1.rows[1]), c1 = T.pxCheck(g1);
   check('…the new price goes to BOTH SKUs of the ASIN; the business price follows at $0.03 less ($17.45) on the SKU that has one (the FBA SKU without one gets none); +75% asks once more; "✅ $9.99 → $17.48 (+75%) on all 2 SKUs"',
