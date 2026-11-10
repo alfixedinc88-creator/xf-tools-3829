@@ -13108,7 +13108,7 @@ console.log('\n⏱ Picking / Packing time: one label = one order; ⏱ time an or
   check('…the Package sizes chips show it: "5 × 1 item ⏱ 30 sec" · "4 × 1 item over 13 lb ⏱ 1.5 min" · "4 × 2 items ⏱ 60 sec" (only when an Admin / Owner shows pace)',
     /<b>5<\/b><span>× 1 item<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 30 sec<\/span>/.test(el.innerHTML) && /× 1 item over 13 lb<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 1.5 min/.test(el.innerHTML)
       && /× 2 items<\/span><span class="ps-itemcount-pace"[^>]*>⏱ 60 sec/.test(el.innerHTML) && /average time an order \(one label, however many pieces\)/.test(el.innerHTML)
-      && /var pace = \(typeof _psPaceOn !== 'undefined' && _psPaceOn && _psPaceAdmin\(\)\) \? _psPaceBySize\(scans\) : null;/.test(ph), el.innerHTML);
+      && /var pace = \(typeof _psPaceAdmin === 'function' && _psPaceAdmin\(\) && \(\(typeof _psPaceOn !== 'undefined' && _psPaceOn\) \|\| \/person-modal\/\.test\(elId\)\)\) \? _psPaceBySize\(scans\) : null;/.test(ph), el.innerHTML); // + a person's window always (owner 2026-11-10)
 }
 
 console.log('\n💲 Order lookup card: no label price (screenshots go to customers)');
