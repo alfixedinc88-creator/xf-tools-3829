@@ -13431,7 +13431,7 @@ console.log('\n♾ Veeqo + Shopify infinite: every item Infinite / not counted; 
   sq.prepare("DELETE FROM app_config WHERE key IN ('veeqo_stock_topup', 'shopify_infinite')").run();
 }
 
-console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in one real hour (a record stays until beaten); tap → the orders; every package size timed');
+console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 minutes (a record stays until beaten); tap → the orders; every package size timed');
 {
   // Owner (2026-11-10): "the top 3 most faster one take it over, like MG she able to do the 154 a hour, she will stay on top 1, until someone beat her
   // number, same for the top 1-3" + "they be able to click on it to see what's in the order and average how long … we still missing time for the
@@ -13440,14 +13440,23 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in one real
   sq.exec('CREATE TABLE IF NOT EXISTS ship_pick_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking TEXT, order_num TEXT, by_user TEXT, started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)');
   const ins = sq.prepare('INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials) VALUES (?,?,?,?,?)');
   const fill = (who, day, hourUtc, n, startSec, gap, tag) => { for (let k = 0; k < n; k++) { const t = new Date(Date.parse(day + 'T' + hourUtc + ':00:00Z') + (startSec + k * gap) * 1000).toISOString(); ins.run(day, t, 'SP' + tag + who + k, 'USPS', who); } };
-  sq.exec("CREATE TABLE IF NOT EXISTS speed_best (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, hour TEXT, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best; DELETE FROM app_config WHERE key LIKE 'speed_best_through_%'");
+  sq.exec("CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best2; DELETE FROM app_config WHERE key LIKE 'speed2_done_%'");
   const D1 = new Date(Date.now() - 86400000).toISOString().slice(0, 10), D2 = new Date().toISOString().slice(0, 10); // yesterday / today (new hours are read 2 days back)
   fill('MG', D1, '14', 154, 1, 23, 'a');    // MG: 154 in one clock hour, one every 23 sec
   ins.run(D1, D1 + 'T14:00:30.000Z', 'SPaMG0', 'USPS', 'MG');   // the same label again: one order once
   fill('KL', D1, '15', 120, 0, 29, 'b'); fill('JR', D1, '16', 100, 0, 35, 'c');
   const t1 = await get('/ship/speed-top');
   const top = d => (d.top || []).map(x => x.who + ':' + x.n).join(',');
-  check('Top 3 by the most orders in one real hour: 🥇 MG 154 (9–10 AM) · 🥈 KL 120 · 🥉 JR 100 (the same label twice counts once)', t1.ok && top(t1.pack) === 'MG:154,KL:120,JR:100' && t1.pack.top[0].hour === D1 + 'T14', t1.pack);
+  check('Top 3 by the most orders in 60 minutes: 🥇 MG 154 · 🥈 KL 120 · 🥉 JR 100 (the same label twice counts once); MG\'s 60 minutes start at her first label',
+    t1.ok && top(t1.pack) === 'MG:154,KL:120,JR:100' && t1.pack.top[0].start === D1 + 'T14:00:01.000Z' && t1.pack.top[0].end === D1 + 'T15:00:01.000Z', t1.pack);
+  // Owner (later): "they can't start at an even time — if they start 1:15 and 1:30 to 2:30 is the most, that's their best" (not 1–2, 2–3)
+  fill('YY', D1, '13', 100, 31 * 60, 30, 'y');   // 100 labels from 13:31, one every 30 sec → clock hours would say 58 (13–14) / 42 (14–15)
+  for (let k = 0; k < 80; k++) ins.run(D1, new Date(Date.parse(D1 + 'T19:00:00Z') + k * 2000).toISOString(), 'SPzZZ' + k, 'USPS', 'ZZ');      // a stack of 80 scanned 2 sec apart
+  for (let k = 0; k < 20; k++) ins.run(D1, new Date(Date.parse(D1 + 'T19:05:00Z') + k * 60000).toISOString(), 'SPzZR' + k, 'USPS', 'ZZ'); // + 20 really packed, 1 a minute
+  await get('/ship/speed-top');
+  const yy = sq.prepare("SELECT n, start FROM speed_best2 WHERE kind='pack' AND who='YY'").get(), zz = sq.prepare("SELECT n, batch FROM speed_best2 WHERE kind='pack' AND who='ZZ'").get();
+  check('any 60 minutes, not clock hours: started 1:31 → all 100 in 1:31–2:31 count (clock hours would give 58)', yy && yy.n === 100 && yy.start === D1 + 'T13:31:00.000Z', yy);
+  check('a stack of 80 labels scanned 2 sec apart is not packing: ZZ = 21 (the stack\'s first label + 20 really packed), 79 batch scans not counted', zz && zz.n === 21 && zz.batch === 79, zz);
   fill('AN', D1, '17', 154, 0, 23, 'd');
   const t2 = await get('/ship/speed-top');
   check('…AN also does 154 (a tie): MG stays 🥇 (did it first), AN 🥈, JR drops off', top(t2.pack) === 'MG:154,AN:154,KL:120', t2.pack);
@@ -13463,12 +13472,27 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in one real
   check('🧭 Picking by scan has its own Top 3: MG 30 finished orders in one hour (an unfinished one not counted)', top(t4.pickscan) === 'MG:30', t4.pickscan);
   // tap a record → its orders, what was in them, how long each took
   sq.prepare('INSERT INTO ship_manifest_log (date, tracking, order_num, line_items) VALUES (?,?,?,?)').run(D2, 'SPeKL0', 'ORD-1', JSON.stringify([{ s: '8-8-8=10', q: 2 }, { s: '3-3-2=10', q: 1 }]));
-  const h = await get('/ship/speed-hour?kind=pack&who=KL&hour=' + D2 + 'T03');
+  const h = await get('/ship/speed-hour?kind=pack&who=KL&start=' + encodeURIComponent(D2 + 'T03:00:00.000Z'));
   const o0 = h.orders && h.orders.find(o => o.tracking === 'SPEKL0'), o1 = h.orders && h.orders.find(o => o.tracking === 'SPEKL1');
   check('tap KL 160 → the 160 orders of that hour: order ORD-1 had 8-8-8=10 ×2 + 3-3-2=10 ×1; each order\'s time from the label before (22 sec), average 22 sec (159 timed — the first of the day has nothing before it)',
     h.ok && h.n === 160 && o0 && o0.orderNum === 'ORD-1' && o0.items.length === 2 && o0.items[0].sku === '8-8-8=10' && o0.items[0].qty === 2 && o0.sec === null && /first of the day/.test(o0.why) && o1.sec === 22 && h.avgSec === 22 && h.timed === 159, { n: h.n, o0, o1, avg: h.avgSec, timed: h.timed });
-  const hp = await get('/ship/speed-hour?kind=pickscan&who=MG&hour=' + D1 + 'T18');
+  const hp = await get('/ship/speed-hour?kind=pickscan&who=MG&start=' + encodeURIComponent(D1 + 'T18:00:00.000Z'));
+  const hz = await get('/ship/speed-hour?kind=pack&who=ZZ&start=' + encodeURIComponent(D1 + 'T19:00:00.000Z'));
+  check('…tap ZZ\'s 60 minutes → 21 counted + 79 batch scans shown greyed ("not counted")', hz.ok && hz.n === 21 && hz.batch === 79 && hz.orders.filter(o => o.counted === false).length === 79 && /batch scan/.test(hz.orders[1].why), { n: hz.n, batch: hz.batch });
   check('🧭 tap → each order started → done (90 sec), average 90 sec', hp.ok && hp.n === 30 && hp.avgSec === 90 && hp.timed === 30, { n: hp.n, avg: hp.avgSec });
+  // 🙈 Owner (2026-11-10): "take off the FP and DB because they not working here no more"
+  fill('FP', D2, '05', 170, 0, 20, 'f'); fill('DB', D2, '07', 165, 0, 21, 'g');
+  const th = await get('/ship/speed-top');
+  check('FP (170) and DB (165) are taken off the board as the owner asked (their records kept): 🥇 KL 160 · MG 154 · AN 154; "🙈 2 taken off" on record',
+    top(th.pack) === 'KL:160,MG:154,AN:154' && th.hidden.map(x => x.who).sort().join(',') === 'DB,FP' && sq.prepare("SELECT COUNT(*) c FROM speed_best2 WHERE who IN ('FP','DB')").get().c === 2
+      && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log WHERE action = 'taken off' AND by_user = 'owner request'").get().c === 2, { top: th.pack.top, hidden: th.hidden });
+  const hk = await post('/ship/speed-hide', { who: 'KL' }), th2 = await get('/ship/speed-top');
+  await post('/ship/speed-hide', { who: 'FP', undo: true }); const th3 = await get('/ship/speed-top');
+  await post('/ship/speed-hide', { who: 'KL', undo: true }); await post('/ship/speed-hide', { who: 'FP' });
+  check('✕ (Admin / Owner) takes someone else off too (KL → MG 🥇); ↩ put back brings them back (FP 170 🥇); every change kept with who / when',
+    hk.ok && top(th2.pack) === 'MG:154,AN:154,YY:100' && top(th3.pack).startsWith('FP:170') && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log").get().c >= 6, { th2: th2.pack.top, th3: th3.pack.top });
+  const pkH2 = await call('/ship/speed-hide', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: '{"who":"MG"}' });
+  check('…a picker can\'t take anyone off (403); FP and DB are not put back on by the next load', pkH2.status === 403 && (await get('/ship/speed-top')).hidden.length === 2, pkH2.status);
   const pkT = await call('/ship/speed-top', { headers: { 'X-Cred-Token': pk.token } });
   check('only Admin / Owner see the Top 3 (a picker → 403)', pkT.status === 403, pkT.status);
   // every package size has a time
@@ -13479,7 +13503,7 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in one real
   const xaS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
   check('page: 🏆 card on 📦 Packing and 🧭 Picking by scan (Admin / Owner), tap a record → its orders; 🧩 check marks',
     /id="ps-speed-top-pack"/.test(psS) && /id="ps-speed-top-pickscan"/.test(psS) && /onclick="psSpeedHour\(/.test(psS) && /\/ship\/speed-hour\?kind=/.test(psS) && /sel: '#ps-speed-top-pack'/.test(xaS) && /sel: '#ps-speed-top-pickscan'/.test(xaS), null);
-  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SP%'; DELETE FROM ship_pick_verify WHERE tracking LIKE 'PKS%'; DELETE FROM ship_manifest_log WHERE tracking = 'SPeKL0'; DELETE FROM speed_best");
+  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SP%'; DELETE FROM ship_pick_verify WHERE tracking LIKE 'PKS%'; DELETE FROM ship_manifest_log WHERE tracking = 'SPeKL0'; DELETE FROM speed_best2; DELETE FROM speed_hidden; DELETE FROM speed_hidden_log");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
