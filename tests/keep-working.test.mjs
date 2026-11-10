@@ -13315,6 +13315,8 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
     const b2 = await post('/amazon/price-set', { sku: 'T1', price: 12, business: 11.5 }), body2 = sent[1] && sent[1].patches[0].value;
     check('price + business price together (business lower, above the tier) → both sent, the rest kept',
       b2.ok && ((body2 || []).find(o => o.audience === 'B2B') || {}).our_price[0].schedule[0].value_with_tax === 11.5 && ((body2 || []).find(o => o.audience === 'ALL') || {}).our_price[0].schedule[0].value_with_tax === 12, b2);
+    { const p30 = await post('/amazon/price-set', { sku: 'T1', price: 12.99 });
+      check('⬆ +30% exactly ($9.99 → $12.99, rounded to the cent) is not a "big jump" — sent without asking again; +35% still asks', p30.ok && !p30.needConfirm && !(p30.warn || []).length && big.needConfirm, p30); }
     const rf = (await post('/amazon/price-ref', { asins: ['B0TEST0001'] })).ref || {};
     check('🔎 Amazon\'s reference prices: Was price (90-day typical) $10.49 · Competitive Price Threshold $12.75 · featured offer $9.99',
       rf.B0TEST0001 && rf.B0TEST0001.was === 10.49 && rf.B0TEST0001.cpt === 12.75 && rf.B0TEST0001.featured === 9.99, rf);
@@ -13348,6 +13350,9 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   const w1 = T.pxWantFor(g1, g1.rows[0]), w2 = T.pxWantFor(g1, g1.rows[1]), c1 = T.pxCheck(g1);
   check('…the new price goes to BOTH SKUs of the ASIN; the business price follows at $0.03 less ($17.45) on the SKU that has one (the FBA SKU without one gets none); +75% asks once more; "✅ $9.99 → $17.48 (+75%) on all 2 SKUs"',
     w1.price === 17.48 && w1.business === 17.45 && w2.price === 17.48 && w2.business === null && !c1.bad.length && c1.warn.some(x => /\+75%/.test(x)) && c1.ok[0] === '✅ $9.99 → $17.48 (+75%) on all 2 SKUs', { w1, w2, c1 });
+  T.E[g1.key] = { price: '12.99' }; const c30 = T.pxCheck(g1);
+  check('page: the ⬆ +30% price ($9.99 → $12.99) has no "big jump" warning (rounded to the cent); the table fits a PC screen (8 columns, full width)', !c30.bad.length && !c30.warn.length && c30.ok.length === 1
+    && /#pf-app\.pf-wide \.wrap \{ max-width:none;/.test(pf) && /document\.getElementById\('pf-app'\)\.classList\.toggle\('pf-wide', t === 'price'\);/.test(pf) && (pf.match(/<th[ >]/g) || []).length > 0 && /<th class="l">New business · min<\/th><th class="l">Check<\/th>/.test(pf), c30);
   T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
   T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',
