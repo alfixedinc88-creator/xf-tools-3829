@@ -6349,8 +6349,9 @@ window.psTogglePace = function() {
 // number, same for top 1–3; and they be able to click on it to see what's in the order and average how long". Ranked by the most orders in ONE
 // real clock hour (owner's pick); a record stays until beaten. Tap one → every order of that hour: what was in it, how long each took, average.
 var _psSpeedTop = {};
-function _psSpeedHourLbl(h) { var t = Date.parse(h + ':00:00Z'); if (isNaN(t)) return h;
-  var d = new Date(t), f = function(x) { return x.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: true }).replace(' ', ' '); };
+// 🕐 Any 60 minutes, not a clock hour (owner: "they can't start at an even time — from 1:30 to 2:30 is their best"): "Nov 10, 2026, 1:31 PM–2:31 PM"
+function _psSpeedHourLbl(start) { var t = Date.parse(start); if (isNaN(t)) return String(start || '');
+  var d = new Date(t), f = function(x) { return x.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true }); };
   return d.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' }) + ', ' + f(d) + '–' + f(new Date(t + 3600000)); }
 var _psSpeedTopAt = 0;
 window.psLoadSpeedTop = function(kind, quiet) { // both cards from one call; quiet = only if not loaded in the last 2 min
@@ -6360,23 +6361,32 @@ window.psLoadSpeedTop = function(kind, quiet) { // both cards from one call; qui
   els.forEach(function(e) { if (!e) return; e.style.display = 'block'; if (!e.innerHTML) e.innerHTML = '<div style="font-size:12px;color:var(--text3)">🏆 loading the Top 3…</div>'; });
   fetch(PS_WORKER + '/ship/speed-top', { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok) { els.forEach(function(e) { if (e) e.style.display = 'none'; }); return; }
-    ['pack', 'pickscan'].forEach(function(k) { _psSpeedTop[k] = d[k]; _psSpeedTopPaint(k); });
+    _psSpeedTop.hidden = d.hidden || []; ['pack', 'pickscan'].forEach(function(k) { _psSpeedTop[k] = d[k]; _psSpeedTopPaint(k); });
   }).catch(function() {});
 };
 function _psSpeedTopPaint(kind) {
   var el = document.getElementById('ps-speed-top-' + kind), D = _psSpeedTop[kind]; if (!el || !D) return;
   var medal = ['🥇', '🥈', '🥉'], today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   el.innerHTML = '<div style="border:1.5px solid #d4a017;background:var(--bg2);border-radius:10px;padding:8px 12px">'
-    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13px;flex:1">🏆 Top 3 — most orders in one real hour (' + (kind === 'pack' ? '📦 Packing' : '🧭 Picking by scan') + ')</b>'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13px;flex:1">🏆 Top 3 — most orders in 60 minutes (' + (kind === 'pack' ? '📦 Packing' : '🧭 Picking by scan') + ')</b>'
     + '<span onclick="psLoadSpeedTop(\'' + kind + '\')" style="cursor:pointer;font-size:12px;color:var(--accent)">↻</span><span style="font-size:10px;color:var(--text3)">only Admin / Owner see this</span></div>'
     + (D.top.length ? '<div style="display:flex;flex-wrap:wrap;gap:8px">' + D.top.map(function(r, i) {
-        var nd = new Date(Date.parse(r.hour + ':00:00Z')).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today;
+        var nd = new Date(Date.parse(r.start)).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today;
         return '<div class="ps-speed-top-row" role="button" tabindex="0" onclick="psSpeedHour(\'' + kind + '\',' + i + ')" title="Tap: every order of that hour — what was in it, how long each took" style="flex:1 1 200px;cursor:pointer;padding:6px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg)">'
+          + '<span class="ps-speed-hide" onclick="event.stopPropagation();psSpeedHide(\'' + _psAlEsc(r.who).replace(/'/g, '') + '\')" title="Not working here any more — take off the board (record kept; ↩ put back any time)" style="float:right;font-size:11px;color:var(--text3);cursor:pointer">✕</span>'
           + '<div style="font-size:15px;font-weight:800">' + medal[i] + ' ' + _psAlEsc(r.who) + ' <span style="font-family:var(--mono);color:var(--accent)">' + r.n + '</span> <span style="font-size:11px;font-weight:600;color:var(--text3)">an hour</span>' + (nd ? ' <span style="font-size:10px;font-weight:800;color:#b45309">NEW TODAY</span>' : '') + '</div>'
-          + '<div style="font-size:11px;color:var(--text3)">' + _psSpeedHourLbl(r.hour) + '</div></div>'; }).join('') + '</div>'
+          + '<div style="font-size:11px;color:var(--text3)">' + _psSpeedHourLbl(r.start) + '</div></div>'; }).join('') + '</div>'
       : '<div style="font-size:12px;color:var(--text3)">No hour on record yet.</div>')
-    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did inside one clock hour (one label = one order). A record stays until someone beats it; a tie keeps who did it first.</div></div>';
+    + (D.stillReading ? '<div style="font-size:11px;color:#b45309;margin-top:4px">⏳ Still reading older days — tap ↻ in a moment for the full board.</div>' : '')
+    + ((_psSpeedTop.hidden || []).length ? '<details class="ps-speed-hidden" style="font-size:11px;color:var(--text3);margin-top:4px"><summary style="cursor:pointer">🙈 ' + _psSpeedTop.hidden.length + ' taken off the board (not working here)</summary>'
+      + _psSpeedTop.hidden.map(function(h) { return '<div>' + _psAlEsc(h.who) + ' — ' + _psAlEsc(h.why || '') + ' · ' + _psAlEsc(h.by || '') + ' <a href="javascript:void 0" onclick="psSpeedHide(\'' + _psAlEsc(h.who).replace(/'/g, '') + '\', true)">↩ put back</a></div>'; }).join('') + '</details>' : '')
+    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did in any 60 minutes in a row (from any minute — not a clock hour). One label = one order; ' + (kind === 'pack' ? 'labels scanned seconds apart (a stack scanned in one go) don\'t count. ' : '') + 'A record stays until someone beats it; a tie keeps who did it first.</div></div>';
 }
+window.psSpeedHide = function(who, undo) {
+  if (!undo && !confirm('Take ' + who + ' off the Top 3 boards (not working here any more)?\n\nTheir record is kept — ↩ put back any time.')) return;
+  fetch(PS_WORKER + '/ship/speed-hide', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken }, body: JSON.stringify({ who: who, undo: !!undo }) })
+    .then(function(r) { return r.json(); }).then(function(d) { if (!d || !d.ok) { _psToast((d && d.error) || 'Not changed', 'err'); return; } psLoadSpeedTop('pack'); }).catch(function() { _psToast('Not changed — check WiFi', 'err'); });
+};
 window.psSpeedHour = function(kind, i) {
   var r = _psSpeedTop[kind] && _psSpeedTop[kind].top[i]; if (!r) return;
   var m = document.getElementById('ps-speed-hour'); if (!m) { m = document.createElement('div'); m.id = 'ps-speed-hour'; document.body.appendChild(m); }
@@ -6384,18 +6394,19 @@ window.psSpeedHour = function(kind, i) {
   m.onclick = function(e) { if (e.target === m) m.remove(); };
   var box = '<div style="background:var(--bg2);color:var(--text);border-radius:14px;padding:14px;width:760px;max-width:100%">';
   m.innerHTML = box + '⏳ Loading ' + _psAlEsc(r.who) + '\'s orders…</div>';
-  fetch(PS_WORKER + '/ship/speed-hour?kind=' + kind + '&who=' + encodeURIComponent(r.who) + '&hour=' + encodeURIComponent(r.hour), { headers: { 'X-Cred-Token': psCredToken } })
+  fetch(PS_WORKER + '/ship/speed-hour?kind=' + kind + '&who=' + encodeURIComponent(r.who) + '&start=' + encodeURIComponent(r.start), { headers: { 'X-Cred-Token': psCredToken } })
     .then(function(x) { return x.json(); }).then(function(d) {
       if (!d || !d.ok) { m.innerHTML = box + '<div style="color:var(--red)">⚠ ' + _psAlEsc((d && d.error) || 'Could not load') + '</div></div>'; return; }
       var fmt = function(s) { return s == null ? '' : s < 90 ? s + ' sec' : (Math.round(s / 6) / 10) + ' min'; };
       var t = function(iso) { return iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' }) : ''; };
       var td = 'padding:4px 6px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top';
-      m.innerHTML = box + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:16px;flex:1">' + _psAlEsc(d.who) + ' — ' + d.n + ' orders · ' + _psSpeedHourLbl(d.hour) + '</b>'
+      m.innerHTML = box + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:16px;flex:1">' + _psAlEsc(d.who) + ' — ' + d.n + ' orders · ' + _psSpeedHourLbl(d.start) + '</b>'
         + '<button type="button" onclick="document.getElementById(\'ps-speed-hour\').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">✕</button></div>'
         + '<div id="ps-speed-hour-avg" style="font-size:14px;margin-bottom:8px">⏱ Average <b style="font-family:var(--mono);color:var(--green)">' + (d.avgSec != null ? fmt(d.avgSec) : '—') + '</b> an order'
-        + ' <span style="font-size:11px;color:var(--text3)">(' + d.timed + ' of ' + d.n + ' timed — ' + (kind === 'pack' ? 'from the label before; a batch scan or a break isn\'t timed' : 'started → done') + ')</span></div>'
+        + ' <span style="font-size:11px;color:var(--text3)">(' + d.timed + ' of ' + d.n + ' timed — ' + (kind === 'pack' ? 'from the label before; a batch scan or a break isn\'t timed' : 'started → done') + ')</span>'
+        + (d.batch ? '<div style="font-size:12px;color:#b45309">+ ' + d.batch + ' label' + (d.batch === 1 ? '' : 's') + ' scanned seconds after the one before (a batch) — shown greyed, not counted</div>' : '') + '</div>'
         + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tr>' + ['When', 'Order #', 'What was in it', 'Took'].map(function(h) { return '<th style="' + td + ';text-align:left;font-size:10px;text-transform:uppercase;color:var(--text3)">' + h + '</th>'; }).join('') + '</tr>'
-        + d.orders.map(function(o) { return '<tr><td style="' + td + ';white-space:nowrap">' + t(o.at) + '</td><td style="' + td + ';font-family:var(--mono)">' + _psAlEsc(o.orderNum || o.tracking) + '</td>'
+        + d.orders.map(function(o) { return '<tr' + (o.counted === false ? ' style="opacity:.45" title="' + _psAlEsc(o.why || '') + '"' : '') + '><td style="' + td + ';white-space:nowrap">' + t(o.at) + '</td><td style="' + td + ';font-family:var(--mono)">' + _psAlEsc(o.orderNum || o.tracking) + '</td>'
           + '<td style="' + td + '">' + (o.items.length ? o.items.map(function(x) { return '<span style="font-family:var(--mono)">' + _psAlEsc(x.sku) + '</span> ×' + _psAlEsc(x.qty); }).join('<br>') : '<span style="color:var(--text3)">items not saved</span>') + '</td>'
           + '<td style="' + td + ';white-space:nowrap;font-family:var(--mono);font-weight:700;color:var(--green)">' + (o.sec != null ? fmt(o.sec) : '<span style="color:var(--text3);font-weight:400" title="' + _psAlEsc(o.why || '') + '">—</span>') + '</td></tr>'; }).join('') + '</table></div></div>';
     }).catch(function(e) { m.innerHTML = box + '<div style="color:var(--red)">⚠ ' + _psAlEsc((e && e.message) || 'check WiFi') + '</div></div>'; });

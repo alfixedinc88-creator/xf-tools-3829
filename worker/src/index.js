@@ -23844,71 +23844,126 @@ async function shipPickVerifyTable(env) {
     started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)`).run();
 }
 // 🏆 Owner (2026-11-10): "for Packing and Picking by scan, I want the top 3 fastest — MG did 154 in an hour, she stays on top 1 until someone
-// beats her number, same for top 1–3". Ranked by the most orders a person really did inside ONE clock hour (owner's pick, not the ⏱ pace):
-// 📦 Packing = labels scanned at Packing (ship_scan_log, one label once); 🧭 Picking by scan = orders picked by scan, finished
-// (ship_pick_verify, complete, one label once). UTC hours are New York clock hours too (whole-hour offset). Each person's best hour is kept
-// (speed_best) and replaced only when beaten (more, not equal), so a record stays until someone does more; a tie keeps who did it first.
-// New hours are read from 2 days back each time (already-counted hours can't add twice: only the best is kept). Admin / Owner only.
+// beats her number, same for top 1–3" — ranked by the most orders a person really did in one hour (owner's pick, not the ⏱ pace).
+// Owner (later, photo: KL 163 Aug 31 4–5 PM, no MG): "looks like it was by 1-2, 3-4, like a fixed number — they can't start at an even time: if
+// they start 1:15 and from 1:30 to 2:30 they do the most, that's their best". So: the best 60 MINUTES starting at ANY minute (a sliding hour).
+// 📦 Packing = labels scanned at Packing (ship_scan_log), one label once, and like the ⏱ pace a label scanned under 10 sec after the one before
+// is a batch scan (a stack scanned in one go — not packing) and doesn't count. 🧭 Picking by scan = finished orders (ship_pick_verify).
+// Each person's best is kept (speed_best2) and replaced only when beaten (more, not equal): a record stays even after its scans are gone; a
+// tie keeps who did it first. History is read day by day (60 days a call until it's all read — "still reading" meanwhile); the last 2 days
+// are read again on every call. Admin / Owner only.
+const PS_SPEED_BATCH_MS = 10000, PS_SPEED_GAP_MS = 600000, PS_SPEED_WIN_MS = 3600000; // the same as the page's ⏱ pace: under 10 sec = a batch scan, 10 min+ = a break
+// best window in sorted [{t, k}] (counted labels only) → { n, start, end }
+function psSpeedBestWindow(L) {
+  let best = null, j = 0;
+  for (let i = 0; i < L.length; i++) { while (L[i].t - L[j].t >= PS_SPEED_WIN_MS) j++; const n = i - j + 1; if (!best || n > best.n) best = { n, start: L[j].t }; }
+  return best ? { n: best.n, start: new Date(best.start).toISOString(), end: new Date(best.start + PS_SPEED_WIN_MS).toISOString() } : null;
+}
+// one person's labels of one day, in time order → the counted ones (one label once; a batch scan left out) + how many were batch
+function psSpeedCount(rows, batchRule) {
+  const seen = new Set(), out = []; let prev = null, batch = 0;
+  for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
+    const isBatch = batchRule && prev != null && t - prev < PS_SPEED_BATCH_MS; prev = t; if (isBatch) { batch++; continue; } out.push({ t, k }); }
+  return { L: out, batch };
+}
+const PS_SPEED_SRC = {
+  pack: { days: "SELECT DISTINCT date AS d FROM ship_scan_log WHERE date > ? ORDER BY date LIMIT ?", rows: "SELECT UPPER(TRIM(initials)) AS who, timestamp AS ts, tracking AS k FROM ship_scan_log WHERE date = ? AND TRIM(COALESCE(initials, '')) != '' ORDER BY 1, timestamp", batch: true },
+  pickscan: { days: "SELECT DISTINCT substr(COALESCE(done_at, at), 1, 10) AS d FROM ship_pick_verify WHERE complete = 1 AND substr(COALESCE(done_at, at), 1, 10) > ? ORDER BY 1 LIMIT ?",
+    rows: "SELECT UPPER(TRIM(by_user)) AS who, COALESCE(done_at, at) AS ts, tracking AS k FROM ship_pick_verify WHERE complete = 1 AND substr(COALESCE(done_at, at), 1, 10) = ? AND TRIM(COALESCE(by_user, '')) != '' ORDER BY 1, 2", batch: false } };
+// 🙈 Owner (2026-11-10): "take off the FP and DB because they not working here no more" — someone who left is kept off both Top 3 boards
+// (their record stays saved, nothing else changes; ↩ put back any time). Every take-off / put-back is kept (speed_hidden_log: who, by whom, when).
+// FP and DB are taken off once, as the owner asked (recorded as that), and not again if someone puts them back.
+async function shipSpeedHiddenTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_hidden (who TEXT PRIMARY KEY, by_user TEXT, at TEXT, why TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_hidden_log (id INTEGER PRIMARY KEY AUTOINCREMENT, who TEXT, action TEXT, by_user TEXT, at TEXT, why TEXT)').run();
+  const seeded = await env.DB.prepare("SELECT value FROM app_config WHERE key = 'speed_hidden_seed_20261110'").first().catch(() => null);
+  if (!seeded) { const now = new Date().toISOString(), why = 'not working here any more (owner, 2026-11-10)';
+    for (const w of ['FP', 'DB']) { await env.DB.prepare('INSERT OR IGNORE INTO speed_hidden (who, by_user, at, why) VALUES (?,?,?,?)').bind(w, 'owner request', now, why).run();
+      await env.DB.prepare('INSERT INTO speed_hidden_log (who, action, by_user, at, why) VALUES (?,?,?,?,?)').bind(w, 'taken off', 'owner request', now, why).run(); }
+    await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed_hidden_seed_20261110', ?)").bind(now).run(); }
+}
+async function shipSpeedHide(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run(); await shipSpeedHiddenTable(env);
+  const b = await request.json().catch(() => ({})), w = String(b.who || '').trim().toUpperCase().slice(0, 40); if (!w) return J({ ok: false, error: 'who?' }, 400);
+  const by = String(session.displayName || session.username || '?').slice(0, 40), now = new Date().toISOString(), why = String(b.why || 'not working here any more').slice(0, 120);
+  if (b.undo) await env.DB.prepare('DELETE FROM speed_hidden WHERE who = ?').bind(w).run();
+  else await env.DB.prepare('INSERT OR REPLACE INTO speed_hidden (who, by_user, at, why) VALUES (?,?,?,?)').bind(w, by, now, why).run();
+  await env.DB.prepare('INSERT INTO speed_hidden_log (who, action, by_user, at, why) VALUES (?,?,?,?,?)').bind(w, b.undo ? 'put back' : 'taken off', by, now, b.undo ? '' : why).run();
+  return J({ ok: true, who: w, hidden: !b.undo });
+}
 async function shipSpeedTop(env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
   await ensureShipD1Tables(env); await shipPickVerifyTable(env);
-  await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_best (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, hour TEXT, at TEXT, PRIMARY KEY (kind, who))').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who))').run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run();
-  const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString();
-  const SRC = {
-    pack: ["SELECT UPPER(TRIM(initials)) AS who, substr(timestamp, 1, 13) AS h, COUNT(DISTINCT UPPER(tracking)) AS n FROM ship_scan_log WHERE TRIM(COALESCE(initials, '')) != '' AND tracking != ''", 'date'],
-    pickscan: ["SELECT UPPER(TRIM(by_user)) AS who, substr(COALESCE(done_at, at), 1, 13) AS h, COUNT(DISTINCT UPPER(tracking)) AS n FROM ship_pick_verify WHERE complete = 1 AND TRIM(COALESCE(by_user, '')) != '' AND COALESCE(tracking, '') != ''", 'substr(COALESCE(done_at, at), 1, 10)'] };
-  const out = {};
-  for (const kind of Object.keys(SRC)) {
-    const key = 'speed_best_through_' + kind, thr = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null);
-    const from = thr && thr.value ? (thr.value < since ? thr.value : since) : '';
-    const rows = ((await env.DB.prepare(SRC[kind][0] + (from ? ` AND ${SRC[kind][1]} >= ?` : '') + ' GROUP BY 1, 2').bind(...(from ? [from] : [])).all()).results) || [];
-    const best = {}; rows.forEach(r => { if (!r.h || !(r.n > 0)) return; const b = best[r.who]; if (!b || r.n > b.n || (r.n === b.n && r.h < b.h)) best[r.who] = r; });
-    const st = Object.values(best).map(b => env.DB.prepare(`INSERT INTO speed_best (kind, who, n, hour, at) VALUES (?,?,?,?,?)
-      ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, hour = excluded.hour, at = excluded.at WHERE excluded.n > speed_best.n`).bind(kind, b.who, b.n, b.h, now));
-    for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
-    await env.DB.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').bind(key, since).run();
-    const top = ((await env.DB.prepare('SELECT who, n, hour, at FROM speed_best WHERE kind = ? ORDER BY n DESC, hour ASC LIMIT 3').bind(kind).all()).results) || [];
-    const people = await env.DB.prepare('SELECT COUNT(*) AS c FROM speed_best WHERE kind = ?').bind(kind).first();
-    out[kind] = { top, people: (people && people.c) || 0 };
+  await shipSpeedHiddenTable(env);
+  const hidden = new Set((((await env.DB.prepare('SELECT who FROM speed_hidden').all()).results) || []).map(r => String(r.who).toUpperCase()));
+  const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString(), out = {};
+  for (const kind of Object.keys(PS_SPEED_SRC)) {
+    const S = PS_SPEED_SRC[kind], key = 'speed2_done_' + kind;
+    const done = ((await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null)) || {}).value || '';
+    const from = done && done < since ? done : (done ? since : ''); // the last 2 days are read again each time
+    const days = (((await env.DB.prepare(S.days).bind(from || '0000', 61).all()).results) || []).map(r => r.d).filter(Boolean);
+    const more = days.length > 60; if (more) days.length = 60;
+    let last = done;
+    for (const day of days) {
+      const rows = ((await env.DB.prepare(S.rows).bind(day).all()).results) || [], by = {};
+      rows.forEach(r => (by[r.who] = by[r.who] || []).push(r));
+      const st = [];
+      for (const who of Object.keys(by)) { const c = psSpeedCount(by[who], S.batch), b = psSpeedBestWindow(c.L); if (!b) continue;
+        st.push(env.DB.prepare(`INSERT INTO speed_best2 (kind, who, n, start, end, batch, at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, start = excluded.start,
+          end = excluded.end, batch = excluded.batch, at = excluded.at WHERE excluded.n > speed_best2.n`).bind(kind, who, b.n, b.start, b.end, c.batch, now)); }
+      for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+      if (day < since && day > last) last = day;
+    }
+    if (last && last !== done) await env.DB.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').bind(key, last).run();
+    const all = ((await env.DB.prepare('SELECT who, n, start, end, at FROM speed_best2 WHERE kind = ? ORDER BY n DESC, start ASC').bind(kind).all()).results) || [];
+    const top = all.filter(r => !hidden.has(String(r.who).toUpperCase())).slice(0, 3);
+    out[kind] = { top, people: all.length, stillReading: more };
   }
-  return J({ ok: true, ...out });
+  const hid = ((await env.DB.prepare('SELECT who, by_user AS by, at, why FROM speed_hidden ORDER BY at DESC').all()).results) || [];
+  return J({ ok: true, ...out, hidden: hid });
 }
 // 🏆 Tap a Top 3 record (owner 2026-11-10: "click on it to see what's in the order and average how long for those packages"): every order of
-// that person in that clock hour — when, order #, label, what was in it (our saved copy of the order), and how long each took:
-// 📦 Packing = the time from their label before (the ⏱ pace rule: 10 sec – 10 min; a batch scan or a break is not timed);
+// that person in that 60 minutes — when, order #, label, what was in it (our saved copy of the order), and how long each took:
+// 📦 Packing = the time from their label before, the same day (the ⏱ pace rule: 10 sec – 10 min; a batch scan is shown, not counted or timed);
 // 🧭 Picking by scan = started → done of that order. Average = timed orders only. Read only. Admin / Owner only.
 async function shipSpeedHour(url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
-  const kind = url.searchParams.get('kind') === 'pickscan' ? 'pickscan' : 'pack', who = String(url.searchParams.get('who') || '').trim().toUpperCase(), hour = String(url.searchParams.get('hour') || '').slice(0, 13);
-  if (!who || !/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(hour)) return J({ ok: false, error: 'who and hour required' }, 400);
+  const kind = url.searchParams.get('kind') === 'pickscan' ? 'pickscan' : 'pack', who = String(url.searchParams.get('who') || '').trim().toUpperCase();
+  const t0 = Date.parse(url.searchParams.get('start') || ''); if (!who || isNaN(t0)) return J({ ok: false, error: 'who and start required' }, 400);
+  const start = new Date(t0).toISOString(), end = new Date(t0 + PS_SPEED_WIN_MS).toISOString();
   await ensureShipD1Tables(env); await shipPickVerifyTable(env);
-  const seen = new Set(), orders = [];
+  const orders = [];
   if (kind === 'pack') {
-    const rs = ((await env.DB.prepare(`SELECT tracking, timestamp, carrier, order_num, date FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND substr(timestamp, 1, 13) = ? ORDER BY timestamp`).bind(who, hour).all()).results) || [];
-    // the label before the hour's first one — the same work day only (another day's last label is not "the one before")
-    const before = rs.length ? await env.DB.prepare(`SELECT timestamp FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND date = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT 1`).bind(who, rs[0].date, hour + ':00:00').first().catch(() => null) : null;
-    let prev = before ? Date.parse(before.timestamp) : null;
-    for (const r of rs) { const k = String(r.tracking || '').toUpperCase(); if (!k || seen.has(k)) continue; seen.add(k);
-      const t = Date.parse(r.timestamp), d = prev != null && !isNaN(t) ? t - prev : null; if (!isNaN(t)) prev = t;
-      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.timestamp, carrier: r.carrier || '', sec: d != null && d >= PS_SPEED_BATCH_MS && d < PS_SPEED_GAP_MS ? Math.round(d / 1000) : null, why: d == null ? 'first of the day' : d < PS_SPEED_BATCH_MS ? 'scanned seconds after the one before (a batch)' : d >= PS_SPEED_GAP_MS ? 'after a break (10+ min)' : '' }); }
+    const day = await env.DB.prepare('SELECT date FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND timestamp >= ? AND timestamp < ? LIMIT 1').bind(who, start, end).first();
+    const rows = day ? (((await env.DB.prepare('SELECT tracking AS k, timestamp AS ts, carrier, order_num FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND date = ? ORDER BY timestamp').bind(who, day.date).all()).results) || []) : [];
+    const seen = new Set(); let prev = null;
+    for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
+      const d = prev != null ? t - prev : null; prev = t;
+      if (t < t0 || t >= t0 + PS_SPEED_WIN_MS) continue;
+      const batch = d != null && d < PS_SPEED_BATCH_MS;
+      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.ts, carrier: r.carrier || '', counted: !batch, sec: d != null && !batch && d < PS_SPEED_GAP_MS ? Math.round(d / 1000) : null,
+        why: d == null ? 'first of the day' : batch ? 'batch scan (seconds after the label before) — not counted' : d >= PS_SPEED_GAP_MS ? 'after a break (10+ min)' : '' }); }
   } else {
-    const rs = ((await env.DB.prepare(`SELECT tracking, order_num, started_at, done_at, at FROM ship_pick_verify WHERE complete = 1 AND UPPER(TRIM(by_user)) = ? AND substr(COALESCE(done_at, at), 1, 13) = ? ORDER BY COALESCE(done_at, at)`).bind(who, hour).all()).results) || [];
+    const rs = ((await env.DB.prepare(`SELECT tracking, order_num, started_at, done_at, at FROM ship_pick_verify WHERE complete = 1 AND UPPER(TRIM(by_user)) = ? AND COALESCE(done_at, at) >= ? AND COALESCE(done_at, at) < ? ORDER BY COALESCE(done_at, at)`).bind(who, start, end).all()).results) || [];
+    const seen = new Set();
     for (const r of rs) { const k = String(r.tracking || '').toUpperCase(); if (!k || seen.has(k)) continue; seen.add(k);
       const d = Date.parse(r.done_at || r.at) - Date.parse(r.started_at || '');
-      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.done_at || r.at, sec: d > 0 && d < PS_SPEED_GAP_MS * 3 ? Math.round(d / 1000) : null, why: d > 0 ? '' : 'no start time' }); }
+      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.done_at || r.at, counted: true, sec: d > 0 && d < PS_SPEED_GAP_MS * 3 ? Math.round(d / 1000) : null, why: d > 0 ? '' : 'no start time' }); }
   }
   const ks = orders.map(o => o.tracking), items = {};
   for (let i = 0; i < ks.length; i += 80) { const ch = ks.slice(i, i + 80);
     (((await env.DB.prepare(`SELECT UPPER(tracking) AS t, order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) IN (${ch.map(() => '?').join(',')}) ORDER BY date DESC, id DESC`).bind(...ch).all()).results) || [])
       .forEach(r => { if (items[r.t]) return; let li = []; try { li = JSON.parse(r.line_items || '[]'); } catch (_) {} items[r.t] = { orderNum: r.order_num || '', items: (Array.isArray(li) ? li : []).map(x => ({ sku: x.s || '', qty: x.q || 1 })) }; }); }
-  orders.forEach(o => { const it = items[o.tracking]; o.items = it ? it.items : []; if (!o.orderNum && it) o.orderNum = it.orderNum; o.pieces = o.items.reduce((a, x) => a + (parseFloat(x.qty) || 0), 0); });
-  const timed = orders.filter(o => o.sec != null), avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
-  return J({ ok: true, kind, who, hour, n: orders.length, timed: timed.length, avgSec: avg, orders });
+  orders.forEach(o => { const it = items[o.tracking]; o.items = it ? it.items : []; if (!o.orderNum && it) o.orderNum = it.orderNum; });
+  const cnt = orders.filter(o => o.counted), timed = cnt.filter(o => o.sec != null), avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
+  return J({ ok: true, kind, who, start, end, n: cnt.length, batch: orders.length - cnt.length, timed: timed.length, avgSec: avg, orders });
 }
-const PS_SPEED_BATCH_MS = 10000, PS_SPEED_GAP_MS = 600000; // the same as the page's ⏱ pace: under 10 sec = a batch scan, 10 min+ = a break
 async function shipPickVerifyRows(env, tracking) {
   try { await shipPickVerifyTable(env); return (await env.DB.prepare('SELECT * FROM ship_pick_verify WHERE UPPER(tracking) = ? ORDER BY id').bind(String(tracking || '').toUpperCase()).all()).results || []; } catch (_) { return []; }
 }
@@ -24142,6 +24197,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/scans'        && method === 'GET')  return await shipGetScans(url, env);
     if (path === '/ship/speed-top'    && method === 'GET')  return await shipSpeedTop(env, session);
     if (path === '/ship/speed-hour'   && method === 'GET')  return await shipSpeedHour(url, env, session);
+    if (path === '/ship/speed-hide'   && method === 'POST') return await shipSpeedHide(request, env, session);
     if (path === '/ship/pick'         && method === 'POST') return await shipPick(request, env, ctx);
     if (path === '/ship/picks'        && method === 'GET')  return await shipGetPicks(url, env);
     if (path === '/ship/stockout'     && method === 'POST') return await shipReportStockout(request, env);
