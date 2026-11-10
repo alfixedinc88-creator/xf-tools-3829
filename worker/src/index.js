@@ -22302,7 +22302,7 @@ function apxCheck(cur, want) {
   if (biz != null && price > 0 && biz >= price) bad.push(`The Business price $${biz.toFixed(2)} must be LOWER than the price $${price.toFixed(2)} (Amazon's rule)`);
   if (want.business != null && cur.qd && cur.qd.type === 'fixed' && cur.qd.levels.some(l => l.value != null && l.value >= want.business))
     bad.push('A quantity discount tier is not lower than the new Business price — every tier must be lower; change the tiers in Seller Central');
-  if (cur.price > 0 && price > cur.price * (1 + APX_BIG_JUMP)) warn.push(`+${Math.round((price / cur.price - 1) * 100)}% in one step — Amazon may flag a big jump as a "potential pricing error" and take the offer down; raise it in smaller steps if you can`);
+  if (cur.price > 0 && price > Math.round(cur.price * (1 + APX_BIG_JUMP) * 100) / 100 + 0.005) warn.push(`+${Math.round((price / cur.price - 1) * 100)}% in one step — Amazon may flag a big jump as a "potential pricing error" and take the offer down; raise it in smaller steps if you can`);
   return { bad, warn };
 }
 async function amazonPrices(url, env, session) {

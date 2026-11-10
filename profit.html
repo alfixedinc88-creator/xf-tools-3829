@@ -87,9 +87,20 @@ tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-s
 .pftabs { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
 .pftabs button { font-family:inherit; font-size:14px; font-weight:700; padding:9px 16px; border-radius:9px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer; }
 .pftabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-.pxwrap { background:var(--bg2); border:1px solid var(--border); border-radius:10px; overflow:auto; box-shadow:var(--shadow); max-height:70vh; }
-.pxwrap td input { width:76px; font-family:var(--mono); padding:5px 7px; }
-.pxwrap td.msg { white-space:normal; min-width:220px; max-width:360px; text-align:left; font-size:12px; }
+/* 🖥 Owner (2026-11-10): "make screen bigger under 'change prices' I don't need to scrolling it over to see the other like 'check' … design it to using
+   as PC" — the price tab uses the whole width of the screen and 8 columns (business / min / max under the price, the two buttons stacked). */
+#pf-app.pf-wide .wrap { max-width:none; padding-left:16px; padding-right:16px; }
+.pxwrap { background:var(--bg2); border:1px solid var(--border); border-radius:10px; overflow:auto; box-shadow:var(--shadow); max-height:calc(100vh - 230px); }
+#px-table { width:100%; }
+#px-table th, #px-table td { padding:6px 8px; font-size:12.5px; vertical-align:top; }
+#px-table th { white-space:nowrap; }
+#px-table td.l, #px-table td.msg { white-space:normal; }
+.pxwrap td input { width:84px; font-family:var(--mono); padding:5px 7px; }
+.pxwrap td.msg { white-space:normal; min-width:230px; text-align:left; font-size:12px; }
+.px-sub { font-size:11.5px; color:var(--text2); white-space:nowrap; line-height:1.5; }
+.px-sub b { font-family:var(--mono); color:var(--text); font-weight:600; }
+.px-lbl { display:block; font-size:10.5px; color:var(--text3); text-align:left; margin-top:2px; }
+.px-btns .btn { display:block; width:100%; text-align:left; padding:4px 8px; margin-bottom:4px; white-space:nowrap; }
 .px-bad { color:var(--red); font-weight:700; } .px-warn { color:var(--orange); } .px-ok { color:var(--green); }
 tr.px-chg td { background:#fffbea; }
 @media (max-width: 800px) { .detail-grid { grid-template-columns: 1fr; } #pf-search { width:100%; } .wrap { padding:14px 12px 60px; } .topbar { padding:0 12px; } }
@@ -234,9 +245,9 @@ tr.px-chg td { background:#fffbea; }
         <span id="px-msg" class="muted"></span>
       </div>
       <div class="pxwrap"><table id="px-table"><thead><tr>
-        <th class="l"><input type="checkbox" id="px-all" onclick="pxTickAll(this.checked)"></th><th class="l">ASIN · title · its SKUs</th><th>Ship</th><th>Price now</th><th>Business</th><th>Min</th><th>Max</th>
-        <th title="Amazon: 90-day typical price paid (Was price) · Competitive Price Threshold (other stores)">Was · Threshold</th><th title="From the 📊 Profit tab (last period)">Sold · profit/unit</th><th class="l" title="The last price change sent from here that Amazon accepted">📅 Last changed</th>
-        <th>New price</th><th>New business</th><th>New min</th><th class="l">Check</th></tr></thead><tbody id="px-body"><tr><td colspan="14" class="l muted">Tap ↻ Load Amazon listings.</td></tr></tbody></table></div>
+        <th class="l"><input type="checkbox" id="px-all" onclick="pxTickAll(this.checked)"></th><th class="l">Listing (ASIN · title · its SKUs)</th><th>Price now<span class="px-lbl" style="text-align:right">business · min · max</span></th>
+        <th title="Amazon: 90-day typical price paid (Was price) · Competitive Price Threshold (other stores) · from the 📊 Profit tab: sold · profit / unit">Amazon · sales</th><th class="l" title="The last price change sent from here that Amazon accepted">📅 Last changed</th>
+        <th class="l">New price</th><th class="l">New business · min</th><th class="l">Check</th></tr></thead><tbody id="px-body"><tr><td colspan="8" class="l muted">Tap ↻ Load Amazon listings.</td></tr></tbody></table></div>
       <div class="controls" style="margin-top:8px"><button class="btn" onclick="pxPage=Math.max(0,pxPage-1);pxRender()">◀</button><span id="px-pageinfo" class="muted"></span><button class="btn" onclick="pxPage++;pxRender()">▶</button></div>
       <div class="panel"><h3>🕘 Price change history</h3><div id="px-log" class="muted">—</div></div>
     </div>
@@ -535,6 +546,7 @@ function renderSync() {
 // ── 💲 Change prices (owner 2026-11-09) — Amazon. Reads / writes through the main worker (it has the Amazon seller account), the server
 // checks every number again before anything is sent, and keeps who / when / old → new.
 window.pfTab = function (t) {
+  document.getElementById('pf-app').classList.toggle('pf-wide', t === 'price');
   ['profit', 'price'].forEach(function (k) { document.getElementById('pf-tab-' + k).style.display = k === t ? '' : 'none'; document.getElementById('pf-tabbtn-' + k).classList.toggle('on', k === t); });
   if (t === 'price' && !PX) pxGet();
 };
@@ -565,7 +577,7 @@ function pxLastHtml(g) { var L = pxGLast(g); if (!L) return '<span class="muted"
 function pxN(v) { return v == null || v === '' ? '—' : '$' + (+v).toFixed(2); }
 function pxR2(v) { return Math.round(v * 100) / 100; }
 async function pxGet() {
-  var d = await wapi('/amazon/prices'); if (!d.ok) { document.getElementById('px-body').innerHTML = '<tr><td colspan="14" class="l neg">⚠ ' + esc(d.error || 'Could not load') + '</td></tr>'; return; }
+  var d = await wapi('/amazon/prices'); if (!d.ok) { document.getElementById('px-body').innerHTML = '<tr><td colspan="8" class="l neg">⚠ ' + esc(d.error || 'Could not load') + '</td></tr>'; return; }
   PX = d; PX.groups = pxGroups(d.rows); document.getElementById('px-loaded').textContent = d.loadedAt ? 'Listings from Amazon: ' + new Date(d.loadedAt).toLocaleString() + ' · ' + PX.groups.length + ' ASINs (' + d.rows.length + ' SKUs)' : 'Not loaded yet';
   document.getElementById('px-apply').style.display = d.canChange ? '' : 'none';
   if (!d.canChange) document.getElementById('px-msg').textContent = 'Only Admin / Owner can change prices — you can look.';
@@ -622,7 +634,7 @@ function pxCheckSku(r, want, ref, bigJump) {
   if (want.min != null && i.max != null && want.min > i.max) bad.push('Minimum above the Maximum');
   if (biz != null && biz >= price) bad.push('Business ' + pxN(biz) + ' must be LOWER than the price ' + pxN(price));
   if (want.business != null && i.qd && i.qd.type === 'fixed' && i.qd.levels.some(function (l) { return l.value != null && l.value >= want.business; })) bad.push('A quantity-discount tier is not lower than the new business price');
-  if (r.price > 0 && price > r.price * (1 + bigJump)) warn.push('+' + Math.round((price / r.price - 1) * 100) + '% at once — Amazon may flag a big jump; asks once more');
+  if (r.price > 0 && price > pxR2(r.price * (1 + bigJump)) + 0.005) warn.push('+' + Math.round((price / r.price - 1) * 100) + '% at once — Amazon may flag a big jump; asks once more');
   if (ref && ref.cpt != null && price > ref.cpt) warn.push('Above the Competitive Price Threshold ' + pxN(ref.cpt) + ' — may lose the Buy Box');
   if (ref && ref.was != null && price > ref.was * (1 + bigJump)) warn.push('Well above the 90-day Was price ' + pxN(ref.was));
   return { bad: bad, warn: warn, price: price };
@@ -657,21 +669,21 @@ window.pxRender = function () {
   var P = L.slice(pxPage * PX_PER, pxPage * PX_PER + PX_PER), pct = pxPct(), e99 = (document.getElementById('px-99') || {}).checked;
   document.getElementById('px-pageinfo').textContent = L.length + ' ASIN' + (L.length === 1 ? '' : 's') + ' · page ' + (pxPage + 1) + ' of ' + pages;
   if (!PX) return;
-  document.getElementById('px-body').innerHTML = !P.length ? '<tr><td colspan="14" class="l muted">' + (PX.rows.length ? 'No listing matches.' : 'Tap ↻ Load Amazon listings.') + '</td></tr>' : P.map(function (g) {
+  document.getElementById('px-body').innerHTML = !P.length ? '<tr><td colspan="8" class="l muted">' + (PX.rows.length ? 'No listing matches.' : 'Tap ↻ Load Amazon listings.') + '</td></tr>' : P.map(function (g) {
     var e = PXE[g.key] || {}, rf = PXREF[g.asin], k = esc(JSON.stringify(g.key)), ready = pxGReady(g), sg = ready ? pxSuggest(g, pct, e99) : null, st = ready ? pxSuggest(g, PX_STEP, e99) : null, id = esc(g.key.replace(/[^A-Za-z0-9]/g, '_'));
     var inp = function (f, v) { return '<input type="number" step="0.01" min="0" id="px-in-' + f + '-' + id + '" value="' + esc(v == null ? '' : v) + '" oninput="pxEdit(' + k + ',\'' + f + '\',this.value)">'; };
     var bizShown = e.business !== '' && e.business != null ? e.business : (e.price !== '' && e.price != null && pxGHasBiz(g) ? pxR2(+e.price - PX_BIZ_GAP).toFixed(2) : '');
     var sold = g.rows.map(function (r) { var pr = pxProfitOf(r.sku); return pr ? pr.units + ' · <span class="' + mcls(pr.perUnit) + '">' + money(pr.perUnit) + '</span>' : ''; }).filter(Boolean).join('<br>');
+    var vals = function (lbl, f) { return '<div class="px-sub">' + lbl + ' <b>' + (ready ? pxVals(g, f) : '…') + '</b></div>'; };
     return '<tr class="' + (pxCheck(g) ? 'px-chg' : '') + '"><td class="l"><input type="checkbox" id="px-ck-' + id + '" ' + (PXTICK[g.key] ? 'checked ' : '') + 'onclick="PXTICK[' + k + ']=this.checked"></td>'
-      + '<td class="l sku"><b class="mono">' + esc(g.asin || g.rows[0].sku) + '</b>' + (g.rows.length > 1 ? ' <span class="pill nocost">' + g.rows.length + ' SKUs</span>' : '')
-      + '<div class="muted" style="white-space:normal;max-width:300px">' + esc((g.title || '').slice(0, 90)) + '</div><div class="mono" style="font-size:11.5px">' + g.rows.map(function (r) { return esc(r.sku) + ' <span class="muted">' + (r.fba ? 'FBA' : 'FBM') + '</span>'; }).join('<br>') + '</div></td>'
-      + '<td>' + Object.keys(g.rows.reduce(function (m, r) { m[r.fba ? 'FBA' : 'FBM'] = 1; return m; }, {})).join(' + ') + '</td><td class="num"><b>' + pxVals(g, function (r) { return r.price; }) + '</b></td>'
-      + '<td class="num">' + (ready ? pxVals(g, function (r) { return r.info.business; }) : '<span class="muted">…</span>') + '</td>'
-      + '<td class="num">' + (ready ? pxVals(g, function (r) { return r.info.min; }) : '<span class="muted">…</span>') + '</td><td class="num">' + (ready ? pxVals(g, function (r) { return r.info.max; }) : '<span class="muted">…</span>') + '</td>'
-      + '<td class="num">' + (rf ? pxN(rf.was) + ' · ' + pxN(rf.cpt) : '<span class="muted">—</span>') + '</td><td class="num">' + (sold || '<span class="muted">—</span>') + '</td><td class="l">' + pxLastHtml(g) + '</td>'
-      + '<td style="white-space:nowrap">' + (sg ? '<button type="button" class="btn px-sug" style="padding:4px 8px;margin-bottom:4px;white-space:nowrap" title="The price now + ' + pct + '%' + (sg.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ')">💡 ' + pxN(sg.price) + (sg.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button> ' : '')
-        + (st ? '<button type="button" class="btn px-step" style="padding:4px 8px;margin-bottom:4px;white-space:nowrap" title="The price now + ' + PX_STEP + '%' + (st.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ',PX_STEP)">⬆ +' + PX_STEP + '% ' + pxN(st.price) + (st.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button>' : '') + (sg || st ? '<br>' : '') + inp('price', e.price) + '</td>'
-      + '<td>' + inp('business', bizShown) + (pxGHasBiz(g) && (e.business === '' || e.business == null) ? '<div class="muted" style="font-size:10.5px">auto −$0.03</div>' : '') + '</td><td>' + inp('min', e.min) + '</td>'
+      + '<td class="l sku" style="min-width:200px"><b class="mono">' + esc(g.asin || g.rows[0].sku) + '</b>' + (g.rows.length > 1 ? ' <span class="pill nocost">' + g.rows.length + ' SKUs</span>' : '')
+      + '<div class="muted">' + esc((g.title || '').slice(0, 90)) + '</div><div class="mono" style="font-size:11.5px">' + g.rows.map(function (r) { return esc(r.sku) + ' <span class="muted">' + (r.fba ? 'FBA' : 'FBM') + '</span>'; }).join('<br>') + '</div></td>'
+      + '<td class="num"><b style="font-size:14px">' + pxVals(g, function (r) { return r.price; }) + '</b>' + vals('business', function (r) { return r.info.business; }) + vals('min', function (r) { return r.info.min; }) + vals('max', function (r) { return r.info.max; }) + '</td>'
+      + '<td class="num"><div class="px-sub">was · threshold <b>' + (rf ? pxN(rf.was) + ' · ' + pxN(rf.cpt) : '—') + '</b></div><div class="px-sub">sold · profit/unit</div>' + (sold ? '<div class="px-sub">' + sold + '</div>' : '<div class="px-sub">—</div>') + '</td>'
+      + '<td class="l">' + pxLastHtml(g) + '</td>'
+      + '<td class="l px-btns" style="min-width:150px">' + (sg ? '<button type="button" class="btn px-sug" title="The price now + ' + pct + '%' + (sg.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ')">💡 ' + pxN(sg.price) + (sg.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button>' : '')
+        + (st ? '<button type="button" class="btn px-step" title="The price now + ' + PX_STEP + '%' + (st.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ',PX_STEP)">⬆ +' + PX_STEP + '% ' + pxN(st.price) + (st.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button>' : '') + inp('price', e.price) + '</td>'
+      + '<td class="l"><span class="px-lbl">business' + (pxGHasBiz(g) && (e.business === '' || e.business == null) ? ' (auto −$0.03)' : '') + '</span>' + inp('business', bizShown) + '<span class="px-lbl">min</span>' + inp('min', e.min) + '</td>'
       + '<td class="msg" id="px-msg-' + id + '">' + pxCheckHtml(g) + '</td></tr>';
   }).join('');
   var need = []; P.forEach(function (g) { g.rows.forEach(function (r) { if (!r.info) need.push(r.sku); }); }); pxInfoFor(need);
