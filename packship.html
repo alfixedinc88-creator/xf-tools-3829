@@ -6377,7 +6377,8 @@ function _psSpeedTopPaint(kind) {
         var nd = new Date(Date.parse(r.start)).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today;
         return '<div class="ps-speed-top-row"' + (adm ? ' role="button" tabindex="0" onclick="psSpeedHour(\'' + kind + '\',' + i + ')" title="Tap: every order of that hour — what was in it, how long each took"' : '') + ' style="flex:1 1 200px;cursor:pointer;padding:6px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg)">'
           + (!adm ? '' : '<span class="ps-speed-hide" onclick="event.stopPropagation();psSpeedHide(\'' + _psAlEsc(r.who).replace(/'/g, '') + '\')" title="Not working here any more — take off the board (record kept; ↩ put back any time)" style="float:right;font-size:11px;color:var(--text3);cursor:pointer">✕</span>')
-          + '<div style="font-size:15px;font-weight:800">' + medal[i] + ' ' + _psAlEsc(r.who) + ' <span style="font-family:var(--mono);color:var(--accent)">' + r.n + '</span> <span style="font-size:11px;font-weight:600;color:var(--text3)">an hour</span>' + (nd ? ' <span style="font-size:10px;font-weight:800;color:#b45309">NEW TODAY</span>' : '') + '</div>'
+          + '<div style="font-size:15px;font-weight:800">' + medal[i] + ' ' + _psAlEsc(r.who) + ' <span style="font-family:var(--mono);color:var(--accent)">' + r.n + '</span> <span style="font-size:11px;font-weight:600;color:var(--text3)">an hour</span>'
+          + (adm && r.avgSec != null ? ' <span class="ps-speed-avg" title="Average time a package in those 60 minutes (timed ones: from the label before; a batch scan or a break not timed)" style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--green)">⏱ ' + (r.avgSec < 90 ? r.avgSec + ' sec' : (Math.round(r.avgSec / 6) / 10) + ' min') + ' a package</span>' : '') + (nd ? ' <span style="font-size:10px;font-weight:800;color:#b45309">NEW TODAY</span>' : '') + '</div>'
           + '<div style="font-size:11px;color:var(--text3)">' + _psSpeedHourLbl(r.start) + '</div></div>'; }).join('') + '</div>'
       : '<div style="font-size:12px;color:var(--text3)">No hour on record yet.</div>')
     + (adm && D.stillReading ? '<div style="font-size:11px;color:#b45309;margin-top:4px">⏳ Still reading older days — tap ↻ in a moment for the full board.</div>' : '')
@@ -6391,6 +6392,20 @@ window.psSpeedHide = function(who, undo) {
   fetch(PS_WORKER + '/ship/speed-hide', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken }, body: JSON.stringify({ who: who, undo: !!undo }) })
     .then(function(r) { return r.json(); }).then(function(d) { if (!d || !d.ok) { _psToast((d && d.error) || 'Not changed', 'err'); return; } psLoadSpeedTop('pack'); }).catch(function() { _psToast('Not changed — check WiFi', 'err'); });
 };
+// 📦 Owner (2026-11-10, photo of the Package sizes chips "137 × 1 item ⏱ 23 sec · 1 × 1 item over 13 lb ⏱ 37 sec (1 timed) …"): "for the top 3, when we
+// click on it we see this, easy to read" — the record's orders by package size, each with the ⏱ average (the same chips, the same rules).
+function _psSpeedSizesHtml(orders) {
+  var by = {}, unknown = 0;
+  (orders || []).forEach(function(o) { if (o.counted === false) return; var k = _psSizeKey(o); if (k === 'unknown') { unknown++; return; }
+    var b = by[k] = by[k] || { c: 0, n: 0, ms: 0 }; b.c++; if (o.sec != null) { b.n++; b.ms += o.sec * 1000; } });
+  var keys = Object.keys(by).sort(function(a, b) { var an = parseInt(a, 10), bn = parseInt(b, 10); return an !== bn ? an - bn : (a.indexOf(':heavy') >= 0) - (b.indexOf(':heavy') >= 0); });
+  if (!keys.length && !unknown) return '';
+  return '<div class="ps-speed-sizes" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 10px"><span class="ps-itemcount-label">Package sizes</span>'
+    + keys.map(function(k) { var heavy = k.indexOf(':heavy') !== -1, n = parseInt(k, 10), b = by[k], pt = _psPaceFmt(b);
+      return '<span class="ps-itemcount-chip' + (heavy ? ' heavy' : '') + '"><b>' + b.c + '</b><span>× ' + n + ' item' + (n !== 1 ? 's' : '') + (heavy ? ' over ' + PS_HEAVY_LB_THRESHOLD + ' lb' : '') + '</span>'
+        + '<span class="ps-itemcount-pace" style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:' + (pt ? 'var(--green)' : 'var(--text3)') + ';margin-left:4px"' + (pt ? '' : ' title="No order of this size could be timed (right after a break, first of the day, or seconds after another label)"') + '>⏱ ' + (pt || 'not timed') + '</span></span>'; }).join('')
+    + (unknown ? '<span class="ps-itemcount-chip unknown"><b>' + unknown + '</b><span>unknown size</span></span>' : '') + '</div>';
+}
 window.psSpeedHour = function(kind, i) {
   var r = _psSpeedTop[kind] && _psSpeedTop[kind].top[i]; if (!r) return;
   var m = document.getElementById('ps-speed-hour'); if (!m) { m = document.createElement('div'); m.id = 'ps-speed-hour'; document.body.appendChild(m); }
@@ -6409,6 +6424,7 @@ window.psSpeedHour = function(kind, i) {
         + '<div id="ps-speed-hour-avg" style="font-size:14px;margin-bottom:8px">⏱ Average <b style="font-family:var(--mono);color:var(--green)">' + (d.avgSec != null ? fmt(d.avgSec) : '—') + '</b> an order'
         + ' <span style="font-size:11px;color:var(--text3)">(' + d.timed + ' of ' + d.n + ' timed — ' + (kind === 'pack' ? 'from the label before; a batch scan or a break isn\'t timed' : 'started → done') + ')</span>'
         + (d.batch ? '<div style="font-size:12px;color:#b45309">+ ' + d.batch + ' label' + (d.batch === 1 ? '' : 's') + ' scanned seconds after the one before (a batch) — shown greyed, not counted</div>' : '') + '</div>'
+        + _psSpeedSizesHtml(d.orders)
         + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tr>' + ['When', 'Order #', 'What was in it', 'Took'].map(function(h) { return '<th style="' + td + ';text-align:left;font-size:10px;text-transform:uppercase;color:var(--text3)">' + h + '</th>'; }).join('') + '</tr>'
         + d.orders.map(function(o) { return '<tr' + (o.counted === false ? ' style="opacity:.45" title="' + _psAlEsc(o.why || '') + '"' : '') + '><td style="' + td + ';white-space:nowrap">' + t(o.at) + '</td><td style="' + td + ';font-family:var(--mono)">' + _psAlEsc(o.orderNum || o.tracking) + '</td>'
           + '<td style="' + td + '">' + (o.items.length ? o.items.map(function(x) { return '<span style="font-family:var(--mono)">' + _psAlEsc(x.sku) + '</span> ×' + _psAlEsc(x.qty); }).join('<br>') : '<span style="color:var(--text3)">items not saved</span>') + '</td>'

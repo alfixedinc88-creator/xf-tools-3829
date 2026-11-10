@@ -23856,8 +23856,13 @@ const PS_SPEED_BATCH_MS = 10000, PS_SPEED_GAP_MS = 600000, PS_SPEED_WIN_MS = 360
 // best window in sorted [{t, k}] (counted labels only) → { n, start, end }
 function psSpeedBestWindow(L) {
   let best = null, j = 0;
-  for (let i = 0; i < L.length; i++) { while (L[i].t - L[j].t >= PS_SPEED_WIN_MS) j++; const n = i - j + 1; if (!best || n > best.n) best = { n, start: L[j].t }; }
-  return best ? { n: best.n, start: new Date(best.start).toISOString(), end: new Date(best.start + PS_SPEED_WIN_MS).toISOString() } : null;
+  for (let i = 0; i < L.length; i++) { while (L[i].t - L[j].t >= PS_SPEED_WIN_MS) j++; const n = i - j + 1; if (!best || n > best.n) best = { n, j, i }; }
+  if (!best) return null;
+  // ⏱ the average seconds a package in that 60 minutes (owner 2026-11-10: "at outside showing the average time too"): timed ones only (g = the
+  // time it took: Packing from the label before, 10 sec – 10 min; Picking by scan started → done)
+  let ms = 0, k = 0; for (let x = best.j; x <= best.i; x++) if (L[x].g != null) { ms += L[x].g; k++; }
+  const t0 = L[best.j].t;
+  return { n: best.n, start: new Date(t0).toISOString(), end: new Date(t0 + PS_SPEED_WIN_MS).toISOString(), avgSec: k ? Math.round(ms / k / 1000) : null };
 }
 // one person's labels of one day, in time order → the counted ones (one label once; a batch scan left out) + how many were batch
 // A stack = 3+ labels in a row, each under 10 sec after the one before: only its first label counts (owner: MG works fast — two quick real
@@ -23870,15 +23875,17 @@ function psSpeedStackFlags(ts) {
 }
 function psSpeedCount(rows, batchRule) {
   const seen = new Set(), L = [];
-  for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k); L.push({ t, k }); }
+  for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
+    const st = Date.parse(r.st || ''), g0 = !batchRule && !isNaN(st) && t - st > 0 && t - st < PS_SPEED_GAP_MS * 3 ? t - st : null; L.push({ t, k, g: g0 }); }
   if (!batchRule) return { L, batch: 0 };
+  L.forEach((x, i) => { const d = i ? x.t - L[i - 1].t : null; x.g = d != null && d >= PS_SPEED_BATCH_MS && d < PS_SPEED_GAP_MS ? d : null; });
   const f = psSpeedStackFlags(L.map(x => x.t));
   return { L: L.filter((x, i) => !f[i]), batch: f.filter(Boolean).length };
 }
 const PS_SPEED_SRC = {
   pack: { days: "SELECT DISTINCT date AS d FROM ship_scan_log WHERE date > ? ORDER BY date LIMIT ?", rows: "SELECT UPPER(TRIM(initials)) AS who, timestamp AS ts, tracking AS k FROM ship_scan_log WHERE date = ? AND TRIM(COALESCE(initials, '')) != '' ORDER BY 1, timestamp", batch: true },
   pickscan: { days: "SELECT DISTINCT substr(COALESCE(done_at, at), 1, 10) AS d FROM ship_pick_verify WHERE complete = 1 AND substr(COALESCE(done_at, at), 1, 10) > ? ORDER BY 1 LIMIT ?",
-    rows: "SELECT UPPER(TRIM(by_user)) AS who, COALESCE(done_at, at) AS ts, tracking AS k FROM ship_pick_verify WHERE complete = 1 AND substr(COALESCE(done_at, at), 1, 10) = ? AND TRIM(COALESCE(by_user, '')) != '' ORDER BY 1, 2", batch: false } };
+    rows: "SELECT UPPER(TRIM(by_user)) AS who, COALESCE(done_at, at) AS ts, started_at AS st, tracking AS k FROM ship_pick_verify WHERE complete = 1 AND substr(COALESCE(done_at, at), 1, 10) = ? AND TRIM(COALESCE(by_user, '')) != '' ORDER BY 1, 2", batch: false } };
 // 🙈 Owner (2026-11-10): "take off the FP and DB because they not working here no more" — someone who left is kept off both Top 3 boards
 // (their record stays saved, nothing else changes; ↩ put back any time). Every take-off / put-back is kept (speed_hidden_log: who, by whom, when).
 // FP and DB are taken off once, as the owner asked (recorded as that), and not again if someone puts them back.
@@ -23910,12 +23917,13 @@ async function shipSpeedTop(env, session) {
   const isAdm = (session.roles || []).some(r => r === 'admin' || r === 'owner');
   await ensureShipD1Tables(env); await shipPickVerifyTable(env);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who))').run();
+  await env.DB.prepare('ALTER TABLE speed_best2 ADD COLUMN avg_sec INTEGER').run().catch(() => {}); // ⏱ average seconds a package in that 60 minutes
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run();
   await shipSpeedHiddenTable(env);
   const hidden = new Set((((await env.DB.prepare('SELECT who FROM speed_hidden').all()).results) || []).map(r => String(r.who).toUpperCase()));
   const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString(), out = {};
   for (const kind of Object.keys(PS_SPEED_SRC)) {
-    const S = PS_SPEED_SRC[kind], key = 'speed3_done_' + kind; // speed3: history read again once with the 3+ stack rule (records only go up)
+    const S = PS_SPEED_SRC[kind], key = 'speed4_done_' + kind; // speed4: history read again once (3+ stack rule; + the ⏱ average of each record)
     const done = ((await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null)) || {}).value || '';
     const from = done && done < since ? done : (done ? since : ''); // the last 2 days are read again each time
     const days = (((await env.DB.prepare(S.days).bind(from || '0000', 61).all()).results) || []).map(r => r.d).filter(Boolean);
@@ -23930,13 +23938,14 @@ async function shipSpeedTop(env, session) {
       rows.forEach(r => (by[r.who] = by[r.who] || []).push(r));
       const st = [];
       for (const who of Object.keys(by)) { const c = psSpeedCount(by[who], S.batch), b = psSpeedBestWindow(c.L); if (!b) continue;
-        st.push(env.DB.prepare(`INSERT INTO speed_best2 (kind, who, n, start, end, batch, at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, start = excluded.start,
-          end = excluded.end, batch = excluded.batch, at = excluded.at WHERE excluded.n > speed_best2.n`).bind(kind, who, b.n, b.start, b.end, c.batch, now)); }
+        st.push(env.DB.prepare(`INSERT INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, start = excluded.start,
+          end = excluded.end, batch = excluded.batch, at = excluded.at, avg_sec = excluded.avg_sec
+          WHERE excluded.n > speed_best2.n OR (excluded.n = speed_best2.n AND excluded.start = speed_best2.start AND speed_best2.avg_sec IS NULL)`).bind(kind, who, b.n, b.start, b.end, c.batch, now, b.avgSec)); }
       for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
       if (day < since && day > last) last = day;
     }
     if (last && last !== done) await env.DB.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').bind(key, last).run();
-    const all = ((await env.DB.prepare('SELECT who, n, start, end, at FROM speed_best2 WHERE kind = ? ORDER BY n DESC, start ASC').bind(kind).all()).results) || [];
+    const all = ((await env.DB.prepare('SELECT who, n, start, end, at, avg_sec AS avgSec FROM speed_best2 WHERE kind = ? ORDER BY n DESC, start ASC').bind(kind).all()).results) || [];
     const top = all.filter(r => !hidden.has(String(r.who).toUpperCase())).slice(0, 3);
     out[kind] = { top, people: all.length, stillReading: more };
   }
@@ -23980,6 +23989,10 @@ async function shipSpeedHour(url, env, session) {
     (((await env.DB.prepare(`SELECT UPPER(tracking) AS t, order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) IN (${ch.map(() => '?').join(',')}) ORDER BY date DESC, id DESC`).bind(...ch).all()).results) || [])
       .forEach(r => { if (items[r.t]) return; let li = []; try { li = JSON.parse(r.line_items || '[]'); } catch (_) {} items[r.t] = { orderNum: r.order_num || '', items: (Array.isArray(li) ? li : []).map(x => ({ sku: x.s || '', qty: x.q || 1 })) }; }); }
   orders.forEach(o => { const it = items[o.tracking]; o.items = it ? it.items : []; if (!o.orderNum && it) o.orderNum = it.orderNum; });
+  // 📦 Package size of each order (item count + weight, the same as Packing's "Package sizes") — owner 2026-11-10: tapping a Top 3 shows the
+  // sizes with the ⏱ average of each, "easy to read", like a person's window.
+  await shipAttachItemsAndWeight(orders, env).catch(() => null);
+  orders.forEach(o => { delete o.weightSource; delete o.debug; });
   const cnt = orders.filter(o => o.counted), timed = cnt.filter(o => o.sec != null), avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
   return J({ ok: true, kind, who, start, end, n: cnt.length, batch: orders.length - cnt.length, timed: timed.length, avgSec: avg, orders });
 }
