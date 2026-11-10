@@ -1306,6 +1306,7 @@ body {
   <!-- 🧭 Picking by scan (owner 2026-11-07): scan the shipping label → where to grab each item on the shelf map → scan each bag to count it -->
   <div class="ps-panel" id="ps-panel-pickscan">
     <div class="ps-card">
+      <div class="ps-speed-top" id="ps-speed-top-pickscan" data-kind="pickscan" style="display:none;margin:0 0 10px"></div>
       <div style="font-size:16px;font-weight:800">🧭 Picking by scan</div>
       <div id="ps-pks-step" style="font-size:18px;font-weight:800;margin:6px 0">1️⃣ Scan the SHIPPING LABEL</div>
       <input id="ps-pks-inp" type="text" autocomplete="off" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();psPksScan(this.value);}"
@@ -1364,6 +1365,8 @@ body {
          for the same at-a-glance comparison). -->
     <!-- 📌 Owner (2026-10-29): "on the packing put a note somewhere I can see: Mayra can pack 130 in an hour". Admin / Owner only. -->
     <div id="ps-pack-pace-note" style="display:none;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1.5px solid var(--accent);background:var(--bg2);font-size:13px;color:var(--text)">📌 <b>Note:</b> Mayra can pack <b>130 an hour</b> <span style="color:var(--text3);font-size:11px">(only Admin / Owner see this)</span></div>
+    <!-- 🏆 Top 3 — most orders in one real clock hour (owner 2026-11-10). Admin / Owner only. -->
+    <div class="ps-speed-top" id="ps-speed-top-pack" data-kind="pack" style="display:none;margin:0 0 10px"></div>
     <div class="ps-scan-summary" id="ps-scan-summary">
       <div class="ps-scan-summary-total" id="ps-scan-summary-printed" style="display:none">
         <div class="ps-scan-summary-total-val" id="ps-scan-summary-printed-val">0</div>
@@ -4495,7 +4498,9 @@ function _psPaceBySize(scans) {
   });
   return out;
 }
-function _psPaceFmt(o) { if (!o || o.n < 3) return ''; var sec = Math.round(o.ms / o.n / 1000); return sec < 90 ? sec + ' sec' : (Math.round(sec / 6) / 10) + ' min'; }
+// ⏱ Owner (2026-11-10, "we still missing time for the 1 item over 13 lb and the 2 × 3 items — make sure all have the average time"): a size with
+// 1 or 2 orders timed shows its time too, with how many ("(2 timed)"); a size with none timed says why instead of nothing.
+function _psPaceFmt(o) { if (!o || o.n < 1) return ''; var sec = Math.round(o.ms / o.n / 1000); return (sec < 90 ? sec + ' sec' : (Math.round(sec / 6) / 10) + ' min') + (o.n < 3 ? ' (' + o.n + ' timed)' : ''); }
 function _psRenderItemCountBreakdown(scans, elId) {
   var el = document.getElementById(elId);
   if (!el) return;
@@ -4525,6 +4530,7 @@ function _psRenderItemCountBreakdown(scans, elId) {
     var label = n + ' item' + (n !== 1 ? 's' : '') + (heavy ? ' over ' + PS_HEAVY_LB_THRESHOLD + ' lb' : '');
     var pt = pace ? _psPaceFmt(pace[key]) : '';
     return '<span class="ps-itemcount-chip' + (heavy ? ' heavy' : '') + '" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',\'' + key + '\')"><b>' + counts[key] + '</b><span>× ' + label + '</span>'
+      + (pace && !pt ? '<span class="ps-itemcount-pace" title="No order of this size could be timed: each one was scanned right after a break (10+ min), first of the day, or seconds after another label (a batch)" style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--text3);margin-left:4px">⏱ not timed</span>' : '')
       + (pt ? '<span class="ps-itemcount-pace" title="Average time an order (one label), steady work only — ' + pace[key].n + ' orders timed" style="font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--green);margin-left:4px">⏱ ' + pt + '</span>' : '') + '</span>';
   }).join('');
   if (unknown) {
@@ -6326,7 +6332,7 @@ window.psUnlockTab = async function(tab) {
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 // 📌 the packing pace note: Admin / Owner only
 function _psPaceAdmin() { var r = (psCredUser && psCredUser.roles) || []; return r.indexOf('admin') !== -1 || r.indexOf('owner') !== -1; }
-function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), a = _psPaceAdmin();
+function _psPaceNote() { var n = document.getElementById('ps-pack-pace-note'), a = _psPaceAdmin(); if (typeof psLoadSpeedTop === 'function') psLoadSpeedTop('pack', true); // 🏆 Top 3 after sign-in too
   if (n) n.style.display = a ? 'block' : 'none';
   document.querySelectorAll('.ps-pace-btn').forEach(function(b) { b.style.display = a ? 'inline-block' : 'none'; b.textContent = _psPaceOn && a ? '⏱ Hide pace' : '⏱ Show pace'; }); }
 // ⏱ Owner (2026-10-29): "hide the average time right now — only Admin level up can click and see". Hidden for everyone; an Admin / Owner
@@ -6339,7 +6345,63 @@ window.psTogglePace = function() {
   if (typeof _psPickRenderPersonChips === 'function') _psPickRenderPersonChips();
   if (typeof _psItemCountSource !== 'undefined' && typeof _psRenderItemCountBreakdown === 'function') Object.keys(_psItemCountSource).forEach(function(id) { _psRenderItemCountBreakdown(_psItemCountSource[id], id); }); // ⏱ on the package sizes too
 };
+// 🏆 Owner (2026-11-10): "for Packing and Picking by scan, the top 3 fastest — MG did 154 in an hour, she stays top 1 until someone beats her
+// number, same for top 1–3; and they be able to click on it to see what's in the order and average how long". Ranked by the most orders in ONE
+// real clock hour (owner's pick); a record stays until beaten. Tap one → every order of that hour: what was in it, how long each took, average.
+var _psSpeedTop = {};
+function _psSpeedHourLbl(h) { var t = Date.parse(h + ':00:00Z'); if (isNaN(t)) return h;
+  var d = new Date(t), f = function(x) { return x.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: true }).replace(' ', ' '); };
+  return d.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' }) + ', ' + f(d) + '–' + f(new Date(t + 3600000)); }
+var _psSpeedTopAt = 0;
+window.psLoadSpeedTop = function(kind, quiet) { // both cards from one call; quiet = only if not loaded in the last 2 min
+  var els = ['pack', 'pickscan'].map(function(k) { return document.getElementById('ps-speed-top-' + k); });
+  if (!_psPaceAdmin() || !psCredToken) { els.forEach(function(e) { if (e) e.style.display = 'none'; }); return; }
+  if (quiet && Date.now() - _psSpeedTopAt < 120000) return; _psSpeedTopAt = Date.now();
+  els.forEach(function(e) { if (!e) return; e.style.display = 'block'; if (!e.innerHTML) e.innerHTML = '<div style="font-size:12px;color:var(--text3)">🏆 loading the Top 3…</div>'; });
+  fetch(PS_WORKER + '/ship/speed-top', { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) { els.forEach(function(e) { if (e) e.style.display = 'none'; }); return; }
+    ['pack', 'pickscan'].forEach(function(k) { _psSpeedTop[k] = d[k]; _psSpeedTopPaint(k); });
+  }).catch(function() {});
+};
+function _psSpeedTopPaint(kind) {
+  var el = document.getElementById('ps-speed-top-' + kind), D = _psSpeedTop[kind]; if (!el || !D) return;
+  var medal = ['🥇', '🥈', '🥉'], today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  el.innerHTML = '<div style="border:1.5px solid #d4a017;background:var(--bg2);border-radius:10px;padding:8px 12px">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><b style="font-size:13px;flex:1">🏆 Top 3 — most orders in one real hour (' + (kind === 'pack' ? '📦 Packing' : '🧭 Picking by scan') + ')</b>'
+    + '<span onclick="psLoadSpeedTop(\'' + kind + '\')" style="cursor:pointer;font-size:12px;color:var(--accent)">↻</span><span style="font-size:10px;color:var(--text3)">only Admin / Owner see this</span></div>'
+    + (D.top.length ? '<div style="display:flex;flex-wrap:wrap;gap:8px">' + D.top.map(function(r, i) {
+        var nd = new Date(Date.parse(r.hour + ':00:00Z')).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today;
+        return '<div class="ps-speed-top-row" role="button" tabindex="0" onclick="psSpeedHour(\'' + kind + '\',' + i + ')" title="Tap: every order of that hour — what was in it, how long each took" style="flex:1 1 200px;cursor:pointer;padding:6px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg)">'
+          + '<div style="font-size:15px;font-weight:800">' + medal[i] + ' ' + _psAlEsc(r.who) + ' <span style="font-family:var(--mono);color:var(--accent)">' + r.n + '</span> <span style="font-size:11px;font-weight:600;color:var(--text3)">an hour</span>' + (nd ? ' <span style="font-size:10px;font-weight:800;color:#b45309">NEW TODAY</span>' : '') + '</div>'
+          + '<div style="font-size:11px;color:var(--text3)">' + _psSpeedHourLbl(r.hour) + '</div></div>'; }).join('') + '</div>'
+      : '<div style="font-size:12px;color:var(--text3)">No hour on record yet.</div>')
+    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did inside one clock hour (one label = one order). A record stays until someone beats it; a tie keeps who did it first.</div></div>';
+}
+window.psSpeedHour = function(kind, i) {
+  var r = _psSpeedTop[kind] && _psSpeedTop[kind].top[i]; if (!r) return;
+  var m = document.getElementById('ps-speed-hour'); if (!m) { m = document.createElement('div'); m.id = 'ps-speed-hour'; document.body.appendChild(m); }
+  m.style.cssText = 'position:fixed;inset:0;z-index:9990;background:rgba(0,0,0,.45);display:flex;justify-content:center;align-items:flex-start;padding:16px 10px;overflow:auto';
+  m.onclick = function(e) { if (e.target === m) m.remove(); };
+  var box = '<div style="background:var(--bg2);color:var(--text);border-radius:14px;padding:14px;width:760px;max-width:100%">';
+  m.innerHTML = box + '⏳ Loading ' + _psAlEsc(r.who) + '\'s orders…</div>';
+  fetch(PS_WORKER + '/ship/speed-hour?kind=' + kind + '&who=' + encodeURIComponent(r.who) + '&hour=' + encodeURIComponent(r.hour), { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(x) { return x.json(); }).then(function(d) {
+      if (!d || !d.ok) { m.innerHTML = box + '<div style="color:var(--red)">⚠ ' + _psAlEsc((d && d.error) || 'Could not load') + '</div></div>'; return; }
+      var fmt = function(s) { return s == null ? '' : s < 90 ? s + ' sec' : (Math.round(s / 6) / 10) + ' min'; };
+      var t = function(iso) { return iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit' }) : ''; };
+      var td = 'padding:4px 6px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top';
+      m.innerHTML = box + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:16px;flex:1">' + _psAlEsc(d.who) + ' — ' + d.n + ' orders · ' + _psSpeedHourLbl(d.hour) + '</b>'
+        + '<button type="button" onclick="document.getElementById(\'ps-speed-hour\').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">✕</button></div>'
+        + '<div id="ps-speed-hour-avg" style="font-size:14px;margin-bottom:8px">⏱ Average <b style="font-family:var(--mono);color:var(--green)">' + (d.avgSec != null ? fmt(d.avgSec) : '—') + '</b> an order'
+        + ' <span style="font-size:11px;color:var(--text3)">(' + d.timed + ' of ' + d.n + ' timed — ' + (kind === 'pack' ? 'from the label before; a batch scan or a break isn\'t timed' : 'started → done') + ')</span></div>'
+        + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><tr>' + ['When', 'Order #', 'What was in it', 'Took'].map(function(h) { return '<th style="' + td + ';text-align:left;font-size:10px;text-transform:uppercase;color:var(--text3)">' + h + '</th>'; }).join('') + '</tr>'
+        + d.orders.map(function(o) { return '<tr><td style="' + td + ';white-space:nowrap">' + t(o.at) + '</td><td style="' + td + ';font-family:var(--mono)">' + _psAlEsc(o.orderNum || o.tracking) + '</td>'
+          + '<td style="' + td + '">' + (o.items.length ? o.items.map(function(x) { return '<span style="font-family:var(--mono)">' + _psAlEsc(x.sku) + '</span> ×' + _psAlEsc(x.qty); }).join('<br>') : '<span style="color:var(--text3)">items not saved</span>') + '</td>'
+          + '<td style="' + td + ';white-space:nowrap;font-family:var(--mono);font-weight:700;color:var(--green)">' + (o.sec != null ? fmt(o.sec) : '<span style="color:var(--text3);font-weight:400" title="' + _psAlEsc(o.why || '') + '">—</span>') + '</td></tr>'; }).join('') + '</table></div></div>';
+    }).catch(function(e) { m.innerHTML = box + '<div style="color:var(--red)">⚠ ' + _psAlEsc((e && e.message) || 'check WiFi') + '</div></div>'; });
+};
 window.psSwitchTab = function(name) {
+  if (name === 'scan' || name === 'pickscan') psLoadSpeedTop(name === 'scan' ? 'pack' : 'pickscan', true);
   if (name === 'scan' || name === 'picking') _psPaceNote();
   if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
   if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
