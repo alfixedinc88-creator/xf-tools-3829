@@ -13356,7 +13356,10 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   // Owner (2026-11-10): "click to change it all? like price $6.99 right, I want it to change all to $8.99? except the 'check' one"
   check('✏ Every listing now at $6.99 → $8.99: fills every row shown at that price (all pages), reads their min / max first; 💾 sends all of them EXCEPT the ones with ❌ in Check (said in the OK box and after)',
     /id="px-from"/.test(pf) && /id="px-to"/.test(pf) && /onclick="pxFillTo\(\)"/.test(pf) && /Math\.abs\(r\.price - from\) < 0\.005/.test(pf)
-      && /L = L\.filter\(function \(g\) \{ return !pxCheck\(g\)\.bad\.length; \}\);/.test(pf) && /left out \(a red problem in Check\)/.test(pf) && !/still have a red problem — fix or untick them/.test(pf), null);
+      && /L = L\.filter\(function \(g\) \{ return !pxCheck\(g\)\.bad\.length; \}\);/.test(pf) && /left out \(a red problem in Check\)/.test(pf) && !/still have a red problem — fix or untick them/.test(pf)
+      /* owner 2026-11-10: "if i put $6.99 to $8.99 then 'fill', the price will even fill in for the one with the 'check'" — Fill leaves those empty, unticked, Check says why */
+      && /if \(c && c\.bad\.length\) \{ if \(old\) PXE\[g\.key\] = old; else delete PXE\[g\.key\]; PXTICK\[g\.key\] = false; PXSKIP\[g\.key\] = '⏭ Not filled with '/.test(pf)
+      && /if \(!c && PXSKIP\[g\.key\]\) return '<div class="px-warn">'/.test(pf), null);
   T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
   T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',

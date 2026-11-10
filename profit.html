@@ -568,7 +568,7 @@ async function wapi(path, opts) {
 //   • 💡 suggested price = the price now + N % (75 % to start, the owner's number; end in .99 if ticked), never above the lowest Maximum of its
 //     SKUs — tap it to fill; "💡 Fill all" fills every row shown
 //   • the business price follows: the new price − $0.03 (for SKUs that have a business price), unless someone types their own
-var PX = null, pxPage = 0, PX_PER = 40, PXE = {}, PXREF = {}, PXRES = {}, PXTICK = {}, PX_BIZ_GAP = 0.03;
+var PX = null, pxPage = 0, PX_PER = 40, PXE = {}, PXREF = {}, PXRES = {}, PXTICK = {}, PXSKIP = {}, PX_BIZ_GAP = 0.03;
 // ⬆ Owner (2026-11-10): "set it 30% increase price, right next to the suggesting price … I can just click it, it will auto filling the 'new price', then
 // recording the time and date when we just updated, then next week we will try to increase it again" — a +30% button on each row (never above the
 // Maximum), 📅 the last change of each listing (when, who, old → new, how many days ago), and "Hide ones changed in the last 7 days".
@@ -664,7 +664,8 @@ function pxCheck(g) {
 function pxCheckHtml(g) {
   var res = g.rows.map(function (r) { return PXRES[r.sku]; }).filter(Boolean);
   if (res.length) return res.map(function (x) { return '<div class="' + (x.ok ? 'px-ok' : 'px-bad') + '">' + esc(x.text) + '</div>'; }).join('');
-  var c = pxCheck(g); if (!c) { var iss = []; g.rows.forEach(function (r) { (r.info && r.info.issues || []).forEach(function (x) { iss.push(x); }); }); return iss.length ? '<span class="px-warn">' + esc(iss.join(' · ')) + '</span>' : ''; }
+  var c = pxCheck(g); if (!c && PXSKIP[g.key]) return '<div class="px-warn">' + esc(PXSKIP[g.key]) + '</div>';
+  if (!c) { var iss = []; g.rows.forEach(function (r) { (r.info && r.info.issues || []).forEach(function (x) { iss.push(x); }); }); return iss.length ? '<span class="px-warn">' + esc(iss.join(' · ')) + '</span>' : ''; }
   return c.bad.map(function (x) { return '<div class="px-bad">❌ ' + esc(x) + '</div>'; }).join('') + c.warn.map(function (x) { return '<div class="px-warn">⚠ ' + esc(x) + '</div>'; }).join('') + c.ok.map(function (x) { return '<div class="px-ok">' + esc(x) + '</div>'; }).join('');
 }
 function pxVals(g, f) { var v = g.rows.map(function (r) { return f(r); }), s = {}; v.forEach(function (x) { s[x == null ? '—' : pxN(x)] = 1; }); return Object.keys(s).join(' / '); }
@@ -697,7 +698,7 @@ function pxRedrawRow(g) { var id = g.key.replace(/[^A-Za-z0-9]/g, '_'), el = doc
   if (bi && (e.business === '' || e.business == null)) bi.value = e.price !== '' && e.price != null && pxGHasBiz(g) ? pxR2(+e.price - PX_BIZ_GAP).toFixed(2) : ''; }
 window.pxEdit = function (key, f, v) {
   var e = PXE[key] = PXE[key] || {}, g = PX.groups.find(function (x) { return x.key === key; }); if (!g) return;
-  e[f] = v; if (f === 'business' && g) { var auto = e.price !== '' && e.price != null ? pxR2(+e.price - PX_BIZ_GAP).toFixed(2) : ''; if (v === auto) e.business = ''; } // the auto number = still automatic
+  delete PXSKIP[key]; e[f] = v; if (f === 'business' && g) { var auto = e.price !== '' && e.price != null ? pxR2(+e.price - PX_BIZ_GAP).toFixed(2) : ''; if (v === auto) e.business = ''; } // the auto number = still automatic
   g.rows.forEach(function (r) { delete PXRES[r.sku]; });
   if (v !== '') { PXTICK[key] = true; var ck = document.getElementById('px-ck-' + key.replace(/[^A-Za-z0-9]/g, '_')); if (ck) ck.checked = true; }
   pxRedrawRow(g);
@@ -735,9 +736,13 @@ window.pxFillTo = async function () {
   if (!L.length) { toast(from > 0 ? 'No listing shown is at ' + pxN(from) + ' now' : 'No listing shown'); return; }
   var need = []; L.forEach(function (g) { g.rows.forEach(function (r) { if (!r.info) need.push(r.sku); }); });
   if (need.length) { m.textContent = '⏳ Reading Maximum / Minimum / business price of ' + need.length + ' SKU(s) from Amazon first…'; while (_pxInfoBusy) await new Promise(function (r) { setTimeout(r, 300); }); await pxInfoFor(need); }
-  L.forEach(function (g) { var e = PXE[g.key] = PXE[g.key] || {}; e.price = to.toFixed(2); e.business = ''; PXTICK[g.key] = true; g.rows.forEach(function (r) { delete PXRES[r.sku]; }); });
-  var bad = L.filter(function (g) { var c = pxCheck(g); return c && c.bad.length; }).length;
-  m.textContent = '✏ ' + L.length + ' ASIN(s)' + (from > 0 ? ' at ' + pxN(from) : '') + ' → ' + pxN(to) + (bad ? ' · ❌ ' + bad + ' can\'t (see Check) — 💾 leaves them out' : '') + ' — check, then 💾 Change on Amazon';
+  // Owner (2026-11-10): "if i put $6.99 to $8.99 then 'fill', the price will even fill in for the one with the 'check'" — a row where the new price
+  // would be ❌ (over its Maximum, under its Minimum …) is NOT filled: left as it was, unticked, and its Check says why
+  var n = 0, skip = 0;
+  L.forEach(function (g) { var old = PXE[g.key], e = { price: to.toFixed(2), business: '' }; PXE[g.key] = e; var c = pxCheck(g);
+    if (c && c.bad.length) { if (old) PXE[g.key] = old; else delete PXE[g.key]; PXTICK[g.key] = false; PXSKIP[g.key] = '⏭ Not filled with ' + pxN(to) + ' — ' + c.bad.join(' · '); skip++; return; }
+    delete PXSKIP[g.key]; PXTICK[g.key] = true; g.rows.forEach(function (r) { delete PXRES[r.sku]; }); n++; });
+  m.textContent = '✏ ' + n + ' ASIN(s)' + (from > 0 ? ' at ' + pxN(from) : '') + ' filled → ' + pxN(to) + (skip ? ' · ⏭ ' + skip + ' NOT filled (it would be ❌ — see their Check)' : '') + ' — check, then 💾 Change on Amazon';
   pxRender();
 };
 var _pxRefAt = 0;
