@@ -180,7 +180,8 @@ document.addEventListener('input', function (e) {
         { key: 'addlisting', label: '+ Add a missing listing', sel: '#inv-panel-soldout button[onclick="soToggleAdd()"], #so-add' },
         { key: 'log', label: '📜 Quantity changes', sel: '#inv-panel-soldout > .icard:has(#so-log)' } ] }] },
     { key: 'packship', file: 'packship.html', name: '📦 Pack & Ship', needs: 'any sign-in', card: card('packship.html'), tabs: [
-      { key: 'pickscan', label: '🧭 Picking by scan', sel: '#ps-tab-pickscan' },
+      { key: 'pickscan', label: '🧭 Picking by scan', sel: '#ps-tab-pickscan', parts: [
+        { key: 'top3', label: '🏆 Top 3 — most orders in one hour (Admin / Owner)', sel: '#ps-speed-top-pickscan' } ] },
       { key: 'picking', label: '🧺 Picking', sel: '#ps-tab-picking', parts: [
         { key: 'voice', label: '🔊 Alert voice', sel: '#ps-panel-picking div:has(> #ps-pick-voice-select)' },
         { key: 'nostockbtn', label: '⚠ Report out of stock', sel: '#ps-pick-nostock-submit-wrap' },
@@ -193,6 +194,7 @@ document.addEventListener('input', function (e) {
         { key: 'list', label: 'Today\'s Picks', sel: '#ps-panel-picking > .ps-section-header:has(#ps-pick-cnt-label), #ps-panel-picking > .ps-filter-row, #ps-pick-list' },
         { key: 'debug', label: 'debug link', sel: '#ps-panel-picking span[onclick*="psShowDebug"]' } ] },
       { key: 'scan', label: '📦 Packing', sel: '#ps-tab-scan', parts: [
+        { key: 'top3', label: '🏆 Top 3 — most orders in one hour (Admin / Owner)', sel: '#ps-speed-top-pack' },
         { key: 'voice', label: '🔊 Alert voice', sel: '#ps-panel-scan div:has(> #ps-scan-voice-select)' },
         { key: 'printed', label: 'Printed Today tile', sel: '#ps-scan-summary-printed' },
         { key: 'notprinted', label: 'Not Printed tile', sel: '#ps-scan-summary-notprinted' },

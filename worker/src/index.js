@@ -23843,6 +23843,72 @@ async function shipPickVerifyTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ship_pick_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking TEXT, order_num TEXT, by_user TEXT,
     started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)`).run();
 }
+// 🏆 Owner (2026-11-10): "for Packing and Picking by scan, I want the top 3 fastest — MG did 154 in an hour, she stays on top 1 until someone
+// beats her number, same for top 1–3". Ranked by the most orders a person really did inside ONE clock hour (owner's pick, not the ⏱ pace):
+// 📦 Packing = labels scanned at Packing (ship_scan_log, one label once); 🧭 Picking by scan = orders picked by scan, finished
+// (ship_pick_verify, complete, one label once). UTC hours are New York clock hours too (whole-hour offset). Each person's best hour is kept
+// (speed_best) and replaced only when beaten (more, not equal), so a record stays until someone does more; a tie keeps who did it first.
+// New hours are read from 2 days back each time (already-counted hours can't add twice: only the best is kept). Admin / Owner only.
+async function shipSpeedTop(env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
+  await ensureShipD1Tables(env); await shipPickVerifyTable(env);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS speed_best (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, hour TEXT, at TEXT, PRIMARY KEY (kind, who))').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run();
+  const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString();
+  const SRC = {
+    pack: ["SELECT UPPER(TRIM(initials)) AS who, substr(timestamp, 1, 13) AS h, COUNT(DISTINCT UPPER(tracking)) AS n FROM ship_scan_log WHERE TRIM(COALESCE(initials, '')) != '' AND tracking != ''", 'date'],
+    pickscan: ["SELECT UPPER(TRIM(by_user)) AS who, substr(COALESCE(done_at, at), 1, 13) AS h, COUNT(DISTINCT UPPER(tracking)) AS n FROM ship_pick_verify WHERE complete = 1 AND TRIM(COALESCE(by_user, '')) != '' AND COALESCE(tracking, '') != ''", 'substr(COALESCE(done_at, at), 1, 10)'] };
+  const out = {};
+  for (const kind of Object.keys(SRC)) {
+    const key = 'speed_best_through_' + kind, thr = await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null);
+    const from = thr && thr.value ? (thr.value < since ? thr.value : since) : '';
+    const rows = ((await env.DB.prepare(SRC[kind][0] + (from ? ` AND ${SRC[kind][1]} >= ?` : '') + ' GROUP BY 1, 2').bind(...(from ? [from] : [])).all()).results) || [];
+    const best = {}; rows.forEach(r => { if (!r.h || !(r.n > 0)) return; const b = best[r.who]; if (!b || r.n > b.n || (r.n === b.n && r.h < b.h)) best[r.who] = r; });
+    const st = Object.values(best).map(b => env.DB.prepare(`INSERT INTO speed_best (kind, who, n, hour, at) VALUES (?,?,?,?,?)
+      ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, hour = excluded.hour, at = excluded.at WHERE excluded.n > speed_best.n`).bind(kind, b.who, b.n, b.h, now));
+    for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+    await env.DB.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').bind(key, since).run();
+    const top = ((await env.DB.prepare('SELECT who, n, hour, at FROM speed_best WHERE kind = ? ORDER BY n DESC, hour ASC LIMIT 3').bind(kind).all()).results) || [];
+    const people = await env.DB.prepare('SELECT COUNT(*) AS c FROM speed_best WHERE kind = ?').bind(kind).first();
+    out[kind] = { top, people: (people && people.c) || 0 };
+  }
+  return J({ ok: true, ...out });
+}
+// 🏆 Tap a Top 3 record (owner 2026-11-10: "click on it to see what's in the order and average how long for those packages"): every order of
+// that person in that clock hour — when, order #, label, what was in it (our saved copy of the order), and how long each took:
+// 📦 Packing = the time from their label before (the ⏱ pace rule: 10 sec – 10 min; a batch scan or a break is not timed);
+// 🧭 Picking by scan = started → done of that order. Average = timed orders only. Read only. Admin / Owner only.
+async function shipSpeedHour(url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Admin / Owner only' }, 403);
+  const kind = url.searchParams.get('kind') === 'pickscan' ? 'pickscan' : 'pack', who = String(url.searchParams.get('who') || '').trim().toUpperCase(), hour = String(url.searchParams.get('hour') || '').slice(0, 13);
+  if (!who || !/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(hour)) return J({ ok: false, error: 'who and hour required' }, 400);
+  await ensureShipD1Tables(env); await shipPickVerifyTable(env);
+  const seen = new Set(), orders = [];
+  if (kind === 'pack') {
+    const rs = ((await env.DB.prepare(`SELECT tracking, timestamp, carrier, order_num, date FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND substr(timestamp, 1, 13) = ? ORDER BY timestamp`).bind(who, hour).all()).results) || [];
+    // the label before the hour's first one — the same work day only (another day's last label is not "the one before")
+    const before = rs.length ? await env.DB.prepare(`SELECT timestamp FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND date = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT 1`).bind(who, rs[0].date, hour + ':00:00').first().catch(() => null) : null;
+    let prev = before ? Date.parse(before.timestamp) : null;
+    for (const r of rs) { const k = String(r.tracking || '').toUpperCase(); if (!k || seen.has(k)) continue; seen.add(k);
+      const t = Date.parse(r.timestamp), d = prev != null && !isNaN(t) ? t - prev : null; if (!isNaN(t)) prev = t;
+      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.timestamp, carrier: r.carrier || '', sec: d != null && d >= PS_SPEED_BATCH_MS && d < PS_SPEED_GAP_MS ? Math.round(d / 1000) : null, why: d == null ? 'first of the day' : d < PS_SPEED_BATCH_MS ? 'scanned seconds after the one before (a batch)' : d >= PS_SPEED_GAP_MS ? 'after a break (10+ min)' : '' }); }
+  } else {
+    const rs = ((await env.DB.prepare(`SELECT tracking, order_num, started_at, done_at, at FROM ship_pick_verify WHERE complete = 1 AND UPPER(TRIM(by_user)) = ? AND substr(COALESCE(done_at, at), 1, 13) = ? ORDER BY COALESCE(done_at, at)`).bind(who, hour).all()).results) || [];
+    for (const r of rs) { const k = String(r.tracking || '').toUpperCase(); if (!k || seen.has(k)) continue; seen.add(k);
+      const d = Date.parse(r.done_at || r.at) - Date.parse(r.started_at || '');
+      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.done_at || r.at, sec: d > 0 && d < PS_SPEED_GAP_MS * 3 ? Math.round(d / 1000) : null, why: d > 0 ? '' : 'no start time' }); }
+  }
+  const ks = orders.map(o => o.tracking), items = {};
+  for (let i = 0; i < ks.length; i += 80) { const ch = ks.slice(i, i + 80);
+    (((await env.DB.prepare(`SELECT UPPER(tracking) AS t, order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) IN (${ch.map(() => '?').join(',')}) ORDER BY date DESC, id DESC`).bind(...ch).all()).results) || [])
+      .forEach(r => { if (items[r.t]) return; let li = []; try { li = JSON.parse(r.line_items || '[]'); } catch (_) {} items[r.t] = { orderNum: r.order_num || '', items: (Array.isArray(li) ? li : []).map(x => ({ sku: x.s || '', qty: x.q || 1 })) }; }); }
+  orders.forEach(o => { const it = items[o.tracking]; o.items = it ? it.items : []; if (!o.orderNum && it) o.orderNum = it.orderNum; o.pieces = o.items.reduce((a, x) => a + (parseFloat(x.qty) || 0), 0); });
+  const timed = orders.filter(o => o.sec != null), avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
+  return J({ ok: true, kind, who, hour, n: orders.length, timed: timed.length, avgSec: avg, orders });
+}
+const PS_SPEED_BATCH_MS = 10000, PS_SPEED_GAP_MS = 600000; // the same as the page's ⏱ pace: under 10 sec = a batch scan, 10 min+ = a break
 async function shipPickVerifyRows(env, tracking) {
   try { await shipPickVerifyTable(env); return (await env.DB.prepare('SELECT * FROM ship_pick_verify WHERE UPPER(tracking) = ? ORDER BY id').bind(String(tracking || '').toUpperCase()).all()).results || []; } catch (_) { return []; }
 }
@@ -24074,6 +24140,8 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/items'        && method === 'GET')  { const o = await shipLocalOrder(env, normalizeShipTracking(url.searchParams.get('tracking') || ''));
       return cors(new Response(JSON.stringify({ ok: true, found: !!o, orderNum: o ? o.orderNum : '', lineItems: o ? o.items : null }), { headers: { 'Content-Type': 'application/json' } })); }
     if (path === '/ship/scans'        && method === 'GET')  return await shipGetScans(url, env);
+    if (path === '/ship/speed-top'    && method === 'GET')  return await shipSpeedTop(env, session);
+    if (path === '/ship/speed-hour'   && method === 'GET')  return await shipSpeedHour(url, env, session);
     if (path === '/ship/pick'         && method === 'POST') return await shipPick(request, env, ctx);
     if (path === '/ship/picks'        && method === 'GET')  return await shipGetPicks(url, env);
     if (path === '/ship/stockout'     && method === 'POST') return await shipReportStockout(request, env);
