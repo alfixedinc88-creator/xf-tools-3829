@@ -23860,11 +23860,20 @@ function psSpeedBestWindow(L) {
   return best ? { n: best.n, start: new Date(best.start).toISOString(), end: new Date(best.start + PS_SPEED_WIN_MS).toISOString() } : null;
 }
 // one person's labels of one day, in time order → the counted ones (one label once; a batch scan left out) + how many were batch
+// A stack = 3+ labels in a row, each under 10 sec after the one before: only its first label counts (owner: MG works fast — two quick real
+// orders in a row both count; only a real stack scanned in one go is left out). → flags[i] true = a stack label after the first.
+function psSpeedStackFlags(ts) {
+  const f = ts.map(() => false); let i = 0;
+  while (i < ts.length) { let j = i; while (j + 1 < ts.length && ts[j + 1] - ts[j] < PS_SPEED_BATCH_MS) j++;
+    if (j - i + 1 >= 3) for (let k = i + 1; k <= j; k++) f[k] = true; i = j + 1; }
+  return f;
+}
 function psSpeedCount(rows, batchRule) {
-  const seen = new Set(), out = []; let prev = null, batch = 0;
-  for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
-    const isBatch = batchRule && prev != null && t - prev < PS_SPEED_BATCH_MS; prev = t; if (isBatch) { batch++; continue; } out.push({ t, k }); }
-  return { L: out, batch };
+  const seen = new Set(), L = [];
+  for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k); L.push({ t, k }); }
+  if (!batchRule) return { L, batch: 0 };
+  const f = psSpeedStackFlags(L.map(x => x.t));
+  return { L: L.filter((x, i) => !f[i]), batch: f.filter(Boolean).length };
 }
 const PS_SPEED_SRC = {
   pack: { days: "SELECT DISTINCT date AS d FROM ship_scan_log WHERE date > ? ORDER BY date LIMIT ?", rows: "SELECT UPPER(TRIM(initials)) AS who, timestamp AS ts, tracking AS k FROM ship_scan_log WHERE date = ? AND TRIM(COALESCE(initials, '')) != '' ORDER BY 1, timestamp", batch: true },
@@ -23903,11 +23912,15 @@ async function shipSpeedTop(env, session) {
   const hidden = new Set((((await env.DB.prepare('SELECT who FROM speed_hidden').all()).results) || []).map(r => String(r.who).toUpperCase()));
   const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString(), out = {};
   for (const kind of Object.keys(PS_SPEED_SRC)) {
-    const S = PS_SPEED_SRC[kind], key = 'speed2_done_' + kind;
+    const S = PS_SPEED_SRC[kind], key = 'speed3_done_' + kind; // speed3: history read again once with the 3+ stack rule (records only go up)
     const done = ((await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null)) || {}).value || '';
     const from = done && done < since ? done : (done ? since : ''); // the last 2 days are read again each time
     const days = (((await env.DB.prepare(S.days).bind(from || '0000', 61).all()).results) || []).map(r => r.d).filter(Boolean);
     const more = days.length > 60; if (more) days.length = 60;
+    // 🐞 Owner (2026-11-10: "something is not right — MG packed about 154 within an hour", the board still "reading older days"): history is
+    // read oldest first, so today waited until every older day was read. The last 2 days (today too) are read on EVERY load, older ones meanwhile.
+    const dayBefore = new Date(Date.parse(since + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    (((await env.DB.prepare(S.days).bind(dayBefore, 10).all()).results) || []).map(r => r.d).filter(Boolean).forEach(d => { if (days.indexOf(d) < 0) days.push(d); });
     let last = done;
     for (const day of days) {
       const rows = ((await env.DB.prepare(S.rows).bind(day).all()).results) || [], by = {};
@@ -23942,13 +23955,15 @@ async function shipSpeedHour(url, env, session) {
   if (kind === 'pack') {
     const day = await env.DB.prepare('SELECT date FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND timestamp >= ? AND timestamp < ? LIMIT 1').bind(who, start, end).first();
     const rows = day ? (((await env.DB.prepare('SELECT tracking AS k, timestamp AS ts, carrier, order_num FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND date = ? ORDER BY timestamp').bind(who, day.date).all()).results) || []) : [];
-    const seen = new Set(); let prev = null;
-    for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
-      const d = prev != null ? t - prev : null; prev = t;
+    const seen = new Set(), U = [];
+    for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k); U.push({ r, k, t }); }
+    const fl = psSpeedStackFlags(U.map(x => x.t));
+    for (let ui = 0; ui < U.length; ui++) { const { r, k, t } = U[ui];
+      const d = ui ? t - U[ui - 1].t : null;
       if (t < t0 || t >= t0 + PS_SPEED_WIN_MS) continue;
-      const batch = d != null && d < PS_SPEED_BATCH_MS;
-      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.ts, carrier: r.carrier || '', counted: !batch, sec: d != null && !batch && d < PS_SPEED_GAP_MS ? Math.round(d / 1000) : null,
-        why: d == null ? 'first of the day' : batch ? 'batch scan (seconds after the label before) — not counted' : d >= PS_SPEED_GAP_MS ? 'after a break (10+ min)' : '' }); }
+      const batch = fl[ui];
+      orders.push({ tracking: k, orderNum: r.order_num || '', at: r.ts, carrier: r.carrier || '', counted: !batch, sec: d != null && !batch && d >= PS_SPEED_BATCH_MS && d < PS_SPEED_GAP_MS ? Math.round(d / 1000) : null,
+        why: d == null ? 'first of the day' : batch ? 'batch scan (part of a stack scanned seconds apart) — not counted' : d < PS_SPEED_BATCH_MS ? 'seconds after the label before — counted, not timed' : d >= PS_SPEED_GAP_MS ? 'after a break (10+ min)' : '' }); }
   } else {
     const rs = ((await env.DB.prepare(`SELECT tracking, order_num, started_at, done_at, at FROM ship_pick_verify WHERE complete = 1 AND UPPER(TRIM(by_user)) = ? AND COALESCE(done_at, at) >= ? AND COALESCE(done_at, at) < ? ORDER BY COALESCE(done_at, at)`).bind(who, start, end).all()).results) || [];
     const seen = new Set();

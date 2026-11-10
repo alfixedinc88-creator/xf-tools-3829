@@ -6380,7 +6380,7 @@ function _psSpeedTopPaint(kind) {
     + (D.stillReading ? '<div style="font-size:11px;color:#b45309;margin-top:4px">⏳ Still reading older days — tap ↻ in a moment for the full board.</div>' : '')
     + ((_psSpeedTop.hidden || []).length ? '<details class="ps-speed-hidden" style="font-size:11px;color:var(--text3);margin-top:4px"><summary style="cursor:pointer">🙈 ' + _psSpeedTop.hidden.length + ' taken off the board (not working here)</summary>'
       + _psSpeedTop.hidden.map(function(h) { return '<div>' + _psAlEsc(h.who) + ' — ' + _psAlEsc(h.why || '') + ' · ' + _psAlEsc(h.by || '') + ' <a href="javascript:void 0" onclick="psSpeedHide(\'' + _psAlEsc(h.who).replace(/'/g, '') + '\', true)">↩ put back</a></div>'; }).join('') + '</details>' : '')
-    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did in any 60 minutes in a row (from any minute — not a clock hour). One label = one order; ' + (kind === 'pack' ? 'labels scanned seconds apart (a stack scanned in one go) don\'t count. ' : '') + 'A record stays until someone beats it; a tie keeps who did it first.</div></div>';
+    + '<div style="font-size:10.5px;color:var(--text3);margin-top:4px">The most orders one person really did in any 60 minutes in a row (from any minute — not a clock hour). One label = one order; ' + (kind === 'pack' ? 'a stack of 3+ labels scanned seconds apart (scanned in one go) counts once. ' : '') + 'A record stays until someone beats it; a tie keeps who did it first.</div></div>';
 }
 window.psSpeedHide = function(who, undo) {
   if (!undo && !confirm('Take ' + who + ' off the Top 3 boards (not working here any more)?\n\nTheir record is kept — ↩ put back any time.')) return;
