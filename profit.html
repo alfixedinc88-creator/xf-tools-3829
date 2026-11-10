@@ -239,6 +239,10 @@ tr.px-chg td { background:#fffbea; }
         <label><input type="checkbox" id="px-99" onchange="pxRender()"> end in .99</label>
         <button class="btn" id="px-fillall" onclick="pxFillAll()">💡 Fill all shown with the suggested price</button>
         <button class="btn" id="px-fillstep" onclick="pxFillAll(PX_STEP)">⬆ Fill all shown +30%</button>
+        <span id="px-setto" style="display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border:1px dashed var(--border2);border-radius:8px">
+          ✏ Every listing now at $ <input type="number" id="px-from" step="0.01" min="0" style="width:70px" placeholder="6.99" title="Leave empty = every listing shown">
+          → $ <input type="number" id="px-to" step="0.01" min="0" style="width:70px" placeholder="8.99">
+          <button class="btn" id="px-filltoall" onclick="pxFillTo()">Fill</button></span>
         <span class="muted">Business price = new price − $0.03 (automatic)</span>
         <button class="btn" onclick="pxRef()">🔎 Amazon's reference prices (this page)</button>
         <button class="btn btn-primary" id="px-apply" onclick="pxApply()">💾 Change on Amazon</button>
@@ -721,6 +725,21 @@ window.pxFillAll = async function (step) {
   m.textContent = '💡 ' + n + ' ASIN(s) filled: price now + ' + pct + '%' + (cap ? ' · ' + cap + ' stopped at their Maximum' : '') + ' · business −$0.03 — check, then 💾 Change on Amazon';
   pxRender();
 };
+// ✏ Owner (2026-11-10): "is there's any way I can have i click to change it all? like price $6.99 right, I want it to change all to $8.99? except the
+// 'check' one" — every listing shown (all pages) that is at $6.99 now (empty = every one shown) gets $8.99 (business −$0.03 as always). 💾 then sends
+// all of them except the ones whose Check is ❌ (over the Maximum, under the Minimum …): those are left out and said.
+window.pxFillTo = async function () {
+  var from = parseFloat(document.getElementById('px-from').value), to = parseFloat(document.getElementById('px-to').value), m = document.getElementById('px-msg');
+  if (!(to > 0)) { toast('Type the new price ($)'); return; }
+  var L = pxRows().filter(function (g) { return !(from > 0) || g.rows.some(function (r) { return r.price != null && Math.abs(r.price - from) < 0.005; }); });
+  if (!L.length) { toast(from > 0 ? 'No listing shown is at ' + pxN(from) + ' now' : 'No listing shown'); return; }
+  var need = []; L.forEach(function (g) { g.rows.forEach(function (r) { if (!r.info) need.push(r.sku); }); });
+  if (need.length) { m.textContent = '⏳ Reading Maximum / Minimum / business price of ' + need.length + ' SKU(s) from Amazon first…'; while (_pxInfoBusy) await new Promise(function (r) { setTimeout(r, 300); }); await pxInfoFor(need); }
+  L.forEach(function (g) { var e = PXE[g.key] = PXE[g.key] || {}; e.price = to.toFixed(2); e.business = ''; PXTICK[g.key] = true; g.rows.forEach(function (r) { delete PXRES[r.sku]; }); });
+  var bad = L.filter(function (g) { var c = pxCheck(g); return c && c.bad.length; }).length;
+  m.textContent = '✏ ' + L.length + ' ASIN(s)' + (from > 0 ? ' at ' + pxN(from) : '') + ' → ' + pxN(to) + (bad ? ' · ❌ ' + bad + ' can\'t (see Check) — 💾 leaves them out' : '') + ' — check, then 💾 Change on Amazon';
+  pxRender();
+};
 var _pxRefAt = 0;
 window.pxRef = async function () {
   var P = pxRows().slice(pxPage * PX_PER, pxPage * PX_PER + PX_PER).map(function (g) { return g.asin; }).filter(function (a) { return a && !PXREF[a]; });
@@ -740,11 +759,14 @@ window.pxApply = async function () {
   if (!PX || !PX.canChange) return;
   var L = PX.groups.filter(function (g) { return PXTICK[g.key] && pxCheck(g); }), m = document.getElementById('px-msg');
   if (!L.length) { toast('Tick the rows with a new price first'); return; }
+  // ❌ rows (over the Maximum, under the Minimum …) are left out — the rest are sent (owner 2026-11-10: "change it all … except the 'check' one")
   var bad = L.filter(function (g) { return pxCheck(g).bad.length; });
-  if (bad.length) { toast('❌ ' + bad.length + ' ticked row(s) still have a red problem — fix or untick them'); return; }
+  L = L.filter(function (g) { return !pxCheck(g).bad.length; });
+  if (!L.length) { toast('❌ Every ticked row has a red problem in Check — nothing to send'); return; }
   var big = L.filter(function (g) { return pxCheck(g).warn.length; }), nSku = L.reduce(function (a, g) { return a + g.rows.length; }, 0);
   if (!confirm('Change ' + L.length + ' ASIN(s) (' + nSku + ' SKU listing(s)) on Amazon now?\n\n' + L.slice(0, 15).map(function (g) { return (g.asin || g.rows[0].sku) + ': ' + pxN(pxGPrice(g)) + ' → ' + pxN(pxCheck(g).price) + (g.rows.length > 1 ? ' (' + g.rows.length + ' SKUs)' : ''); }).join('\n') + (L.length > 15 ? '\n…' : '')
-    + (big.length ? '\n\n⚠ ' + big.length + ' have a warning (big jump / above Amazon\'s reference). OK = send them too.' : ''))) return;
+    + (big.length ? '\n\n⚠ ' + big.length + ' have a warning (big jump / above Amazon\'s reference). OK = send them too.' : '')
+    + (bad.length ? '\n\n❌ ' + bad.length + ' left out (a red problem in Check): ' + bad.slice(0, 8).map(function (g) { return g.asin || g.rows[0].sku; }).join(', ') + (bad.length > 8 ? '…' : '') : ''))) return;
   var okN = 0, badN = 0, done = 0;
   for (var i = 0; i < L.length; i++) { var g = L[i], allOk = true;
     for (var j = 0; j < g.rows.length; j++) { var r = g.rows[j], w = pxWantFor(g, r); done++; m.textContent = '💾 ' + done + ' of ' + nSku + ' — ' + r.sku;
@@ -754,7 +776,7 @@ window.pxApply = async function () {
       if (d.ok) { okN++; r.last = { at: new Date().toISOString(), by: (USER && USER.displayName) || '', old: d.before.price, new: d.after.price }; r.price = d.after.price; if (r.info) { r.info.business = d.after.business; r.info.min = d.after.min; } } else { badN++; allOk = false; } }
     if (allOk) { delete PXE[g.key]; PXTICK[g.key] = false; }
     pxRender(); }
-  m.textContent = '✅ ' + okN + ' SKU listing(s) sent to Amazon' + (badN ? ' · ❌ ' + badN + ' refused (see the rows)' : '') + ' — Amazon shows them in about 5–15 min';
+  m.textContent = '✅ ' + okN + ' SKU listing(s) sent to Amazon' + (badN ? ' · ❌ ' + badN + ' refused (see the rows)' : '') + (bad.length ? ' · ' + bad.length + ' ASIN(s) left out (❌ in Check)' : '') + ' — Amazon shows them in about 5–15 min';
   pxLogLoad();
 };
 async function pxLogLoad() { var d = await wapi('/amazon/prices'); if (d.ok) { PX.log = d.log; pxLog(); } }

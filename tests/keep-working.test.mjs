@@ -13353,6 +13353,10 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
   T.E[g1.key] = { price: '12.99' }; const c30 = T.pxCheck(g1);
   check('page: the ⬆ +30% price ($9.99 → $12.99) has no "big jump" warning (rounded to the cent); the table fits a PC screen (8 columns, full width)', !c30.bad.length && !c30.warn.length && c30.ok.length === 1
     && /#pf-app\.pf-wide \.wrap \{ max-width:none;/.test(pf) && /document\.getElementById\('pf-app'\)\.classList\.toggle\('pf-wide', t === 'price'\);/.test(pf) && (pf.match(/<th[ >]/g) || []).length > 0 && /<th class="l">New business · min<\/th><th class="l">Check<\/th>/.test(pf), c30);
+  // Owner (2026-11-10): "click to change it all? like price $6.99 right, I want it to change all to $8.99? except the 'check' one"
+  check('✏ Every listing now at $6.99 → $8.99: fills every row shown at that price (all pages), reads their min / max first; 💾 sends all of them EXCEPT the ones with ❌ in Check (said in the OK box and after)',
+    /id="px-from"/.test(pf) && /id="px-to"/.test(pf) && /onclick="pxFillTo\(\)"/.test(pf) && /Math\.abs\(r\.price - from\) < 0\.005/.test(pf)
+      && /L = L\.filter\(function \(g\) \{ return !pxCheck\(g\)\.bad\.length; \}\);/.test(pf) && /left out \(a red problem in Check\)/.test(pf) && !/still have a red problem — fix or untick them/.test(pf), null);
   T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
   T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',
