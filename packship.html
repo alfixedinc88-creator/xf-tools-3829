@@ -4523,7 +4523,9 @@ function _psRenderItemCountBreakdown(scans, elId) {
     return aHeavy - bHeavy;
   });
   if (!keys.length && !unknown) { el.innerHTML = ''; return; }
-  var pace = (typeof _psPaceOn !== 'undefined' && _psPaceOn && _psPaceAdmin()) ? _psPaceBySize(scans) : null; // ⏱ only when an Admin / Owner shows pace
+  // ⏱ only for an Admin / Owner: on the page when ⏱ Show pace is on; in a person's window (tap a name) ALWAYS — owner 2026-11-10: "how come there's
+  // no average time for package now … when I click on MG's name, before I had the time" (the ⏱ switch goes back to off when the page reloads).
+  var pace = (typeof _psPaceAdmin === 'function' && _psPaceAdmin() && ((typeof _psPaceOn !== 'undefined' && _psPaceOn) || /person-modal/.test(elId))) ? _psPaceBySize(scans) : null;
   var chips = keys.map(function(key) {
     var heavy = key.indexOf(':heavy') !== -1;
     var n = parseInt(key, 10);
