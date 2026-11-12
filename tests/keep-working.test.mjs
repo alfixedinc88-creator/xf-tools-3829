@@ -13564,5 +13564,17 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SP%'; DELETE FROM ship_pick_verify WHERE tracking LIKE 'PKS%'; DELETE FROM ship_manifest_log WHERE tracking = 'SPeKL0'; DELETE FROM speed_best2; DELETE FROM speed_hidden; DELETE FROM speed_hidden_log");
 }
 
+// 📦 Owner (2026-11-12): "I try to use the scanner as packing, nothing happening" — a barcode that is not a tracking # was dropped silently
+{
+  const psS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const code = psS.slice(psS.indexOf('var _psPackBadLast = '), psS.indexOf('function _psProcessScan(raw) {'));
+  let shown = null, flash = null, beeps = 0;
+  const bad = new Function('_psFlash', '_psBeep', '_psShowLastScan', code + '; return _psPackNotTracking;')(c => { flash = c; }, () => { beeps++; }, o => { shown = o; });
+  bad('30-3-4=10X'); const first = shown; bad('30-3-4=10X');
+  check('📦 Packing: a barcode that is not a tracking # (part #, square 2D code) shows a red ✗ "Not a tracking number — nothing saved" (once beeped for the same code read again), never silent',
+    first && first.cls === 'err' && first.tracking === '30-3-4=10X' && /Not a tracking number — nothing saved/.test(first.meta) && flash === 'red' && beeps === 1
+      && /if \(!tracking\) \{ _psPackNotTracking\(raw\); inp\.focus\(\); return; \}/.test(psS), { first, beeps });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
