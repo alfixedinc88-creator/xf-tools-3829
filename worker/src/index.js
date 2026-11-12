@@ -27086,16 +27086,27 @@ async function officeEbayPO(env, path) { // Post-Order API (returns, cancellatio
 }
 const officeV = x => (x && typeof x === 'object' && 'value' in x) ? x.value : x;
 const OFFICE_EBAY_INBOX = 'https://mesg.ebay.com/mesgweb/ViewMessages/0';
+// 🔗 Owner (2026-11-12): "Open on eBay just brings me to the message inbox, not to that message — can it bring me to the message we need to reply?"
+// eBay gives each inbox message its own reply link (GetMyMessages ResponseURL), kept here by message ID when the 30-minute timer reads them.
+// A message with no such link (a listing question) opens eBay's page of that one message by its ID; with no ID, eBay's Messages page.
+async function officeEbayMsgUrlsSave(env, msgs) {
+  const L = (msgs || []).filter(m => m && m.messageId && /^https:\/\/[a-z0-9.-]*ebay\.com\//i.test(m.responseUrl || '')); if (!L.length) return;
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS ebay_msg_url (message_id TEXT PRIMARY KEY, url TEXT, at TEXT)').run();
+  const now = new Date().toISOString();
+  await env.DB.batch(L.map(m => env.DB.prepare('INSERT OR REPLACE INTO ebay_msg_url (message_id, url, at) VALUES (?,?,?)').bind(String(m.messageId), String(m.responseUrl).slice(0, 600), now)));
+}
+function officeEbayMsgUrl(urls, id) { id = String(id || '').trim(); return urls[id] || (/^\d{6,}$/.test(id) ? 'https://mesg.ebay.com/mesgweb/ViewMessageDetail/0/m2m/' + id : OFFICE_EBAY_INBOX); }
 const OFFICE_EBAY_OPEN_RET = /OPEN|PENDING|WAITING|REQUEST|ESCALAT|ITEM_SHIPPED|ITEM_DELIVERED|PARTIAL/i;
 const officeSources = {
   async ebay_msg(env) { // the eBay messages the 30-minute timer already reads (eBay Messages app): a thread waits until we answer it
     await ebayThreadsEnsureSheet(env);
     const rows = ((await rSheetGet(env, `${THREAD_TAB}!A2:J5000`).catch(() => ({ values: [] }))).values || []), cut = officeSince(30), by = {};
     rows.forEach(r => { const id = r[0] || r[1]; if (!id || !(r[2] >= cut)) return; (by[id] = by[id] || []).push(r); });
+    const urls = {}; (await d1All(env, 'SELECT message_id, url FROM ebay_msg_url', [])).forEach(x => { urls[x.message_id] = x.url; });
     return Object.keys(by).map(id => { const L = by[id].sort((a, b) => String(a[2]).localeCompare(String(b[2]))), lastB = L.filter(r => r[6] === 'BUYER').pop(), last = L[L.length - 1];
       if (!lastB) return null; const ans = last[6] === 'SELLER' && String(last[2]) >= String(lastB[2]);
       return { src: 'ebay_msg', ext_id: id + '|' + lastB[2], channel: 'eBay', kind: 'message', title: (lastB[5] || 'Message') + ' — ' + (lastB[4] || ''), detail: lastB[7] || '',
-        customer: lastB[4] || '', order_no: lastB[3] || '', url: OFFICE_EBAY_INBOX /* 🔗 eBay's own Messages page (owner 2026-11-04: "Open on eBay opened our app, not eBay") */, received_at: lastB[2], closed: ans, closed_at: ans ? (last[9] || last[2]) : '', closed_by: 'eBay Messages' }; }).filter(Boolean);
+        customer: lastB[4] || '', order_no: lastB[3] || '', url: officeEbayMsgUrl(urls, lastB[1]) /* 🔗 that message on eBay (owner 2026-11-12), else eBay's Messages page */, received_at: lastB[2], closed: ans, closed_at: ans ? (last[9] || last[2]) : '', closed_by: 'eBay Messages' }; }).filter(Boolean);
   },
   async ebay_return(env) {
     const d = await officeEbayPO(env, 'return/search?creation_date_range_from=' + encodeURIComponent(officeSince(30)) + '&limit=200');
@@ -27902,6 +27913,7 @@ function parseMyMessageBlock(blk) {
   const readMatch    = blk.match(/<Read>(true|false)<\/Read>/);
   const itemIdMatch  = blk.match(/<ItemID>([^<]+)<\/ItemID>/);
   const extIdMatch   = blk.match(/<ExternalMessageID>([^<]+)<\/ExternalMessageID>/);
+  const respMatch    = blk.match(/<ResponseURL>([^<]+)<\/ResponseURL>/); // eBay's own link to answer THIS message (owner 2026-11-12)
   // Strip HTML from body text
   const rawBody = (textMatch?.[1] || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g,' ').trim();
   return {
@@ -27917,6 +27929,7 @@ function parseMyMessageBlock(blk) {
     type:           'OrderInquiry',
     currentPrice:   null,
     read:           (readMatch?.[1] || 'false'),
+    responseUrl:    (respMatch?.[1] || '').trim().replace(/&amp;/g, '&'),
   };
 }
 
@@ -28542,6 +28555,7 @@ ${msgIds.map(id=>`  <MessageIDs><MessageID>${escXml(id)}</MessageID></MessageIDs
         body: m.body||'', replyType: m.replyType||'RTQ', sentAt:'',
       })).filter(m=>m.messageId||m.body);
       await ebayThreadsSave({ json: async ()=>({ messages: toSave }) }, env);
+      await officeEbayMsgUrlsSave(env, messages).catch(e => console.error('[cron-msg] reply links:', e.message)); // 🔗 Office: "Open on eBay" opens that message
     }
     console.log(`[cron-msg] Fetched ${messages.length} messages`);
     return cors(new Response(JSON.stringify({ ok:true, fetched:messages.length }), { headers:{'Content-Type':'application/json'} }));

@@ -12893,8 +12893,16 @@ console.log('\n🧑‍💼 Office: one to-do list from every channel, grey when 
   // Owner (2026-11-04): "for messages, Open on eBay just pops up our app — not our eBay website"
   const wkO = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('an eBay message\'s 🔗 Open on eBay goes to eBay\'s own Messages page (mesg.ebay.com), never our app; one saved before with our app\'s link is sent there too, and its link is put right on the next read',
-    /url: OFFICE_EBAY_INBOX/.test(wkO) && /const OFFICE_EBAY_INBOX = 'https:\/\/mesg\.ebay\.com\/mesgweb\/ViewMessages\/0'/.test(wkO) && !/url: 'index\.html#ebay-messages'/.test(wkO)
+    /url: officeEbayMsgUrl\(urls, lastB\[1\]\)/.test(wkO) /* owner 2026-11-12: that message itself */ && /const OFFICE_EBAY_INBOX = 'https:\/\/mesg\.ebay\.com\/mesgweb\/ViewMessages\/0'/.test(wkO) && !/url: 'index\.html#ebay-messages'/.test(wkO)
       && new Function(ohO.match(/function ofUrl\(it\) \{[^\n]*\}/)[0] + '; return ofUrl;')()({ channel: 'eBay', url: 'index.html#ebay-messages' }) === 'https://mesg.ebay.com/mesgweb/ViewMessages/0' && /url = CASE WHEN \? != \\'\\' THEN \? ELSE url END/.test(wkO), null);
+  // Owner (2026-11-12): "Open on eBay just brings me to the message inbox, not to that message — can it bring me to the message we need to reply?"
+  const pm = new Function(wkO.slice(wkO.indexOf('function parseMyMessageBlock('), wkO.indexOf('\n}\n', wkO.indexOf('function parseMyMessageBlock(')) + 2) + '; return parseMyMessageBlock;')();
+  const pb = pm('<Message><MessageID>145678901234</MessageID><Sender>jim</Sender><Text>Is this 1/2?</Text><ResponseDetails><ResponseEnabled>true</ResponseEnabled><ResponseURL>https://contact.ebay.com/ws/eBayISAPI.dll?M2MContact&amp;id=145678901234</ResponseURL></ResponseDetails></Message>');
+  const mu = new Function('OFFICE_EBAY_INBOX', wkO.match(/function officeEbayMsgUrl\(urls, id\) \{[^\n]*\}/)[0] + '; return officeEbayMsgUrl;')('https://mesg.ebay.com/mesgweb/ViewMessages/0');
+  check('🔗 Open on eBay for a message goes to THAT message: eBay\'s own reply link for it (kept when the timer reads the inbox); a message with no reply link → eBay\'s page of that message by its ID; no ID → the Messages page',
+    pb.responseUrl === 'https://contact.ebay.com/ws/eBayISAPI.dll?M2MContact&id=145678901234' && mu({ '145678901234': pb.responseUrl }, '145678901234') === pb.responseUrl
+      && mu({}, '145678901299') === 'https://mesg.ebay.com/mesgweb/ViewMessageDetail/0/m2m/145678901299' && mu({}, '') === 'https://mesg.ebay.com/mesgweb/ViewMessages/0'
+      && /await officeEbayMsgUrlsSave\(env, messages\)/.test(wkO), { pb: pb.responseUrl });
   globalThis.fetch = realF; keys.forEach(k => { if (saved[k] === undefined) delete env[k]; else env[k] = saved[k]; });
   sq.exec('DELETE FROM office_item; DELETE FROM office_log; DELETE FROM office_src; DELETE FROM office_rep');
 }
