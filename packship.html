@@ -2940,11 +2940,26 @@ function _psQuickRepeat(kind, tracking) {
   return rep;
 }
 
+// Owner 2026-11-12: "I try to use the scanner as packing, nothing happening" — a barcode that is not a
+// USPS / UPS tracking # (the small square 2D code, an order # / part # barcode, another carrier) used to be
+// dropped without a word. Now it shows in red what was read and which barcode to scan (low beep, not
+// repeated for the same code read again within 5 s, e.g. a station scanner).
+var _psPackBadLast = { raw: '', at: 0 };
+function _psPackNotTracking(raw) {
+  var shown = String(raw || '').replace(/[\x00-\x1F\x7F]+/g, ' ').trim();
+  if (shown.length > 40) shown = shown.slice(0, 40) + '…';
+  var now = Date.now(), again = _psPackBadLast.raw === shown && now - _psPackBadLast.at < 5000;
+  _psPackBadLast = { raw: shown, at: now };
+  _psFlash('red');
+  if (!again) _psBeep(220, 160);
+  _psShowLastScan({ icon:'✗', cls:'err', tracking: shown || '(empty)', meta:'Not a tracking number — nothing saved. Scan the long barcode under USPS TRACKING # / UPS (not the small square code).' });
+}
+
 function _psProcessScan(raw) {
   var inp      = document.getElementById('ps-scan-input');
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
-  if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+  if (!tracking) { _psPackNotTracking(raw); inp.focus(); return; } // not a USPS / UPS tracking # — say so (owner 2026-11-12: "nothing happening")
   if (_psStationRepeat('pack', tracking)) { inp.focus(); return; } // same label still under the station scanner
   if (_psQuickRepeat('pack', tracking)) { inp.focus(); return; } // QR + barcode of the same label read within 5 s
 
