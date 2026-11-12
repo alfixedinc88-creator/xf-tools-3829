@@ -13478,6 +13478,18 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   const tt = await get('/ship/speed-top');
   check('…70 older days still to read ("still reading"), yet TODAY counts at once: TD 140 today is on the board', tt.pack.stillReading === true && tt.pack.top.some(x => x.who === 'TD' && x.n === 140), tt.pack);
   sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPoLD%' OR tracking LIKE 'SPtTD%'; DELETE FROM speed_best2 WHERE who IN ('TD','OLD'); DELETE FROM app_config WHERE key = 'speed4_done_pack'");
+  // Owner (2026-11-12): "I see her doing very good, should be better then 110 of her ranking for few days ago, you sure it change?" — a record from days
+  // ago is replaced the moment it is beaten: YM 110 (4 days ago, already on record) → 130 in 60 minutes today → the board shows YM 130 (today's hour)
+  { const D4 = new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10);
+    sq.prepare("INSERT OR REPLACE INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES ('pack','YM',110,?,?,0,?,32)").run(D4 + 'T15:00:00.000Z', D4 + 'T16:00:00.000Z', D4 + 'T20:00:00.000Z');
+    sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed4_done_pack', ?)").run(D4); // older days already read
+    const b0 = await get('/ship/speed-top'), y0 = (b0.pack.top || []).find(x => x.who === 'YM');
+    fill('YM', D2, '13', 130, 0, 27, 'm'); // today: 130 labels, one every 27 sec
+    const b1 = await get('/ship/speed-top'), y1 = (b1.pack.top || []).concat([]).find(x => x.who === 'YM') || sq.prepare("SELECT who, n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
+    const y2 = sq.prepare("SELECT n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
+    check('a record beaten today replaces the old one at once: YM 110 (4 days ago) → packs 130 in 60 minutes today → YM 130, today\'s hour (on the next load / ↻)',
+      (!y0 || y0.n === 110) && y2 && y2.n === 130 && String(y2.start).slice(0, 10) === D2 && y1 && y1.n === 130, { y0, y1, y2 });
+    sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPmYM%'; DELETE FROM speed_best2 WHERE who = 'YM'; DELETE FROM app_config WHERE key = 'speed4_done_pack'"); }
   await get('/ship/speed-top');
   fill('AN', D1, '17', 154, 0, 23, 'd');
   const t2 = await get('/ship/speed-top');
