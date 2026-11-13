@@ -128,7 +128,7 @@ tr.px-chg td { background:#fffbea; }
       <div class="tb-name">Profit Check</div>
     </div>
     <div class="topbar-right">
-      <button class="btn" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
+      <button class="btn" onclick="window.xfRefresh ? xfRefresh() : location.reload()" title="Reload this page">🔄 Refresh</button>
       <button class="btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
       <button class="btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
     </div>
@@ -834,6 +834,6 @@ window.pfSync = async function (restart) {
 })();
 </script>
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261109a"></script>
+<script src="xf-access.js?v=20261113a"></script>
 </body>
 </html>
