@@ -10504,6 +10504,30 @@ window.psCbPrintScanForms = async function(btn) {
 // 📄 Close Batch → USPS scan form (owner 2026-10-22: "under Close Batch have the scan form too, so our guy can print it
 // there"): the forms of the last 3 days (today first), printed or not, each with 🖨 Print / Reprint — the same print as
 // Auto Label (sent to the 📄 Scan Form Station / ink printer) — and ⚠ USPS labels not on a form yet + 📄 Make scan form now.
+// 📄 Owner (2026-11-13): "under Close Batch why there's no more scan form at 8:50 pm? it should have 8:50 pm scan form no matter
+// what". The list below shows only forms that were made — a try that made nothing (Veeqo: no label waiting, or Veeqo refused)
+// was hidden, so a missing 8:50 pm looked like it never ran. Every scan form time of today now shows with what happened.
+function _psCbSfTimesHtml(d) {
+  var e = _psAlEsc, today = psTodayKey(), wd = new Date(today + 'T12:00:00Z').getUTCDay(), forms = d.forms || [];
+  if (d.on === false || d.on === 'false') return '<br><b style="color:var(--red)">⚠ Auto scan forms are OFF (Auto Label → 📄 USPS scan form)</b>';
+  var times = _psAlSegs(d.times, false).filter(function(x) { return x.days.indexOf(wd) >= 0; }).map(function(x) { return x.at; }).sort(function(a, b) { return a - b; });
+  if (!times.length) return '';
+  var ny = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })), nowMin = ny.getHours() * 60 + ny.getMinutes();
+  var rows = times.map(function(at) {
+    var slot = today + ' ' + Math.floor(at / 60) + ':' + (at % 60 < 10 ? '0' : '') + (at % 60), t = _psAlHm(at);
+    var mine = forms.filter(function(f) { return f.slot === slot; }), made = mine.filter(function(f) { return f.ok; });
+    if (made.length) return '<span style="color:var(--green)">✅ ' + e(t) + ' made' + (made[0].shipments != null ? ' · ' + e(made[0].shipments) + ' label' + (made[0].shipments === 1 ? '' : 's') : '') + '</span>';
+    var f = mine[0];
+    if (f && f.kind === 'locked') return '<span style="color:var(--red)">🔒 ' + e(t) + ' locked: ' + e(f.detail || '') + '</span>';
+    if (f) { var tr = []; try { tr = JSON.parse(f.detail || '[]'); } catch (x) {}
+      if (tr.length === 1 && tr[0] && tr[0].carrier === 'waiting?') return '<span style="color:var(--text2)">⚪ ' + e(t) + ' tried — Veeqo said no USPS label was waiting (every one already on a form)</span>';
+      var last = tr.filter(function(x) { return x && x.carrier !== 'waiting?'; }).pop() || tr[tr.length - 1] || {};
+      return '<span style="color:var(--red)">❌ ' + e(t) + ' NOT made — Veeqo said: ' + e(String(last.said || last.status || 'no answer').slice(0, 160)) + ' → 📄 Make scan form now</span>'; }
+    if (nowMin >= at + 10) return '<span style="color:var(--red)">⚠ ' + e(t) + ' was not tried (the server did not run then) → 📄 Make scan form now</span>';
+    return '<span style="color:var(--text3)">⏳ ' + e(t) + ' — later today</span>';
+  });
+  return '<div class="ps-cb-sf-times" style="margin-top:6px;font-size:12.5px;line-height:1.6"><b>Today\'s scan form times:</b><br>' + rows.join('<br>') + '</div>';
+}
 window.psCbLoadScanForms = async function() {
   var st = document.getElementById('ps-cb-sf-status'), box = document.getElementById('ps-cb-sf-list'); if (!st || !box) return;
   var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { d = { ok: false, error: e.message }; }
@@ -10516,7 +10540,8 @@ window.psCbLoadScanForms = async function() {
   var notPr = forms.filter(function(f) { return !f.printed_at; }).length;
   st.innerHTML = (miss.length ? '<span style="color:var(--orange);font-weight:700">⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? '' : 's') + ' today not on a scan form yet — tap 📄 Make scan form now</span>'
       : '<span style="color:var(--green)">✅ Every USPS label bought today (by Auto Label) is on a scan form</span>')
-    + (notPr ? '<br><b style="color:var(--orange)">' + notPr + ' scan form' + (notPr === 1 ? '' : 's') + ' not printed yet</b>' : '');
+    + (notPr ? '<br><b style="color:var(--orange)">' + notPr + ' scan form' + (notPr === 1 ? '' : 's') + ' not printed yet</b>' : '')
+    + (typeof _psCbSfTimesHtml === 'function' ? _psCbSfTimesHtml(d) : '');
   var today = psTodayKey();
   box.innerHTML = forms.length ? '<table style="width:100%;border-collapse:collapse">' + forms.map(function(f) {
     var td = 'style="padding:6px;border-bottom:1px solid var(--border);white-space:nowrap"';
