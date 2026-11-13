@@ -13474,7 +13474,7 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   sq.exec('CREATE TABLE IF NOT EXISTS ship_pick_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking TEXT, order_num TEXT, by_user TEXT, started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)');
   const ins = sq.prepare('INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials) VALUES (?,?,?,?,?)');
   const fill = (who, day, hourUtc, n, startSec, gap, tag) => { for (let k = 0; k < n; k++) { const t = new Date(Date.parse(day + 'T' + hourUtc + ':00:00Z') + (startSec + k * gap) * 1000).toISOString(); ins.run(day, t, 'SP' + tag + who + k, 'USPS', who); } };
-  sq.exec("CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best2; DELETE FROM app_config WHERE key LIKE 'speed4_done_%'");
+  sq.exec("CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best2; DELETE FROM app_config WHERE key LIKE 'speed5_done_%'");
   const D1 = new Date(Date.now() - 86400000).toISOString().slice(0, 10), D2 = new Date().toISOString().slice(0, 10); // yesterday / today (new hours are read 2 days back)
   fill('MG', D1, '14', 154, 1, 23, 'a');    // MG: 154 in one clock hour, one every 23 sec
   ins.run(D1, D1 + 'T14:00:30.000Z', 'SPaMG0', 'USPS', 'MG');   // the same label again: one order once
@@ -13491,31 +13491,33 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   await get('/ship/speed-top');
   const yy = sq.prepare("SELECT n, start FROM speed_best2 WHERE kind='pack' AND who='YY'").get(), zz = sq.prepare("SELECT n, batch FROM speed_best2 WHERE kind='pack' AND who='ZZ'").get();
   check('any 60 minutes, not clock hours: started 1:31 → all 100 in 1:31–2:31 count (clock hours would give 58)', yy && yy.n === 100 && yy.start === D1 + 'T13:31:00.000Z', yy);
-  check('a stack of 80 labels scanned 2 sec apart is not packing: ZZ = 21 (the stack\'s first label + 20 really packed), 79 batch scans not counted', zz && zz.n === 21 && zz.batch === 79, zz);
+  // Owner (2026-11-13): "why 3 or more labels are scanned within seconds of each other counts as 1? … if different, count as 3, each one count as one"
+  // (replaces the older "a stack counts once" rule): 80 different tracking #s scanned 2 sec apart + 20 more = 100
+  check('every different tracking # counts as one order, also scanned 2 sec apart: ZZ = 100 (80 scanned in one go + 20 one a minute), nothing left out as a batch', zz && zz.n === 100 && zz.batch === 0, zz);
   // MG works fast: two real orders seconds apart both count — only a stack (3+ in a row, seconds apart) is left out
   for (let k = 0; k < 30; k++) { const b0 = Date.parse(D1 + 'T21:00:00Z') + k * 60000; ins.run(D1, new Date(b0).toISOString(), 'SPqQA' + k, 'USPS', 'QQ'); ins.run(D1, new Date(b0 + 6000).toISOString(), 'SPqQB' + k, 'USPS', 'QQ'); }
   await get('/ship/speed-top');
   const qq = sq.prepare("SELECT n, batch FROM speed_best2 WHERE kind='pack' AND who='QQ'").get();
   check('…two quick real orders 6 sec apart (30 pairs, one pair a minute) all count: QQ = 60, nothing taken as a stack', qq && qq.n === 60 && qq.batch === 0, qq);
   // 🐞 today is read on every load, even while older days are still being read
-  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed4_done_pack', '2000-01-01')").run();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed5_done_pack', '2000-01-01')").run();
   for (let d = 0; d < 70; d++) { const day = new Date(Date.parse('2024-01-01T00:00:00Z') + d * 86400000).toISOString().slice(0, 10); ins.run(day, day + 'T15:00:00.000Z', 'SPoLD' + d, 'USPS', 'OLD'); }
   fill('TD', D2, '09', 140, 0, 25, 't');
   const tt = await get('/ship/speed-top');
   check('…70 older days still to read ("still reading"), yet TODAY counts at once: TD 140 today is on the board', tt.pack.stillReading === true && tt.pack.top.some(x => x.who === 'TD' && x.n === 140), tt.pack);
-  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPoLD%' OR tracking LIKE 'SPtTD%'; DELETE FROM speed_best2 WHERE who IN ('TD','OLD'); DELETE FROM app_config WHERE key = 'speed4_done_pack'");
+  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPoLD%' OR tracking LIKE 'SPtTD%'; DELETE FROM speed_best2 WHERE who IN ('TD','OLD'); DELETE FROM app_config WHERE key = 'speed5_done_pack'");
   // Owner (2026-11-12): "I see her doing very good, should be better then 110 of her ranking for few days ago, you sure it change?" — a record from days
   // ago is replaced the moment it is beaten: YM 110 (4 days ago, already on record) → 130 in 60 minutes today → the board shows YM 130 (today's hour)
   { const D4 = new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10);
     sq.prepare("INSERT OR REPLACE INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES ('pack','YM',110,?,?,0,?,32)").run(D4 + 'T15:00:00.000Z', D4 + 'T16:00:00.000Z', D4 + 'T20:00:00.000Z');
-    sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed4_done_pack', ?)").run(D4); // older days already read
+    sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed5_done_pack', ?)").run(D4); // older days already read
     const b0 = await get('/ship/speed-top'), y0 = (b0.pack.top || []).find(x => x.who === 'YM');
     fill('YM', D2, '13', 130, 0, 27, 'm'); // today: 130 labels, one every 27 sec
     const b1 = await get('/ship/speed-top'), y1 = (b1.pack.top || []).concat([]).find(x => x.who === 'YM') || sq.prepare("SELECT who, n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
     const y2 = sq.prepare("SELECT n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
     check('a record beaten today replaces the old one at once: YM 110 (4 days ago) → packs 130 in 60 minutes today → YM 130, today\'s hour (on the next load / ↻)',
       (!y0 || y0.n === 110) && y2 && y2.n === 130 && String(y2.start).slice(0, 10) === D2 && y1 && y1.n === 130, { y0, y1, y2 });
-    sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPmYM%'; DELETE FROM speed_best2 WHERE who = 'YM'; DELETE FROM app_config WHERE key = 'speed4_done_pack'"); }
+    sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPmYM%'; DELETE FROM speed_best2 WHERE who = 'YM'; DELETE FROM app_config WHERE key = 'speed5_done_pack'"); }
   await get('/ship/speed-top');
   fill('AN', D1, '17', 154, 0, 23, 'd');
   const t2 = await get('/ship/speed-top');
@@ -13538,7 +13540,8 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
     h.ok && h.n === 160 && o0 && o0.orderNum === 'ORD-1' && o0.items.length === 2 && o0.items[0].sku === '8-8-8=10' && o0.items[0].qty === 2 && o0.sec === null && /first of the day/.test(o0.why) && o1.sec === 22 && h.avgSec === 22 && h.timed === 159, { n: h.n, o0, o1, avg: h.avgSec, timed: h.timed });
   const hp = await get('/ship/speed-hour?kind=pickscan&who=MG&start=' + encodeURIComponent(D1 + 'T18:00:00.000Z'));
   const hz = await get('/ship/speed-hour?kind=pack&who=ZZ&start=' + encodeURIComponent(D1 + 'T19:00:00.000Z'));
-  check('…tap ZZ\'s 60 minutes → 21 counted + 79 batch scans shown greyed ("not counted")', hz.ok && hz.n === 21 && hz.batch === 79 && hz.orders.filter(o => o.counted === false).length === 79 && /batch scan/.test(hz.orders[1].why), { n: hz.n, batch: hz.batch });
+  // owner 2026-11-13: every different tracking # counts (was: a stack of 3+ counted once)
+  check('…tap ZZ\'s 60 minutes → all 100 counted (80 scanned 2 sec apart + 20), none "not counted"; the 2-sec ones say "counted, not timed"', hz.ok && hz.n === 100 && hz.batch === 0 && hz.orders.filter(o => o.counted === false).length === 0 && /counted, not timed/.test(hz.orders[1].why), { n: hz.n, batch: hz.batch, why: hz.orders[1] && hz.orders[1].why });
   check('🧭 tap → each order started → done (90 sec), average 90 sec', hp.ok && hp.n === 30 && hp.avgSec === 90 && hp.timed === 30, { n: hp.n, avg: hp.avgSec });
   // 🙈 Owner (2026-11-10): "take off the FP and DB because they not working here no more"
   fill('FP', D2, '05', 170, 0, 20, 'f'); fill('DB', D2, '07', 165, 0, 21, 'g');

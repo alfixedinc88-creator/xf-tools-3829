@@ -23878,9 +23878,12 @@ function psSpeedCount(rows, batchRule) {
   for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k);
     const st = Date.parse(r.st || ''), g0 = !batchRule && !isNaN(st) && t - st > 0 && t - st < PS_SPEED_GAP_MS * 3 ? t - st : null; L.push({ t, k, g: g0 }); }
   if (!batchRule) return { L, batch: 0 };
+  // ⏱ timing only: a label seconds after the one before (under 10 sec) or after a break (10+ min) is counted but not timed
   L.forEach((x, i) => { const d = i ? x.t - L[i - 1].t : null; x.g = d != null && d >= PS_SPEED_BATCH_MS && d < PS_SPEED_GAP_MS ? d : null; });
-  const f = psSpeedStackFlags(L.map(x => x.t));
-  return { L: L.filter((x, i) => !f[i]), batch: f.filter(Boolean).length };
+  // Owner (2026-11-13): "why 3 or more labels scanned within seconds of each other counts as 1? same tracking number it was same one, if different,
+  // count as 3, each one count as one" — every DIFFERENT tracking # counts as one order, a stack scanned in one go too (the same tracking # twice
+  // still counts once, above). Nothing is left out as a "batch scan" any more.
+  return { L, batch: 0 };
 }
 const PS_SPEED_SRC = {
   pack: { days: "SELECT DISTINCT date AS d FROM ship_scan_log WHERE date > ? ORDER BY date LIMIT ?", rows: "SELECT UPPER(TRIM(initials)) AS who, timestamp AS ts, tracking AS k FROM ship_scan_log WHERE date = ? AND TRIM(COALESCE(initials, '')) != '' ORDER BY 1, timestamp", batch: true },
@@ -23923,7 +23926,7 @@ async function shipSpeedTop(env, session) {
   const hidden = new Set((((await env.DB.prepare('SELECT who FROM speed_hidden').all()).results) || []).map(r => String(r.who).toUpperCase()));
   const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString(), out = {};
   for (const kind of Object.keys(PS_SPEED_SRC)) {
-    const S = PS_SPEED_SRC[kind], key = 'speed4_done_' + kind; // speed4: history read again once (3+ stack rule; + the ⏱ average of each record)
+    const S = PS_SPEED_SRC[kind], key = 'speed5_done_' + kind; // speed5: history read again once (owner 2026-11-13: every different tracking # counts, stacks too — a record only goes up)
     const done = ((await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null)) || {}).value || '';
     const from = done && done < since ? done : (done ? since : ''); // the last 2 days are read again each time
     const days = (((await env.DB.prepare(S.days).bind(from || '0000', 61).all()).results) || []).map(r => r.d).filter(Boolean);
@@ -23970,7 +23973,7 @@ async function shipSpeedHour(url, env, session) {
     const rows = day ? (((await env.DB.prepare('SELECT tracking AS k, timestamp AS ts, carrier, order_num FROM ship_scan_log WHERE UPPER(TRIM(initials)) = ? AND date = ? ORDER BY timestamp').bind(who, day.date).all()).results) || []) : [];
     const seen = new Set(), U = [];
     for (const r of rows) { const k = String(r.k || '').toUpperCase(), t = Date.parse(r.ts); if (!k || isNaN(t) || seen.has(k)) continue; seen.add(k); U.push({ r, k, t }); }
-    const fl = psSpeedStackFlags(U.map(x => x.t));
+    const fl = U.map(() => false); // owner 2026-11-13: every different tracking # counts — no stack is left out
     for (let ui = 0; ui < U.length; ui++) { const { r, k, t } = U[ui];
       const d = ui ? t - U[ui - 1].t : null;
       if (t < t0 || t >= t0 + PS_SPEED_WIN_MS) continue;
