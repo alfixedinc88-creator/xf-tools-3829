@@ -13376,6 +13376,12 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
       /* owner 2026-11-10: "if i put $6.99 to $8.99 then 'fill', the price will even fill in for the one with the 'check'" — Fill leaves those empty, unticked, Check says why */
       && /if \(c && c\.bad\.length\) \{ if \(old\) PXE\[g\.key\] = old; else delete PXE\[g\.key\]; PXTICK\[g\.key\] = false; PXSKIP\[g\.key\] = '⏭ Not filled with '/.test(pf)
       && /if \(!c && PXSKIP\[g\.key\]\) return '<div class="px-warn">'/.test(pf), null);
+  // Owner (2026-11-13): "when I click on the '6.99 to 8.99' fill, why all the one with 'check' note there still get checked? I thought it should not get checked"
+  check('✏ Fill $6.99 → $8.99: a row with a ⚠ note in Check is filled but NOT ticked (💾 sends it only if someone ticks it) — also when Amazon\'s reference prices come in after',
+    /if \(c && c\.warn\.length\) \{ PXTICK\[g\.key\] = false; delete PXAUTO\[g\.key\]; PXHOLD\[g\.key\] = /.test(pf)
+      && /delete PXHOLD\[g\.key\]; PXTICK\[g\.key\] = true; PXAUTO\[g\.key\] = true; n\+\+;/.test(pf)
+      && /function pxHoldWarned\(\) \{[^\n]*if \(!PXAUTO\[g\.key\]\) return;/.test(pf) && /PXREF\[a\] = d\.ref\[a\]; \}\); pxHoldWarned\(\); pxRender\(\);/.test(pf)
+      && /var L = PX\.groups\.filter\(function \(g\) \{ return PXTICK\[g\.key\] && pxCheck\(g\); \}\)/.test(pf), null);
   T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
   T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',
