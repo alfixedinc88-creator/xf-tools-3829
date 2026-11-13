@@ -11711,6 +11711,55 @@ var _psAlLabelBusyAt = 0, _psAlLabelGen = 0;
 function _psAlTimeout(p, ms, what) {
   return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error(what + ': no answer in ' + Math.round(ms / 1000) + ' s — tries again')); }, ms); })]);
 }
+// 🧾 Owner (2026-11-13): "54 waiting, I clicked Print new labels now, nothing printing, I closed it — now 30 waiting, where
+// are the other 24? Nothing in Batches printed." A round marks each label printed while it gets it ready; the paper and
+// the 🗂 batch come only at the end. Closed half-way → marked printed, never came out, in no batch. The server lists those
+// (labels-unbatched): 🖨 print them now (a 🗂 batch is kept), or ✓ they did come out (kept as a batch, with who / when).
+var _psAlCutoff = [];
+function _psAlCutoffPaint(list, after) {
+  _psAlCutoff = list || [];
+  var b = document.getElementById('ps-al-cutoff');
+  if (!b) { if (!after || !after.parentNode) return; b = document.createElement('div'); b.id = 'ps-al-cutoff'; after.parentNode.insertBefore(b, after.nextSibling); }
+  var e = _psAlEsc, n = _psAlCutoff.length;
+  b.innerHTML = n ? '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--red)">'
+    + '<b>⚠ ' + n + ' label' + (n === 1 ? ' was' : 's were') + ' marked printed but never sent to the printer</b>'
+    + '<div style="color:var(--text2);margin-top:2px">Printing stopped half-way (the page was closed or the computer went off while the labels were being made ready), so ' + (n === 1 ? 'it is' : 'they are') + ' not waiting and not in 🗂 Batches printed.</div>'
+    + '<details style="margin-top:4px;color:var(--text)"><summary style="cursor:pointer">Show them</summary>' + _psAlCutoff.map(function(l) {
+        return '<div style="margin-top:3px;font-family:var(--mono)">' + e(l.order_number) + ' · ' + e(l.channel || '') + ' · ' + e(l.tracking || '') + ' <span style="font-family:var(--sans);color:var(--text3)">marked ' + e(new Date(l.printed_at).toLocaleString()) + (l.printed_by ? ' · ' + e(l.printed_by) : '') + '</span></div>';
+      }).join('') + '</details>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button type="button" class="ps-btn-sm" style="background:var(--red);color:#fff;border-color:var(--red)" onclick="psAlCutoffPrint(this)">🖨 Print ' + (n === 1 ? 'it' : 'all ' + n) + ' now</button>'
+    + '<button type="button" class="ps-btn-sm" onclick="psAlCutoffClear(this)">✓ They did come out of the printer</button></div></div>' : '';
+}
+window.psAlCutoffPrint = async function(btn) {
+  var list = _psAlCutoff.slice(); if (!list.length) return;
+  if (_psAlLabelBusy) { _psToast('🖨 Already printing — try again when it is done'); return; }
+  if (!confirm('🖨 Print the ' + list.length + ' label' + (list.length === 1 ? '' : 's') + ' that never came out?\n\nKeep this page open until the paper comes out.')) return;
+  if (btn) btn.disabled = true;
+  _psAlLabelBusy = true; _psAlLabelBusyAt = Date.now(); window._psAlBusyWhat = 'printing labels that were cut off';
+  var msg = document.getElementById('ps-al-label-msg'), okIds = [], bad = [];
+  try {
+    _psAlBatch = [];
+    for (var i = 0; i < list.length; i++) {
+      if (msg) msg.textContent = 'Getting labels ready ' + (i + 1) + ' of ' + list.length + '… the paper comes out when all are ready — don\'t close this page';
+      try { await _psAlTimeout(_psAlPrintOneLabel(list[i], true), 120000, 'label ' + list[i].order_number); okIds.push(list[i].id); }
+      catch (err) { bad.push(list[i].order_number + ': ' + err.message); }
+    }
+    await _psAlBatchFlush();
+    if (okIds.length) await _psAlFetch('/veeqo/autolabel/print-batch', { method: 'POST', body: { ids: okIds, source: 'cut off — printed again', by: psInitials || '' } });
+    if (msg) msg.textContent = '✓ Printed ' + okIds.length + ' label' + (okIds.length === 1 ? '' : 's') + ' that were cut off' + (bad.length ? ' · ✗ ' + bad.join(' · ') : '');
+  } finally { _psAlBatch = null; _psAlLabelBusy = false; if (btn) btn.disabled = false; psAlLoadLabels(); }
+};
+window.psAlCutoffClear = async function(btn) {
+  var ids = _psAlCutoff.map(function(l) { return l.id; }); if (!ids.length) return;
+  if (!confirm('✓ All ' + ids.length + ' label' + (ids.length === 1 ? '' : 's') + ' really came out of the printer?\n\nThey are kept in 🗂 Batches printed with your name, and taken off this list.')) return;
+  if (btn) btn.disabled = true;
+  var d = await _psAlFetch('/veeqo/autolabel/print-batch', { method: 'POST', body: { ids: ids, source: 'cut off — came out (checked)', by: psInitials || '' } });
+  if (btn) btn.disabled = false;
+  if (!d || d.ok === false) { _psToast('✗ ' + ((d && d.error) || 'Not saved')); return; }
+  psAlLoadLabels();
+};
+// Leaving the page while labels are being made ready = they are marked printed but never come out → ask first.
+window.addEventListener('beforeunload', function(ev) { if (_psAlLabelBusy && _psAlBatch) { ev.preventDefault(); ev.returnValue = ''; return ''; } });
 window.psAlPrintNewLabels = async function(silent) {
   if (_psAlLabelBusy) return;
   // 🛑 on hold (labels not picked up by the Print Log scanner): printing by hand = the printer was checked → ask, then the hold ends (recorded)
@@ -11739,6 +11788,7 @@ window.psAlPrintNewLabels = async function(silent) {
         if (gen !== _psAlLabelGen) return;
         after = Math.max(after, list[i].id);
         window._psAlBusyWhat = 'label ' + list[i].order_number;
+        if (msg) msg.textContent = 'Getting labels ready ' + (i + 1) + ' of ' + list.length + '… the paper comes out when all are ready — don\'t close this page';
         try { await _psAlTimeout(_psAlPrintOneLabel(list[i]), 120000, 'label ' + list[i].order_number); done++; stack.push(list[i].id); if (window._psAlLastNote) notes.push(window._psAlLastNote); }
         catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
       }
@@ -11826,7 +11876,7 @@ window.psAlReprintLast = function(btn) { var id = parseInt(btn.getAttribute('dat
 window.psAlLoadLabels = async function() {
   setTimeout(psAlLoadRecentStacks, 1500); // after the batch just printed is saved
   var box = document.getElementById('ps-al-label-list'); if (!box) return;
-  var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30')]);
+  var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30'), _psAlFetch('/veeqo/autolabel/labels-unbatched').catch(function() { return null; })]);
   var fresh = (all[0] && all[0].labels) || [];
   var nAuto = fresh.filter(function(l) { return l.origin && l.origin.kind === 'auto'; }).length;
   // Owner (2026-10-19): "stays at 199 waiting for a long time" — the list holds 200 at most; the count is the real total now.
@@ -11864,6 +11914,7 @@ window.psAlLoadLabels = async function() {
     + '<details style="margin-top:4px"><summary style="cursor:pointer">Show them</summary>' + nd.map(function(l) {
         return '<div style="margin-top:3px;font-family:var(--mono)">' + _psAlEsc(l.order_number) + ' · ' + _psAlEsc(l.channel || '') + ' · ' + _psAlEsc(l.tracking || '') + ' <span style="font-family:var(--sans);color:var(--text3)">bought ' + _psAlEsc(new Date(l.created_at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '</span></div>'; }).join('') + '</details>'
     + '<button type="button" onclick="psAlPrintEarly(this)" data-ids="' + nd.map(function(l) { return l.id; }).join(',') + '" style="margin-top:6px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);cursor:pointer;font-size:12px">🖨 Print them now anyway</button></div>' : '';
+  _psAlCutoffPaint((all[2] && all[2].labels) || [], nb);
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
   var e = _psAlEsc;
   box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {
