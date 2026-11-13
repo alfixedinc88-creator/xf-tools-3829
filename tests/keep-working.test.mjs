@@ -13382,6 +13382,10 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
       && /delete PXHOLD\[g\.key\]; PXTICK\[g\.key\] = true; PXAUTO\[g\.key\] = true; n\+\+;/.test(pf)
       && /function pxHoldWarned\(\) \{[^\n]*if \(!PXAUTO\[g\.key\]\) return;/.test(pf) && /PXREF\[a\] = d\.ref\[a\]; \}\); pxHoldWarned\(\); pxRender\(\);/.test(pf)
       && /var L = PX\.groups\.filter\(function \(g\) \{ return PXTICK\[g\.key\] && pxCheck\(g\); \}\)/.test(pf), null);
+  // Owner (2026-11-13): "can we also do from $7 to $8, change all to the $9.99?"
+  check('✏ Fill with a price range: "Every listing now at $7 up to $8 → $9.99" fills every listing from $7.00 to $8.00 (both ends); the "up to" box empty = the exact price as before',
+    /id="px-from2"/.test(pf) && /range = from > 0 && from2 > 0;/.test(pf) && /if \(range && from2 < from\) \{/.test(pf)
+      && /range \? r\.price >= from - 0\.005 && r\.price <= from2 \+ 0\.005 : Math\.abs\(r\.price - from\) < 0\.005/.test(pf), null);
   T.E[g1.key] = { price: '18.50' }; const c2 = T.pxCheck(g1); T.E[g1.key] = { price: '11', business: '11.2' }; const c3 = T.pxCheck(g1);
   T.REF['B0TEST0001'] = { was: 10.49, cpt: 12.75 }; T.E[g1.key] = { price: '13' }; const c4 = T.pxCheck(g1);
   check('…checked on every SKU of the ASIN: $18.50 is over T1-FBA\'s Maximum $18 ❌ (T1\'s $19 is fine); a typed business price not lower ❌; above the Competitive Price Threshold ⚠; a 💡 Fill all button; 🧩 marks',

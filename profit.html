@@ -241,6 +241,7 @@ tr.px-chg td { background:#fffbea; }
         <button class="btn" id="px-fillstep" onclick="pxFillAll(PX_STEP)">⬆ Fill all shown +30%</button>
         <span id="px-setto" style="display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border:1px dashed var(--border2);border-radius:8px">
           ✏ Every listing now at $ <input type="number" id="px-from" step="0.01" min="0" style="width:70px" placeholder="6.99" title="Leave empty = every listing shown">
+          <span title="Optional: fill this for a price range (e.g. $7.00 up to $8.00 → all of them get the new price). Empty = only the exact price">up to $ <input type="number" id="px-from2" step="0.01" min="0" style="width:70px" placeholder="(optional)"></span>
           → $ <input type="number" id="px-to" step="0.01" min="0" style="width:70px" placeholder="8.99">
           <button class="btn" id="px-filltoall" onclick="pxFillTo()">Fill</button></span>
         <span class="muted">Business price = new price − $0.03 (automatic)</span>
@@ -732,9 +733,14 @@ window.pxFillAll = async function (step) {
 // all of them except the ones whose Check is ❌ (over the Maximum, under the Minimum …): those are left out and said.
 window.pxFillTo = async function () {
   var from = parseFloat(document.getElementById('px-from').value), to = parseFloat(document.getElementById('px-to').value), m = document.getElementById('px-msg');
+  // Owner (2026-11-13): "can we also do from $7 to $8, change all to the $9.99?" — the optional "up to $" box makes it a range: every listing shown
+  // whose price now is from $7.00 up to $8.00 (both ends included) gets $9.99. Empty = only the exact price, as before.
+  var from2 = parseFloat((document.getElementById('px-from2') || {}).value), range = from > 0 && from2 > 0;
+  if (range && from2 < from) { var sw = from; from = from2; from2 = sw; }
   if (!(to > 0)) { toast('Type the new price ($)'); return; }
-  var L = pxRows().filter(function (g) { return !(from > 0) || g.rows.some(function (r) { return r.price != null && Math.abs(r.price - from) < 0.005; }); });
-  if (!L.length) { toast(from > 0 ? 'No listing shown is at ' + pxN(from) + ' now' : 'No listing shown'); return; }
+  var L = pxRows().filter(function (g) { return !(from > 0) || g.rows.some(function (r) { return r.price != null && (range ? r.price >= from - 0.005 && r.price <= from2 + 0.005 : Math.abs(r.price - from) < 0.005); }); });
+  var atTxt = range ? ' from ' + pxN(from) + ' to ' + pxN(from2) : ' at ' + pxN(from);
+  if (!L.length) { toast(from > 0 ? 'No listing shown is' + atTxt + ' now' : 'No listing shown'); return; }
   var need = []; L.forEach(function (g) { g.rows.forEach(function (r) { if (!r.info) need.push(r.sku); }); });
   if (need.length) { m.textContent = '⏳ Reading Maximum / Minimum / business price of ' + need.length + ' SKU(s) from Amazon first…'; while (_pxInfoBusy) await new Promise(function (r) { setTimeout(r, 300); }); await pxInfoFor(need); }
   // Owner (2026-11-10): "if i put $6.99 to $8.99 then 'fill', the price will even fill in for the one with the 'check'" — a row where the new price
@@ -747,7 +753,7 @@ window.pxFillTo = async function () {
     delete PXSKIP[g.key]; g.rows.forEach(function (r) { delete PXRES[r.sku]; });
     if (c && c.warn.length) { PXTICK[g.key] = false; delete PXAUTO[g.key]; PXHOLD[g.key] = 'Filled but NOT ticked (it has a ⚠ note) — tick it yourself if you still want it sent'; hold++; return; }
     delete PXHOLD[g.key]; PXTICK[g.key] = true; PXAUTO[g.key] = true; n++; });
-  m.textContent = '✏ ' + n + ' ASIN(s)' + (from > 0 ? ' at ' + pxN(from) : '') + ' filled + ticked → ' + pxN(to) + (hold ? ' · ⏸ ' + hold + ' filled but NOT ticked (⚠ note in Check)' : '') + (skip ? ' · ⏭ ' + skip + ' NOT filled (it would be ❌ — see their Check)' : '') + ' — check, then 💾 Change on Amazon';
+  m.textContent = '✏ ' + n + ' ASIN(s)' + (from > 0 ? atTxt : '') + ' filled + ticked → ' + pxN(to) + (hold ? ' · ⏸ ' + hold + ' filled but NOT ticked (⚠ note in Check)' : '') + (skip ? ' · ⏭ ' + skip + ' NOT filled (it would be ❌ — see their Check)' : '') + ' — check, then 💾 Change on Amazon';
   pxRender();
 };
 var _pxRefAt = 0;
