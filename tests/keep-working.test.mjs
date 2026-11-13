@@ -13637,5 +13637,29 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   sq.exec("DELETE FROM label_print_batch WHERE source IN ('cut off — printed again') OR label_ids = '[" + A + "]'");
 }
 
+// Owner (2026-11-13): "under Close Batch why there's no more scan form at 8:50 pm? it should have 8:50 pm scan form no matter what".
+// Close Batch listed only forms that were made — a try that made nothing was hidden. Every scan form time of today now shows.
+console.log('\n📄 Close Batch: every scan form time of today shows what happened (made / nothing waiting / Veeqo refused / not run)');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ph = rfS(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fnOf = name => { const i = ph.indexOf('function ' + name + '('); let k = ph.indexOf('{', i), n = 0; for (; k < ph.length; k++) { if (ph[k] === '{') n++; else if (ph[k] === '}' && --n === 0) break; } return ph.slice(i, k + 1); };
+  const src = ph.slice(ph.indexOf('var _PS_DAYN = '), ph.indexOf('\n', ph.indexOf('var _PS_DAYN = '))) + '\n' + ['_psAlDays', '_psAlMin', '_psAlSegs', '_psAlHm', '_psAlEsc', '_psCbSfTimesHtml'].map(fnOf).join('\n');
+  const day = '2026-11-13'; // a Friday
+  const S = new Function('psTodayKey', '_psAlClock', src + '; return _psCbSfTimesHtml;')(() => day, x => { const [h, m] = x.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); });
+  const realNow = Date; globalThis.Date = class extends realNow { constructor(...a) { super(...(a.length ? a : ['2026-11-14T02:30:00Z'])); } static now() { return new realNow('2026-11-14T02:30:00Z').getTime(); } }; // 9:30 pm New York
+  const forms = [
+    { slot: day + ' 16:30', ok: 1, shipments: 42, kind: 'scheduled' },
+    { slot: day + ' 20:50', ok: 0, kind: 'scheduled', detail: JSON.stringify([{ carrier: 'waiting?', status: 200, said: '[]' }]) } ];
+  const h1 = S({ on: true, times: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', forms });
+  const f2 = [forms[0], { slot: day + ' 20:50', ok: 0, kind: 'scheduled', detail: JSON.stringify([{ carrier: 'waiting?', status: 200 }, { carrier: 'USPS', status: 422, said: 'collection_address is required' }]) }];
+  const h2 = S({ on: true, times: 'Mon-Fri 16:30, 20:50', forms: f2 }), h3 = S({ on: true, times: 'Mon-Fri 16:30, 20:50', forms: [forms[0]] });
+  globalThis.Date = realNow;
+  check('4:30 pm made (42 labels) · 8:50 pm "tried — Veeqo said no USPS label was waiting" (was hidden)', /✅ 4:30 PM made · 42 labels/.test(h1) && /⚪ 8:50 PM tried — Veeqo said no USPS label was waiting/.test(h1), h1);
+  check('…8:50 pm refused by Veeqo → "❌ 8:50 PM NOT made — Veeqo said: collection_address is required"; never tried → "⚠ 8:50 PM was not tried"',
+    /❌ 8:50 PM NOT made — Veeqo said: collection_address is required/.test(h2) && /⚠ 8:50 PM was not tried/.test(h3), { h2, h3 });
+  check('…shown on Close Batch under the scan forms', ph.includes("+ (typeof _psCbSfTimesHtml === 'function' ? _psCbSfTimesHtml(d) : '');"), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
