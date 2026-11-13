@@ -33217,6 +33217,7 @@ async function autolabelScanFormTick(env, when) {
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
 // One buying run at a time (the automatic run, ▶ Run now and the 🖨 station's
 // nudge can start together): a second one only checks, it buys / splits / merges nothing.
+const AUTOLABEL_RUN_BUDGET_MS = 5 * 60000, AUTOLABEL_RUN_MAX_ORDERS = 400; // 🚀 no label limit (owner 2026-11-13): only Cloudflare's time for one run
 async function autolabelRun(env, opts = {}) {
   if (!opts.buy) return autolabelRunOnce(env, opts);
   if (!(await autolabelClaimAlloc(env, 'run'))) {
@@ -33275,8 +33276,13 @@ async function autolabelRunOnce(env, opts = {}) {
   }
 
   const boughtToday = (await d1First(env, `SELECT COUNT(*) AS n FROM autolabel_log WHERE date=? AND action='bought'`, [shipTodayKey()]) || {}).n || 0;
-  let quotesLeft = cfg.maxQuotesPerRun, cached = null;
-  let buysLeft = Math.min(cfg.maxLabelsPerRun, Math.max(0, cfg.maxLabelsPerDay - boughtToday));
+  // 🚀 Owner (2026-11-13: 108 orders waiting — "set no limit, when there's order, just only have to wait for 30 minutes to see if there's more same person
+  // order come in"): a buying run has NO per-run and NO per-day label limit any more — only the wait after a person's newest order (and the no-buy
+  // times around the scan forms). One safety only: a run stops starting new orders after AUTOLABEL_RUN_BUDGET_MS (Cloudflare's time for one run) —
+  // the next run (about 10 min later) carries on. A preview run (not buying) still rate-checks only "Orders to rate-check per run".
+  const runT0 = Date.now();
+  let quotesLeft = buy ? AUTOLABEL_RUN_MAX_ORDERS : cfg.maxQuotesPerRun, cached = null;
+  let buysLeft = buy ? Infinity : Math.min(cfg.maxLabelsPerRun, Math.max(0, cfg.maxLabelsPerDay - boughtToday));
   const now = Date.now();
   // 🧩 Same name + address: merged boxes on record, and one plan per group.
   const mergeMap = await autolabelMergeMap(env);
@@ -33420,7 +33426,7 @@ async function autolabelRunOnce(env, opts = {}) {
           reason: cached.reason + ` (rates from ${new Date(cached.at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })})` });
         if (cached.slip) row.slip = true;
       }
-      else if (quotesLeft <= 0) { row.decision = 'ready'; row.reason = 'Ready — rates checked on a later run'; }
+      else if (quotesLeft <= 0 || (buy && Date.now() - runT0 > AUTOLABEL_RUN_BUDGET_MS)) { row.decision = 'ready'; row.reason = buy ? 'Ready — this run used its time; the next run (about 10 min) buys it' : 'Ready — rates checked on a later run'; }
       else {
         quotesLeft--;
         const prior = await d1First(env,

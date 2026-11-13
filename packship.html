@@ -2217,8 +2217,8 @@ body {
           <label style="display:none">Packing slip with the label<select class="ps-field-input" data-k="slipRule">
             <option value="multi_sku">2+ different items</option><option value="multi_qty">2+ pieces in total</option>
             <option value="all">Every order</option><option value="off">Never</option></select></label>
-          <label>Max labels per run<input class="ps-field-input" data-k="maxLabelsPerRun" type="number" min="0" step="1"></label>
-          <label>Max labels per day<input class="ps-field-input" data-k="maxLabelsPerDay" type="number" min="0" step="1"></label>
+          <!-- 🚀 Owner (2026-11-13): "set no limit, when there's order, just only have to wait for 30 minutes" — no per-run / per-day label limit in auto mode. -->
+          <label>Max labels per run / per day<span class="ps-al-nolimit" style="display:block;font-size:12px;font-weight:700;color:var(--green);padding:6px 0">🚀 No limit — buys every order once its 30-min wait is over (owner 2026-11-13)</span></label>
           <label>Orders to rate-check per run<input class="ps-field-input" data-k="maxQuotesPerRun" type="number" min="0" step="1"></label>
           <label>Cancellation look-back (days)<input class="ps-field-input" data-k="cancelLookbackDays" type="number" min="1" step="1"></label>
           <label>Run at most every (min)<input class="ps-field-input" data-k="minRunGapMinutes" type="number" min="1" step="1"></label>

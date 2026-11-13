@@ -3667,6 +3667,14 @@ console.log('\n⚡ Auto on: ▶ Run now buys the would-buy orders; 💸 low valu
     (ws.match(/await autolabelBuy\(env/g) || []).length === 1 && (ws.match(/await autolabelBuyLocked\(env/g) || []).length >= 4 && /'\/veeqo\/autolabel\/auto-tick'/.test(ws.match(/const TM_BLOCK = new Set\(\[[\s\S]*?\]\);/)[0]), null);
   check('…page: ▶ Run now says it buys when ⚡ Auto is on; the 🖨 station nudges a run; the Low value rule is in Rules',
     /'▶ Run now — ⚡ buys the labels'/.test(ph) && /\/veeqo\/autolabel\/auto-tick/.test(ph) && /data-k="autoBuyLowValue"/.test(ph), null);
+  // 🚀 Owner (2026-11-13, 108 orders waiting): "set no limit, when there's order, just only have to wait for 30 minutes" + "you see 100 you purchase 100"
+  { const n0 = bought.length; for (let i = 0; i < 15; i++) orders.push(mk(3200 + i, 'AU-N' + i, 40, '7-8-' + i + '=1', 7200 + i, 'Many' + i));
+    await post('/veeqo/autolabel/config', { config: { ...base, mode: 'auto', maxLabelsPerRun: 10, maxLabelsPerDay: 12 } }); // old limits still saved: not used any more
+    const rn = await post('/veeqo/autolabel/run', {}), got = rn.orders.filter(x => /^AU-N/.test(x.number) && x.decision === 'bought').length;
+    check('🚀 no label limit: 15 orders ready (30-min wait over) → all 15 bought in ONE run, even with the old "10 a run / 12 a day" still saved; nothing says "label limit reached"',
+      got === 15 && bought.length === n0 + 15 && !rn.orders.some(x => /label limit reached/.test(x.reason || '')), { got, n: bought.length - n0, r: rn.orders.filter(x => /^AU-N/.test(x.number)).map(x => x.decision + ':' + x.reason).slice(0, 4) });
+    check('…the page says "🚀 No limit" instead of the two limit boxes; only Cloudflare\'s time for one run (5 min) can leave the rest for the next run',
+      /class="ps-al-nolimit"/.test(ph) && !/data-k="maxLabelsPerRun"/.test(ph) && /AUTOLABEL_RUN_BUDGET_MS = 5 \* 60000/.test(ws) && /let buysLeft = buy \? Infinity :/.test(ws), null); }
   await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
   if (verified0) sq.prepare("UPDATE app_config SET value = ? WHERE key = 'autolabel_buy_verified'").run(verified0.value); else sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_buy_verified'").run();
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
@@ -4648,7 +4656,7 @@ console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏�
     check('…📐 Rules starts folded (tap the title) and keeps every rule box + 💾 Save rules',
       /<details class="ps-card" id="ps-al-rules-card"[^>]*>\s*<summary[^>]*>📐 Rules/.test(al) && !/id="ps-al-rules-card"[^>]* open/.test(al)
       && /id="ps-al-rules-card"[\s\S]*id="ps-al-rules"[\s\S]*data-k="pauseTimes"[\s\S]*data-k="mergeMaxLb"[\s\S]*onclick="psAlSaveConfig\(\)">💾 Save rules[\s\S]*id="ps-al-save-result"[\s\S]*<\/details>/.test(al)
-      && (al.match(/data-k="/g) || []).length === 23, (al.match(/data-k="/g) || []).length);
+      && (al.match(/data-k="/g) || []).length === 21 /* owner 2026-11-13: "set no limit" — Max labels per run / per day boxes → 🚀 No limit */ && /class="ps-al-nolimit"/.test(al), (al.match(/data-k="/g) || []).length);
   }
 }
 
