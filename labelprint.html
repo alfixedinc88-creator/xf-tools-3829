@@ -198,7 +198,7 @@ window.lpCredLogin = async function() {
 <div class="lp-header">
   <div class="lp-header-title">🏷️ Label Printer <span style="font-size:12px;font-weight:500;color:var(--text3)">ZP 450</span></div>
   <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-    <button class="lp-back" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
+    <button class="lp-back" onclick="window.xfRefresh ? xfRefresh() : location.reload()" title="Reload this page">🔄 Refresh</button>
     <button class="lp-back" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
     <button class="lp-back" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
   </div>
@@ -909,6 +909,6 @@ window.lpCredLogin = async function() {
 
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261109a"></script>
+<script src="xf-access.js?v=20261113a"></script>
 </body>
 </html>

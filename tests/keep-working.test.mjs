@@ -13637,5 +13637,36 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   sq.exec("DELETE FROM label_print_batch WHERE source IN ('cut off — printed again') OR label_ids = '[" + A + "]'");
 }
 
+// 🔄 Owner (2026-11-13): "all the Refresh at the top — when people click Refresh don't go to another page, just stay on that same page"
+{
+  const fsm = await import('node:fs'), rd = f => fsm.readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const xa = rd('xf-access.js'), store = {};
+  const sess = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+  let clickH = null, reloaded = 0; const calls = [];
+  const win = { scrollY: 120, scrollTo: () => {}, addEventListener: () => {}, psSwitchTab: a => calls.push('ps:' + a), psAlSetMode: a => calls.push('MODE:' + a) };
+  const doc = { readyState: 'loading', addEventListener: (ev, h) => { if (ev === 'click') clickH = h; } };
+  const loc = { pathname: '/packship.html', reload: () => { reloaded++; } };
+  const block = xa.slice(xa.indexOf('// 🔄 Owner (2026-11-13)'));
+  new Function('window', 'document', 'location', 'sessionStorage', 'setTimeout', 'console', block)(win, doc, loc, sess, () => {}, console);
+  const tap = oc => clickH({ target: { closest: () => ({ getAttribute: () => oc }) } });
+  tap("psSwitchTab('picking')"); tap("psSwitchTab('scan')"); tap("psAlSetMode('auto')"); tap("psUnlockTab('autolabel')");
+  const saved = JSON.parse(store['xf_tabs:/packship.html'] || '[]');
+  win.xfRefresh();
+  check('🔄 Refresh remembers the tab tapped last (📦 Packing) — never a button that changes something (Auto Label mode, PIN unlock) — and reloads',
+    saved.length === 1 && saved[0].fn === 'psSwitchTab' && saved[0].arg === 'scan' && reloaded === 1 && JSON.parse(store['xf_refresh_back:/packship.html']).y === 120
+      && !win.xfRefreshParse("psAlSetMode('auto')") && !win.xfRefreshParse("psUnlockTab('x')") && win.xfRefreshParse("invSwitchTab('history')").arg === 'history', saved);
+  // after the reload: the same tab is opened again
+  const win2 = { scrollTo: () => {}, addEventListener: () => {}, psSwitchTab: a => calls.push('ps:' + a) };
+  const timers = [];
+  new Function('window', 'document', 'location', 'sessionStorage', 'setTimeout', 'console', block)(win2, { readyState: 'complete', addEventListener: () => {} }, loc, sess, (f) => timers.push(f), console);
+  for (let i = 0; i < 10 && timers.length; i++) timers.shift()();
+  check('…after the reload it opens 📦 Packing again (once), and the "came back from Refresh" mark is cleared (a normal reload starts as usual)',
+    calls.filter(c => c === 'ps:scan').length === 1 && !calls.some(c => /^MODE/.test(c)) && !('xf_refresh_back:/packship.html' in store), calls);
+  const pages = ['packship', 'inventory', 'reorder', 'sales', 'upc', 'repricer', 'profit', 'receivepo', 'labelprint', 'training', 'index', 'awd', 'xfitting-admin'];
+  const bad = pages.filter(p => /onclick="location\.reload\(\)"/.test(rd(p + '.html')));
+  check('…every top 🔄 Refresh (Pack & Ship, Inventory, Reorder, Sales, UPC, Repricer, Profit, Receive PO, Label print, Training, AWD, Admin, Home) uses it', !bad.length
+    && /if \(window\.xfRefresh\) window\.xfRefresh\(\); else window\.location\.reload\(\);/.test(rd('inventory.html')), bad);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
