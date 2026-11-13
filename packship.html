@@ -11716,14 +11716,16 @@ function _psAlTimeout(p, ms, what) {
 // the 🗂 batch come only at the end. Closed half-way → marked printed, never came out, in no batch. The server lists those
 // (labels-unbatched): 🖨 print them now (a 🗂 batch is kept), or ✓ they did come out (kept as a batch, with who / when).
 var _psAlCutoff = [];
-function _psAlCutoffPaint(list, after) {
+function _psAlCutoffPaint(list, after, cameOut) {
   _psAlCutoff = list || [];
   var b = document.getElementById('ps-al-cutoff');
   if (!b) { if (!after || !after.parentNode) return; b = document.createElement('div'); b.id = 'ps-al-cutoff'; after.parentNode.insertBefore(b, after.nextSibling); }
   var e = _psAlEsc, n = _psAlCutoff.length;
   b.innerHTML = n ? '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--red)">'
     + '<b>⚠ ' + n + ' label' + (n === 1 ? ' was' : 's were') + ' marked printed but never sent to the printer</b>'
-    + '<div style="color:var(--text2);margin-top:2px">Printing stopped half-way (the page was closed or the computer went off while the labels were being made ready), so ' + (n === 1 ? 'it is' : 'they are') + ' not waiting and not in 🗂 Batches printed.</div>'
+    + '<div style="color:var(--text2);margin-top:2px">Printing stopped half-way (the page was closed or the computer went off while the labels were being made ready), so ' + (n === 1 ? 'it is' : 'they are') + ' not waiting and not in 🗂 Batches printed.'
+    + ' How we know: every label that goes to the printer is saved in a 🗂 batch, and ' + (n === 1 ? 'this one is' : 'these are') + ' in none — and nobody has scanned ' + (n === 1 ? 'it' : 'them') + ' since (🖨 Print Log scanner, Picking or Packing).'
+    + ((cameOut || []).length ? ' <b>' + cameOut.length + ' more</b> like this ' + (cameOut.length === 1 ? 'was' : 'were') + ' scanned after (so ' + (cameOut.length === 1 ? 'it' : 'they') + ' did come out) — not listed.' : '') + '</div>'
     + '<details style="margin-top:4px;color:var(--text)"><summary style="cursor:pointer">Show them</summary>' + _psAlCutoff.map(function(l) {
         return '<div style="margin-top:3px;font-family:var(--mono)">' + e(l.order_number) + ' · ' + e(l.channel || '') + ' · ' + e(l.tracking || '') + ' <span style="font-family:var(--sans);color:var(--text3)">marked ' + e(new Date(l.printed_at).toLocaleString()) + (l.printed_by ? ' · ' + e(l.printed_by) : '') + '</span></div>';
       }).join('') + '</details>'
@@ -11914,7 +11916,7 @@ window.psAlLoadLabels = async function() {
     + '<details style="margin-top:4px"><summary style="cursor:pointer">Show them</summary>' + nd.map(function(l) {
         return '<div style="margin-top:3px;font-family:var(--mono)">' + _psAlEsc(l.order_number) + ' · ' + _psAlEsc(l.channel || '') + ' · ' + _psAlEsc(l.tracking || '') + ' <span style="font-family:var(--sans);color:var(--text3)">bought ' + _psAlEsc(new Date(l.created_at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '</span></div>'; }).join('') + '</details>'
     + '<button type="button" onclick="psAlPrintEarly(this)" data-ids="' + nd.map(function(l) { return l.id; }).join(',') + '" style="margin-top:6px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);cursor:pointer;font-size:12px">🖨 Print them now anyway</button></div>' : '';
-  _psAlCutoffPaint((all[2] && all[2].labels) || [], nb);
+  _psAlCutoffPaint((all[2] && all[2].labels) || [], nb, (all[2] && all[2].cameOut) || []);
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
   var e = _psAlEsc;
   box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {

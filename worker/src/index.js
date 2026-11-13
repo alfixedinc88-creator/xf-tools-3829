@@ -35024,7 +35024,25 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, items FROM label_print_queue q
       WHERE printed_at >= ? AND cancel_hold IS NULL AND NOT EXISTS (SELECT 1 FROM label_print_batch b, json_each(b.label_ids) j WHERE b.ts >= ? AND CAST(j.value AS INTEGER) = q.id)
       ORDER BY id LIMIT 300`, [since, bSince]);
-    return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} return { ...r, items }; }) });
+    // Owner (2026-11-13): "how do you know they're not printed? Sometimes it prints but the scanner doesn't pick it up" →
+    // a label scanned anywhere after it was marked (🖨 Print Log scanner, Picking, Packing) did come out: not listed,
+    // only counted (cameOut), so the red list is only the ones nobody has seen on paper.
+    const seen = new Map();
+    const tr = [...new Set(rows.map(r => normalizeShipTracking(String(r.tracking || ''))).filter(Boolean))];
+    for (const [table, what] of [['ship_print_log', 'Print Log scanner'], ['ship_pick_log', 'Picking'], ['ship_scan_log', 'Packing']]) {
+      for (let i = 0; i < tr.length; i += 90) {
+        const part = tr.slice(i, i + 90);
+        (await d1All(env, `SELECT UPPER(tracking) t, timestamp ts FROM ${table} WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ?`, [...part, bSince]).catch(() => []))
+          .forEach(x => { const k = normalizeShipTracking(x.t); (seen.get(k) || seen.set(k, []).get(k)).push({ ts: x.ts, what }); });
+      }
+    }
+    const cut = [], cameOut = [];
+    for (const r of rows) {
+      const k = normalizeShipTracking(String(r.tracking || '')), p0 = Date.parse(r.printed_at) - 5 * 60000;
+      const hit = (seen.get(k) || []).find(x => Date.parse(x.ts) >= p0);
+      if (hit) cameOut.push({ id: r.id, order_number: r.order_number, tracking: r.tracking, scannedAt: hit.ts, by: hit.what }); else cut.push(r);
+    }
+    return veeqoResp({ ok: true, cameOut, labels: cut.map(r => { let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} return { ...r, items }; }) });
   }
   if (path === '/veeqo/autolabel/print-batch' && method === 'GET') {
     await labelBatchEnsure(env);

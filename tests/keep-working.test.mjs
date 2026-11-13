@@ -13603,25 +13603,31 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   const ins = (num, printedAgo, hold) => Number(sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, printed_at, printed_by, items, cancel_hold) VALUES (?,?,?,?,?,?,?,?,?)")
     .run(num, 'Amazon', 'CUT' + num, 'USPS', iso(7200000), printedAgo == null ? null : iso(printedAgo), printedAgo == null ? null : 'OW', JSON.stringify([{ sku: '30-3-4=10X', qty: 1, bin: '30-3-4' }]), hold ? 'cancelled' : null).lastInsertRowid);
   const A = ins('CUT-A', 600000), B = ins('CUT-B', 300000), C = ins('CUT-C', 290000), D = ins('CUT-D', 5 * 86400000), E = ins('CUT-E', null), F = ins('CUT-F', 200000, true);
+  const G = ins('CUT-G', 280000), Hh = ins('CUT-H', 270000);
+  sq.prepare('INSERT INTO ship_scan_log (tracking, timestamp, initials, date) VALUES (?,?,?,?)').run('CUTCUT-G', iso(60000), 'MG', iso(60000).slice(0, 10)); // packed after → it came out
+  sq.prepare('INSERT INTO ship_scan_log (tracking, timestamp, initials, date) VALUES (?,?,?,?)').run('CUTCUT-H', iso(86400000), 'MG', iso(86400000).slice(0, 10)); // a scan from BEFORE it was marked doesn't count
   await post('/veeqo/autolabel/print-batch', { ids: [A], source: 'by hand' });
   const u1 = await get('/veeqo/autolabel/labels-unbatched'), n1 = (u1.labels || []).filter(l => /^CUT-/.test(l.order_number)).map(l => l.order_number).join(',');
-  check('🧾 labels marked printed but in NO 🗂 batch (page closed half-way) are listed to print again: CUT-B, CUT-C (in a batch / 5 days old / still waiting / cancelled → not listed), with their items',
-    u1.ok && n1 === 'CUT-B,CUT-C' && u1.labels.find(l => l.order_number === 'CUT-B').items[0].sku === '30-3-4=10X', n1);
+  check('🧾 labels marked printed but in NO 🗂 batch (page closed half-way) are listed to print again: CUT-B, CUT-C, CUT-H (in a batch / 5 days old / still waiting / cancelled → not listed), with their items',
+    u1.ok && n1 === 'CUT-B,CUT-C,CUT-H' && u1.labels.find(l => l.order_number === 'CUT-B').items[0].sku === '30-3-4=10X', n1);
+  check('…owner: "sometimes it prints but the scanner doesn\'t pick it up" → one scanned after it was marked (Packing / Picking / 🖨 Print Log) did come out: not listed, only counted (CUT-G by Packing)',
+    (u1.cameOut || []).length === 1 && u1.cameOut[0].order_number === 'CUT-G' && u1.cameOut[0].by === 'Packing', u1.cameOut);
   await post('/veeqo/autolabel/print-batch', { ids: [B], source: 'cut off — printed again' });
   const n2 = ((await get('/veeqo/autolabel/labels-unbatched')).labels || []).filter(l => /^CUT-/.test(l.order_number)).map(l => l.order_number).join(',');
-  check('…printed again (or ✓ "they did come out") → kept as a 🗂 batch with who / when, and off the list', n2 === 'CUT-C'
+  check('…printed again (or ✓ "they did come out") → kept as a 🗂 batch with who / when, and off the list', n2 === 'CUT-C,CUT-H'
     && sq.prepare("SELECT COUNT(*) n FROM label_print_batch WHERE source = 'cut off — printed again'").get().n === 1, n2);
   const psS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   const code = psS.slice(psS.indexOf('var _psAlCutoff = [];'), psS.indexOf('window.psAlCutoffPrint = async function'));
   const box = { id: '', innerHTML: '' }, after = { parentNode: { insertBefore: el => { box.inserted = true; } }, nextSibling: null };
   const doc = { getElementById: () => null, createElement: () => box };
   const paint = new Function('document', '_psAlEsc', code + '; return _psAlCutoffPaint;')(doc, x => String(x == null ? '' : x).replace(/</g, '&lt;'));
-  paint([{ id: 1, order_number: 'CUT-B', channel: 'Amazon', tracking: 'CUTB', printed_at: new Date().toISOString(), printed_by: 'OW' }, { id: 2, order_number: 'CUT-C', tracking: 'CUTC', printed_at: new Date().toISOString() }], after);
+  paint([{ id: 1, order_number: 'CUT-B', channel: 'Amazon', tracking: 'CUTB', printed_at: new Date().toISOString(), printed_by: 'OW' }, { id: 2, order_number: 'CUT-C', tracking: 'CUTC', printed_at: new Date().toISOString() }], after, [{ id: 3 }]);
   check('page: 🏷️ Shipping labels shows "⚠ 2 labels were marked printed but never sent to the printer" + 🖨 Print all 2 now + ✓ They did come out; a page closed while labels are made ready asks first',
-    box.inserted && /⚠ 2 labels were marked printed but never sent to the printer/.test(box.innerHTML) && /CUT-B/.test(box.innerHTML) && /psAlCutoffPrint\(this\)">🖨 Print all 2 now/.test(box.innerHTML)
+    box.inserted && /⚠ 2 labels were marked printed but never sent to the printer/.test(box.innerHTML) && /How we know: every label that goes to the printer is saved in a 🗂 batch/.test(box.innerHTML) && /<b>1 more<\/b> like this was scanned after/.test(box.innerHTML) && /CUT-B/.test(box.innerHTML) && /psAlCutoffPrint\(this\)">🖨 Print all 2 now/.test(box.innerHTML)
       && /psAlCutoffClear\(this\)/.test(box.innerHTML) && /\/veeqo\/autolabel\/labels-unbatched/.test(psS) && /addEventListener\('beforeunload', function\(ev\) \{ if \(_psAlLabelBusy && _psAlBatch\)/.test(psS)
       && /source: 'cut off — printed again'/.test(psS), box.innerHTML.slice(0, 200));
-  for (const id of [A, B, C, D, E, F]) sq.prepare('DELETE FROM label_print_queue WHERE id = ?').run(id);
+  for (const id of [A, B, C, D, E, F, G, Hh]) sq.prepare('DELETE FROM label_print_queue WHERE id = ?').run(id);
+  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'CUTCUT-%'");
   sq.exec("DELETE FROM label_print_batch WHERE source IN ('cut off — printed again') OR label_ids = '[" + A + "]'");
 }
 
