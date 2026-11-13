@@ -2756,6 +2756,14 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   check('…the whole record is kept (up to 20,000 characters — the owner\'s copy was cut off at 4,000)', !/JSON\.stringify\(tried\)\.slice\(0, 4000\)/.test(readFileSync0(workerPath, 'utf8')), null);
   none = true; refuse = false; const mk0 = made; const nw = await post('/veeqo/autolabel/scanform-make', {});
   check('…Veeqo says no carrier has labels waiting (unmanifested = none) → "No labels waiting for a scan form", nothing sent to make one, on record', nw.ok === false && nw.nothing === true && /No labels waiting for a scan form/.test(nw.error) && made === mk0 && nw.tried.length === 1, nw);
+  // Owner (2026-11-13): "after 5:30 pm we buy labels up to 8 pm — why does Veeqo say no label was waiting and not let us make the 8:50
+  // scan form?". Veeqo's waiting list says none, but our own record has USPS labels bought since the last form → asked anyway, with the
+  // pickup address of the last form that worked; Veeqo makes it.
+  const todayNy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, action, carrier, service, price, tracking) VALUES (?,?,?,?,?,?,?,?)").run(new Date().toISOString(), todayNy, 'EVE-1', 'bought', 'USPS', 'GA', 5, '9400EVENING1');
+  const mk1 = made, ev = await post('/veeqo/autolabel/scanform-make', {});
+  check('…Veeqo says no label waiting, but our record has a USPS label bought after the last form (5:30–8 pm) → Veeqo is asked anyway with the last pickup address → the form is made, and why is on record',
+    ev.ok === true && made === mk1 + 1 && ev.tried.some(t => t.carrier === 'ours' && /1 USPS label\(s\) were bought since the last form .*9400EVENING1/.test(t.said)) && ev.tried.some(t => t.path === '/shipping/api/v1/scan_forms/USPS' && t.status === 200), ev);
   none = false;
   const sfRow = rows().find(r => r.slot === '2026-10-07 16:30');
   const p0 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=0', { headers: H }), p1 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=1', { headers: H }), p2 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=2', { headers: H });

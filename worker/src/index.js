@@ -33068,17 +33068,30 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
   const tried = [], made = [];
   const um = await autolabelScanFormUnmanifested(env);
   tried.push({ carrier: 'waiting?', path: '/shipping/api/v1/scan_forms/unmanifested', status: um.status, said: um.said });
+  // 📄 Owner (2026-11-13): "after 5:30 pm we buy labels until 8 pm — why does Veeqo say no label was waiting and not let us print the
+  // 8:50 scan form?". Veeqo's "waiting" list can be empty while our own record has USPS labels bought since the last form that worked.
+  // Then it is asked to make the form anyway, with the pickup address of the last form that worked; what Veeqo says is kept.
+  let forceJobs = null;
   if (um.ok && um.carriers && !um.carriers.length) {
-    await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`,
-      [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 20000)]);
-    return { ok: false, nothing: true, tried, error: 'No labels waiting for a scan form — Veeqo says every shipment is already on one (or none were bought since the last form)' };
+    const ours = await autolabelScanFormMissing(env, when).catch(() => ({ labels: [] }));
+    const lastOk = ours.labels.length ? await d1First(env, `SELECT detail FROM scan_form_log WHERE ok = 1 AND detail LIKE '%collection_address%' ORDER BY id DESC LIMIT 1`).catch(() => null) : null;
+    let good = null; try { good = (JSON.parse((lastOk && lastOk.detail) || '[]') || []).filter(t => t && t.status >= 200 && t.status < 300 && t.sent && t.sent.collection_address).pop() || null; } catch (_) {}
+    if (!ours.labels.length || !good) {
+      if (ours.labels.length) tried.push({ carrier: 'ours', said: `Veeqo listed no label waiting, but ${ours.labels.length} USPS label(s) were bought since the last form — no earlier form's pickup address on record to ask with` });
+      await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`,
+        [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 20000)]);
+      return { ok: false, nothing: !ours.labels.length, tried, error: ours.labels.length ? `Veeqo says no label is waiting, but ${ours.labels.length} USPS label(s) were bought since the last form — make it in Veeqo: Settings → USPS Scan Forms` : 'No labels waiting for a scan form — Veeqo says every shipment is already on one (or none were bought since the last form)' };
+    }
+    tried.push({ carrier: 'ours', said: `Veeqo listed no label waiting, but ${ours.labels.length} USPS label(s) were bought since the last form (${ours.labels.slice(0, 5).map(l => l.tracking || l.order_number).join(', ')}${ours.labels.length > 5 ? ', …' : ''}) — asking Veeqo to make the form anyway` });
+    const gc = String(good.path || '').split('/').pop();
+    forceJobs = [{ cid: decodeURIComponent(gc || 'USPS'), body: good.sent }];
   }
   // Owner's test 2026-10-06 5:11 pm: every body → 400 "collection_address is required"; Veeqo's
   // unmanifested answer lists, per carrier, the pickup address(es) with shipments waiting
   // (carrier_id "amazon_shipping_v2__USPS", unmanifested_shipment_location_list[].address).
   // → one form per carrier × pickup address, that address sent as collection_address.
-  const jobs = [];
-  um.usps.filter(c => c && typeof c === 'object').forEach(c => (Array.isArray(c.unmanifested_shipment_location_list) ? c.unmanifested_shipment_location_list : [])
+  const jobs = forceJobs || [];
+  if (!forceJobs) um.usps.filter(c => c && typeof c === 'object').forEach(c => (Array.isArray(c.unmanifested_shipment_location_list) ? c.unmanifested_shipment_location_list : [])
     .forEach(l => { if (l && l.address) jobs.push({ cid: String(c.carrier_id || c.carrier_name || ''), addr: l.address }); }));
   if (!jobs.length) jobs.push({ cid: '', addr: null }); // no address from Veeqo → the old tries, Veeqo's answer kept
   const noNulls = a => Object.fromEntries(Object.entries(a || {}).filter(([, v]) => v != null && v !== ''));
@@ -33096,7 +33109,7 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
   for (const job of jobs) {
     const subs = ['USPS', ...(job.cid && job.cid !== 'USPS' ? [job.cid] : [])]; // the docs' example first, then Veeqo's own carrier id
     const a = job.addr;
-    const bodies = !a ? AUTOLABEL_SCANFORM_BODIES : [
+    const bodies = job.body ? [() => job.body] : !a ? AUTOLABEL_SCANFORM_BODIES : [
       () => ({ collection_address: scanFormAddr(a, true) }),  // the docs' "withFullAddress" example, state from the ZIP when Veeqo has none
       () => ({ collection_address: scanFormAddr(a, false) }), // …without the state, in case Veeqo looks it up itself
     ];
