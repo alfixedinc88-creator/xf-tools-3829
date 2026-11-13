@@ -35007,6 +35007,19 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       [new Date().toISOString(), shipTodayKey(), by, String(b.source || '').slice(0, 40), ids.length, JSON.stringify(ids)]);
     return veeqoResp({ ok: true, id: r && r.meta ? r.meta.last_row_id : null, count: ids.length });
   }
+  // 🧾 Owner (2026-11-13): "I see 54 waiting, clicked Print new labels now, nothing printing, I closed it — now 30 waiting,
+  // where are the other 24? Nothing in Batches printed." A round marks each label printed while it gets it ready and sends
+  // the paper + saves the batch only at the end, so a page closed half-way left labels marked printed that never came out
+  // and are in no batch. Every way of printing saves a batch, so a label printed in the last 3 days that is in NO batch
+  // was cut off → listed here to print (or, if it did come out, cleared with who / when kept as a batch).
+  if (path === '/veeqo/autolabel/labels-unbatched' && method === 'GET') {
+    await labelBatchEnsure(env);
+    const since = new Date(Date.now() - 3 * 86400000).toISOString(), bSince = new Date(Date.now() - 4 * 86400000).toISOString();
+    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, items FROM label_print_queue q
+      WHERE printed_at >= ? AND cancel_hold IS NULL AND NOT EXISTS (SELECT 1 FROM label_print_batch b, json_each(b.label_ids) j WHERE b.ts >= ? AND CAST(j.value AS INTEGER) = q.id)
+      ORDER BY id LIMIT 300`, [since, bSince]);
+    return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} return { ...r, items }; }) });
+  }
   if (path === '/veeqo/autolabel/print-batch' && method === 'GET') {
     await labelBatchEnsure(env);
     const batch = await d1First(env, 'SELECT * FROM label_print_batch WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);

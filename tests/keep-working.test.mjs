@@ -13588,5 +13588,34 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
       && /if \(!tracking\) \{ _psPackNotTracking\(raw\); inp\.focus\(\); return; \}/.test(psS), { first, beeps });
 }
 
+// 🧾 Owner (2026-11-13): "54 waiting, clicked Print new labels now, nothing printing, I closed it — now 30 waiting, where are
+// the other 24? Nothing in Batches printed" → a label marked printed in no 🗂 batch was cut off: listed to print again.
+{
+  const now = Date.now(), iso = ms => new Date(now - ms).toISOString();
+  const ins = (num, printedAgo, hold) => Number(sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, printed_at, printed_by, items, cancel_hold) VALUES (?,?,?,?,?,?,?,?,?)")
+    .run(num, 'Amazon', 'CUT' + num, 'USPS', iso(7200000), printedAgo == null ? null : iso(printedAgo), printedAgo == null ? null : 'OW', JSON.stringify([{ sku: '30-3-4=10X', qty: 1, bin: '30-3-4' }]), hold ? 'cancelled' : null).lastInsertRowid);
+  const A = ins('CUT-A', 600000), B = ins('CUT-B', 300000), C = ins('CUT-C', 290000), D = ins('CUT-D', 5 * 86400000), E = ins('CUT-E', null), F = ins('CUT-F', 200000, true);
+  await post('/veeqo/autolabel/print-batch', { ids: [A], source: 'by hand' });
+  const u1 = await get('/veeqo/autolabel/labels-unbatched'), n1 = (u1.labels || []).filter(l => /^CUT-/.test(l.order_number)).map(l => l.order_number).join(',');
+  check('🧾 labels marked printed but in NO 🗂 batch (page closed half-way) are listed to print again: CUT-B, CUT-C (in a batch / 5 days old / still waiting / cancelled → not listed), with their items',
+    u1.ok && n1 === 'CUT-B,CUT-C' && u1.labels.find(l => l.order_number === 'CUT-B').items[0].sku === '30-3-4=10X', n1);
+  await post('/veeqo/autolabel/print-batch', { ids: [B], source: 'cut off — printed again' });
+  const n2 = ((await get('/veeqo/autolabel/labels-unbatched')).labels || []).filter(l => /^CUT-/.test(l.order_number)).map(l => l.order_number).join(',');
+  check('…printed again (or ✓ "they did come out") → kept as a 🗂 batch with who / when, and off the list', n2 === 'CUT-C'
+    && sq.prepare("SELECT COUNT(*) n FROM label_print_batch WHERE source = 'cut off — printed again'").get().n === 1, n2);
+  const psS = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const code = psS.slice(psS.indexOf('var _psAlCutoff = [];'), psS.indexOf('window.psAlCutoffPrint = async function'));
+  const box = { id: '', innerHTML: '' }, after = { parentNode: { insertBefore: el => { box.inserted = true; } }, nextSibling: null };
+  const doc = { getElementById: () => null, createElement: () => box };
+  const paint = new Function('document', '_psAlEsc', code + '; return _psAlCutoffPaint;')(doc, x => String(x == null ? '' : x).replace(/</g, '&lt;'));
+  paint([{ id: 1, order_number: 'CUT-B', channel: 'Amazon', tracking: 'CUTB', printed_at: new Date().toISOString(), printed_by: 'OW' }, { id: 2, order_number: 'CUT-C', tracking: 'CUTC', printed_at: new Date().toISOString() }], after);
+  check('page: 🏷️ Shipping labels shows "⚠ 2 labels were marked printed but never sent to the printer" + 🖨 Print all 2 now + ✓ They did come out; a page closed while labels are made ready asks first',
+    box.inserted && /⚠ 2 labels were marked printed but never sent to the printer/.test(box.innerHTML) && /CUT-B/.test(box.innerHTML) && /psAlCutoffPrint\(this\)">🖨 Print all 2 now/.test(box.innerHTML)
+      && /psAlCutoffClear\(this\)/.test(box.innerHTML) && /\/veeqo\/autolabel\/labels-unbatched/.test(psS) && /addEventListener\('beforeunload', function\(ev\) \{ if \(_psAlLabelBusy && _psAlBatch\)/.test(psS)
+      && /source: 'cut off — printed again'/.test(psS), box.innerHTML.slice(0, 200));
+  for (const id of [A, B, C, D, E, F]) sq.prepare('DELETE FROM label_print_queue WHERE id = ?').run(id);
+  sq.exec("DELETE FROM label_print_batch WHERE source IN ('cut off — printed again') OR label_ids = '[" + A + "]'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
