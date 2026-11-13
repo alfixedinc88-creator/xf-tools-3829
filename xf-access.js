@@ -1303,3 +1303,49 @@ document.addEventListener('input', function (e) {
   setTimeout(ping, 3000); setInterval(ping, 20000);
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') ping(); }); // woke up → ask at once
 })();
+
+// 🔄 Owner (2026-11-13): "all the Refresh at the top — when people click Refresh don't go to another page, whatever
+// they hit Refresh on, just stay on that same page". A click on a tab (the pages' own tab switch, e.g. 📦 Packing,
+// 🏬 Stock Out Shelving, 🧾 Reorder) is remembered for this browser tab only (sessionStorage), and 🔄 Refresh
+// (xfRefresh) reloads and opens those tabs again, then scrolls back to where it was. Only the tab switches below are
+// replayed — never a button that changes something (modes, PINs, saves).
+(function () {
+  var TAB_FN = /^(psSwitchTab|invSwitchTab|lpTab|roTab|dbTab|rprTab|pfTab|emSwitchTab|awd_switchTab|adSwitchTab)$/;
+  var KEY = 'xf_tabs:' + location.pathname, FLAG = 'xf_refresh_back:' + location.pathname;
+  function read(k) { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } }
+  function write(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  // A tab switch click → remembered. A switch on an earlier level (e.g. another main tab) forgets the ones after it.
+  function remember(fn, arg) {
+    var a = read(KEY) || [], i = -1;
+    for (var j = 0; j < a.length; j++) if (a[j].fn === fn) { i = j; break; }
+    if (i >= 0) a = a.slice(0, i);
+    a.push({ fn: fn, arg: arg });
+    write(KEY, a.slice(-4));
+  }
+  window.xfRefreshParse = function (onclick) { // "psSwitchTab('scan')" → { fn, arg } (only the tab switches above)
+    var m = /^\s*([A-Za-z_]\w*)\(\s*'([\w-]*)'\s*\)\s*;?\s*(?:return false;?)?\s*$/.exec(String(onclick || ''));
+    return m && TAB_FN.test(m[1]) ? { fn: m[1], arg: m[2] } : null;
+  };
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[onclick]') : null; if (!el) return;
+    var t = window.xfRefreshParse(el.getAttribute('onclick')); if (t) remember(t.fn, t.arg);
+  }, true);
+  window.xfRefresh = function () {
+    write(FLAG, { at: Date.now(), y: window.scrollY || 0 });
+    location.reload();
+  };
+  // After a 🔄 Refresh: open the same tab(s) again once the page has set itself up.
+  var back = read(FLAG); write(FLAG, null);
+  if (!back || Date.now() - back.at > 60000) return;
+  var todo = (read(KEY) || []).slice(), tries = 0;
+  function next() {
+    if (!todo.length) { if (back.y) setTimeout(function () { window.scrollTo(0, back.y); }, 400); return; }
+    var t = todo[0], f = window[t.fn];
+    if (typeof f !== 'function') { if (++tries < 40) return setTimeout(next, 250); todo.shift(); return next(); }
+    todo.shift(); tries = 0;
+    try { f(t.arg); } catch (e) { console.warn('[refresh] could not open', t.fn, t.arg, e && e.message); }
+    setTimeout(next, 400);
+  }
+  function start() { setTimeout(next, 900); }
+  if (document.readyState === 'complete') start(); else window.addEventListener('load', start);
+})();

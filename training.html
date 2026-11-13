@@ -303,7 +303,7 @@ footer{margin-top:40px;color:var(--ink3);font-size:14px}
     <button id="l-en" type="button" aria-pressed="true" onclick="setLang('en')">English</button>
     <button id="l-es" type="button" aria-pressed="false" onclick="setLang('es')">Español</button>
   </div>
-  <button type="button" onclick="location.reload()" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap" title="Reload this page">🔄<span class="xf-rf-t"> <span class="en">Refresh</span><span class="es">Actualizar</span></span></button><button type="button" data-xf-signout onclick="xfSignOut()" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap">🚪<span class="xf-rf-t"> <span class="en">Sign Out</span><span class="es">Salir</span></span></button><a href="index.html" class="xf-apps-btn" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap;text-decoration:none">← <span class="en">Apps</span><span class="es">Apps</span></a>
+  <button type="button" onclick="window.xfRefresh ? xfRefresh() : location.reload()" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap" title="Reload this page">🔄<span class="xf-rf-t"> <span class="en">Refresh</span><span class="es">Actualizar</span></span></button><button type="button" data-xf-signout onclick="xfSignOut()" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap">🚪<span class="xf-rf-t"> <span class="en">Sign Out</span><span class="es">Salir</span></span></button><a href="index.html" class="xf-apps-btn" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap;text-decoration:none">← <span class="en">Apps</span><span class="es">Apps</span></a>
   </div>
 </div></div>
 
@@ -2735,6 +2735,6 @@ loadStatus();
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261109a"></script>
+<script src="xf-access.js?v=20261113a"></script>
 </body>
 </html>

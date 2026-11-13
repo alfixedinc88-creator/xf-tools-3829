@@ -63,7 +63,8 @@ function invRefreshPage() {
   // Plain reload — for whenever something looks stale or stuck and the
   // simplest fix is just starting the page fresh. Doesn't touch login or
   // the saved Pull List, both of which persist across a reload already.
-  window.location.reload();
+  // Owner 2026-11-13: Refresh stays on the same tab (xf-access.js xfRefresh remembers it).
+  if (window.xfRefresh) window.xfRefresh(); else window.location.reload();
 }
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
@@ -17959,6 +17960,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261109a"></script>
+<script src="xf-access.js?v=20261113a"></script>
 </body>
 </html>

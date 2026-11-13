@@ -152,7 +152,7 @@
         <div class="ad-who">Signed in as <b id="ad-who-name"></b></div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
+        <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="window.xfRefresh ? xfRefresh() : location.reload()" title="Reload this page">🔄 Refresh</button>
         <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adLogout()">🚪 Sign Out</button>
         <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
       </div>
@@ -1190,6 +1190,6 @@ window.adTestToggle = async function() {
   }
 })();
 </script>
-<script src="xf-access.js?v=20261109a"></script>
+<script src="xf-access.js?v=20261113a"></script>
 </body>
 </html>
