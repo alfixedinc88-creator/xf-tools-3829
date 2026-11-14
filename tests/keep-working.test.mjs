@@ -13772,5 +13772,47 @@ console.log('\n🔗 Hot & cold sets (24-2-1&2): Stock Out Shelving uses the set 
   check('…pieces add up: 2 sets × 2 pcs = 4 pcs = 2 hot + 2 cold (got 4)', rec.body.lines.reduce((a, l) => a + l.got, 0) === 4 && rec.body.lines.reduce((a, l) => a + l.need, 0) === 4, rec.body.lines);
 }
 
+console.log('\n⚡ Picking by scan: every barcode of the order known at once (fast), no false "wrong item"');
+{
+  // Owner (2026-11-14): "why it still saying 'wrong item' is there's anyway we can make it fast, sometime, the item was right next to it".
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('97-7-1','union','97-7-1=10','C3=7-7-1',5,10), ('97-7-1','union','97-7-1=25','C3=7-7-2',2,25), ('97-7-9','cap','97-7-9=10','C3=7-7-9',2,10)`).run();
+  sq.exec('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT); CREATE TABLE IF NOT EXISTS upc_edit (part TEXT PRIMARY KEY, inside_upc TEXT, outside_upc TEXT, by_user TEXT, at TEXT)');
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('97-7-1=10','97-7-1','810000097710',''), ('97-7-1=25','97-7-1','810000097711','')").run();
+  sq.prepare("INSERT INTO upc_link (upc, part, by_user, at) VALUES ('810000097725', '97-7-1=25', 'TS', '2026-11-01')").run();               // linked at Stock In (another list)
+  sq.prepare("INSERT INTO upc_edit (part, inside_upc, outside_upc, by_user, at) VALUES ('97-7-9=10', '810000097711', '', 'TS', '2026-11-02')").run(); // SKU Mgr moved 810000097711 to the cap
+  const cols = sq.prepare('PRAGMA table_info(ship_manifest_log)').all().map(c => c.name);
+  const rw = { date: '2026-11-14', tracking: '1Z999AA1FASTPICK01', order_num: 'FAST-1', line_items: JSON.stringify([{ s: '97-7-1=10', q: 3, b: '97-7-1' }]) };
+  const k = Object.keys(rw).filter(x => cols.includes(x));
+  sq.prepare('INSERT INTO ship_manifest_log (' + k.join(',') + ') VALUES (' + k.map(() => '?').join(',') + ')').run(...k.map(x => rw[x]));
+  const pk = await get('/ship/package?tracking=1Z999AA1FASTPICK01'), it = (pk.items || [])[0] || {}, cd = it.codes || {};
+  check('/ship/package sends every barcode of the item\'s part #s from every list (UPC table =10, Stock In link =25 …) — but not one SKU Mgr moved to another part # (810000097711 → the cap)',
+    cd['810000097710'] === '97-7-1=10' && cd['810000097725'] === '97-7-1=25' && !cd['810000097711'] && it.pickSpots.length === 2, cd);
+  const { readFileSync: rfF } = await import('node:fs');
+  const ph = rfF(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const els = {}; const el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', textContent: '', focus() {} });
+  const calls = [], posts = []; let lookups = 0, pickDone = null;
+  const fetchF = url => { calls.push(/\/ship\/package/.test(url) ? 'package' : 'lookup'); if (/\/ship\/package/.test(url)) return Promise.resolve({ json: () => Promise.resolve(pk) });
+    lookups++; return Promise.resolve({ json: () => Promise.resolve({ partNum: '97-7-9=10' }) }); };
+  const post = (url, body) => { posts.push({ url, body }); calls.push(/pick-verify/.test(url) ? 'verify' : 'pick'); return /\/ship\/pick$/.test(url) ? new Promise(r => { pickDone = () => r({ ok: true }); }) : Promise.resolve({ ok: true }); };
+  const win = {}, said = [];
+  new Function('window', 'document', 'fetch', '_psPostWithTimeout', 'PS_WORKER', 'psCredToken', 'psInitials', 'psNormalizeTracking', '_psCancelOrderCache', 'psShowCancelOrderAlert', '_psAlEsc', '_psBeep', '_psSpeakAlert', '_psSkuMultiplier', 'xfShelfMapHtml', 'xfShelfNo', 'xfShelfName', 'confirm', 'prompt', 'navigator', src)(
+    win, { getElementById: el }, fetchF, post, 'W', 'T', 'KL', v => /^1Z[A-Z0-9]{16}$/.test(v) ? v : null, {}, () => {}, v => String(v), () => {}, t => said.push(t), () => 1, p => '', p => String(p).split('-')[0], () => '', () => true, () => null, {});
+  const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0)); };
+  win.psPksScan('1Z999AA1FASTPICK01'); await settle();
+  check('…the label: the order\'s items are asked for at the same time as the pick is saved (not after it)', calls.join() === 'package,pick', calls);
+  pickDone(); await settle();
+  const l0 = lookups;
+  win.psPksScan('810000097710'); win.psPksScan('10000097710'); // a bag of 10, then one from a scanner that drops the first digit
+  win.psPksScan('810000097725'); await settle();                  // a bag of 25 (barcode from the Stock In link list) — bigger than the 10 still needed
+  check('…bags known at once — no wait for the server: 2 bags of 10 counted (the 11-digit read too) = 20 of 30; the =25 bag (other list) is the right item → "open it, take 10"',
+    lookups === l0 && /<b>20 of 30 pcs<\/b>/.test(el('ps-pks-out').innerHTML) && /bag of <b>25<\/b>[\s\S]*only <b>10<\/b>/.test(el('ps-pks-msg').innerHTML) && !said.includes('Wrong item'), { n: lookups - l0, msg: el('ps-pks-msg').innerHTML });
+  win.psPksScan('810000097711'); await settle(); // the barcode SKU Mgr moved to the cap → really the wrong item
+  check('…a really wrong item says what was scanned and what the order needs: "you scanned 97-7-9=10 (barcode 810000097711). This order needs: 97-7-1=10"',
+    /WRONG ITEM — you scanned <b>97-7-9=10<\/b> <span[^>]*>\(barcode 810000097711\)<\/span>\. This order needs: <b>97-7-1=10<\/b>/.test(el('ps-pks-msg').innerHTML) && said.includes('Wrong item'), el('ps-pks-msg').innerHTML);
+  const wk = rfF(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the order\'s 🧭 Activity History shows each wrong scan (barcode → what it was)', /wrong scan\(s\): ` \+ wrong\.slice\(0, 6\)\.map\(w => w\.code \+ ' → '/.test(wk), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
