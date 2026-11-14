@@ -24056,7 +24056,23 @@ async function shipPickFamily(env, parent) {
   const codes = {}, pl = Object.keys(parts).slice(0, 80);
   if (pl.length) (await d1All(env, `SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) IN (${pl.map(() => '?').join(',')})`, pl))
     .forEach(u => [u.inside_upc, u.outside_upc].forEach(c => { c = String(c || '').replace(/\D/g, '').replace(/^0+/, ''); if (c.length >= 8 && !codes[c]) codes[c] = String(u.sku).trim().toUpperCase(); }));
-  return { spots, codes };
+  return { spots, codes, _parts: pl };
+}
+// ⚡ Owner (2026-11-14): "why it still saying 'wrong item' … make it fast, sometime the item was right next to it". Every barcode we have
+// for the family's part #s, from EVERY list a scan is checked against (🔢 saved in SKU Mgr, UPC sheet, UPC table, vendor list, Stock In
+// links, Reorder ✏️, vendor sheets) — the phone then knows each bag at once (no wait), and a bag with an older / other-list barcode is
+// never called wrong. A barcode SKU Mgr moved to another part # is left out (the same rule as the scan lookup).
+async function shipPickAllCodes(env, fams) {
+  const parts = [...new Set(fams.flatMap(f => f._parts || []))];
+  if (!parts.length) return;
+  const src = await upcSources(env, parts), ed = await upcEditMap(env);
+  const z = c => String(c || '').replace(/\D/g, '').replace(/^0+/, '');
+  fams.forEach(f => (f._parts || []).forEach(p => (src[p] || []).forEach(x => [x.inside, x.outside].forEach(c => {
+    c = z(c); if (c.length < 8 || f.codes[c]) return;
+    const owner = ed.byUpc.get(c); if (owner && owner !== p && !(f._parts || []).includes(owner)) return; // moved to another part # in SKU Mgr
+    f.codes[c] = p;
+  }))));
+  fams.forEach(f => Object.keys(f.codes).forEach(c => { const owner = ed.byUpc.get(c); if (owner && !(f._parts || []).includes(owner)) delete f.codes[c]; }));
 }
 
 // ── GET /ship/package?tracking= ──────────────────────────────────────────
@@ -24082,7 +24098,7 @@ async function shipPackageCheck(url, env) {
   let lines = []; try { lines = JSON.parse(r.line_items || '[]') || []; } catch (_) {}
   const up = x => String(x || '').trim().toUpperCase();
   const photos = await productPhotoMap(env, lines.map(li => li.b || li.s)).catch(() => ({}));
-  const items = [];
+  const items = [], fams = [];
   for (const li of lines) {
     const sku = up(li.s), bin = up(li.b), qty = parseFloat(li.q) || 1;
     const exact = sku ? await d1All(env, 'SELECT part_num, name, location, cases, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) ORDER BY cases DESC', [sku, sku.replace(/-+$/, '')]).catch(() => []) : [];
@@ -24100,11 +24116,14 @@ async function shipPackageCheck(url, env) {
     const setP = setPartsOf(parentOf(partNum || parent || sku));
     const pick = setP ? null : await shipPickFamily(env, parentOf(parent || sku)).catch(() => null);
     const components = setP ? await Promise.all(setP.map(async c => Object.assign({ parent: c }, await shipPickFamily(env, c).catch(() => ({ spots: [], codes: {} }))))) : null;
+    fams.push(...(pick ? [pick] : []), ...(components || []));
     items.push({ sku: li.s || '', qty, bin: li.b || '', image: li.i || photos[parentOf(parent)] || '', partNum, parent, name, pcsPerCase: pcs,
       exactMatch: !!exact.length, spots, totalCases: src.reduce((a, x) => a + (parseFloat(x.cases) || 0), 0),
       upcs: upcs.map(u => ({ inside: u.inside_upc || '', outside: u.outside_upc || '' })),
       ...(pick ? { pickSpots: pick.spots, codes: pick.codes } : {}), ...(components ? { components } : {}) });
   }
+  await shipPickAllCodes(env, fams).catch(() => {});
+  fams.forEach(f => { delete f._parts; });
   return J({ ok: true, found: true, tracking: r.tracking || t, otherDates: rows.slice(1).map(x => x.date),
     order: { date: r.date || '', orderNum: r.order_num || '', channel: r.channel || '', carrier: r.carrier || detectShipCarrier(t), service: r.service || '',
       customerName: r.customer_name || '', city: r.city || '', state: r.ship_to_state || '', zip: r.zip || '', status: r.reconcile_status || '', weightLb: r.weight_lb != null ? r.weight_lb : null },
@@ -24232,7 +24251,7 @@ async function shipTrackingHistory(url, env) {
     let lines = [], wrong = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {} try { wrong = JSON.parse(r.wrong || '[]'); } catch (_) {}
     const sc = lines.reduce((a, l) => a + (l.scanned || 0), 0), ty = lines.reduce((a, l) => a + (l.typed || 0), 0);
     events.push({ type: 'pick-verify', icon: '🧭', label: r.complete ? 'Picked by scan — every item checked' : 'Picked by scan — NOT finished', at: r.done_at || r.started_at || '', by: r.by_user || '',
-      detail: lines.map(l => (l.partNum || l.sku) + ' ' + (l.got || 0) + '/' + (l.need || 0) + ' pcs').join(' · ') + ` · ${sc} pcs scanned, ${ty} typed` + (wrong.length ? ` · ⚠ ${wrong.length} wrong scan(s)` : '') + (r.note ? ' · ' + r.note : '') });
+      detail: lines.map(l => (l.partNum || l.sku) + ' ' + (l.got || 0) + '/' + (l.need || 0) + ' pcs').join(' · ') + ` · ${sc} pcs scanned, ${ty} typed` + (wrong.length ? ` · ⚠ ${wrong.length} wrong scan(s): ` + wrong.slice(0, 6).map(w => w.code + ' → ' + (w.part || (w.kind === 'unknown' ? 'not linked' : '?'))).join(', ') : '') + (r.note ? ' · ' + r.note : '') });
   }
   for (const r of (nostocks.results || [])) {
     events.push({

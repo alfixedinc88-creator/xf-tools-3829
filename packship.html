@@ -6797,10 +6797,14 @@ function psPksStart(tr) {
   PKS = { tracking: tr, orderNum: '', lines: [], wrong: [], startedAt: new Date().toISOString(), done: false, loading: true, queue: [], labelAt: Date.now() };
   psPksStep('⏳ Reading the order…'); psPksMsg('', ''); if (out) out.innerHTML = '';
   var me = PKS;
+  // ⚡ the pick record and the order's items are asked for at the same time (was one after the other); only when the items are not
+  // there yet (the pick brings them in) is the order read again after the pick.
+  var pkg = function() { return fetch(PS_WORKER + '/ship/package?tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }); };
+  var pkgP = pkg().catch(function() { return null; });
   _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tr, initials: psInitials }).then(function(d) {
     if (d && d.duplicate) psPksMsg('⚠ Already picked ' + _psAlEsc((d.scannedDate || '') + ' ' + (typeof psFmtTime === 'function' ? psFmtTime(d.scannedAt) : '')) + (d.initials ? ' by ' + _psAlEsc(d.initials) : '') + ' — check it is not picked twice', 'warn');
   }).catch(function() {}).then(function() {
-    return fetch(PS_WORKER + '/ship/package?tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); });
+    return pkgP.then(function(d) { return d && d.found && (d.items || []).length ? d : pkg(); });
   }).then(function(d) {
     if (PKS !== me) return;
     if (!d || !d.found || !(d.items || []).length) { psPksStep('1️⃣ Scan the SHIPPING LABEL'); PKS = null;
@@ -6841,7 +6845,9 @@ function psPksItem(v) {
   var spotHit = me.lines.filter(function(l) { return l.spots.some(function(s) { return String(s.location).toUpperCase() === code; }) || (code.indexOf('=') < 0 && /^\d+(-\d+)+$/.test(code) && l.parent === code); })[0];
   if (spotHit && !(dig.length >= 8 && spotHit.codes[dig])) { spotHit.spotOk = true; me.cur = me.lines.indexOf(spotHit); psPksMsg('📍 Right shelf for ' + _psAlEsc(spotHit.partNum || spotHit.sku) + ' — now scan each bag', 'ok'); psPksRender(); return; }
   if (/^[A-Z0-9]+=\d/.test(code) && code.indexOf('-') > 0 && !/^\d/.test(code)) { psPksBuzz(); psPksSay('Wrong shelf'); psPksMsg('❌ ' + _psAlEsc(code) + ' — nothing for this order on that shelf', 'bad'); me.wrong.push({ code: code, part: '', at: new Date().toISOString() }); return; }
-  var local = null; me.lines.forEach(function(l) { if (dig.length >= 8 && l.codes[dig]) local = l.codes[dig] === 1 ? (l.partNum || l.parent) : l.codes[dig]; });
+  var local = null; me.lines.forEach(function(l) {
+    var k = dig.length >= 8 && l.codes[dig] ? dig : dig.length === 11 ? Object.keys(l.codes).filter(function(c) { return c.length === 12 && c.slice(1) === dig; })[0] : null; // a scanner that drops the first digit
+    if (k) local = l.codes[k] === 1 ? (l.partNum || l.parent) : l.codes[k]; });
   var look = function() { return fetch(PS_WORKER + '/inventory/lookup?lite=1&code=' + encodeURIComponent(code), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); })
     .then(function(d) { var pn = String((d && d.partNum) || '').toUpperCase(); return pn && !(pn === code && !/^\d+(-\d+)+/.test(pn)) ? pn : ''; }); };
   var p = local ? Promise.resolve(local) : /^\d+(-\d+)+/.test(code) ? Promise.resolve(code)
@@ -6865,7 +6871,8 @@ function psPksItem(v) {
     }
     var l = cands.filter(function(x) { return x.got < x.need; })[0] || cands[0];
     if (!l) { psPksBuzz(); psPksSay('Wrong item'); me.wrong.push({ code: code, part: part || '', at: new Date().toISOString() });
-      psPksMsg('❌ WRONG ITEM — ' + _psAlEsc(part || code) + ' is not on this order. Put it back.', 'bad'); return; }
+      psPksMsg('❌ WRONG ITEM — you scanned <b>' + _psAlEsc(part) + '</b>' + (part !== code ? ' <span style="font-weight:400">(barcode ' + _psAlEsc(code) + ')</span>' : '')
+        + '. This order needs: <b>' + me.lines.filter(function(x) { return x.got < x.need; }).map(function(x) { return _psAlEsc(x.partNum || x.sku); }).join(', ') + '</b>. Put it back.', 'bad'); return; }
     me.cur = me.lines.indexOf(l);
     if (!psPksPack(part) && part.indexOf('=') > 0) { psPksRender(); psPksMsg('📦 ' + _psAlEsc(part) + ' has no bag count on it — count the pieces you take, then tap ✋ and type the count.', 'warn'); return; }
     var pk = psPksPack(part) || l.unit, left = Math.round((l.need - l.got) * 100) / 100;
