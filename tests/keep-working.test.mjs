@@ -13824,6 +13824,22 @@ console.log('\n⚡ Picking by scan: every barcode of the order known at once (fa
   check('…the order\'s 🧭 Activity History shows each wrong scan (barcode → what it was)', /wrong scan\(s\): ` \+ wrong\.slice\(0, 6\)\.map\(w => w\.code \+ ' → '/.test(wk), null);
 }
 
+// Owner (2026-11-14): "Order Lookup — set the days at 30, and in Activity History I want to see who dropped it off too and when".
+console.log('\n🚚 Order Lookup: 30 days by default; Activity History shows who dropped the package off (USPS drop-off run) and when');
+{
+  const { readFileSync: rfD } = await import('node:fs');
+  await get('/ship/tracking-history?tracking=9400DROP0001'); // makes the tables
+  sq.prepare("INSERT INTO ship_scan_log (date, tracking, carrier, initials, timestamp) VALUES ('2026-11-13', '9400DROP0001', 'USPS', 'MG', '2026-11-13T21:10:00.000Z')").run();
+  sq.prepare("INSERT INTO ship_usps_run_log (date, name, left_at, returned_at, logged_in_by) VALUES ('2026-11-13', 'Earlier <b>Run</b>', '2026-11-13T20:00:00.000Z', '2026-11-13T20:40:00.000Z', '1')").run();
+  sq.prepare("INSERT INTO ship_usps_run_log (date, name, left_at, returned_at, logged_in_by) VALUES ('2026-11-13', 'Chen', '2026-11-13T22:05:00.000Z', '2026-11-13T22:45:00.000Z', '1')").run();
+  const h = await get('/ship/tracking-history?tracking=9400DROP0001'), d = (h.events || []).find(e => e.type === 'dropoff');
+  check('packed 4:10 pm → the 5:05 pm drop-off run carried it: "🚚 Dropped off — Chen", left 5:05 pm, back 5:45 pm (the 3:00 pm run before it was packed is not it)',
+    d && d.by === 'Chen' && d.at === '2026-11-13T22:05:00.000Z' && /^Left .* · back /.test(d.detail), h.events);
+  const ph = rfD(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const olSel = ph.slice(ph.indexOf('<select id="ps-ol-days"'), ph.indexOf('</select>', ph.indexOf('<select id="ps-ol-days"')));
+  check('…Order Lookup opens on 30 days; 7 and 14 days taken off (owner)', /<option value="30" selected>30 days<\/option>/.test(olSel) && !/value="7"|value="14"/.test(olSel) && /getElementById\('ps-ol-days'\)\.value \|\| '30'/.test(ph), olSel);
+}
+
 console.log('\n🧭 Picking by scan: a listing SKU "10=3/8XA" = 10 pcs (not 3)');
 {
   // Owner (2026-11-14, photo: order 10=3/8XA, bag 24-3-2=5XX): "we need 10 pieces, but after our guy scan =5 … showing we only need to grab 3 more pieces?"
