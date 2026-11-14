@@ -24214,6 +24214,17 @@ async function shipTrackingHistory(url, env) {
         + (r.status ? ' · ' + r.status : '') + (r.batch_closed_at ? ' · batch closed' : ''),
     });
   }
+  // 🚚 Owner (2026-11-14): "Order Lookup → Activity History: I want to see who dropped it off too and when". The package went
+  // with the first 🚚 USPS Drop-off run that left after it was packed (within 3 days): who took it, when they left, when back.
+  const packedAt = (scans.results || []).map(r => Date.parse(r.timestamp || '')).filter(t => t > 0).sort((a, b) => a - b).pop();
+  if (packedAt) {
+    const run = await env.DB.prepare(`SELECT name, left_at, returned_at FROM ship_usps_run_log WHERE left_at >= ? AND left_at <= ? ORDER BY left_at ASC LIMIT 1`)
+      .bind(new Date(packedAt).toISOString(), new Date(packedAt + 3 * 86400000).toISOString()).first().catch(() => null);
+    if (run) events.push({
+      type: 'dropoff', icon: '🚚', label: 'Dropped off (USPS drop-off run)', at: run.left_at || '', by: String(run.name || '').replace(/[<>&"']/g, ''),
+      detail: 'Left ' + _shipFmtTs(run.left_at) + (run.returned_at ? ' · back ' + _shipFmtTs(run.returned_at) : ' · not back yet'),
+    });
+  }
   for (const r of (prints.results || [])) {
     events.push({
       type: 'print', icon: '🖨️', label: 'Label Printed', at: r.timestamp || '', by: r.operator_name || '',
