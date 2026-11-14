@@ -13474,7 +13474,7 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   sq.exec('CREATE TABLE IF NOT EXISTS ship_pick_verify (id INTEGER PRIMARY KEY AUTOINCREMENT, tracking TEXT, order_num TEXT, by_user TEXT, started_at TEXT, done_at TEXT, complete INTEGER, lines TEXT, wrong TEXT, note TEXT, at TEXT)');
   const ins = sq.prepare('INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials) VALUES (?,?,?,?,?)');
   const fill = (who, day, hourUtc, n, startSec, gap, tag) => { for (let k = 0; k < n; k++) { const t = new Date(Date.parse(day + 'T' + hourUtc + ':00:00Z') + (startSec + k * gap) * 1000).toISOString(); ins.run(day, t, 'SP' + tag + who + k, 'USPS', who); } };
-  sq.exec("CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best2; DELETE FROM app_config WHERE key LIKE 'speed5_done_%'");
+  sq.exec("CREATE TABLE IF NOT EXISTS speed_best2 (kind TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, start TEXT, end TEXT, batch INTEGER, at TEXT, PRIMARY KEY (kind, who)); DELETE FROM speed_best2; DELETE FROM app_config WHERE key LIKE 'speed6_done_%'");
   const D1 = new Date(Date.now() - 86400000).toISOString().slice(0, 10), D2 = new Date().toISOString().slice(0, 10); // yesterday / today (new hours are read 2 days back)
   fill('MG', D1, '14', 154, 1, 23, 'a');    // MG: 154 in one clock hour, one every 23 sec
   ins.run(D1, D1 + 'T14:00:30.000Z', 'SPaMG0', 'USPS', 'MG');   // the same label again: one order once
@@ -13500,24 +13500,25 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   const qq = sq.prepare("SELECT n, batch FROM speed_best2 WHERE kind='pack' AND who='QQ'").get();
   check('…two quick real orders 6 sec apart (30 pairs, one pair a minute) all count: QQ = 60, nothing taken as a stack', qq && qq.n === 60 && qq.batch === 0, qq);
   // 🐞 today is read on every load, even while older days are still being read
-  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed5_done_pack', '2000-01-01')").run();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed6_done_pack', '2000-01-01')").run();
   for (let d = 0; d < 70; d++) { const day = new Date(Date.parse('2024-01-01T00:00:00Z') + d * 86400000).toISOString().slice(0, 10); ins.run(day, day + 'T15:00:00.000Z', 'SPoLD' + d, 'USPS', 'OLD'); }
   fill('TD', D2, '09', 140, 0, 25, 't');
   const tt = await get('/ship/speed-top');
-  check('…70 older days still to read ("still reading"), yet TODAY counts at once: TD 140 today is on the board', tt.pack.stillReading === true && tt.pack.top.some(x => x.who === 'TD' && x.n === 140), tt.pack);
-  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPoLD%' OR tracking LIKE 'SPtTD%'; DELETE FROM speed_best2 WHERE who IN ('TD','OLD'); DELETE FROM app_config WHERE key = 'speed5_done_pack'");
+  // Owner (2026-11-14): "the record only go back to 10/15/26 … before that day we was doing the different way" — the 70 days of 2024 are never read
+  check('…TODAY counts at once (TD 140 on the board); days before 10/15/26 are not read at all (OLD from 2024 has no record)', tt.pack.top.some(x => x.who === 'TD' && x.n === 140) && !sq.prepare("SELECT 1 FROM speed_best2 WHERE who = 'OLD'").get(), tt.pack);
+  sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPoLD%' OR tracking LIKE 'SPtTD%'; DELETE FROM speed_best2 WHERE who IN ('TD','OLD'); DELETE FROM app_config WHERE key = 'speed6_done_pack'");
   // Owner (2026-11-12): "I see her doing very good, should be better then 110 of her ranking for few days ago, you sure it change?" — a record from days
   // ago is replaced the moment it is beaten: YM 110 (4 days ago, already on record) → 130 in 60 minutes today → the board shows YM 130 (today's hour)
   { const D4 = new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10);
     sq.prepare("INSERT OR REPLACE INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES ('pack','YM',110,?,?,0,?,32)").run(D4 + 'T15:00:00.000Z', D4 + 'T16:00:00.000Z', D4 + 'T20:00:00.000Z');
-    sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed5_done_pack', ?)").run(D4); // older days already read
+    sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed6_done_pack', ?)").run(D4); // older days already read
     const b0 = await get('/ship/speed-top'), y0 = (b0.pack.top || []).find(x => x.who === 'YM');
     fill('YM', D2, '13', 130, 0, 27, 'm'); // today: 130 labels, one every 27 sec
     const b1 = await get('/ship/speed-top'), y1 = (b1.pack.top || []).concat([]).find(x => x.who === 'YM') || sq.prepare("SELECT who, n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
     const y2 = sq.prepare("SELECT n, start FROM speed_best2 WHERE kind='pack' AND who='YM'").get();
     check('a record beaten today replaces the old one at once: YM 110 (4 days ago) → packs 130 in 60 minutes today → YM 130, today\'s hour (on the next load / ↻)',
       (!y0 || y0.n === 110) && y2 && y2.n === 130 && String(y2.start).slice(0, 10) === D2 && y1 && y1.n === 130, { y0, y1, y2 });
-    sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPmYM%'; DELETE FROM speed_best2 WHERE who = 'YM'; DELETE FROM app_config WHERE key = 'speed5_done_pack'"); }
+    sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'SPmYM%'; DELETE FROM speed_best2 WHERE who = 'YM'; DELETE FROM app_config WHERE key = 'speed6_done_pack'"); }
   await get('/ship/speed-top');
   fill('AN', D1, '17', 154, 0, 23, 'd');
   const t2 = await get('/ship/speed-top');
@@ -13547,15 +13548,24 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
   fill('FP', D2, '05', 170, 0, 20, 'f'); fill('DB', D2, '07', 165, 0, 21, 'g');
   const th = await get('/ship/speed-top');
   check('FP (170) and DB (165) are taken off the board as the owner asked (their records kept): 🥇 KL 160 · MG 154 · AN 154; "🙈 2 taken off" on record',
-    top(th.pack) === 'KL:160,MG:154,AN:154' && th.hidden.map(x => x.who).sort().join(',') === 'DB,FP' && sq.prepare("SELECT COUNT(*) c FROM speed_best2 WHERE who IN ('FP','DB')").get().c === 2
-      && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log WHERE action = 'taken off' AND by_user = 'owner request'").get().c === 2, { top: th.pack.top, hidden: th.hidden });
+    top(th.pack) === 'KL:160,MG:154,AN:154' && th.hidden.map(x => x.who).sort().join(',') === 'DB,FP,MM' && sq.prepare("SELECT COUNT(*) c FROM speed_best2 WHERE who IN ('FP','DB')").get().c === 2
+      && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log WHERE action = 'taken off' AND by_user = 'owner request'").get().c === 3, { top: th.pack.top, hidden: th.hidden });
   const hk = await post('/ship/speed-hide', { who: 'KL' }), th2 = await get('/ship/speed-top');
   await post('/ship/speed-hide', { who: 'FP', undo: true }); const th3 = await get('/ship/speed-top');
   await post('/ship/speed-hide', { who: 'KL', undo: true }); await post('/ship/speed-hide', { who: 'FP' });
   check('✕ (Admin / Owner) takes someone else off too (KL → MG 🥇); ↩ put back brings them back (FP 170 🥇); every change kept with who / when',
     hk.ok && top(th2.pack) === 'MG:154,AN:154,YY:100' && top(th3.pack).startsWith('FP:170') && sq.prepare("SELECT COUNT(*) c FROM speed_hidden_log").get().c >= 6, { th2: th2.pack.top, th3: th3.pack.top });
   const pkH2 = await call('/ship/speed-hide', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: '{"who":"MG"}' });
-  check('…a picker can\'t take anyone off (403); FP and DB are not put back on by the next load', pkH2.status === 403 && (await get('/ship/speed-top')).hidden.length === 2, pkH2.status);
+  check('…a picker can\'t take anyone off (403); FP and DB are not put back on by the next load', pkH2.status === 403 && (await get('/ship/speed-top')).hidden.length === 3, pkH2.status);
+  // Owner (2026-11-14): "KL is 181 a hour (Aug 31) … MM 138 (Aug 24) … take MM off, he is not working here no more … the record only go back to 10/15/26"
+  { sq.prepare("INSERT OR REPLACE INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES ('pack','OLDKL',181,'2026-08-31T19:45:00.000Z','2026-08-31T20:45:00.000Z',0,'x',82)").run();
+    sq.prepare("DELETE FROM app_config WHERE key = 'speed_cutoff_20261015'").run();
+    const tc = await get('/ship/speed-top');
+    check('a record from before 10/15/26 (KL 181 on Aug 31) is cleared and never shown; MM is taken off the board (owner request, kept on record)',
+      !tc.pack.top.some(x => x.who === 'OLDKL') && !sq.prepare("SELECT 1 FROM speed_best2 WHERE who = 'OLDKL'").get() && tc.hidden.some(x => x.who === 'MM' && /owner/.test(x.by)), { top: tc.pack.top, hidden: tc.hidden });
+    // ⏱ = that hour's time shared by every package in it: 80 labels 2 sec apart + 20 one a minute → 100 in 60 min, first → last 19:00 → 19:24 = 1440 s / 99 ≈ 15 sec
+    const zr = sq.prepare("SELECT n, avg_sec FROM speed_best2 WHERE kind='pack' AND who='ZZ'").get();
+    check('⏱ "sec a package" matches the number an hour (every package counts): ZZ 100 an hour → 15 sec a package, not only the timed ones; the tap shows the same', zr && zr.n === 100 && zr.avg_sec === 15 && hz.avgSec === 15, { zr, tap: hz.avgSec }); }
   // 👀 Owner (later): "show the top 3 ranking to everyone, only showing like that"
   const pkT = await (await call('/ship/speed-top', { headers: { 'X-Cred-Token': pk.token } })).json();
   const pkHr = await call('/ship/speed-hour?kind=pack&who=KL&start=' + encodeURIComponent(D2 + 'T03:00:00.000Z'), { headers: { 'X-Cred-Token': pk.token } });
