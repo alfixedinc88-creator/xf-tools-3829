@@ -6764,23 +6764,37 @@ function psPksBuzz() { try { if (navigator.vibrate) navigator.vibrate([350, 100,
 function psPksMsg(html, kind) { var m = document.getElementById('ps-pks-msg'); if (!m) return; var c = { ok: 'var(--green)', bad: 'var(--red)', warn: '#b45309' }[kind] || 'var(--text2)';
   m.innerHTML = '<div style="padding:10px 12px;border-radius:10px;font-weight:800;font-size:15px;border:2px solid ' + c + ';color:' + c + ';background:var(--bg2)">' + html + '</div>'; }
 function psPksStep(t) { var s = document.getElementById('ps-pks-step'); if (s) s.textContent = t; }
+// Owner (2026-11-14): "most of the first item we scan it was right item, but system always pick up as wrong item, then we have to rescan
+// it". Fixed: (1) the label's other barcode (its 2D code, read with the label) is not an item — ignored; (2) a scan while the order is
+// still loading waits for it (was checked against an empty order → "wrong item"); (3) a barcode the system can't read / isn't linked is
+// tried again once, then "❓ not linked" — never "wrong item" (a wrong item = a part # we know that is not on this order).
+function psPksLabelEcho(v) {
+  var raw = String(v || ''), t = raw.toUpperCase().replace(/[\s\x00-\x1F\x7F]+/g, '');
+  if (/^\[\)>|[\x1D\x1E\x04]/.test(raw) || t.length > 34) return true;              // a label's 2D code (MaxiCode / PDF417 / DataMatrix)
+  if (PKS && PKS.tracking && t.length > PKS.tracking.length && t.indexOf(PKS.tracking) >= 0) return true; // this label's tracking inside a longer code
+  var justLabel = !!(PKS && PKS.labelAt && Date.now() - PKS.labelAt < 6000);                 // read together with the label
+  if (justLabel && /^420\d{5}(\d{4})?$/.test(t)) return true;                               // the label's "ship to ZIP" barcode
+  return justLabel && !/^\d{8,14}$/.test(t) && !/^\d+(-\d+)+/.test(t) && !/^[A-Z0-9]+=/.test(t) && !/^(X0|B0)/.test(t);
+}
 window.psPksScan = function(v) {
   v = String(v || '').trim(); var inp = document.getElementById('ps-pks-inp'); if (inp) inp.value = ''; if (!v) return;
   var tr = typeof psNormalizeTracking === 'function' ? psNormalizeTracking(v) : '';
   if (tr) { // a shipping label (UPS / USPS — the same check as 🧺 Picking)
-    if (PKS && PKS.tracking === tr) { psPksMsg('This order is open — scan the items', 'warn'); return; }
+    if (PKS && PKS.tracking === tr) { if (!PKS.labelAt || Date.now() - PKS.labelAt > 6000) psPksMsg('This order is open — scan the items', 'warn'); return; }
     if (PKS && !PKS.done && PKS.lines.some(function(l) { return l.got > 0; }) && !confirm('Order ' + (PKS.orderNum || PKS.tracking) + ' is not finished. Start the new label? (it is kept as not finished)')) return;
     if (PKS && !PKS.done) psPksSave(false, 'left for another label');
     return psPksStart(tr);
   }
+  if (psPksLabelEcho(v)) return; // the label's other barcode — not an item
   if (!PKS || PKS.done) { psPksMsg('1️⃣ Scan the SHIPPING LABEL first', 'warn'); return; }
+  if (PKS.loading) { PKS.queue.push(v); psPksMsg('⏳ Still reading the order — your scan is kept', 'warn'); return; }
   psPksItem(v);
 };
 function psPksStart(tr) {
   var out = document.getElementById('ps-pks-out');
   var ce = (typeof _psCancelOrderCache !== 'undefined') && _psCancelOrderCache[tr];
   if (ce && typeof psShowCancelOrderAlert === 'function') { psShowCancelOrderAlert(ce, 'picking'); return; } // 🗑 marked for cancellation → stop
-  PKS = { tracking: tr, orderNum: '', lines: [], wrong: [], startedAt: new Date().toISOString(), done: false, loading: true };
+  PKS = { tracking: tr, orderNum: '', lines: [], wrong: [], startedAt: new Date().toISOString(), done: false, loading: true, queue: [], labelAt: Date.now() };
   psPksStep('⏳ Reading the order…'); psPksMsg('', ''); if (out) out.innerHTML = '';
   var me = PKS;
   _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tr, initials: psInitials }).then(function(d) {
@@ -6789,36 +6803,71 @@ function psPksStart(tr) {
     return fetch(PS_WORKER + '/ship/package?tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); });
   }).then(function(d) {
     if (PKS !== me) return;
-    me.loading = false;
     if (!d || !d.found || !(d.items || []).length) { psPksStep('1️⃣ Scan the SHIPPING LABEL'); PKS = null;
       psPksMsg('No items found for ' + _psAlEsc(tr) + ' yet — pick it on 🧺 Picking (it can link the order), then scan it here again', 'bad'); return; }
     me.orderNum = (d.order && d.order.orderNum) || '';
-    me.lines = d.items.map(function(it) {
-      var pack = psPksPack(it.partNum) || (typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1) || 1;
-      var codes = {}; (it.upcs || []).forEach(function(u) { [u.inside, u.outside].forEach(function(c) { c = psPksDigits(c); if (c) codes[c] = 1; }); });
-      return { sku: it.sku, partNum: it.partNum || '', parent: psPksParent(it.parent || it.partNum || it.bin || it.sku), name: it.name || '', image: it.image || '', qty: it.qty, unit: pack,
-        need: Math.round(it.qty * pack * 100) / 100, got: 0, scanned: 0, typed: 0, spotOk: false, spots: it.spots || [], codes: codes };
-    }).sort(psPksCmp);
-    me.cur = 0; psPksRender(); psPksStep('2️⃣ Go to the shelf — scan the shelf (column) label, then each bag');
+    me.lines = psPksLines(d.items).sort(psPksCmp);
+    me.cur = 0; me.loading = false; psPksRender(); psPksStep('2️⃣ Go to the shelf — scan the shelf (column) label, then each bag');
+    var q = me.queue.splice(0); q.forEach(function(v) { if (PKS === me && !me.done) psPksItem(v); }); // scans made while it was loading
   }).catch(function(e) { if (PKS === me) { PKS = null; psPksStep('1️⃣ Scan the SHIPPING LABEL'); psPksMsg('📶 Could not read the order — check WiFi and scan the label again', 'bad'); } });
 }
+// The order's items → lines to pick. 🔗 A hot & cold set (24-2-1&2=2: one 24-2-1 hot + one 24-2-1 cold, owner 2026-11-14) is picked
+// as its parts — the shelves only have 24-2-1 and 24-2-2: =2 → 1 of each per set, =10 → 5 of each.
+function psPksLines(items) {
+  var out = [];
+  (items || []).forEach(function(it) {
+    var pack = psPksPack(it.partNum || it.sku) || (typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1) || 1;
+    var codes = {}; Object.keys(it.codes || {}).forEach(function(c) { codes[c] = it.codes[c]; });
+    (it.upcs || []).forEach(function(u) { [u.inside, u.outside].forEach(function(c) { c = psPksDigits(c); if (c) codes[c] = it.partNum || it.sku; }); });
+    var base = { sku: it.sku, name: it.name || '', image: it.image || '', qty: it.qty, got: 0, scanned: 0, typed: 0, spotOk: false };
+    var comps = it.components || [];
+    if (comps.length > 1) {
+      var per = Math.round(pack / comps.length * 100) / 100, setOf = it.partNum || it.sku;
+      comps.forEach(function(c) {
+        var cc = {}; Object.keys(c.codes || {}).forEach(function(k) { cc[k] = c.codes[k]; });
+        out.push(Object.assign({}, base, { partNum: c.parent, parent: psPksParent(c.parent), setOf: setOf, unit: per, need: Math.round(it.qty * per * 100) / 100, spots: c.spots || [], codes: cc }));
+      });
+      return;
+    }
+    out.push(Object.assign({}, base, { partNum: it.partNum || '', parent: psPksParent(it.parent || it.partNum || it.bin || it.sku), unit: pack,
+      need: Math.round(it.qty * pack * 100) / 100, spots: (it.pickSpots && it.pickSpots.length ? it.pickSpots : it.spots) || [], codes: codes }));
+  });
+  return out;
+}
+function psPksSetParts(par) { var m = /^(\d+(?:-\d+)*-)(\d+(?:&\d+)+)$/.exec(String(par || '')); return m ? m[2].split('&').map(function(n) { return m[1] + n; }) : null; }
 // one scan at the shelf: the shelf / spot label, or an item (bag UPC, box UPC, part #)
 function psPksItem(v) {
   var me = PKS, code = String(v).trim().toUpperCase(), dig = psPksDigits(code);
   var spotHit = me.lines.filter(function(l) { return l.spots.some(function(s) { return String(s.location).toUpperCase() === code; }) || (code.indexOf('=') < 0 && /^\d+(-\d+)+$/.test(code) && l.parent === code); })[0];
   if (spotHit && !(dig.length >= 8 && spotHit.codes[dig])) { spotHit.spotOk = true; me.cur = me.lines.indexOf(spotHit); psPksMsg('📍 Right shelf for ' + _psAlEsc(spotHit.partNum || spotHit.sku) + ' — now scan each bag', 'ok'); psPksRender(); return; }
   if (/^[A-Z0-9]+=\d/.test(code) && code.indexOf('-') > 0 && !/^\d/.test(code)) { psPksBuzz(); psPksSay('Wrong shelf'); psPksMsg('❌ ' + _psAlEsc(code) + ' — nothing for this order on that shelf', 'bad'); me.wrong.push({ code: code, part: '', at: new Date().toISOString() }); return; }
-  var local = null; me.lines.forEach(function(l) { if (dig.length >= 8 && l.codes[dig]) local = l.partNum || l.parent; });
+  var local = null; me.lines.forEach(function(l) { if (dig.length >= 8 && l.codes[dig]) local = l.codes[dig] === 1 ? (l.partNum || l.parent) : l.codes[dig]; });
+  var look = function() { return fetch(PS_WORKER + '/inventory/lookup?lite=1&code=' + encodeURIComponent(code), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); })
+    .then(function(d) { var pn = String((d && d.partNum) || '').toUpperCase(); return pn && !(pn === code && !/^\d+(-\d+)+/.test(pn)) ? pn : ''; }); };
   var p = local ? Promise.resolve(local) : /^\d+(-\d+)+/.test(code) ? Promise.resolve(code)
-    : fetch(PS_WORKER + '/inventory/lookup?lite=1&code=' + encodeURIComponent(code), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) { return (d && d.partNum) || ''; }).catch(function() { return null; });
+    : look().then(function(pn) { return pn || look(); }).catch(function() { return look(); }).catch(function() { return null; }); // not found → asked once more
   p.then(function(part) {
     if (PKS !== me) return;
     if (part === null) { psPksMsg('📶 Could not check ' + _psAlEsc(code) + ' — scan it again', 'warn'); return; }
+    if (!part) { psPksBuzz(); me.wrong.push({ code: code, part: '', at: new Date().toISOString(), kind: 'unknown' });
+      psPksMsg('❓ ' + _psAlEsc(code) + ' — this barcode is not linked to a part # yet. Scan the part # label on the bag / box, or ✋ type the count.', 'warn'); return; }
     var par = psPksParent(part), cands = me.lines.filter(function(l) { return l.parent === par; });
+    var setP = psPksSetParts(par), inSet = setP ? me.lines.filter(function(l) { return setP.indexOf(l.parent) >= 0; }) : [];
+    if (!cands.length && inSet.length) { // 🔗 a hot & cold set bag / box
+      var whole = inSet.filter(function(l) { return l.setOf && psPksParent(l.setOf) === par; }), spk = psPksPack(part);
+      if (spk && whole.length === setP.length && whole.every(function(l) { return l.need - l.got >= spk / setP.length - 1e-9; })) { // a set bag for a set order: half each
+        whole.forEach(function(l) { var n = Math.round(spk / setP.length * 100) / 100; l.got = Math.round((l.got + n) * 100) / 100; l.scanned = Math.round((l.scanned + n) * 100) / 100; });
+        me.cur = me.lines.indexOf(whole[0]); psPksMsg('✅ Set ' + _psAlEsc(part) + ' — ' + whole.map(function(l) { return _psAlEsc(l.parent) + ' ' + l.got + ' of ' + l.need; }).join(' · '), 'ok');
+        try { if (typeof _psBeep === 'function') _psBeep(880, 70); } catch (e) {} psPksAfter(); return;
+      }
+      var tl = inSet.filter(function(x) { return x.got < x.need; })[0] || inSet[0]; me.cur = me.lines.indexOf(tl); psPksRender();
+      psPksMsg('🔗 ' + _psAlEsc(part) + ' is a hot &amp; cold set box — take only the <b>' + inSet.map(function(l) { return _psAlEsc(l.parent); }).join(' / ') + '</b> pieces you need, then tap ✋ and type the count.', 'warn'); return;
+    }
     var l = cands.filter(function(x) { return x.got < x.need; })[0] || cands[0];
-    if (!part || !l) { psPksBuzz(); psPksSay('Wrong item'); me.wrong.push({ code: code, part: part || '', at: new Date().toISOString() });
+    if (!l) { psPksBuzz(); psPksSay('Wrong item'); me.wrong.push({ code: code, part: part || '', at: new Date().toISOString() });
       psPksMsg('❌ WRONG ITEM — ' + _psAlEsc(part || code) + ' is not on this order. Put it back.', 'bad'); return; }
     me.cur = me.lines.indexOf(l);
+    if (!psPksPack(part) && part.indexOf('=') > 0) { psPksRender(); psPksMsg('📦 ' + _psAlEsc(part) + ' has no bag count on it — count the pieces you take, then tap ✋ and type the count.', 'warn'); return; }
     var pk = psPksPack(part) || l.unit, left = Math.round((l.need - l.got) * 100) / 100;
     if (left <= 0) { psPksBuzz(); psPksSay('Too many'); psPksMsg('⚠ TOO MANY — ' + _psAlEsc(l.partNum || l.sku) + ' already has all ' + l.need + ' pcs. Put this one back.', 'bad'); psPksRender(); return; }
     if (pk > left) { psPksBuzz(); psPksMsg('📦 This is a bag of <b>' + pk + '</b> — the order needs only <b>' + left + '</b> more pcs. Open it, take ' + left + ' pcs, then tap ✋ Type the count.', 'warn'); psPksRender(); return; }
@@ -6837,7 +6886,7 @@ window.psPksType = function(i) {
   psPksMsg('✋ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + n + ' pcs typed · ' + l.got + ' of ' + l.need, 'ok'); psPksAfter();
 };
 window.psPksUndo = function(i) { var l = PKS && PKS.lines[i]; if (!l || !l.got || !confirm('Start ' + (l.partNum || l.sku) + ' again (0 of ' + l.need + ')?')) return; l.got = 0; l.scanned = 0; l.typed = 0; psPksRender(); };
-window.psPksPick = function(i) { if (PKS && PKS.lines[i]) { PKS.cur = i; psPksRender(); } };
+window.psPksPick = function(i) { if (PKS && PKS.lines[i]) { PKS.cur = i; psPksRender(); psPksFocus(); } };
 function psPksAfter() {
   var me = PKS; if (!me) return;
   var cur = me.lines[me.cur]; if (cur && cur.got >= cur.need) { var nx = me.lines.filter(function(x) { return x.got < x.need; })[0]; if (nx) me.cur = me.lines.indexOf(nx); }
@@ -6854,7 +6903,7 @@ window.psPksStop = function() {
 function psPksSave(complete, note) {
   var me = PKS; if (!me || me.saved) return; me.saved = true;
   _psPostWithTimeout(PS_WORKER + '/ship/pick-verify', { tracking: me.tracking, orderNum: me.orderNum, startedAt: me.startedAt, doneAt: new Date().toISOString(), complete: !!complete, note: note || '',
-    lines: me.lines.map(function(l) { return { sku: l.sku, partNum: l.partNum, need: l.need, got: l.got, scanned: l.scanned, typed: l.typed, spotOk: l.spotOk }; }), wrong: me.wrong,
+    lines: me.lines.map(function(l) { return { sku: l.sku, partNum: l.partNum, need: l.need, got: l.got, scanned: l.scanned, typed: l.typed, spotOk: l.spotOk, setOf: l.setOf || '' }; }), wrong: me.wrong,
     _requestId: 'pks-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }).catch(function() {});
 }
 function psPksRender() {
@@ -6867,7 +6916,7 @@ function psPksRender() {
     return '<div class="ps-pks-line" onclick="psPksPick(' + i + ')" style="display:flex;gap:10px;align-items:center;padding:8px;margin:6px 0;border-radius:10px;cursor:pointer;border:2px solid ' + (done ? 'var(--green)' : on ? 'var(--accent)' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : 'var(--bg2)') + '">'
       + (l.image ? '<img src="' + e(l.image) + '" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:#fff;flex:0 0 56px">' : '<div style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:24px">📦</div>')
       + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:900;font-size:16px">' + (done ? '✅ ' : '') + e(l.partNum || l.sku) + '</div>'
-      + '<div style="font-size:12px;color:var(--text2)">' + e(l.name) + '</div>'
+      + '<div style="font-size:12px;color:var(--text2)">' + (l.setOf ? '🔗 part of the hot &amp; cold set <b>' + e(l.setOf) + '</b> · ' : '') + e(l.name) + '</div>'
       + '<div style="font-size:13px;margin-top:2px"><b>' + l.qty + '</b> × ' + l.unit + ' pcs = <b>' + l.need + ' pcs</b>' + (loc ? ' · 📍 <b style="font-family:var(--mono)">' + e(loc) + '</b>' : '') + (l.spotOk ? ' <span style="color:var(--green);font-weight:700">· shelf ✓</span>' : '') + '</div>'
       + '<div style="height:8px;border-radius:5px;background:var(--bg3);margin-top:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (done ? 'var(--green)' : 'var(--accent)') + '"></div></div>'
       + '<div style="font-size:12px;margin-top:2px"><b>' + l.got + ' of ' + l.need + ' pcs</b>' + (l.typed ? ' <span style="color:#b45309">(' + l.typed + ' typed)</span>' : '') + '</div></div>'
@@ -6875,7 +6924,7 @@ function psPksRender() {
       + (l.got && !me.done ? '<button type="button" onclick="event.stopPropagation();psPksUndo(' + i + ')" title="Start this item again" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text3);cursor:pointer">↺</button>' : '') + '</div>';
   }).join('');
   var map = cur && !me.done && typeof xfShelfMapHtml === 'function' ? '<div style="margin-top:6px"><div style="font-size:13px;font-weight:800">🗺 ' + e(cur.partNum || cur.sku) + ' → shelf <span style="font-family:var(--mono);font-size:20px">' + e(xfShelfNo(cur.parent) || cur.parent) + '</span>'
-    + (xfShelfName(xfShelfNo(cur.parent)) ? ' (' + e(xfShelfName(xfShelfNo(cur.parent))) + ')' : '') + (cur.spots.length ? ' · 📍 ' + cur.spots.slice(0, 4).map(function(s) { return e(s.location) + ' (' + s.cases + ' cs)'; }).join(' · ') : '') + '</div>' + xfShelfMapHtml(cur.parent) + '</div>' : '';
+    + (xfShelfName(xfShelfNo(cur.parent)) ? ' (' + e(xfShelfName(xfShelfNo(cur.parent))) + ')' : '') + (cur.spots.length ? ' · 📍 ' + cur.spots.slice(0, 4).map(function(s) { return e(s.location) + ' (' + (s.partNum && s.partNum !== String(cur.partNum).toUpperCase() ? e(s.partNum) + ' · ' : '') + s.cases + ' cs)'; }).join(' · ') : '') + '</div>' + xfShelfMapHtml(cur.parent) + '</div>' : '';
   out.innerHTML = head + rows + (!me.done ? '<div style="text-align:right;margin-top:4px"><button type="button" onclick="psPksStop()" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text3);cursor:pointer;font-size:12px">✕ Stop (not every item)</button></div>' : '') + map;
 }
 

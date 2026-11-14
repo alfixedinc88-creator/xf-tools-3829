@@ -13707,5 +13707,70 @@ console.log('\n📄 Close Batch: every scan form time of today shows what happen
     && /if \(window\.xfRefresh\) window\.xfRefresh\(\); else window\.location\.reload\(\);/.test(rd('inventory.html')), bad);
 }
 
+console.log('\n🔗 Hot & cold sets (24-2-1&2): Stock Out Shelving uses the set boxes; Picking by scan picks a set as its parts');
+{
+  // Owner (2026-11-14): "1/2 pex ball valve hot (24-2-1) and cold (24-2-2) … our shelving columns only have 24-2-1 for hot and 24-2-2 for cold,
+  // but we sell it as a set 24-2-1&2=2 … for inventory out shelving … we still have 24-2-1&2=OLD … all the 24-2-1&2=OLD we never been used".
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('96-6-1','ball valve hot','96-6-1=10','C4=6-6-1',4,10), ('96-6-2','ball valve cold','96-6-2=10','C4=6-6-2',3,10),
+    ('96-6-1&2','ball valve set','96-6-1&2=OLD','BO=6-6-9',2,20), ('96-6-1&2','ball valve set','96-6-1&2=2','BO=6-6-8',0,2), ('96-6-10','other','96-6-10=5','C5=6-6-0',1,5)`).run();
+  const c0 = shelf();
+  const plain = await get('/inventory/lookup?code=96-6-1'), sets = await get('/inventory/lookup?code=96-6-1&sets=1'), cold = await get('/inventory/lookup?code=96-6-2&sets=1');
+  const pl = l => (l.locations || []).map(x => x.partNum + '@' + x.location + (x.setOf ? ' 🔗' + x.setOf : '')).sort().join(', ');
+  check('Stock Out Shelving search 96-6-1 → its own spot AND the set box 96-6-1&2=OLD (marked 🔗 set); 96-6-2 the same; 96-6-10 never; other screens (no sets=1) unchanged',
+    pl(sets) === '96-6-1&2=2@BO=6-6-8 🔗96-6-1&2, 96-6-1&2=OLD@BO=6-6-9 🔗96-6-1&2, 96-6-1=10@C4=6-6-1' && /96-6-1&2=OLD@BO=6-6-9 🔗/.test(pl(cold)) && /96-6-2=10@C4=6-6-2/.test(pl(cold)) && !/96-6-1=10/.test(pl(cold))
+      && pl(plain) === '96-6-1=10@C4=6-6-1', { plain: pl(plain), sets: pl(sets), cold: pl(cold) });
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ph = rfS(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const P = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return { pick: invPickForShelving, plan: invPlanShelvingPull };')(Object.assign({}, sets, { fbaParts: [] }), []);
+  const plan = P.plan(3), ranked = P.pick(sets.locations.filter(l => l.cases > 0));
+  check('…Shelving Pull List for 3 cases of 96-6-1: the =OLD set box first (2 cases, "🔗 Hot & cold set box … take only the 96-6-1 pieces"), then 1 from 96-6-1=10; nothing counted twice',
+    plan.takes.map(t => t.partNum + ' ' + t.cases).join(', ') === '96-6-1&2=OLD 2, 96-6-1=10 1' && /🔗 Hot & cold set box 96-6-1&2 — take only the 96-6-1 pieces/.test(ranked[0]._pick.why)
+      && plan.takes.reduce((a, t) => a + t.cases, 0) === 3, { takes: plan.takes.map(t => t.partNum + ' ' + t.cases), why: ranked[0]._pick.why });
+  check('…the Stock Out page asks for the set boxes only on Stock Out Shelving (search, the other-code retry, None Found next spot) — not Big Company / Stock In',
+    /_invFetchLookupRaw\(code, invMode === 'out' && invStockOutDest === 'shelving'\)/.test(ih) && /var sets = invMode === 'out' && invStockOutDest === 'shelving';/.test(ih) && /_invFetchLookupRaw\(invParent\(it\.partNum\), it\.dest !== 'company'\)/.test(ih), null);
+  // Picking by scan: an order of 2 sets 96-6-1&2=2 + the server's package read
+  const cols = sq.prepare('PRAGMA table_info(ship_manifest_log)').all().map(c => c.name);
+  const rw = { date: '2026-11-14', tracking: '1Z999AA1SETPICK001', order_num: 'SET-1', line_items: JSON.stringify([{ s: '96-6-1&2=2', q: 2, b: '96-6-1&2' }]) };
+  const k = Object.keys(rw).filter(x => cols.includes(x));
+  sq.prepare('INSERT INTO ship_manifest_log (' + k.join(',') + ') VALUES (' + k.map(() => '?').join(',') + ')').run(...k.map(x => rw[x]));
+  sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('96-6-1=10','96-6-1','0810000096610',''), ('96-6-2=10','96-6-2','810000096620','')").run();
+  const pk = await get('/ship/package?tracking=1Z999AA1SETPICK001'), it = (pk.items || [])[0] || {}, cp = it.components || [];
+  check('…/ship/package: the set 96-6-1&2=2 → its parts 96-6-1 (spots: the =OLD set box first, then C4=6-6-1) and 96-6-2, each with its bag barcodes',
+    cp.map(c => c.parent).join() === '96-6-1,96-6-2' && cp[0].spots.map(x => x.partNum + '@' + x.location).join() === '96-6-1&2=OLD@BO=6-6-9,96-6-1=10@C4=6-6-1'
+      && cp[0].codes['810000096610'] === '96-6-1=10' && cp[1].codes['810000096620'] === '96-6-2=10' && it.partNum === '96-6-1&2=2', it);
+  check('…read-only: no stock changed', shelf() === c0, null);
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const els = {}; const el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', textContent: '', focus() {} });
+  const posts = []; let said = [], promptAns = null, lookups = 0, slow = null;
+  const fetchF = url => { if (/\/ship\/package/.test(url)) return new Promise(r => { slow = () => r({ json: () => Promise.resolve(pk) }); });
+    lookups++; return Promise.resolve({ json: () => Promise.resolve({ partNum: /777/.test(url) ? '' : '' }) }); };
+  const win = {};
+  new Function('window', 'document', 'fetch', '_psPostWithTimeout', 'PS_WORKER', 'psCredToken', 'psInitials', 'psNormalizeTracking', '_psCancelOrderCache', 'psShowCancelOrderAlert', '_psAlEsc', '_psBeep', '_psSpeakAlert', '_psSkuMultiplier', 'xfShelfMapHtml', 'xfShelfNo', 'xfShelfName', 'confirm', 'prompt', 'navigator', src)(
+    win, { getElementById: el }, fetchF, (url, body) => { posts.push({ url, body }); return Promise.resolve({ ok: true }); }, 'W', 'T', 'KL', v => /^1Z[A-Z0-9]{16}$/.test(v) ? v : null, {}, () => {}, v => String(v), () => {}, t => said.push(t), () => 1,
+    p => '<map ' + p + '>', p => String(p).split('-')[0], () => '', () => true, () => promptAns, {});
+  const tick = () => new Promise(r => setTimeout(r, 0)), settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
+  win.psPksScan('1Z999AA1SETPICK001'); await settle();
+  win.psPksScan('[)>\x1e01\x1d961Z999AA1SETPICK001\x1dUPSN\x1d...'); win.psPksScan('42012345'); // the label's 2D code + ZIP barcode, read with it
+  win.psPksScan('810000096610'); await settle(); // the first bag, scanned while the order is still loading
+  check('…the label\'s other barcodes (2D code, ZIP) are not items; the first bag scanned while the order was still loading is kept, not "wrong item" (owner: "the first item we scan … always wrong item")',
+    /Still reading the order/.test(el('ps-pks-msg').innerHTML) && !said.includes('Wrong item'), el('ps-pks-msg').innerHTML);
+  slow(); await settle();
+  let out = el('ps-pks-out').innerHTML;
+  check('…the set order (2 × 96-6-1&2=2) is picked as its parts: 96-6-1 2 pcs + 96-6-2 2 pcs ("part of the hot & cold set"); the kept first bag (=10) is a bag bigger than needed → "open it, ✋ type"',
+    /96-6-1<\/div>/.test(out) && /96-6-2<\/div>/.test(out) && (out.match(/= <b>2 pcs<\/b>/g) || []).length === 2 && /part of the hot &amp; cold set <b>96-6-1&2=2<\/b>/.test(out) && /bag of <b>10<\/b>/.test(el('ps-pks-msg').innerHTML), { out: out.slice(0, 900), msg: el('ps-pks-msg').innerHTML });
+  said = []; const l0 = lookups; win.psPksScan('0000777000111'); await settle();
+  check('…a barcode not linked to any part # → asked twice, then "❓ not linked … scan the part # label or ✋ type" — not "wrong item"', lookups - l0 === 2 && /not linked to a part #/.test(el('ps-pks-msg').innerHTML) && !said.includes('Wrong item'), { n: lookups - l0, m: el('ps-pks-msg').innerHTML });
+  win.psPksScan('96-6-1&2=OLD'); await settle();
+  check('…the =OLD set box scanned → "🔗 hot & cold set box — take only the 96-6-1 / 96-6-2 pieces, ✋ type the count" (not counted, not wrong)', /hot &amp; cold set box/.test(el('ps-pks-msg').innerHTML) && /<b>0 of 2 pcs<\/b>/.test(el('ps-pks-out').innerHTML), el('ps-pks-msg').innerHTML);
+  win.psPksScan('96-6-1&2=2'); await settle(); win.psPksScan('96-6-1&2=2'); await settle();
+  const rec = posts.find(p => /pick-verify/.test(p.url));
+  check('…two set bags 96-6-1&2=2 → 1 hot + 1 cold each → 96-6-1 2 of 2, 96-6-2 2 of 2 → ✅ ALL PICKED; the record keeps each part with its set',
+    /ALL PICKED/.test(el('ps-pks-msg').innerHTML) && rec && JSON.stringify(rec.body.lines.map(l => [l.partNum, l.need, l.got, l.setOf])) === JSON.stringify([['96-6-1', 2, 2, '96-6-1&2=2'], ['96-6-2', 2, 2, '96-6-1&2=2']])
+      && rec.body.wrong.length === 1 && rec.body.wrong[0].kind === 'unknown', rec && rec.body);
+  check('…pieces add up: 2 sets × 2 pcs = 4 pcs = 2 hot + 2 cold (got 4)', rec.body.lines.reduce((a, l) => a + l.got, 0) === 4 && rec.body.lines.reduce((a, l) => a + l.need, 0) === 4, rec.body.lines);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
