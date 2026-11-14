@@ -13836,7 +13836,8 @@ console.log('\n🚚 Order Lookup: 30 days by default; Activity History shows who
   check('packed 4:10 pm → the 5:05 pm drop-off run carried it: "🚚 Dropped off — Chen", left 5:05 pm, back 5:45 pm (the 3:00 pm run before it was packed is not it)',
     d && d.by === 'Chen' && d.at === '2026-11-13T22:05:00.000Z' && /^Left .* · back /.test(d.detail), h.events);
   const ph = rfD(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…Order Lookup opens on 30 days', /<option value="30" selected>30 days<\/option>/.test(ph) && /getElementById\('ps-ol-days'\)\.value \|\| '30'/.test(ph), null);
+  const olSel = ph.slice(ph.indexOf('<select id="ps-ol-days"'), ph.indexOf('</select>', ph.indexOf('<select id="ps-ol-days"')));
+  check('…Order Lookup opens on 30 days; 7 and 14 days taken off (owner)', /<option value="30" selected>30 days<\/option>/.test(olSel) && !/value="7"|value="14"/.test(olSel) && /getElementById\('ps-ol-days'\)\.value \|\| '30'/.test(ph), olSel);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
