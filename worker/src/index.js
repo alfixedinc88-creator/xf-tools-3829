@@ -24046,7 +24046,7 @@ async function shipPickVerify(request, url, env, session) {
   if (!t) return J({ ok: false, error: 'Which label?' }, 400);
   const by = String((session && (session.displayName || session.username)) || b.by || '?').slice(0, 40), T = v => v && !isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
   const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 60).map(l => ({ sku: String(l.sku || '').slice(0, 80), partNum: String(l.partNum || '').slice(0, 60), need: +l.need || 0, got: +l.got || 0,
-    scanned: +l.scanned || 0, typed: +l.typed || 0, spotOk: !!l.spotOk, ...(l.setOf ? { setOf: String(l.setOf).slice(0, 60) } : {}) }));
+    scanned: +l.scanned || 0, typed: +l.typed || 0, spotOk: !!l.spotOk, opened: +l.opened || 0, ...(l.setOf ? { setOf: String(l.setOf).slice(0, 60) } : {}) }));
   const wrong = (Array.isArray(b.wrong) ? b.wrong : []).slice(0, 60).map(w => ({ code: String(w.code || '').slice(0, 60), part: String(w.part || '').slice(0, 60), at: T(w.at), ...(w.kind ? { kind: String(w.kind).slice(0, 20) } : {}) }));
   await env.DB.prepare('INSERT INTO ship_pick_verify (tracking, order_num, by_user, started_at, done_at, complete, lines, wrong, note, at) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .bind(t, String(b.orderNum || '').slice(0, 60), by, T(b.startedAt), T(b.doneAt) || new Date().toISOString(), b.complete ? 1 : 0, JSON.stringify(lines), JSON.stringify(wrong), String(b.note || '').slice(0, 200), new Date().toISOString()).run();
@@ -24277,9 +24277,9 @@ async function shipTrackingHistory(url, env) {
   // 🧭 Picked by scan (owner 2026-11-07): each item checked by its barcode, counted to the order's quantity
   for (const r of await shipPickVerifyRows(env, clean)) {
     let lines = [], wrong = []; try { lines = JSON.parse(r.lines || '[]'); } catch (_) {} try { wrong = JSON.parse(r.wrong || '[]'); } catch (_) {}
-    const sc = lines.reduce((a, l) => a + (l.scanned || 0), 0), ty = lines.reduce((a, l) => a + (l.typed || 0), 0);
+    const sc = lines.reduce((a, l) => a + (l.scanned || 0), 0), ty = lines.reduce((a, l) => a + (l.typed || 0), 0), op = lines.reduce((a, l) => a + (l.opened || 0), 0);
     events.push({ type: 'pick-verify', icon: '🧭', label: r.complete ? 'Picked by scan — every item checked' : 'Picked by scan — NOT finished', at: r.done_at || r.started_at || '', by: r.by_user || '',
-      detail: lines.map(l => (l.partNum || l.sku) + ' ' + (l.got || 0) + '/' + (l.need || 0) + ' pcs').join(' · ') + ` · ${sc} pcs scanned, ${ty} typed` + (wrong.length ? ` · ⚠ ${wrong.length} wrong scan(s): ` + wrong.slice(0, 6).map(w => w.code + ' → ' + (w.part || (w.kind === 'unknown' ? 'not linked' : '?'))).join(', ') : '') + (r.note ? ' · ' + r.note : '') });
+      detail: lines.map(l => (l.partNum || l.sku) + ' ' + (l.got || 0) + '/' + (l.need || 0) + ' pcs').join(' · ') + ` · ${sc} pcs scanned, ${ty} typed` + (op ? `, ${op} from opened bags` : '') + (wrong.length ? ` · ⚠ ${wrong.length} wrong scan(s): ` + wrong.slice(0, 6).map(w => w.code + ' → ' + (w.part || (w.kind === 'unknown' ? 'not linked' : '?'))).join(', ') : '') + (r.note ? ' · ' + r.note : '') });
   }
   for (const r of (nostocks.results || [])) {
     events.push({

@@ -6779,7 +6779,7 @@ window.psPksScan = function(v) {
   var tr = typeof psNormalizeTracking === 'function' ? psNormalizeTracking(v) : '';
   if (tr) { // a shipping label (UPS / USPS — the same check as 🧺 Picking)
     if (PKS && PKS.tracking === tr) { if (!PKS.labelAt || Date.now() - PKS.labelAt > 6000) psPksMsg('This order is open — scan the items', 'warn'); return; }
-    if (PKS && !PKS.done && PKS.lines.some(function(l) { return l.got > 0; }) && !confirm('Order ' + (PKS.orderNum || PKS.tracking) + ' is not finished. Start the new label? (it is kept as not finished)')) return;
+    if (PKS && !PKS.done && PKS.lines.some(function(l) { return l.got > 0; }) && !confirm('Order ' + (PKS.orderNum || PKS.tracking) + ' is not finished — still missing: ' + psPksShort(PKS) + '.\n\nOK = start the new label (this one is kept as NOT finished)\nCancel = go back and finish it')) return;
     if (PKS && !PKS.done) psPksSave(false, 'left for another label');
     return psPksStart(tr);
   }
@@ -6818,7 +6818,10 @@ function psPksStart(tr) {
 function psPksLines(items) {
   var out = [];
   (items || []).forEach(function(it) {
-    var pack = psPksPack(it.partNum || it.sku) || (typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1) || 1;
+    // Pieces in one ordered unit: a part # (24-3-2=5XX, 24-2-1&2=2) → the number after "="; a listing SKU (10=3/8XA = 10 pcs of the 3/8)
+    // → the number BEFORE "=" (owner 2026-11-14: "we need 10 pieces … showing we only need to grab 3" — the 3 of 3/8 was read as the pack).
+    var mult = typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1;
+    var pack = (it.partNum ? psPksPack(it.partNum) : /^\d+(-\d+)+/.test(String(it.sku || '').trim()) ? psPksPack(it.sku) : 0) || mult || 1;
     var codes = {}; Object.keys(it.codes || {}).forEach(function(c) { codes[c] = it.codes[c]; });
     (it.upcs || []).forEach(function(u) { [u.inside, u.outside].forEach(function(c) { c = psPksDigits(c); if (c) codes[c] = it.partNum || it.sku; }); });
     var base = { sku: it.sku, name: it.name || '', image: it.image || '', qty: it.qty, got: 0, scanned: 0, typed: 0, spotOk: false };
@@ -6875,7 +6878,10 @@ function psPksItem(v) {
     if (!psPksPack(part) && part.indexOf('=') > 0) { psPksRender(); psPksMsg('📦 ' + _psAlEsc(part) + ' has no bag count on it — count the pieces you take, then tap ✋ and type the count.', 'warn'); return; }
     var pk = psPksPack(part) || l.unit, left = Math.round((l.need - l.got) * 100) / 100;
     if (left <= 0) { psPksBuzz(); psPksSay('Too many'); psPksMsg('⚠ TOO MANY — ' + _psAlEsc(l.partNum || l.sku) + ' already has all ' + l.need + ' pcs. Put this one back.', 'bad'); psPksRender(); return; }
-    if (pk > left) { psPksBuzz(); psPksMsg('📦 This is a bag of <b>' + pk + '</b> — the order needs only <b>' + left + '</b> more pcs. Open it, take ' + left + ' pcs, then tap ✋ Type the count.', 'warn'); psPksRender(); return; }
+    // Owner (2026-11-14): "when we finish, system … keep saying that label not finish" — a bag bigger than what is left was never counted
+    // unless the picker found ✋ and typed it. Now one tap: "✂ I took N pcs from this bag" (kept as taken from an opened bag).
+    if (pk > left) { psPksBuzz(); psPksRender(); psPksMsg('📦 This is a bag of <b>' + pk + '</b> — the order needs only <b>' + left + '</b> more pcs. Open it and take ' + left + ' pcs.'
+      + '<div style="margin-top:8px"><button type="button" onclick="psPksTook(' + me.cur + ',' + left + ',\'' + _psAlEsc(part).replace(/'/g, '') + '\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#fff;font-weight:900;font-size:16px;cursor:pointer">✂ I took ' + left + ' pcs from this bag</button></div>', 'warn'); return; }
     l.got = Math.round((l.got + pk) * 100) / 100; l.scanned = Math.round((l.scanned + pk) * 100) / 100;
     psPksMsg('✅ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + l.got + ' of ' + l.need + ' pcs', 'ok'); try { if (typeof _psBeep === 'function') _psBeep(880, 70); } catch (e) {}
     psPksAfter();
@@ -6890,8 +6896,16 @@ window.psPksType = function(i) {
   l.got = Math.round((l.got + n) * 100) / 100; l.typed = Math.round((l.typed + n) * 100) / 100; PKS.cur = i;
   psPksMsg('✋ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + n + ' pcs typed · ' + l.got + ' of ' + l.need, 'ok'); psPksAfter();
 };
-window.psPksUndo = function(i) { var l = PKS && PKS.lines[i]; if (!l || !l.got || !confirm('Start ' + (l.partNum || l.sku) + ' again (0 of ' + l.need + ')?')) return; l.got = 0; l.scanned = 0; l.typed = 0; psPksRender(); };
-window.psPksPick = function(i) { if (PKS && PKS.lines[i]) { PKS.cur = i; psPksRender(); psPksFocus(); } };
+window.psPksTook = function(i, n, from) {
+  var l = PKS && PKS.lines[i]; if (!l || PKS.done) return; var left = Math.round((l.need - l.got) * 100) / 100; n = Math.min(+n || 0, left); if (!(n > 0)) return;
+  l.got = Math.round((l.got + n) * 100) / 100; l.opened = Math.round(((l.opened || 0) + n) * 100) / 100; PKS.cur = i;
+  psPksMsg('✂ ' + _psAlEsc(l.partNum || l.sku) + ' — ' + n + ' pcs from an opened bag' + (from ? ' (' + _psAlEsc(from) + ')' : '') + ' · ' + l.got + ' of ' + l.need, 'ok');
+  try { if (typeof _psBeep === 'function') _psBeep(880, 70); } catch (e) {} psPksAfter(); if (window.psPksFocus) window.psPksFocus();
+};
+// What is still missing, for the "not finished" questions: "24-3-2 5 of 10 pcs, 24-1-8=10X 0 of 30 pcs".
+function psPksShort(me) { return me.lines.filter(function(l) { return l.got < l.need; }).map(function(l) { return (l.partNum || l.sku) + ' ' + l.got + ' of ' + l.need + ' pcs'; }).join(', '); }
+window.psPksUndo = function(i) { var l = PKS && PKS.lines[i]; if (!l || !l.got || !confirm('Start ' + (l.partNum || l.sku) + ' again (0 of ' + l.need + ')?')) return; l.got = 0; l.scanned = 0; l.typed = 0; l.opened = 0; psPksRender(); };
+window.psPksPick = function(i) { if (PKS && PKS.lines[i]) { PKS.cur = i; psPksRender(); if (window.psPksFocus) window.psPksFocus(); } };
 function psPksAfter() {
   var me = PKS; if (!me) return;
   var cur = me.lines[me.cur]; if (cur && cur.got >= cur.need) { var nx = me.lines.filter(function(x) { return x.got < x.need; })[0]; if (nx) me.cur = me.lines.indexOf(nx); }
@@ -6908,7 +6922,7 @@ window.psPksStop = function() {
 function psPksSave(complete, note) {
   var me = PKS; if (!me || me.saved) return; me.saved = true;
   _psPostWithTimeout(PS_WORKER + '/ship/pick-verify', { tracking: me.tracking, orderNum: me.orderNum, startedAt: me.startedAt, doneAt: new Date().toISOString(), complete: !!complete, note: note || '',
-    lines: me.lines.map(function(l) { return { sku: l.sku, partNum: l.partNum, need: l.need, got: l.got, scanned: l.scanned, typed: l.typed, spotOk: l.spotOk, setOf: l.setOf || '' }; }), wrong: me.wrong,
+    lines: me.lines.map(function(l) { return { sku: l.sku, partNum: l.partNum, need: l.need, got: l.got, scanned: l.scanned, typed: l.typed, spotOk: l.spotOk, setOf: l.setOf || '', opened: l.opened || 0 }; }), wrong: me.wrong,
     _requestId: 'pks-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }).catch(function() {});
 }
 function psPksRender() {
@@ -6924,7 +6938,7 @@ function psPksRender() {
       + '<div style="font-size:12px;color:var(--text2)">' + (l.setOf ? '🔗 part of the hot &amp; cold set <b>' + e(l.setOf) + '</b> · ' : '') + e(l.name) + '</div>'
       + '<div style="font-size:13px;margin-top:2px"><b>' + l.qty + '</b> × ' + l.unit + ' pcs = <b>' + l.need + ' pcs</b>' + (loc ? ' · 📍 <b style="font-family:var(--mono)">' + e(loc) + '</b>' : '') + (l.spotOk ? ' <span style="color:var(--green);font-weight:700">· shelf ✓</span>' : '') + '</div>'
       + '<div style="height:8px;border-radius:5px;background:var(--bg3);margin-top:4px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + (done ? 'var(--green)' : 'var(--accent)') + '"></div></div>'
-      + '<div style="font-size:12px;margin-top:2px"><b>' + l.got + ' of ' + l.need + ' pcs</b>' + (l.typed ? ' <span style="color:#b45309">(' + l.typed + ' typed)</span>' : '') + '</div></div>'
+      + '<div style="font-size:12px;margin-top:2px"><b>' + l.got + ' of ' + l.need + ' pcs</b>' + (l.typed ? ' <span style="color:#b45309">(' + l.typed + ' typed)</span>' : '') + (l.opened ? ' <span style="color:#b45309">(' + l.opened + ' from an opened bag)</span>' : '') + '</div></div>'
       + (!done && !me.done ? '<button type="button" onclick="event.stopPropagation();psPksType(' + i + ')" style="padding:7px 9px;border-radius:8px;border:1.5px solid #b45309;background:var(--bg);color:#b45309;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">✋ No barcode /<br>open bag</button>' : '')
       + (l.got && !me.done ? '<button type="button" onclick="event.stopPropagation();psPksUndo(' + i + ')" title="Start this item again" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text3);cursor:pointer">↺</button>' : '') + '</div>';
   }).join('');

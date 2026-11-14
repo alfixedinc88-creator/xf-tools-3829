@@ -13840,5 +13840,50 @@ console.log('\n🚚 Order Lookup: 30 days by default; Activity History shows who
   check('…Order Lookup opens on 30 days; 7 and 14 days taken off (owner)', /<option value="30" selected>30 days<\/option>/.test(olSel) && !/value="7"|value="14"/.test(olSel) && /getElementById\('ps-ol-days'\)\.value \|\| '30'/.test(ph), olSel);
 }
 
+console.log('\n🧭 Picking by scan: a listing SKU "10=3/8XA" = 10 pcs (not 3)');
+{
+  // Owner (2026-11-14, photo: order 10=3/8XA, bag 24-3-2=5XX): "we need 10 pieces, but after our guy scan =5 … showing we only need to grab 3 more pieces?"
+  const { readFileSync: rf10 } = await import('node:fs');
+  const ph = rf10(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const mult = new Function(ph.slice(ph.indexOf('function _psSkuMultiplier('), ph.indexOf('// ⚠ Wrong photo')) + '; return _psSkuMultiplier;')();
+  const L = new Function('window', '_psSkuMultiplier', src + '; return psPksLines;')({}, mult)([
+    { sku: '10=3/8XA', qty: 1, partNum: '', parent: '24-3-2', bin: '24-3-2', spots: [], codes: {} },
+    { sku: '4=1/2XB', qty: 2, partNum: '', parent: '24-3-3', bin: '24-3-3', spots: [], codes: {} },
+    { sku: 'XF-TEE', qty: 3, partNum: '24-1-8=10X', parent: '24-1-8', spots: [], codes: {} },
+    { sku: '96-6-1&2=2', qty: 2, partNum: '', components: [{ parent: '96-6-1', spots: [], codes: {} }, { parent: '96-6-2', spots: [], codes: {} }] }]);
+  check('10=3/8XA × 1 → 10 pcs (was 3: the 3 of 3/8 was read as the pack); 4=1/2XB × 2 → 8 pcs; part # 24-1-8=10X × 3 → 30; set 96-6-1&2=2 × 2 → 2 + 2',
+    JSON.stringify(L.map(l => [l.partNum || l.sku, l.need])) === JSON.stringify([['10=3/8XA', 10], ['4=1/2XB', 8], ['24-1-8=10X', 30], ['96-6-1', 2], ['96-6-2', 2]]), L.map(l => [l.partNum || l.sku, l.need]));
+}
+
+console.log('\n🧭 Picking by scan: a bag bigger than what is left → one tap "✂ I took N pcs"; "not finished" says what is missing');
+{
+  // Owner (2026-11-14): "after we scan the label and getting the stuff scan the product, when we finish, system … keep saying that label not finish".
+  const { readFileSync: rfT } = await import('node:fs');
+  const ph = rfT(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfT(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const mult = new Function(ph.slice(ph.indexOf('function _psSkuMultiplier('), ph.indexOf('// ⚠ Wrong photo')) + '; return _psSkuMultiplier;')();
+  const pkg = { found: true, order: { orderNum: 'T-1' }, items: [{ sku: '8=3/8XA', qty: 1, partNum: '', parent: '24-3-2', bin: '24-3-2', spots: [], codes: { '810000243250': '24-3-2=5XX' } },
+    { sku: '24-1-8=10X', qty: 1, partNum: '24-1-8=10X', parent: '24-1-8', spots: [], codes: {} }] };
+  const els = {}; const el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', textContent: '', focus() {} });
+  const posts = [], asked = []; const win = {};
+  new Function('window', 'document', 'fetch', '_psPostWithTimeout', 'PS_WORKER', 'psCredToken', 'psInitials', 'psNormalizeTracking', '_psCancelOrderCache', 'psShowCancelOrderAlert', '_psAlEsc', '_psBeep', '_psSpeakAlert', '_psSkuMultiplier', 'xfShelfMapHtml', 'xfShelfNo', 'xfShelfName', 'confirm', 'prompt', 'navigator', src)(
+    win, { getElementById: el }, () => Promise.resolve({ json: () => Promise.resolve(pkg) }), (url, body) => { posts.push({ url, body }); return Promise.resolve({ ok: true }); }, 'W', 'T', 'KL',
+    v => /^1Z[A-Z0-9]{16}$/.test(v) ? v : null, {}, () => {}, v => String(v), () => {}, () => {}, mult, () => '', p => String(p).split('-')[0], () => '', q => { asked.push(q); return false; }, () => null, {});
+  const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0)); };
+  win.psPksScan('1Z999AA1TOOKPICK01'); await settle();
+  win.psPksScan('810000243250'); await settle(); win.psPksScan('810000243250'); await settle(); // 5 + a second bag of 5 for the 3 left
+  const m = el('ps-pks-msg').innerHTML, b = /onclick="(psPksTook\([^"]*\))"/.exec(m);
+  check('…8=3/8XA (8 pcs): first =5 bag → 5 of 8; second =5 bag → "Open it and take 3 pcs" + a button "✂ I took 3 pcs from this bag"', /<b>5 of 8 pcs<\/b>/.test(el('ps-pks-out').innerHTML) && /✂ I took 3 pcs from this bag/.test(m) && !!b, m);
+  win.psPksScan('1Z999AA1NEXTLABEL1'); await settle();
+  check('…a new label before it is finished → asks, saying what is still missing ("24-1-8=10X 0 of 10 pcs, 8=3/8XA 5 of 8 pcs"); Cancel = stay on this order',
+    /still missing: 24-1-8=10X 0 of 10 pcs, 8=3\/8XA 5 of 8 pcs/.test(asked[0] || '') && /Cancel = go back and finish it/.test(asked[0]) && !posts.some(p => /pick-verify/.test(p.url)), asked);
+  new Function('psPksTook', b[1].replace(/&#39;|\\'/g, "'"))(win.psPksTook); win.psPksScan('24-1-8=10X'); await settle();
+  const rec = posts.find(p => /pick-verify/.test(p.url));
+  check('…one tap → 8 of 8 (3 from an opened bag), then the 10X bag → ✅ ALL PICKED, kept as complete (scanned 15, opened 3)',
+    /ALL PICKED/.test(el('ps-pks-msg').innerHTML) && rec && rec.body.complete === true && JSON.stringify(rec.body.lines.map(l => [l.partNum || l.sku, l.need, l.got, l.scanned, l.opened])) === JSON.stringify([['24-1-8=10X', 10, 10, 10, 0], ['8=3/8XA', 8, 8, 5, 3]]), rec && rec.body.lines);
+  check('…the order\'s 🧭 Activity History says how many came from opened bags', /, \$\{op\} from opened bags/.test(wk) && /opened: \+l\.opened \|\| 0/.test(wk), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
