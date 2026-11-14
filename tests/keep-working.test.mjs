@@ -13824,5 +13824,21 @@ console.log('\n⚡ Picking by scan: every barcode of the order known at once (fa
   check('…the order\'s 🧭 Activity History shows each wrong scan (barcode → what it was)', /wrong scan\(s\): ` \+ wrong\.slice\(0, 6\)\.map\(w => w\.code \+ ' → '/.test(wk), null);
 }
 
+console.log('\n🧭 Picking by scan: a listing SKU "10=3/8XA" = 10 pcs (not 3)');
+{
+  // Owner (2026-11-14, photo: order 10=3/8XA, bag 24-3-2=5XX): "we need 10 pieces, but after our guy scan =5 … showing we only need to grab 3 more pieces?"
+  const { readFileSync: rf10 } = await import('node:fs');
+  const ph = rf10(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const mult = new Function(ph.slice(ph.indexOf('function _psSkuMultiplier('), ph.indexOf('// ⚠ Wrong photo')) + '; return _psSkuMultiplier;')();
+  const L = new Function('window', '_psSkuMultiplier', src + '; return psPksLines;')({}, mult)([
+    { sku: '10=3/8XA', qty: 1, partNum: '', parent: '24-3-2', bin: '24-3-2', spots: [], codes: {} },
+    { sku: '4=1/2XB', qty: 2, partNum: '', parent: '24-3-3', bin: '24-3-3', spots: [], codes: {} },
+    { sku: 'XF-TEE', qty: 3, partNum: '24-1-8=10X', parent: '24-1-8', spots: [], codes: {} },
+    { sku: '96-6-1&2=2', qty: 2, partNum: '', components: [{ parent: '96-6-1', spots: [], codes: {} }, { parent: '96-6-2', spots: [], codes: {} }] }]);
+  check('10=3/8XA × 1 → 10 pcs (was 3: the 3 of 3/8 was read as the pack); 4=1/2XB × 2 → 8 pcs; part # 24-1-8=10X × 3 → 30; set 96-6-1&2=2 × 2 → 2 + 2',
+    JSON.stringify(L.map(l => [l.partNum || l.sku, l.need])) === JSON.stringify([['10=3/8XA', 10], ['4=1/2XB', 8], ['24-1-8=10X', 30], ['96-6-1', 2], ['96-6-2', 2]]), L.map(l => [l.partNum || l.sku, l.need]));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
