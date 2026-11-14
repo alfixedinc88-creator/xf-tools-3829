@@ -2362,6 +2362,16 @@ function reorderGetBaseSku(sku) {
   return b.replace(/^(\s*\d+(?:-\d+)+(?:&\d+)?)[cC](\s*)$/, '$1$2');
 }
 function parentOf(p) { return reorderGetBaseSku(String(p || '')).trim().toUpperCase(); }
+// 🔗 Hot & cold sets (owner 2026-11-14: "1/2 pex ball valve hot (24-2-1) and cold (24-2-2) … our shelving columns only have 24-2-1 and
+// 24-2-2, but we sell it as a set 24-2-1&2=2"): the parts a set parent holds — 24-2-1&2 → [24-2-1, 24-2-2]; not a set → null.
+function setPartsOf(parent) {
+  const m = /^(\d+(?:-\d+)*-)(\d+(?:&\d+)+)$/.exec(String(parent || '').trim().toUpperCase());
+  return m ? m[2].split('&').map(n => m[1] + n) : null;
+}
+// …and the other way: does the set parent hold this part? (24-2-1&2 holds 24-2-1 and 24-2-2)
+function setHolds(setParent, part) { const p = setPartsOf(setParent); return !!(p && p.includes(String(part || '').trim().toUpperCase())); }
+// SQL LIKE for every set row that could hold this part (24-2-1 → "24-2-%&%"), or null when the part can't be in a set.
+function setLikeFor(part) { const m = /^(\d+(?:-\d+)*-)\d+$/.exec(String(part || '').trim().toUpperCase()); return m ? m[1].replace(/[\\%_]/g, '\\$&') + '%&%' : null; }
 // master_list's own parent (SKU / base_sku column): the Part # before "=",
 // kept as-is (27-3-4C stays 27-3-4C here; parentOf() is the one that folds C).
 function mlParent(p) { return String(p || '').split('=')[0].trim().toUpperCase(); }
@@ -5560,14 +5570,18 @@ async function inventoryLookup(url, env) {
 
   // 2. Read Master_List from D1 (fast) + pending map in parallel
   let mlRows = [], pendingMapLookup = {};
+  // 🔗 Owner (2026-11-14): "we still have 24-2-1&2=OLD, but we don't have 24-2-1&2 on our shelving, only 24-2-1 and 24-2-2 … all the
+  // 24-2-1&2=OLD we never been used". ?sets=1 (Stock Out Shelving) = a search for 24-2-1 also brings the set boxes that hold it.
+  const withSets = url.searchParams.get('sets') === '1';
   if (env.DB) {
     try {
       // Only this item's rows come back (was: every SKU Mgr row on every scan) — the same order and the same row
       // number (rn) each would have had in the full list, then the same match rules below.
       const B0 = parentOf(sku || partNum || ''), likeB = B0.replace(/[\\%_]/g, '\\$&') + '%';
+      const likeSet = withSets ? setLikeFor(B0) : null; // 🔗 Stock Out Shelving: the hot & cold set boxes that hold this part too
       const [d1Rows, pMap] = await Promise.all([
         d1All(env, `SELECT * FROM (SELECT id,sku,name,part_num,location,cases,units_per_case, ROW_NUMBER() OVER () AS rn FROM master_list)
-          WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'`, [String(partNum).toUpperCase(), likeB, likeB]),
+          WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${likeSet ? " OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'" : ''}`, [String(partNum).toUpperCase(), likeB, likeB, ...(likeSet ? [likeSet] : [])]),
         buildPendingMap(env)
       ]);
       mlRows = [['hdr']];
@@ -5612,7 +5626,8 @@ async function inventoryLookup(url, env) {
     const matchBase     = rowBase    === baseSku && baseSku.length > 2;
     const matchPartBase = rowPartBase === baseSku && baseSku.length > 2;
 
-    if (!matchExact && !matchBase && !matchPartBase) continue;
+    const matchSet      = withSets && baseSku.length > 2 && !matchExact && !matchBase && !matchPartBase && setHolds(rowPartBase, baseSku);
+    if (!matchExact && !matchBase && !matchPartBase && !matchSet) continue;
 
     if (!name && r[4]) name = String(r[4]).trim();
     if (rowPart) partNums.add(rowPart);
@@ -5629,7 +5644,8 @@ async function inventoryLookup(url, env) {
         eachQty:       eachQty,
         rowIndex:      i + 1,
         masterId:      r[15] || null, // real D1 master_list id, when sourced from D1
-        isPlaceholder: /will be here/i.test(loc)
+        isPlaceholder: /will be here/i.test(loc),
+        ...(matchSet ? { setOf: rowPartBase } : {})
       });
     }
   }
@@ -24013,14 +24029,34 @@ async function shipPickVerify(request, url, env, session) {
   if (!t) return J({ ok: false, error: 'Which label?' }, 400);
   const by = String((session && (session.displayName || session.username)) || b.by || '?').slice(0, 40), T = v => v && !isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
   const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 60).map(l => ({ sku: String(l.sku || '').slice(0, 80), partNum: String(l.partNum || '').slice(0, 60), need: +l.need || 0, got: +l.got || 0,
-    scanned: +l.scanned || 0, typed: +l.typed || 0, spotOk: !!l.spotOk }));
-  const wrong = (Array.isArray(b.wrong) ? b.wrong : []).slice(0, 60).map(w => ({ code: String(w.code || '').slice(0, 60), part: String(w.part || '').slice(0, 60), at: T(w.at) }));
+    scanned: +l.scanned || 0, typed: +l.typed || 0, spotOk: !!l.spotOk, ...(l.setOf ? { setOf: String(l.setOf).slice(0, 60) } : {}) }));
+  const wrong = (Array.isArray(b.wrong) ? b.wrong : []).slice(0, 60).map(w => ({ code: String(w.code || '').slice(0, 60), part: String(w.part || '').slice(0, 60), at: T(w.at), ...(w.kind ? { kind: String(w.kind).slice(0, 20) } : {}) }));
   await env.DB.prepare('INSERT INTO ship_pick_verify (tracking, order_num, by_user, started_at, done_at, complete, lines, wrong, note, at) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .bind(t, String(b.orderNum || '').slice(0, 60), by, T(b.startedAt), T(b.doneAt) || new Date().toISOString(), b.complete ? 1 : 0, JSON.stringify(lines), JSON.stringify(wrong), String(b.note || '').slice(0, 200), new Date().toISOString()).run();
   if (session && session.userId) await logUserActivity(env, session.userId, 'pick_verify', { tracking: t, complete: !!b.complete, lines: lines.length, wrong: wrong.length }).catch(() => {});
   const res = { ok: true };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
+}
+
+// 🧭 Picking by scan: a part's spots (its family + the hot & cold set boxes that hold it; FIRST, then OLD, then the most cases) and the
+// barcodes of the family (digits without leading 0s → the part # on that bag / box).
+async function shipPickFamily(env, parent) {
+  const P = String(parent || '').trim().toUpperCase(), cols = 'part_num, location, cases, units_per_case';
+  if (!P || !_psIsFamilyCode(P)) return { spots: [], codes: {} };
+  let rows = await d1All(env, _PS_FAMILY_SQL(cols), _psFamilyParams(P));
+  const like = setLikeFor(P);
+  if (like) rows = rows.concat((await d1All(env, `SELECT ${cols} FROM master_list WHERE UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'`, [like])).filter(r => setHolds(parentOf(r.part_num), P)));
+  const seen = {}, parts = {};
+  rows = rows.filter(r => { const k = String(r.part_num || '').toUpperCase() + '|' + String(r.location || '').toUpperCase(); if (r.part_num) parts[String(r.part_num).trim().toUpperCase()] = 1; return seen[k] ? false : (seen[k] = 1); });
+  const rank = pn => /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2;
+  const spots = rows.filter(r => parseFloat(r.cases) > 0 && r.location)
+    .map(r => ({ location: String(r.location).trim().toUpperCase(), cases: parseFloat(r.cases) || 0, partNum: String(r.part_num || '').trim().toUpperCase(), pcs: parseFloat(r.units_per_case) || 0 }))
+    .sort((a, b) => rank(a.partNum) - rank(b.partNum) || b.cases - a.cases).slice(0, 12);
+  const codes = {}, pl = Object.keys(parts).slice(0, 80);
+  if (pl.length) (await d1All(env, `SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) IN (${pl.map(() => '?').join(',')})`, pl))
+    .forEach(u => [u.inside_upc, u.outside_upc].forEach(c => { c = String(c || '').replace(/\D/g, '').replace(/^0+/, ''); if (c.length >= 8 && !codes[c]) codes[c] = String(u.sku).trim().toUpperCase(); }));
+  return { spots, codes };
 }
 
 // ── GET /ship/package?tracking= ──────────────────────────────────────────
@@ -24059,9 +24095,15 @@ async function shipPackageCheck(url, env) {
     const spots = src.filter(x => parseFloat(x.cases) > 0 && x.location).slice(0, 8)
       .map(x => ({ location: up(x.location), cases: parseFloat(x.cases) || 0, partNum: up(x.part_num), pcs: parseFloat(x.units_per_case) || 0 }));
     const upcs = partNum ? await d1All(env, 'SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 5', [partNum]).catch(() => []) : [];
+    // 🧭 Picking by scan: every spot of the part's family (other bag sizes, FIRST / OLD, the hot & cold set boxes that hold it) and every
+    // barcode of the family (bag code → its own part #), so a bag is known at once. A hot & cold set (24-2-1&2=2) → its parts, each its own.
+    const setP = setPartsOf(parentOf(partNum || parent || sku));
+    const pick = setP ? null : await shipPickFamily(env, parentOf(parent || sku)).catch(() => null);
+    const components = setP ? await Promise.all(setP.map(async c => Object.assign({ parent: c }, await shipPickFamily(env, c).catch(() => ({ spots: [], codes: {} }))))) : null;
     items.push({ sku: li.s || '', qty, bin: li.b || '', image: li.i || photos[parentOf(parent)] || '', partNum, parent, name, pcsPerCase: pcs,
       exactMatch: !!exact.length, spots, totalCases: src.reduce((a, x) => a + (parseFloat(x.cases) || 0), 0),
-      upcs: upcs.map(u => ({ inside: u.inside_upc || '', outside: u.outside_upc || '' })) });
+      upcs: upcs.map(u => ({ inside: u.inside_upc || '', outside: u.outside_upc || '' })),
+      ...(pick ? { pickSpots: pick.spots, codes: pick.codes } : {}), ...(components ? { components } : {}) });
   }
   return J({ ok: true, found: true, tracking: r.tracking || t, otherDates: rows.slice(1).map(x => x.date),
     order: { date: r.date || '', orderNum: r.order_num || '', channel: r.channel || '', carrier: r.carrier || detectShipCarrier(t), service: r.service || '',

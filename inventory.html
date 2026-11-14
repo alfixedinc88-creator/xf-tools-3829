@@ -4098,7 +4098,7 @@ window.invCredLogin = async function() {
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
-    _invFetchLookupRaw(code)
+    _invFetchLookupRaw(code, invMode === 'out' && invStockOutDest === 'shelving')
       .then(function(d) { if (byName && invNameFallback(code, d)) { invScanNameSearch(code); return; } _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
@@ -4438,8 +4438,9 @@ window.invCredLogin = async function() {
   // fallback (below) can try more than one code before deciding what to
   // show, without a "not found" flash firing for the attempt that doesn't
   // pan out. window.invLookup (above) is just this call plus rendering.
-  function _invFetchLookupRaw(code) {
-    return wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
+  // sets = true (Stock Out Shelving): a search for 24-2-1 also brings the hot & cold set boxes that hold it (24-2-1&2=OLD) — owner 2026-11-14.
+  function _invFetchLookupRaw(code, sets) {
+    return wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code) + (sets ? '&sets=1' : ''))
       .then(function(r) { return r.json(); });
   }
 
@@ -4749,7 +4750,7 @@ window.invCredLogin = async function() {
     function firstOf(pn) { return /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2; }
     locs.forEach(function(l) {
       var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn);
-      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, why: (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
+      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, why: (l.setOf ? '🔗 Hot & cold set box ' + l.setOf + ' — take only the ' + String(invPart && invPart.baseSku || '').toUpperCase() + ' pieces · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
         : f === 1 ? '=OLD — always used first (after FIRST boxes)' + (pal ? ' · 🚢 on a pallet' : '') : ((t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
         : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : ''))) };
@@ -6336,9 +6337,10 @@ window.invCredLogin = async function() {
   // it to auto-pick the spot).
   function _invLookupWithFallback(primaryCode, fallbackCode, searchInp, onDone) {
     var show = function(code, d) { _invRenderLookupResult(code, d); if (onDone) onDone(d); };
-    _invFetchLookupRaw(primaryCode).then(function(d1) {
+    var sets = invMode === 'out' && invStockOutDest === 'shelving';
+    _invFetchLookupRaw(primaryCode, sets).then(function(d1) {
       if (_invHasRealStock(d1) || !fallbackCode) { show(primaryCode, d1); return; }
-      _invFetchLookupRaw(fallbackCode).then(function(d2) {
+      _invFetchLookupRaw(fallbackCode, sets).then(function(d2) {
         if (_invHasRealStock(d2)) {
           if (searchInp) searchInp.value = fallbackCode;
           show(fallbackCode, d2);
@@ -8257,7 +8259,7 @@ window.invCredLogin = async function() {
     var U = function(v) { return String(v || '').trim().toUpperCase(); };
     var avail = function(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); };
     invFlash('✗ None Found — finding another spot…', 'success');
-    _invFetchLookupRaw(invParent(it.partNum)).then(function(d) {
+    _invFetchLookupRaw(invParent(it.partNum), it.dest !== 'company').then(function(d) {
       var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[U(x.partNum) + '|' + U(x.location)] = (onList[U(x.partNum) + '|' + U(x.location)] || 0) + (parseFloat(x.cases) || 0); });
       var tried = {}; invPullList.forEach(function(x) { if (x.noneFound) tried[U(x.partNum) + '|' + U(x.location)] = 1; });
       var locs = ((d && d.locations) || []).filter(function(l) {
