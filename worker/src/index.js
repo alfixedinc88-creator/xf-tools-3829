@@ -23868,9 +23868,11 @@ async function shipPickVerifyTable(env) {
 // Each person's best is kept (speed_best2) and replaced only when beaten (more, not equal): a record stays even after its scans are gone; a
 // tie keeps who did it first. History is read day by day (60 days a call until it's all read — "still reading" meanwhile); the last 2 days
 // are read again on every call. Admin / Owner only.
+// Owner (2026-11-14): records count from 2026-10-15 (New York) on — before that day packing was done a different way
+const PS_SPEED_FROM = '2026-10-15T04:00:00.000Z', PS_SPEED_FROM_DAY = '2026-10-14'; // midnight NY; days are read "> PS_SPEED_FROM_DAY"
 const PS_SPEED_BATCH_MS = 10000, PS_SPEED_GAP_MS = 600000, PS_SPEED_WIN_MS = 3600000; // the same as the page's ⏱ pace: under 10 sec = a batch scan, 10 min+ = a break
 // best window in sorted [{t, k}] (counted labels only) → { n, start, end }
-function psSpeedBestWindow(L) {
+function psSpeedBestWindow(L, span) {
   let best = null, j = 0;
   for (let i = 0; i < L.length; i++) { while (L[i].t - L[j].t >= PS_SPEED_WIN_MS) j++; const n = i - j + 1; if (!best || n > best.n) best = { n, j, i }; }
   if (!best) return null;
@@ -23878,6 +23880,9 @@ function psSpeedBestWindow(L) {
   // time it took: Packing from the label before, 10 sec – 10 min; Picking by scan started → done)
   let ms = 0, k = 0; for (let x = best.j; x <= best.i; x++) if (L[x].g != null) { ms += L[x].g; k++; }
   const t0 = L[best.j].t;
+  // 📦 Packing (owner 2026-11-14: "why KL is 181 a hour but his record is only 82 sec a package?"): every package counts, so the ⏱ is the time of
+  // that hour shared by every package in it — first label → last label ÷ the packages after the first (181 in an hour ≈ 20 sec a package)
+  if (span) return { n: best.n, start: new Date(t0).toISOString(), end: new Date(t0 + PS_SPEED_WIN_MS).toISOString(), avgSec: best.n > 1 ? Math.round((L[best.i].t - t0) / (best.n - 1) / 1000) : null };
   return { n: best.n, start: new Date(t0).toISOString(), end: new Date(t0 + PS_SPEED_WIN_MS).toISOString(), avgSec: k ? Math.round(ms / k / 1000) : null };
 }
 // one person's labels of one day, in time order → the counted ones (one label once; a batch scan left out) + how many were batch
@@ -23916,6 +23921,11 @@ async function shipSpeedHiddenTable(env) {
     for (const w of ['FP', 'DB']) { await env.DB.prepare('INSERT OR IGNORE INTO speed_hidden (who, by_user, at, why) VALUES (?,?,?,?)').bind(w, 'owner request', now, why).run();
       await env.DB.prepare('INSERT INTO speed_hidden_log (who, action, by_user, at, why) VALUES (?,?,?,?,?)').bind(w, 'taken off', 'owner request', now, why).run(); }
     await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed_hidden_seed_20261110', ?)").bind(now).run(); }
+  // Owner (2026-11-14): "take MM off, he is not working here no more" — once, recorded as the owner's request (↩ put back any time)
+  if (!(await env.DB.prepare("SELECT value FROM app_config WHERE key = 'speed_hidden_seed_20261114'").first().catch(() => null))) { const now = new Date().toISOString(), why = 'not working here any more (owner, 2026-11-14)';
+    await env.DB.prepare('INSERT OR IGNORE INTO speed_hidden (who, by_user, at, why) VALUES (?,?,?,?)').bind('MM', 'owner request', now, why).run();
+    await env.DB.prepare('INSERT INTO speed_hidden_log (who, action, by_user, at, why) VALUES (?,?,?,?,?)').bind('MM', 'taken off', 'owner request', now, why).run();
+    await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed_hidden_seed_20261114', ?)").bind(now).run(); }
 }
 async function shipSpeedHide(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
@@ -23941,11 +23951,16 @@ async function shipSpeedTop(env, session) {
   await shipSpeedHiddenTable(env);
   const hidden = new Set((((await env.DB.prepare('SELECT who FROM speed_hidden').all()).results) || []).map(r => String(r.who).toUpperCase()));
   const since = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), now = new Date().toISOString(), out = {};
+  if (!(await env.DB.prepare("SELECT value FROM app_config WHERE key = 'speed_cutoff_20261015'").first().catch(() => null))) {
+    await env.DB.prepare('DELETE FROM speed_best2 WHERE start < ?').bind(PS_SPEED_FROM).run(); // records before 10/15/26 (the old way of working)
+    await env.DB.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('speed_cutoff_20261015', ?)").bind(now).run(); }
   for (const kind of Object.keys(PS_SPEED_SRC)) {
-    const S = PS_SPEED_SRC[kind], key = 'speed5_done_' + kind; // speed5: history read again once (owner 2026-11-13: every different tracking # counts, stacks too — a record only goes up)
+    // speed6: history read again once from 2026-10-15 (owner 2026-11-14: "the record only go back to 10/15/26 … before that day we was doing the
+    // different way") — older records are cleared once (app_config speed_cutoff_20261015), every record now starts on or after PS_SPEED_FROM
+    const S = PS_SPEED_SRC[kind], key = 'speed6_done_' + kind;
     const done = ((await env.DB.prepare('SELECT value FROM app_config WHERE key = ?').bind(key).first().catch(() => null)) || {}).value || '';
     const from = done && done < since ? done : (done ? since : ''); // the last 2 days are read again each time
-    const days = (((await env.DB.prepare(S.days).bind(from || '0000', 61).all()).results) || []).map(r => r.d).filter(Boolean);
+    const days = (((await env.DB.prepare(S.days).bind(from && from > PS_SPEED_FROM_DAY ? from : PS_SPEED_FROM_DAY, 61).all()).results) || []).map(r => r.d).filter(Boolean);
     const more = days.length > 60; if (more) days.length = 60;
     // 🐞 Owner (2026-11-10: "something is not right — MG packed about 154 within an hour", the board still "reading older days"): history is
     // read oldest first, so today waited until every older day was read. The last 2 days (today too) are read on EVERY load, older ones meanwhile.
@@ -23956,7 +23971,7 @@ async function shipSpeedTop(env, session) {
       const rows = ((await env.DB.prepare(S.rows).bind(day).all()).results) || [], by = {};
       rows.forEach(r => (by[r.who] = by[r.who] || []).push(r));
       const st = [];
-      for (const who of Object.keys(by)) { const c = psSpeedCount(by[who], S.batch), b = psSpeedBestWindow(c.L); if (!b) continue;
+      for (const who of Object.keys(by)) { const c = psSpeedCount(by[who], S.batch), b = psSpeedBestWindow(c.L, S.batch); if (!b) continue;
         st.push(env.DB.prepare(`INSERT INTO speed_best2 (kind, who, n, start, end, batch, at, avg_sec) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(kind, who) DO UPDATE SET n = excluded.n, start = excluded.start,
           end = excluded.end, batch = excluded.batch, at = excluded.at, avg_sec = excluded.avg_sec
           WHERE excluded.n > speed_best2.n OR (excluded.n = speed_best2.n AND excluded.start = speed_best2.start AND speed_best2.avg_sec IS NULL)`).bind(kind, who, b.n, b.start, b.end, c.batch, now, b.avgSec)); }
@@ -23964,7 +23979,7 @@ async function shipSpeedTop(env, session) {
       if (day < since && day > last) last = day;
     }
     if (last && last !== done) await env.DB.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').bind(key, last).run();
-    const all = ((await env.DB.prepare('SELECT who, n, start, end, at, avg_sec AS avgSec FROM speed_best2 WHERE kind = ? ORDER BY n DESC, start ASC').bind(kind).all()).results) || [];
+    const all = ((await env.DB.prepare('SELECT who, n, start, end, at, avg_sec AS avgSec FROM speed_best2 WHERE kind = ? AND start >= ? ORDER BY n DESC, start ASC').bind(kind, PS_SPEED_FROM).all()).results) || [];
     const top = all.filter(r => !hidden.has(String(r.who).toUpperCase())).slice(0, 3);
     out[kind] = { top, people: all.length, stillReading: more };
   }
@@ -24012,7 +24027,9 @@ async function shipSpeedHour(url, env, session) {
   // sizes with the ⏱ average of each, "easy to read", like a person's window.
   await shipAttachItemsAndWeight(orders, env).catch(() => null);
   orders.forEach(o => { delete o.weightSource; delete o.debug; });
-  const cnt = orders.filter(o => o.counted), timed = cnt.filter(o => o.sec != null), avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
+  const cnt = orders.filter(o => o.counted), timed = cnt.filter(o => o.sec != null);
+  let avg = timed.length ? Math.round(timed.reduce((a, o) => a + o.sec, 0) / timed.length) : null;
+  if (kind === 'pack' && cnt.length > 1) { const ts = cnt.map(o => Date.parse(o.at)).filter(t => !isNaN(t)).sort((a, b) => a - b); if (ts.length > 1) avg = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1) / 1000); } // the same ⏱ as the board
   return J({ ok: true, kind, who, start, end, n: cnt.length, batch: orders.length - cnt.length, timed: timed.length, avgSec: avg, orders });
 }
 async function shipPickVerifyRows(env, tracking) {
