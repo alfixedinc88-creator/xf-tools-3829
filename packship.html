@@ -6820,7 +6820,10 @@ function psPksStart(tr) {
 function psPksLines(items) {
   var out = [];
   (items || []).forEach(function(it) {
-    var pack = psPksPack(it.partNum || it.sku) || (typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1) || 1;
+    // Pieces in one ordered unit: a part # (24-3-2=5XX, 24-2-1&2=2) → the number after "="; a listing SKU (10=3/8XA = 10 pcs of the 3/8)
+    // → the number BEFORE "=" (owner 2026-11-14: "we need 10 pieces … showing we only need to grab 3" — the 3 of 3/8 was read as the pack).
+    var mult = typeof _psSkuMultiplier === 'function' ? _psSkuMultiplier(it.sku) : 1;
+    var pack = (it.partNum ? psPksPack(it.partNum) : /^\d+(-\d+)+/.test(String(it.sku || '').trim()) ? psPksPack(it.sku) : 0) || mult || 1;
     var codes = {}; Object.keys(it.codes || {}).forEach(function(c) { codes[c] = it.codes[c]; });
     (it.upcs || []).forEach(function(u) { [u.inside, u.outside].forEach(function(c) { c = psPksDigits(c); if (c) codes[c] = it.partNum || it.sku; }); });
     var base = { sku: it.sku, name: it.name || '', image: it.image || '', qty: it.qty, got: 0, scanned: 0, typed: 0, spotOk: false };
