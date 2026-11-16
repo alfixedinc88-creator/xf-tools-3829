@@ -16377,8 +16377,15 @@ async function awdAutoInventory(env) {
         addSh(((d.payload || {}).ShipmentData) || []); next = (d.payload || {}).NextToken || null;
       } while (next && ++pages < 20);
     } catch (_) { /* closed list is extra — the open ones still count */ }
+    // 🚚 Owner (2026-11-16): "More than 200 shipments — only the first 200 were read: does that mean we have a 200 limit?" It was our own
+    // cap (each shipment is one more call to Amazon). Now the shipments still coming in (shipped / in transit / receiving) are read FIRST,
+    // then the ones not shipped yet, then the closed ones (those add nothing on the way — only checked for 📭 not received); up to
+    // AWD_INB_MAX. Anything left out is said plainly: an OPEN one left out is a red warning (its units are missing from "on the way").
+    const AWD_INB_MAX = 400, inbRank = x => { const s = String(x.ShipmentStatus || ''); return s === 'CLOSED' ? 2 : /^(WORKING|READY_TO_SHIP)$/.test(s) ? 1 : 0; };
+    const order = shipments.map((x, i) => ({ x, i })).sort((a, b) => inbRank(a.x) - inbRank(b.x) || a.i - b.i).map(o => o.x);
+    const readL = order.slice(0, AWD_INB_MAX), left = order.slice(AWD_INB_MAX), leftOpen = left.filter(x => inbRank(x) < 2).length, leftClosed = left.length - leftOpen;
     const rows = []; let units = 0;
-    for (const sh of shipments.slice(0, 200)) {
+    for (const sh of readL) {
       const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/fba/inbound/v0/shipments/${encodeURIComponent(sh.ShipmentId)}/items?MarketplaceId=${mid}`);
       const fa = sh.ShipFromAddress || {}, from = [fa.Name, fa.City, fa.StateOrProvinceCode].filter(Boolean).join(', '), fromAwd = /amazon|awd/i.test(String(fa.Name || ''));
       const status = String(sh.ShipmentStatus || ''), closed = status === 'CLOSED';
@@ -16389,7 +16396,9 @@ async function awdAutoInventory(env) {
         rows.push([sh.ShipmentId || '', sh.ShipmentName || '', status, from, sh.DestinationFulfillmentCenterId || '', x.sku, x.shipped, x.received, way, fromAwd ? 'yes' : '', fl.since || '', nr ? 'yes' : '']); });
     }
     await awdSheetWrite(env, 'FBA_Inbound', [['shipment-id', 'shipment-name', 'status', 'ship-from', 'fc', 'sku', 'shipped', 'received', 'on-the-way', 'from-awd', 'receiving-since', 'not-received'], ...rows]);
-    out.inbound = { at: now, count: shipments.length, units, ...(shipments.length > 200 ? { warn: 'More than 200 shipments — only the first 200 were read' } : {}) };
+    out.inbound = { at: now, count: shipments.length, read: readL.length, units,
+      ...(leftOpen ? { warn: leftOpen + ' open shipment' + (leftOpen === 1 ? '' : 's') + ' not read (more than ' + AWD_INB_MAX + ') — their units are NOT in "on the way"' } : {}),
+      ...(leftClosed ? { note: leftClosed + ' closed shipment' + (leftClosed === 1 ? '' : 's') + ' not checked for 📭 not received (more than ' + AWD_INB_MAX + ') — "on the way" is complete' } : {}) };
   } catch (e) { out.inbound = { at: now, error: String(e.message || e).slice(0, 250) }; }
   // AWD inbound shipments (our warehouse → AWD), updated in the last 60 days: per SKU expected vs received (skuQuantities=SHOW).
   try {
