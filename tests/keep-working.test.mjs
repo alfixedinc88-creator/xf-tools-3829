@@ -13885,5 +13885,41 @@ console.log('\n🧭 Picking by scan: a bag bigger than what is left → one tap 
   check('…the order\'s 🧭 Activity History says how many came from opened bags', /, \$\{op\} from opened bags/.test(wk) && /opened: \+l\.opened \|\| 0/.test(wk), null);
 }
 
+// Owner (2026-11-16, photo): "⚠ Shipments on the way to FBA: More than 200 shipments — only the first 200 were read. Does that mean we have
+// a 200 limit?" It was our own cap, and it read the shipments in Amazon's order — 200 not-shipped drafts could push the ones really on the way out.
+console.log('\n🚚 AWD planner: shipments on the way to FBA — the ones coming in are read first; anything left out is said plainly');
+{
+  const realFetch = globalThis.fetch, writes = {}, itemsAsked = [];
+  const SH = (id, st) => ({ ShipmentId: id, ShipmentName: id, ShipmentStatus: st, DestinationFulfillmentCenterId: 'ABE8', ShipFromAddress: { Name: 'XFitting Warehouse', City: 'Edison', StateOrProvinceCode: 'NJ' } });
+  let working = 396, closedN = 5;
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/fba/inventory/v1/summaries')) return J({ payload: { inventorySummaries: [] } });
+    if (u.includes('/awd/2024-05-09/inventory')) return J({ inventory: [] });
+    if (u.includes('/fba/inbound/v0/shipments?') && u.includes('QueryType=DATE_RANGE')) return J({ payload: { ShipmentData: Array.from({ length: closedN }, (_, i) => SH('C' + i, 'CLOSED')) } });
+    if (u.includes('/fba/inbound/v0/shipments?')) return J({ payload: { ShipmentData: Array.from({ length: working }, (_, i) => SH('W' + i, 'WORKING')).concat([SH('T1', 'IN_TRANSIT'), SH('T2', 'SHIPPED'), SH('T3', 'RECEIVING')]) } });
+    const it = /\/fba\/inbound\/v0\/shipments\/([^/]+)\/items/.exec(u);
+    if (it) { itemsAsked.push(it[1]); return J({ payload: { ItemData: [{ SellerSKU: '28-1-1=10X', QuantityShipped: /^T/.test(it[1]) ? 5 : 0, QuantityReceived: 0 }] } }); }
+    if (u.includes('/reports/2021-06-30/')) return J({ reportId: 'R9', processingStatus: 'IN_QUEUE' }, 202);
+    if (u.includes('sheets.googleapis.com') && u.includes('/values/') && m === 'PUT') { const tab = decodeURIComponent(u.split('/values/')[1].split('?')[0]); writes[tab] = JSON.parse(o.body).values; return J({}); }
+    if (u.includes('sheets.googleapis.com')) return J({});
+    return realFetch(u, o); };
+  const envKeep = { r: env.AMAZON_REFRESH_TOKEN, c: env.AMAZON_CLIENT_ID, s: env.AMAZON_CLIENT_SECRET }; env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  const s1 = await (await call('/awd/auto-reports', { method: 'POST', headers: H })).json(); const ib1 = (s1.status || {}).inbound || {};
+  const way = () => { const IB = writes.FBA_Inbound || [[]], h = IB[0]; return IB.slice(1).reduce((a, r) => a + (+r[h.indexOf('on-the-way')] || 0), 0); };
+  check('396 not-shipped drafts listed BEFORE 3 shipments on the way (+5 closed) → the 3 on the way are read first: 15 on the way (the old 200 cap read only drafts → 0)',
+    ['T1', 'T2', 'T3'].every(x => itemsAsked.slice(0, 3).includes(x)) && ib1.units === 15 && way() === 15 && ib1.count === 404 && ib1.read === 400, { first: itemsAsked.slice(0, 4), ib1 });
+  check('…only closed ones left out (4) → no red warning, a grey note: "4 closed shipments not checked for 📭 not received — on the way is complete"',
+    !ib1.warn && /^4 closed shipments not checked for 📭 not received \(more than 400\) — "on the way" is complete$/.test(ib1.note || ''), ib1);
+  working = 420; closedN = 0; itemsAsked.length = 0;
+  const ib2 = ((await (await call('/awd/auto-reports', { method: 'POST', headers: H })).json()).status || {}).inbound || {};
+  check('…an OPEN shipment left out (423 open) → red: "23 open shipments not read (more than 400) — their units are NOT in on the way"; the 3 on the way still read',
+    /^23 open shipments not read \(more than 400\) — their units are NOT in "on the way"$/.test(ib2.warn || '') && ib2.units === 15 && itemsAsked.length === 400, ib2);
+  const { readFileSync: rfN } = await import('node:fs');
+  const ah = rfN(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('…the planner shows the grey note next to ✅ (the red ⚠ only when units are missing)', /\(o\.note \? ' <span style="color:#6B7280">\(' \+ awdH\(o\.note\) \+ '\)<\/span>' : ''\)/.test(ah), null);
+  globalThis.fetch = realFetch; env.AMAZON_REFRESH_TOKEN = envKeep.r; env.AMAZON_CLIENT_ID = envKeep.c; env.AMAZON_CLIENT_SECRET = envKeep.s;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
