@@ -1435,6 +1435,8 @@ async function processData(skipSave){
     S.fba.forEach(r=>{
       const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
       invMap[sku]=pn(gf(r,'units-shipped-t90'));
+      invMap['30|'+sku]=pn(gf(r,'units-shipped-t30')); // ⚡ the last 30 days too (owner 2026-11-17, see buildRow)
+      const dos=gf(r,'days-of-supply'); if(dos!==''&&dos!=null&&!isNaN(parseFloat(dos))) invMap['dos|'+sku]=parseFloat(dos); // Amazon's own days of supply
       const fct=pn(gf(r,'Reserved FC Transfer'));
       if(fct>0) fcTransMap[sku]=fct;
     });
@@ -1481,13 +1483,21 @@ function buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap){
   const awd=awdMap[skuU]||{};
   const awdAvail=awd.avail||0,awdReserved=awd.reserved||0,awdOutbound=awd.outbound||0;
   const sold90=invMap[skuU]||pn(gf(r,'units-shipped-t90'));
-  const dailySales=sold90>0?sold90/90:0;
+  // ⚡ Owner (2026-11-17, AWD shipment: "B0CL3PVWR8 and B074W2MCLQ … net days way more than what it showing in Amazon, both will not last
+  // long, but our recommendations showing net days over 50 days"). The pace was ONLY the 90-day average — an item selling faster lately
+  // looked like it would last much longer. Now the FASTER of the last 30 days and the 90-day average is used (never the slower one), so
+  // Net Days / Rec Send follow a pick-up in sales; both paces show on the row, with the FBA-only days (what Amazon counts) next to it.
+  const sold30=(invMap&&invMap['30|'+skuU])||pn(gf(r,'units-shipped-t30'));
+  const daily90=sold90>0?sold90/90:0, daily30=sold30>0?sold30/30:0;
+  const dailySales=Math.max(daily90,daily30);
+  const amzDos=invMap&&invMap['dos|'+skuU]!=null?invMap['dos|'+skuU]:null;
   const target=dailySales>0?Math.ceil(dailySales*C.targetDays):0;
   const fbaInb=(inbMap&&inbMap[skuU])||0; // 🚚 on the way to FBA from our warehouse
   const totalNetwork=fbaFul+fcProc+fcTrans+awdAvail+awdReserved+awdOutbound+fbaInb;
   const recSend=Math.max(0,target-totalNetwork);
   const netDays=dailySales>0?totalNetwork/dailySales:999;
-  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,fbaInb,sold90,dailySales,target,totalNetwork,recSend,netDays};
+  const fbaDays=dailySales>0?(fbaFul+fcProc+fcTrans+fbaInb)/dailySales:999; // FBA side only (no AWD) — what Amazon's days of supply counts
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,fbaInb,sold90,sold30,daily90,daily30,dailySales,target,totalNetwork,recSend,netDays,fbaDays,amzDos};
 }
 function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
 
@@ -1859,6 +1869,18 @@ function awdFamInBuilder() {
     var cp = S.cpackMap[String(sku).toUpperCase()], q = cp && cp.unitsPerBox > 0 ? Math.ceil(it.qty / cp.unitsPerBox) * cp.unitsPerBox : it.qty, pk = o.pack || awdPackOf(sku);
     var u = by[o.fam] = by[o.fam] || { pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push({ sku: sku, qty: q, pk: pk }); });
   return by;
+}
+// Under Net Days: FBA only (no AWD) and Amazon's own days of supply; under Daily Sales: which pace is used (30 days vs 90 days).
+function awdDaysSub(r) {
+  if (!r || r.fbaDays == null) return '';
+  var d = function(v) { return v >= 999 ? '—' : Math.round(v) + 'd'; };
+  return '<div style="font-size:10px;line-height:1.3;color:var(--gray-500);white-space:nowrap">FBA only <b style="color:' + (r.fbaDays <= 30 ? 'var(--red)' : 'var(--gray-700)') + '">' + d(r.fbaDays) + '</b>'
+    + (r.amzDos != null ? '<br>Amazon says <b>' + Math.round(r.amzDos) + 'd</b>' : '') + '</div>';
+}
+function awdPaceSub(r) {
+  if (!r || !(r.daily30 > 0 || r.daily90 > 0)) return '';
+  var up = r.daily30 > r.daily90;
+  return '<div style="font-size:10px;line-height:1.3;color:' + (up ? '#B45309' : 'var(--gray-500)') + ';white-space:nowrap" title="The faster of the two is used">30d ' + (r.daily30 || 0).toFixed(1) + (up ? ' ⬆ used' : '') + '<br>90d ' + (r.daily90 || 0).toFixed(1) + (up ? '' : ' used') + '</div>';
 }
 function awdRecStockCells(r) {
   if (!AWDSS.loaded) return '<td class="r" style="color:var(--gray-400)">…</td><td class="r" style="color:var(--gray-400)">…</td>';
@@ -3589,9 +3611,9 @@ function renderRecs() {
       <td class="sku">${r.sku}${reoDisc ? '<div class="awd-reo-disc" title="Discontinued in Reorder' + (reoDisc.note ? ': ' + awdH(reoDisc.note) : '') + '" style="font-size:10px;font-weight:700;color:#6b7280">🚫 discontinued — ship what we have, not reordered</div>' : ''}</td>
       <td style="font-size:12px;min-width:170px;max-width:280px;color:var(--gray-600)" title="${r.name||''}">${awdNameCell(r)}</td>
       <td class="asin">${r.asin||'—'}</td>
-      <td>${db(r.netDays)}</td>
+      <td>${db(r.netDays)}${awdDaysSub(r)}</td>
       <td class="r">${fn(r.sold90)}</td>
-      <td class="r">${r.dailySales > 0 ? r.dailySales.toFixed(1) : '—'}</td>
+      <td class="r">${r.dailySales > 0 ? r.dailySales.toFixed(1) : '—'}${awdPaceSub(r)}</td>
       <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
       ${awdRecStockCells(r)}
       <td class="r">${fn(r.fbaFul)}</td>

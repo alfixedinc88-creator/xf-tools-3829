@@ -16417,7 +16417,7 @@ async function awdReportText(env, token, docId) {
   if (m[0] === 0x1f && m[1] === 0x8b) return await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
   return new TextDecoder().decode(raw);
 }
-const AWD_FBA_HEAD = ['sku','asin','fnsku','product-name','condition','afn-fulfillable-quantity','afn-unsellable-quantity','afn-reserved-quantity','afn-total-quantity','per-unit-volume','afn-inbound-working-quantity','afn-inbound-shipped-quantity','afn-inbound-receiving-quantity','units-shipped-t7','units-shipped-t30','units-shipped-t60','units-shipped-t90','Reserved FC Transfer'];
+const AWD_FBA_HEAD = ['sku','asin','fnsku','product-name','condition','afn-fulfillable-quantity','afn-unsellable-quantity','afn-reserved-quantity','afn-total-quantity','per-unit-volume','afn-inbound-working-quantity','afn-inbound-shipped-quantity','afn-inbound-receiving-quantity','units-shipped-t7','units-shipped-t30','units-shipped-t60','units-shipped-t90','Reserved FC Transfer','days-of-supply'];
 // FBA_Inventory = the FBA Inventory API numbers + units shipped from the newest Inventory Health report (never blank when we have one).
 // `base` rows are AWD_FBA_HEAD rows with the 4 units-shipped cells empty (kept in D1 so a later Inventory Health can fill them).
 function awdFbaBaseRows(items) {
@@ -16427,7 +16427,8 @@ function awdFbaBaseRows(items) {
 }
 async function awdWriteFbaInventory(env, base, health) {
   await awdSheetWrite(env, 'FBA_Inventory', [AWD_FBA_HEAD, ...base.map(r => { const h = (health || {})[String(r[0] || '').trim().toUpperCase()] || null, o = r.slice();
-    if (h) { o[13] = h.t7; o[14] = h.t30; o[15] = h.t60; o[16] = h.t90; } return o; })]);
+    while (o.length < AWD_FBA_HEAD.length) o.push('');
+    if (h) { o[13] = h.t7; o[14] = h.t30; o[15] = h.t60; o[16] = h.t90; o[18] = h.dos == null ? '' : h.dos; } return o; })]); // 18 = Amazon's days of supply (owner 2026-11-17)
 }
 // Inventory now: FBA (Live + Reserved + FBA_Inventory) and AWD. Then asks Amazon for a fresh Inventory Health report.
 async function awdAutoInventory(env) {
@@ -16594,11 +16595,11 @@ async function awdAutoHealth(env) {
   }
   const text = await awdReportText(env, token, rep.reportDocumentId);
   const lines = text.split(/\r?\n/).filter(l => l.trim()), head = (lines[0] || '').split('\t').map(x => x.trim().toLowerCase());
-  const ix = n => head.indexOf(n), iS = ix('sku'), i7 = ix('units-shipped-t7'), i30 = ix('units-shipped-t30'), i60 = ix('units-shipped-t60'), i90 = ix('units-shipped-t90');
+  const ix = n => head.indexOf(n), iS = ix('sku'), i7 = ix('units-shipped-t7'), i30 = ix('units-shipped-t30'), i60 = ix('units-shipped-t60'), i90 = ix('units-shipped-t90'), iDos = ix('days-of-supply');
   if (iS < 0 || i90 < 0) { await awdAutoSet(env, 'health', { ...h, pending: null, error: 'The report had no sku / units-shipped-t90 column — the last one is kept', checkedAt: now }); return { pending: false, status: 'BADFILE' }; }
   const rows = {}, num = v => { const n = parseFloat(String(v || '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
   lines.slice(1).forEach(l => { const c = l.split('\t'), k = String(c[iS] || '').trim().toUpperCase(); if (!k) return;
-    rows[k] = { t7: num(c[i7]), t30: num(c[i30]), t60: num(c[i60]), t90: num(c[i90]) }; });
+    rows[k] = { t7: num(c[i7]), t30: num(c[i30]), t60: num(c[i60]), t90: num(c[i90]), ...(iDos >= 0 && String(c[iDos] || '').trim() !== '' ? { dos: num(c[iDos]) } : {}) }; });
   await awdAutoSet(env, 'healthRows', rows);
   if (Array.isArray(st.fbaBase) && st.fbaBase.length) await awdWriteFbaInventory(env, st.fbaBase, rows);
   const done = { at: now, count: Object.keys(rows).length, pending: null, error: '' };
