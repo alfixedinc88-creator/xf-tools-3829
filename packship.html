@@ -1877,7 +1877,7 @@ body {
           Waits after an order comes in, holds same name + address orders for merging, picks USPS or UPS by the rules below, and never buys a label for a cancelled order.
           Bought labels print on the <b>🖨 Printer station</b> (see 🏷️ Shipping labels below).
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="ps-al-mode-btns">
+        <div style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="ps-al-mode-btns">
           <button class="ps-btn-sm" data-mode="off" onclick="psAlSetMode('off')">⏸ Off</button>
           <button class="ps-btn-sm" data-mode="preview" onclick="psAlSetMode('preview')">👀 Preview only (no buying)</button>
           <button class="ps-btn-sm" data-mode="auto" onclick="psAlSetMode('auto')">⚡ Auto buy labels</button>
@@ -9979,6 +9979,9 @@ async function psAlLoadConfig() {
 function _psAlRenderConfig(d) {
   var c = d.config;
   setTimeout(_psAlRunBtnText, 0);
+  // 🔒 Owner (2026-11-17): "hide the 'auto label' on and off, make only Admin level up can see" — Off / Preview / Auto shown to Admin / Owner only
+  // (the server refuses the switch for anyone else too).
+  var mb = document.getElementById('ps-al-mode-btns'); if (mb) mb.style.display = _psPaceAdmin() ? 'flex' : 'none';
   document.querySelectorAll('#ps-al-mode-btns button').forEach(function(b){
     var on = b.getAttribute('data-mode') === c.mode;
     var col = c.mode === 'auto' ? 'var(--green)' : c.mode === 'preview' ? 'var(--accent)' : 'var(--text2)';

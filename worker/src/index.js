@@ -31131,13 +31131,22 @@ async function autolabelSetKey(env, key, value) {
   await d1Run(env, 'INSERT INTO app_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, value]);
 }
 
+// A read that fails THROWS (autolabelGetKey says null for "not saved" AND for "database didn't answer" — not good enough for the settings).
+async function autolabelGetKeyStrict(env, key) {
+  try { const row = await env.DB.prepare('SELECT value FROM app_config WHERE key=?').bind(key).first(); return row ? row.value : null; }
+  catch (e) { throw new Error('Auto Label settings could not be read just now (' + e.message + ') — nothing changed, try again'); }
+}
 async function autolabelLoadConfig(env) {
   await autolabelEnsureTables(env);
   let saved = {};
-  try { saved = JSON.parse(await autolabelGetKey(env, AUTOLABEL_CONFIG_KEY) || '{}') || {}; } catch (_) { saved = {}; }
+  // 🛡 Owner (2026-11-17): "it see it was been turn off for some reason". A read that FAILED (database busy) used to count as "nothing
+  // saved" → Off + every rule back to default — and the one-time updates below then SAVED that empty copy over the real settings.
+  // Now a failed read stops here (nothing is changed, the run tries again next time); only a setting never saved counts as empty.
+  const raw = await autolabelGetKeyStrict(env, AUTOLABEL_CONFIG_KEY);
+  if (raw) { try { saved = JSON.parse(raw) || {}; } catch (e) { throw new Error('Auto Label settings could not be read (' + e.message + ') — nothing changed'); } }
   // Owner: "change 3 days to 2 days, 0.80 to 0.70" — once, on the saved rules
   // too (the page shows these; they can still be changed there afterwards).
-  if ((await autolabelGetKey(env, 'autolabel_rules_ups_2d_070')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_ups_2d_070')) !== 'done') {
     const before = { upsMinSavings: saved.upsMinSavings, upsMaxDays: saved.upsMaxDays };
     saved.upsMinSavings = 0.70; saved.upsMaxDays = 2;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31145,7 +31154,7 @@ async function autolabelLoadConfig(env) {
     await autolabelLog(env, { action: 'rules_changed', detail: `UPS rule set by the owner's request: cheaper by $${before.upsMinSavings ?? 0.8} → $0.70, within ${before.upsMaxDays ?? 3} → 2 days` }).catch(() => {});
   }
   // Owner: the day's schedule around the scan forms — once, on the saved rules too.
-  if ((await autolabelGetKey(env, 'autolabel_rules_scanform_pause_1006')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_scanform_pause_1006')) !== 'done') {
     const before = { scanFormTimes: saved.scanFormTimes, scanFormCheckAt: saved.scanFormCheckAt, pauseTimes: saved.pauseTimes };
     saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes; saved.scanFormCheckAt = AUTOLABEL_DEFAULTS.scanFormCheckAt; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31153,7 +31162,7 @@ async function autolabelLoadConfig(env) {
     await autolabelLog(env, { action: 'rules_changed', detail: `Scan form + no-auto-buying times set by the owner's request: ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, night check ${saved.scanFormCheckAt}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
   }
   // Owner 2026-10-08: "every day at 8:50 pm make a scan form; stop auto print 8:30 pm – 12:10 am, start again 12:10 am".
-  if ((await autolabelGetKey(env, 'autolabel_rules_scanform_850_1008')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_scanform_850_1008')) !== 'done') {
     const before = { scanFormTimes: saved.scanFormTimes, pauseTimes: saved.pauseTimes };
     saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31162,7 +31171,7 @@ async function autolabelLoadConfig(env) {
   }
   // Owner 2026-10-16: "Mon–Fri stop the 30-min wait at 3:30 pm, wait 3 min, from 4 pm print as soon as an order comes in;
   // Saturday from 12:30 pm 3 min, from 1 pm instant". Saved rules move once to these times (on record).
-  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_330_1016')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_nowait_330_1016')) !== 'done') {
     const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
     saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes; saved.noWaitMinutes = AUTOLABEL_DEFAULTS.noWaitMinutes;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31170,7 +31179,7 @@ async function autolabelLoadConfig(env) {
     await autolabelLog(env, { action: 'rules_changed', detail: `Mon-Fri 3:30 pm 3-min wait, 4 pm no wait; Sat 12:30 pm 3 min, 1 pm no wait (owner's request): ${JSON.stringify(before)} → ${saved.noWaitTimes}` }).catch(() => {});
   }
   // Owner 2026-10-08: "Mon–Fri at 3:45 pm stop the 30-min wait; new orders wait 2 min (a merge may come in), then print".
-  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_345_1008')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_nowait_345_1008')) !== 'done') {
     const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
     if (saved.noWaitTimes == null || String(saved.noWaitTimes).replace(/\s+/g, ' ').trim() === 'Mon-Fri 15:50-17:00; Sat 13:00-14:15') saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes;
     saved.noWaitMinutes = AUTOLABEL_DEFAULTS.noWaitMinutes;
@@ -31180,7 +31189,7 @@ async function autolabelLoadConfig(env) {
   }
   // Owner 2026-10-08: "Saturday at 12:45 pm stop the 30-min wait (new orders 2 min), stop printing at 1:45 pm and make
   // the scan form; Mon–Fri stop printing at 4:30 pm, then the scan form" (Mon–Fri 4:30 pm and Sat 1:45 pm forms were already set).
-  if ((await autolabelGetKey(env, 'autolabel_rules_sat_1245_1008')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_sat_1245_1008')) !== 'done') {
     const before = { noWaitTimes: saved.noWaitTimes, pauseTimes: saved.pauseTimes, scanFormTimes: saved.scanFormTimes };
     saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes; saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31189,7 +31198,7 @@ async function autolabelLoadConfig(env) {
   }
   // Owner 2026-10-08 (later): "Mon–Fri stop 4:30, start again 5:30 pm; Saturday stop 1:45, start again 3 pm; every day stop
   // 8:30 pm, scan form 8:45 pm, start again 12:05 am".
-  if ((await autolabelGetKey(env, 'autolabel_rules_sched_845_1008')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_sched_845_1008')) !== 'done') {
     const before = { pauseTimes: saved.pauseTimes, scanFormTimes: saved.scanFormTimes };
     saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes; saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes;
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -31198,7 +31207,7 @@ async function autolabelLoadConfig(env) {
   }
   // Owner (2026-11-05): "from 5:30 – 8:30 pm must have the 30-min wait, and Saturday after 3 pm to 8:30 pm too" — once, on the saved
   // rules: every no-wait time ends where auto print stops that day (whatever the times are now), so after the restart it is the 30-min wait.
-  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_stop_1105')) !== 'done') {
+  if ((await autolabelGetKeyStrict(env, 'autolabel_rules_nowait_stop_1105')) !== 'done') {
     const before = saved.noWaitTimes == null ? AUTOLABEL_DEFAULTS.noWaitTimes : saved.noWaitTimes;
     saved.noWaitTimes = autolabelNoWaitEndAtPause(before, saved.pauseTimes == null ? AUTOLABEL_DEFAULTS.pauseTimes : saved.pauseTimes);
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
@@ -34392,7 +34401,13 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
 
   if (path === '/veeqo/autolabel/config' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
-    const cfg = autolabelCleanConfig({ ...(await autolabelLoadConfig(env)), ...(b.config || {}) });
+    let cur; try { cur = await autolabelLoadConfig(env); } catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); } // never save over settings we couldn't read
+    // 🔒 Owner (2026-11-17): "hide the 'auto label' on and off, make only Admin level up can see right now" — only an Admin / Owner
+    // can switch Auto Label Off / Preview / Auto (the buttons are hidden for everyone else; this stops it on the server too).
+    const roles = (session && session.roles) || [];
+    if (b.config && 'mode' in b.config && b.config.mode !== cur.mode && !(roles.includes('admin') || roles.includes('owner')))
+      return veeqoResp({ ok: false, error: 'Only an Admin can turn Auto Label on or off' });
+    const cfg = autolabelCleanConfig({ ...cur, ...(b.config || {}) });
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(cfg));
     await scanFormClockEnsure(env); // new scan form times → the alarm moves with them
     await autolabelLog(env, { action: 'config', reason: `mode=${cfg.mode} cancelWatch=${cfg.cancelWatch}`,
