@@ -13928,22 +13928,48 @@ console.log('\n🚚 AWD planner: shipments on the way to FBA — the ones coming
   globalThis.fetch = realFetch; env.AMAZON_REFRESH_TOKEN = envKeep.r; env.AMAZON_CLIENT_ID = envKeep.c; env.AMAZON_CLIENT_SECRET = envKeep.s;
 }
 
-console.log('\n🔍 Warehouse → Item Search: still works when the Products Google Sheet does not answer');
+console.log('\n🗄 Warehouse → Item Search: Products in our database (no Google Sheet); one list not loading never stops the page');
 {
   // Owner (2026-11-17): "under the 'warehouse look up' 'item search' it was nothing show up".
-  sq.prepare("INSERT INTO products (sku, name) VALUES ('98-8-1', '1/2 PEX Coupling (db copy)'), ('98-8-1', 'dup'), ('98-8-2', '3/4 PEX Tee (db copy)')").run();
-  const keep = globalThis.fetch;
-  globalThis.fetch = async u => { u = String(u); const J = x => new Response(JSON.stringify(x)); if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
-    if (u.includes('/values/Products')) return J({ error: { message: 'The caller does not have permission' } }); return J({ values: [] }); };
+  // Owner (2026-11-17, next): "I thought there's no google sheet involve now? everything should match to the 'inventory' 'sku mgr' and that
+  // was in our data base?" → Products is in our database: the old sheet is copied in ONCE, then never read or written again.
+  sq.exec('DELETE FROM products'); try { sq.exec('DELETE FROM products_sheet_copy'); } catch (_) {}
+  const keep = globalThis.fetch; let sheetCalls = 0;
+  const google = vals => async u => { u = String(u); const J = x => new Response(JSON.stringify(x)); if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
+    if (u.includes('/values/Products')) { sheetCalls++; return J(vals); } if (u.includes('sheets.googleapis')) sheetCalls++; return J({ values: [] }); };
+  globalThis.fetch = google({ error: { message: 'The caller does not have permission' } });
   const down = await get('/?sheet=Products');
-  globalThis.fetch = async u => { u = String(u); const J = x => new Response(JSON.stringify(x)); if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
-    if (u.includes('/values/Products')) return J({ values: [['', 'sku', 'name'], ['', '23-2-3', 'Tee (sheet)'], ['', '40-1-1', 'Elbow (sheet)']] }); return J({ values: [] }); };
-  const up = await get('/?sheet=Products');
+  check('the old Products sheet refusing the one-time copy → the database list is used, and the page is told why (no stop)', down.from === 'database' && /could not be copied yet \(The caller does not have permission\)/.test(down.note || ''), down);
+  sq.exec("UPDATE products_sheet_copy SET tried_at = '2000-01-01T00:00:00Z'"); // 30 min later
+  globalThis.fetch = google({ values: [['id', 'sku', 'name', 'wh', 'weight', '', 'kw'], ['P1', '98-8-1', '1/2 PEX Coupling', 'CPL', '0.05', '', 'coupler'], ['P2', '98-8-2', '3/4 PEX Tee', 'TEE', '0.08', '', ''], ['', '98-8-1', 'dup', '', '', '', '']] });
+  const first = await get('/?sheet=Products'); const c1 = sheetCalls;
+  globalThis.fetch = google({ values: [['id', 'sku', 'name'], ['', '98-8-9', 'SHOULD NOT SHOW']] });
+  const again = await get('/?sheet=Products');
+  const rowsOf = d => (d.values || []).slice(1).map(r => r.slice(1, 5).concat(r[6]).join('|'));
+  check('…copied ONCE from the old sheet into our database (name, short name, weight, keywords; each SKU once) — after that the sheet is never read again',
+    first.from === 'database' && !!first.copiedFromSheet && rowsOf(first).join(' / ') === '98-8-1|1/2 PEX Coupling|CPL|0.05|coupler / 98-8-2|3/4 PEX Tee|TEE|0.08|'
+      && sheetCalls === c1 && rowsOf(again).join(' / ') === rowsOf(first).join(' / '), { first, again, sheetCalls, c1 });
+  sheetCalls = 0;
+  const sv = await post('/inventory/product/save', { origSku: '98-8-2', sku: '98-8-2', name: '3/4 PEX Tee', warehouseName: 'TEE', weight: '0.09', keywords: 'tee 3/4' });
+  const add = await post('/inventory/product/save', { sku: '98-8-3', name: '1 PEX Elbow', warehouseName: 'ELB', weight: '0.1' });
+  const dupe = await post('/inventory/product/save', { sku: '98-8-1', name: 'x' });
+  const after = await get('/?sheet=Products'), log = sq.prepare("SELECT action, sku, detail FROM product_edit_log WHERE sku LIKE '98-8-%' ORDER BY id").all();
+  check('…✏️ Edit / ➕ Add save to our database only (0 Google calls), kept in the edit log (who / what changed); the same SKU twice refused',
+    sv.ok && add.ok && add.added && !dupe.ok && /already exists/.test(dupe.error) && sheetCalls === 0
+      && rowsOf(after).includes('98-8-2|3/4 PEX Tee|TEE|0.09|tee 3/4') && rowsOf(after).includes('98-8-3|1 PEX Elbow|ELB|0.1|')
+      && log.some(l => l.action === 'edit' && /weight: 0\.08 → 0\.09/.test(l.detail)) && log.some(l => l.action === 'add' && l.sku === '98-8-3'), { sv, add, dupe, log, sheetCalls });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('98-8-7', '1/2 PEX Cap (SKU Mgr)', '98-8-7=10', 'C1=8-8-7', 2, 10)").run();
+  const whL = await get('/?sheet=Products&skumgr=1'), plain = await get('/?sheet=Products');
+  check('…Warehouse Item Search (&skumgr=1) also lists every SKU Mgr item not on the list, with its SKU Mgr name (98-8-7); other pages get the list as before',
+    rowsOf(whL).some(r => r.startsWith('98-8-7|1/2 PEX Cap (SKU Mgr)|')) && !rowsOf(plain).some(r => r.startsWith('98-8-7|')) && whL.fromSkuMgr >= 1, { n: whL.fromSkuMgr });
   globalThis.fetch = keep;
-  const skus = d => (d.values || []).slice(1).map(r => r[1] + ':' + r[2]);
-  check('Products sheet refused → our database copy, same rows (sku in B, name in C), each SKU once, from: "database" + why; sheet working → the sheet as before',
-    down.from === 'database' && /permission/.test(down.sheetError) && skus(down).join() === '98-8-1:1/2 PEX Coupling (db copy),98-8-2:3/4 PEX Tee (db copy)'
-      && up.from === 'sheet' && skus(up).join() === '23-2-3:Tee (sheet),40-1-1:Elbow (sheet)', { down, up });
+  {
+    const { readFileSync: rfX } = await import('node:fs'); const wk = rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+    const body = n => { const a2 = wk.indexOf('async function ' + n + '('); return wk.slice(a2, wk.indexOf('\n}\n', a2)); };
+    check('…no Products Google Sheet left in Item Search, ✏️ save, Reorder weights or the name search (only the one-time copy reads it); the old sheet import is turned off',
+      !/invSheet(Get|Update|Append)\(env, 'Products/.test(body('warehouseProductSave') + body('reorderFillWeights') + body('warehouseProductsGet'))
+        && !/invSheetGet\(env, 'Products!B2:G5000'\)/.test(wk) && /status: 410/.test(body('importProducts')), null);
+  }
   const { readFileSync: rfW } = await import('node:fs');
   const wh = rfW(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
   const src = wh.slice(wh.indexOf('var _whLoadProblems = [];'), wh.indexOf('async function refreshAllSheets()'));
@@ -13958,11 +13984,10 @@ console.log('\n🔍 Warehouse → Item Search: still works when the Products Goo
       r => r.slice(1), r => r.slice(1), r => r.slice(1), r => r.slice(1), r => r.slice(1), () => {}, () => {}, () => {}, () => {}, () => {}, '');
     return { DB, warn: el('wh-load-warn'), setup: el('setup-screen').style.display };
   };
-  const a = await run(['Products', 'AWD_Master']), b = await run([], 'database'), c = await run(['Master_List', 'Products', 'AWD_Master', 'UPC', 'Out_of_Stock']);
+  const a = await run(['Products', 'AWD_Master']), c = await run(['Master_List', 'Products', 'AWD_Master', 'UPC', 'Out_of_Stock']);
   check('…the page: the item list (or AWD) not loading no longer stops the whole page — stock still loads, "⚠ Not everything loaded — Item list (Products): … Tap 🔄" at the top',
     a.DB.master.length === 1 && a.setup !== 'flex' && a.warn.style.display === 'block' && /Item list \(Products\): Sheet "Products": Google did not answer · AWD list/.test(a.warn.textContent), { warn: a.warn.textContent, setup: a.setup });
-  check('…from the database copy → said ("the Products Google Sheet did not answer — Item Search uses our database copy"); nothing at all loaded → sign-in screen as before',
-    b.DB.products.length === 1 && /database copy/.test(b.warn.textContent) && c.setup === 'flex', { b: b.warn.textContent, c: c.setup });
+  check('…nothing at all loaded → sign-in screen as before', c.setup === 'flex', { c: c.setup });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

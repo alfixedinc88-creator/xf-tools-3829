@@ -2983,24 +2983,20 @@ async function reorderFillWeights(request, env, session) {
     .map(x => ({ base: String((x && x.base) || '').trim().toUpperCase(), lb: Math.round((parseFloat(x && x.lb) || 0) * 10000) / 10000, from: String((x && x.from) || '').slice(0, 120) }))
     .filter(x => x.base && x.lb > 0);
   if (!items.length) return _roResp({ ok: true, filled: [], kept: [], noProduct: [] });
-  const data = await invSheetGet(env, 'Products!A1:E5000');
-  if (data.error) return _roResp({ ok: false, error: 'Products sheet: ' + (data.error.message || 'read failed') }, 500);
-  const rows = data.values || [], rowOf = {};
-  for (let i = 1; i < rows.length; i++) { const k = String((rows[i] || [])[1] || '').trim().toUpperCase(); if (k && !(k in rowOf)) rowOf[k] = i; }
+  // 🗄 Products is in our database now (owner 2026-11-17) — read and written there only, not the Google Sheet.
+  await productsDbReady(env);
+  const rows = [['hdr']], rowOf = {};
+  (await d1All(env, 'SELECT * FROM products ORDER BY rowid')).forEach(r => { const k = String(r.sku || '').trim().toUpperCase(); if (k && !(k in rowOf)) { rowOf[k] = rows.length; rows.push(['', k, '', '', r.weight || '']); } });
   const filled = [], kept = [], noProduct = [], updates = [];
   for (const it of items) {
     const i = rowOf[it.base];
     if (i == null) { noProduct.push(it); continue; }
     const have = parseFloat((rows[i] || [])[4]);
     if (have > 0) { kept.push({ ...it, have }); continue; }
-    updates.push({ range: `Products!E${i + 1}`, values: [[it.lb]] });
+    updates.push(it);
     filled.push(it);
   }
   if (updates.length) {
-    const token = await getToken(env);
-    const resp = await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values:batchUpdate`, { method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ valueInputOption: 'RAW', data: updates }) });
-    if (!resp.ok) { const r = await resp.json().catch(() => ({})); return _roResp({ ok: false, error: 'Products sheet: ' + ((r.error && r.error.message) || 'write failed') }, 500); }
     for (const it of filled) await env.DB.prepare('UPDATE products SET weight = ?, updated_at = ? WHERE UPPER(sku) = ? AND (weight IS NULL OR weight = 0)')
       .bind(it.lb, new Date().toISOString(), it.base).run().catch(() => {});
     try {
@@ -5769,7 +5765,9 @@ async function inventoryNameSearch(url, env) {
   let mlData;
   try { mlData = env.DB ? { values: await skuMgrSheetValues(env) } : await invSheetGet(env, 'Master_List!A1:O15000'); }
   catch (e) { return cors(new Response(JSON.stringify({ error: 'SKU Mgr could not be read just now — try again' }), { status: 503, headers: { 'Content-Type': 'application/json' } })); }
-  const prodData = await invSheetGet(env, 'Products!B2:G5000').catch(() => ({ values: [] }));
+  // 🗄 Products from our database (owner 2026-11-17), in the old sheet's columns B..G (sku, name, warehouse name, weight, —, keywords)
+  if (env.DB) await productsDbReady(env).catch(() => {});
+  const prodData = { values: env.DB ? (await d1All(env, 'SELECT * FROM products ORDER BY rowid')).map(r => [r.sku || '', r.name || '', r.warehouse_name || '', r.weight ? String(r.weight) : '', '', r.keywords || '']) : [] };
   const mlRows   = mlData.values   || [];
   const prodRows = prodData.values || [];
 
@@ -11961,7 +11959,7 @@ const _app = {
     if (method === 'GET') {
       const t = url.searchParams.get('sheet');
       if (t === 'Master_List' && env.DB) return await inventoryMasterList(env); // 🏬 stock = SKU Mgr, not the old sheet (owner 2026-10-27)
-      if (t === 'Products' && env.DB) return await warehouseProductsGet(env); // 🔍 Item Search's list: the sheet, else our database copy
+      if (t === 'Products' && env.DB) return await warehouseProductsGet(env, url); // 🗄 Products = our database (owner 2026-11-17), not the Google Sheet
       if (!t || !ALLOWED_TABS.has(t)) {
         return cors(new Response(JSON.stringify({ error: `Tab "${t}" not allowed` }), {
           status: 400, headers: { 'Content-Type': 'application/json' }
@@ -12155,24 +12153,62 @@ function getSheetId(tab, env) {
 }
 
 // ─── EXISTING handleGet (unchanged) ──────────────────────────────────────────
-// 🔍 Owner (2026-11-17): "under the 'warehouse look up' 'item search' it was nothing show up". Item Search's list of items is the
-// Products Google Sheet; when Google doesn't answer (or sends it back empty) the whole Warehouse page stopped / found nothing. Now the
-// database copy of Products (kept on every ✏️ save) is used instead, in the same rows, and the page is told (from: 'database').
-async function warehouseProductsGet(env) {
-  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
-  let sheetErr = '';
+// 🗄 Owner (2026-11-17): "I thought there's no google sheet involve now? everything should match to the 'inventory' 'sku mgr' and that
+// was in our data base". Products (Item Search's list: name, warehouse short name, weight, keywords) is kept in OUR DATABASE now (D1
+// `products`), like SKU Mgr. The old Google Sheet is read ONE last time to copy it in (the sheet was where people typed until now: its
+// rows win in that copy), then never again — every ✏️ save, weight fill and read uses the database only.
+async function productsDbReady(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id TEXT, sku TEXT NOT NULL, base_sku TEXT NOT NULL,
+    name TEXT, warehouse_name TEXT, weight REAL DEFAULT 0, updated_at TEXT)`).run().catch(() => {});
+  for (const c of ['product_id TEXT', 'base_sku TEXT', 'warehouse_name TEXT', 'weight REAL', 'updated_at TEXT', 'keywords TEXT'])
+    await env.DB.prepare('ALTER TABLE products ADD COLUMN ' + c).run().catch(() => {}); // already there → fine
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS products_sheet_copy (id INTEGER PRIMARY KEY, done_at TEXT, tried_at TEXT, rows INTEGER, note TEXT, first_at TEXT)').run().catch(() => {});
+  const st = await d1First(env, 'SELECT done_at, tried_at, first_at FROM products_sheet_copy WHERE id = 1').catch(() => null);
+  if (st && st.done_at) return { copied: st.done_at };
+  if (st && st.tried_at && Date.now() - Date.parse(st.tried_at) < 30 * 60000) return { copied: null, note: 'the last copy from the old sheet did not work — tried again in 30 min' };
+  const now = new Date().toISOString();
+  // From the first try on, saves go to the database only — a row saved here after that is newer than the old sheet and is kept.
+  const firstAt = (st && st.first_at) || now;
+  await env.DB.prepare('INSERT OR REPLACE INTO products_sheet_copy (id, done_at, tried_at, rows, note, first_at) VALUES (1, NULL, ?, 0, ?, ?)').bind(now, 'trying', firstAt).run().catch(() => {});
   try {
-    const data = await invSheetGet(env, 'Products');
-    if (data && data.error) throw new Error((data.error && data.error.message) || String(data.error));
-    const vals = (data && data.values) || [];
-    if (vals.filter(r => String((r || [])[1] || '').trim()).length > 1) return J({ values: vals, from: 'sheet' });
-    sheetErr = 'the Products sheet came back empty';
-  } catch (e) { sheetErr = (e && e.message) || 'Google did not answer'; }
-  const rows = await d1All(env, "SELECT * FROM products WHERE TRIM(COALESCE(sku, '')) != ''");
-  const seen = new Set(), out = [['', 'sku', 'name', 'warehouse_name', 'weight', '', 'keywords']];
-  rows.forEach(r => { const k = String(r.sku).trim().toUpperCase(); if (seen.has(k)) return; seen.add(k); out.push(['', String(r.sku).trim(), r.name || '', r.warehouse_name || '', r.weight == null ? '' : String(r.weight), '', '']); });
-  console.warn('[Products] sheet not used:', sheetErr, '→ database copy', out.length - 1);
-  return J({ values: out, from: 'database', sheetError: sheetErr });
+    const data = await invSheetGet(env, 'Products!A1:G5000');
+    if (data && data.error) throw new Error((data.error && data.error.message) || 'Google did not answer');
+    const rows = ((data && data.values) || []).slice(1).filter(r => String((r || [])[1] || '').trim() && String(r[1]).trim().toLowerCase() !== 'sku');
+    if (!rows.length) throw new Error('the old Products sheet came back empty');
+    const t = v => String(v == null ? '' : v).trim(), seen = new Set(), st2 = [];
+    const newer = new Set((await d1All(env, 'SELECT UPPER(TRIM(sku)) AS k FROM products WHERE updated_at >= ?', [firstAt])).map(x => x.k));
+    for (const r of rows) {
+      const sku = t(r[1]).toUpperCase(); if (seen.has(sku)) continue; seen.add(sku);
+      if (newer.has(sku)) continue; // saved here since → kept
+      st2.push(env.DB.prepare('DELETE FROM products WHERE UPPER(TRIM(sku)) = ?').bind(sku));
+      st2.push(env.DB.prepare('INSERT INTO products (product_id, sku, base_sku, name, warehouse_name, weight, keywords, updated_at) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(t(r[0]), t(r[1]), t(r[1]).split('=')[0].trim(), t(r[2]), t(r[3]), parseFloat(r[4]) || 0, t(r[6]), now));
+    }
+    for (let i = 0; i < st2.length; i += 80) await env.DB.batch(st2.slice(i, i + 80));
+    await env.DB.prepare('UPDATE products_sheet_copy SET done_at = ?, rows = ?, note = ? WHERE id = 1').bind(now, seen.size, 'copied from the old Products sheet').run();
+    return { copied: now, rows: seen.size };
+  } catch (e) {
+    await env.DB.prepare('UPDATE products_sheet_copy SET note = ? WHERE id = 1').bind(String((e && e.message) || e).slice(0, 200)).run().catch(() => {});
+    return { copied: null, note: 'the old Products sheet could not be copied yet (' + ((e && e.message) || 'no answer') + ') — the database list is used' };
+  }
+}
+// GET ?sheet=Products → the database list, in the old sheet's rows (A product_id, B sku, C name, D warehouse short name, E weight, G keywords).
+// &skumgr=1 (Warehouse → Item Search): every SKU Mgr parent not on the list is added too, with SKU Mgr's name — so the search matches SKU Mgr.
+async function warehouseProductsGet(env, url) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const ready = await productsDbReady(env);
+  const rows = await d1All(env, "SELECT * FROM products WHERE TRIM(COALESCE(sku, '')) != '' ORDER BY rowid");
+  const seen = new Set(), out = [['product_id', 'sku', 'name', 'warehouse_name', 'weight', '', 'keywords']];
+  rows.forEach(r => { const k = String(r.sku).trim().toUpperCase(); if (seen.has(k)) return; seen.add(k);
+    out.push([r.product_id || '', String(r.sku).trim(), r.name || '', r.warehouse_name || '', r.weight ? String(r.weight) : '', '', r.keywords || '']); });
+  let fromSkuMgr = 0;
+  if (url && url.searchParams.get('skumgr') === '1') {
+    (await d1All(env, "SELECT sku, base_sku, part_num, name FROM master_list WHERE TRIM(COALESCE(name, '')) != ''")).forEach(r => {
+      const b = parentOf(r.base_sku || r.sku || r.part_num || ''); if (!b || b.length < 3 || seen.has(b)) return; seen.add(b); fromSkuMgr++;
+      out.push(['', b, String(r.name).trim(), '', '', '', '']);
+    });
+  }
+  return J({ values: out, from: 'database', fromSkuMgr, copiedFromSheet: ready.copied || null, ...(ready.note ? { note: ready.note } : {}) });
 }
 
 async function handleGet(tab, env) {
@@ -19256,35 +19292,21 @@ async function warehouseProductSave(request, env, session) {
   if (!sku) return J({ ok: false, error: 'SKU is required' }, 400);
   if (!name) return J({ ok: false, error: 'Product name is required' }, 400);
   if (weight && !(parseFloat(weight) >= 0)) return J({ ok: false, error: 'Weight must be a number' }, 400);
-  const data = await invSheetGet(env, 'Products!A1:G5000');
-  if (data.error) return J({ ok: false, error: 'Products sheet: ' + (data.error.message || 'read failed') }, 500);
-  const rows = data.values || [];
-  const rowOf = k => { for (let i = 1; i < rows.length; i++) if (t((rows[i] || [])[1]).toUpperCase() === k) return i; return -1; };
-  const at = orig ? rowOf(orig) : -1;
-  if (orig && at < 0) return J({ ok: false, error: `"${orig}" isn't in the Products sheet any more — refresh and try again` }, 404);
-  const clash = rowOf(sku);
-  if (clash >= 0 && clash !== at) return J({ ok: false, error: `SKU ${sku} already exists` + (t(rows[clash][2]) ? ` (${t(rows[clash][2])})` : '') }, 409);
+  // 🗄 Saved in our database only (owner 2026-11-17: "no google sheet … everything in our data base").
+  await productsDbReady(env);
+  const one = async k => k ? await d1First(env, 'SELECT rowid AS rid, * FROM products WHERE UPPER(TRIM(sku)) = ? ORDER BY rowid LIMIT 1', [k]) : null;
+  const cur = await one(orig), clash = await one(sku);
+  if (clash && (!cur || clash.rid !== cur.rid)) return J({ ok: false, error: `SKU ${sku} already exists` + (t(clash.name) ? ` (${t(clash.name)})` : '') }, 409);
   const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
   const who = String((cs && (cs.displayName || cs.username)) || (session && session.userId) || 'unknown');
-  let res, before = null;
-  if (at >= 0) {
-    const r = rows[at] || [];
-    before = { sku: t(r[1]), name: t(r[2]), warehouseName: t(r[3]), weight: t(r[4]), keywords: t(r[6]) };
-    const n = at + 1;
-    res = await invSheetUpdate(env, `Products!B${n}:E${n}`, [[sku, name, whName, weight]]);
-    if (!res.error) res = await invSheetUpdate(env, `Products!G${n}`, [[keywords]]);
-  } else {
-    res = await invSheetAppend(env, 'Products!A:G', [['', sku, name, whName, weight, '', keywords]]);
-  }
-  if (res && res.error) return J({ ok: false, error: 'Products sheet: ' + (res.error.message || 'write failed') }, 500);
-  // Keep the D1 copy in step.
+  const before = cur ? { sku: t(cur.sku), name: t(cur.name), warehouseName: t(cur.warehouse_name), weight: cur.weight ? String(cur.weight) : '', keywords: t(cur.keywords) } : null;
+  const at = cur ? 0 : -1, now = new Date().toISOString();
   try {
-    const now = new Date().toISOString();
-    if (orig) await env.DB.prepare('DELETE FROM products WHERE UPPER(sku) = ?').bind(orig).run();
-    await env.DB.prepare('DELETE FROM products WHERE UPPER(sku) = ?').bind(sku).run();
-    await env.DB.prepare('INSERT INTO products (product_id, sku, base_sku, name, warehouse_name, weight, updated_at) VALUES (?,?,?,?,?,?,?)')
-      .bind(at >= 0 ? t(rows[at][0]) : '', sku, sku.split('=')[0].trim(), name, whName, parseFloat(weight) || 0, now).run();
-  } catch (_) {}
+    if (cur) await env.DB.prepare('DELETE FROM products WHERE UPPER(TRIM(sku)) = ?').bind(orig).run();
+    await env.DB.prepare('DELETE FROM products WHERE UPPER(TRIM(sku)) = ?').bind(sku).run();
+    await env.DB.prepare('INSERT INTO products (product_id, sku, base_sku, name, warehouse_name, weight, keywords, updated_at) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(cur ? t(cur.product_id) : '', sku, sku.split('=')[0].trim(), name, whName, parseFloat(weight) || 0, keywords, now).run();
+  } catch (e) { return J({ ok: false, error: 'Not saved: ' + ((e && e.message) || 'database') }, 500); }
   try {
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_edit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, action TEXT, sku TEXT, detail TEXT)`).run();
     const after = { sku, name, warehouseName: whName, weight, keywords };
@@ -19295,8 +19317,9 @@ async function warehouseProductSave(request, env, session) {
 }
 
 async function importProducts(request, env) {
-  if (!env.DB) return cors(new Response(JSON.stringify({ error: 'D1 not available' }),
-    { status: 503, headers: { 'Content-Type': 'application/json' } }));
+  // 🗄 Products is kept in our database now (owner 2026-11-17) — copying the old sheet over it would wipe newer saves.
+  return cors(new Response(JSON.stringify({ ok: false, error: 'Products are kept in our database now — nothing is imported from the Google Sheet any more' }),
+    { status: 410, headers: { 'Content-Type': 'application/json' } }));
   try {
     const body = await request.json().catch(()=>({}));
     const dryRun = body.dryRun === true;

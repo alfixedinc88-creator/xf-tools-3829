@@ -1914,11 +1914,11 @@ async function fetchSheet(name) {
   };
   var url = D1_ROUTES[name]
     ? 'https://xfitting-lookup.alfixedinc88.workers.dev' + D1_ROUTES[name]
-    : 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name);
+    : 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name) + (name === 'Products' ? '&skumgr=1' : ''); // 🗄 Products = our database + every SKU Mgr item (owner 2026-11-17)
   var res  = await wFetch(url);
   var json = await res.json();
   if (json.error) throw new Error('Sheet "' + name + '": ' + json.error);
-  if (name === 'Products') window._whProductsFrom = json.from || '';
+  if (name === 'Products') { window._whProductsFrom = json.from || ''; window._whProductsNote = json.note || ''; }
   var rows = (json.values || []).map(function(r) {
     while (r.length < 16) r.push('');
     return r;
@@ -2035,7 +2035,7 @@ function _whShowLoadWarn(extra) {
 async function loadAllSheets() {
   showLoading(true);
   setSyncLabel('Loading…', true);
-  _whLoadProblems = []; window._whProductsFrom = '';
+  _whLoadProblems = []; window._whProductsFrom = ''; window._whProductsNote = '';
   try {
     var results = await Promise.all([
       _whSoft('Stock (SKU Mgr)', fetchSheet(SHEET_NAMES.master)),
@@ -2050,7 +2050,7 @@ async function loadAllSheets() {
     ]);
     if (_whLoadProblems.length === 5) throw new Error(_whLoadProblems.join(' · ')); // nothing at all came → as before (sign in again)
     var extra = [];
-    if (window._whProductsFrom === 'database') extra.push('the Products Google Sheet did not answer — Item Search uses our database copy of it');
+    if (window._whProductsNote) extra.push('Item list: ' + window._whProductsNote);
     _whShowLoadWarn(extra);
     DB.master    = parseMasterListRows(results[0]);
     DB.products  = parseProductsRows(results[1]);
@@ -2667,7 +2667,7 @@ function vbAllSave(inp) {
 }
 
 // ─── ADD / EDIT PRODUCT (Item Search) ────────────────
-// Writes the Products sheet (and its D1 copy) through the worker; ops and
+// Writes the Products list in our database (owner 2026-11-17: no Google Sheet) through the worker; ops and
 // managers only. SKU, name, warehouse short name, unit weight, keywords.
 function wpCan() { var r = (CRED_USER && CRED_USER.roles) || []; return r.indexOf('mgmt') >= 0 || r.indexOf('ops') >= 0; }
 function wpAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
