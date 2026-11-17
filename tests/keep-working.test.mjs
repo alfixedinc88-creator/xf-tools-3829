@@ -8796,7 +8796,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 13\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -14050,6 +14050,27 @@ console.log('\n🔒 Auto Label on / off: Admin only, and a busy database never t
   await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });
   const { readFileSync: rfA } = await import('node:fs'); const ph = rfA(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…the page: Off / Preview / Auto hidden unless Admin / Owner', /id="ps-al-mode-btns"/.test(ph) && /<div style="display:none;[^"]*" id="ps-al-mode-btns">/.test(ph) && /mb\.style\.display = _psPaceAdmin\(\) \? 'flex' : 'none'/.test(ph), null);
+}
+
+console.log('\n📦 AWD Recommendations: 🏬 in stock now + 📦 already in the Shipment Builder (same parent SKU)');
+{
+  // Owner (2026-11-17): "under the 'AWD shipment Planner' 'Recommendations' I want to see how many we have instock right now and for the same
+  // parent SKU how many we have added to the 'shipment builder' so far".
+  const { readFileSync: rfR } = await import('node:fs'); const ah = rfR(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const cut = (a, b) => ah.slice(ah.indexOf(a), ah.indexOf(b, ah.indexOf(a)));
+  const src = cut('function awdFamInBuilder()', 'function awdFamWarnHtml()') + ah.slice(ah.indexOf('function awdPackOf('), ah.indexOf('\n', ah.indexOf('function awdPackOf(')));
+  const AWDSS = { loaded: true, fams: { '25-1-5': { shelfPcs: 100 } }, rows: { '25-1-5=2X': { fam: '25-1-5', pack: 2, shelfPcs: 40 }, '25-1-5=5X': { fam: '25-1-5', pack: 5, shelfPcs: 50 }, '25-1-5=10': { fam: '25-1-5', pack: 10, shelfPcs: 10 }, '30-3-4=10X': { fam: '30-3-4', pack: 10, shelfPcs: 0 } } };
+  const S = { shipment: { '25-1-5=2X': { qty: 12 }, '25-1-5=5X': { qty: 7 }, '9-9-9=1': { qty: 3 } }, cpackMap: { '25-1-5=5X': { unitsPerBox: 4 } } };
+  const api = new Function('AWDSS', 'S', 'fn', 'awdH', src + '\n; return { awdFamInBuilder, awdRecStockCells };')(AWDSS, S, n => String(n), v => String(v));
+  const b = api.awdFamInBuilder(), c = api.awdRecStockCells({ sku: '25-1-5=10' }), c2 = api.awdRecStockCells({ sku: '30-3-4=10X' }), c3 = api.awdRecStockCells({ sku: '5-5-5=1' });
+  check('25-1-5 (every size): 🏬 100 pcs in stock (this size 10) · 📦 in the builder 12×2 + 8×5 (7 rounded up to 2 whole boxes of 4) = 64 pcs, with the sizes; 30-3-4: 0 in the builder; not in SKU Mgr: —',
+    b['25-1-5'].pcs === 64 && /<b>100<\/b> pcs<div[^>]*>25-1-5 · this size 10<\/div>/.test(c) && /<b style="color:#1A56DB">64<\/b> pcs/.test(c) && /=2X 12×2 · =5X 8×5/.test(c)
+      && /<b>0<\/b> pcs/.test(c2) && />0<\/span>/.test(c2) && /title="Not in SKU Mgr">—/.test(c3), { b, c, c2, c3 });
+  S.shipment['25-1-5=10'] = { qty: 5 }; // + 50 pcs → 114 > 100
+  const c4 = new Function('AWDSS', 'S', 'fn', 'awdH', src + '\n; return awdRecStockCells;')(AWDSS, S, n => String(n), v => String(v))({ sku: '25-1-5=10' });
+  check('…more in the builder than on the shelf (114 > 100) → red "more than in stock"; this row\'s own size marked ▶', /color:var\(--red\)">114<\/b>/.test(c4) && /more than in stock/.test(c4) && /▶ =10 5×10/.test(c4), c4);
+  check('…two new columns on the Recommendations table; up to date when the tab is opened again after builder changes',
+    /🏬 In Stock Now<\/th>/.test(ah) && /📦 In Builder<br>/.test(ah) && /\$\{awdRecStockCells\(r\)\}/.test(ah) && /if \(n === 'recommendations' && typeof renderRecs === 'function'\) renderRecs\(\);/.test(ah), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

@@ -981,6 +981,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <th><input type="checkbox" id="rec-all" onchange="toggleAllVis(this.checked)"></th>
         <th>SKU</th><th>Product</th><th>ASIN</th>
         <th class="r">Net Days</th><th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Rec Send Qty</th>
+        <th class="r" title="On our shelves right now (SKU Mgr), the whole parent SKU — every bag size — in pieces">🏬 In Stock Now</th>
+        <th class="r" title="Already in the Shipment Builder for the same parent SKU (every bag size), in pieces">📦 In Builder<br><span style="font-weight:400">same parent</span></th>
         <th class="r">FBA Fulfillable</th><th class="r">AWD Available</th><th class="r">Total Network</th><th>WH Stock</th><th>Action</th>
       </tr></thead><tbody id="rec-tbody"></tbody></table></div></div>
     </div>
@@ -1846,6 +1848,30 @@ function awdFamUse() {
     var u = use[o.fam] = use[o.fam] || { fam: o.fam, pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push(sku.split('=').slice(1).join('=') + ' ' + q + (pk > 1 ? '×' + pk : '')); });
   return Object.keys(use).map(function(f) { var F = AWDSS.fams[f] || {}, u = use[f], reserve = Math.ceil((F.otherDailyPcs || 0) * c.keepDays);
     return { fam: f, pcs: u.pcs, parts: u.parts, shelf: F.shelfPcs || 0, reserve: reserve, spare: Math.max(0, (F.shelfPcs || 0) - reserve), keepDays: c.keepDays }; });
+}
+// 📦 Owner (2026-11-17): "under the 'AWD shipment Planner' 'Recommendations' I want to see how many we have instock right now and for the same
+// parent SKU how many we have added to the 'shipment builder' so far". Two columns on each row, in pieces, the whole parent SKU (every bag
+// size): 🏬 on our shelves now (SKU Mgr — the same number the shelf check above the builder uses) and 📦 already in the Shipment Builder
+// (each size's qty, rounded up to whole boxes when it has a case pack — the same as the builder's export), with which sizes.
+function awdFamInBuilder() {
+  var by = {};
+  Object.keys(S.shipment || {}).forEach(function(sku) { var it = S.shipment[sku], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
+    var cp = S.cpackMap[String(sku).toUpperCase()], q = cp && cp.unitsPerBox > 0 ? Math.ceil(it.qty / cp.unitsPerBox) * cp.unitsPerBox : it.qty, pk = o.pack || awdPackOf(sku);
+    var u = by[o.fam] = by[o.fam] || { pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push({ sku: sku, qty: q, pk: pk }); });
+  return by;
+}
+function awdRecStockCells(r) {
+  if (!AWDSS.loaded) return '<td class="r" style="color:var(--gray-400)">…</td><td class="r" style="color:var(--gray-400)">…</td>';
+  var o = AWDSS.rows[String(r.sku || '').toUpperCase()];
+  if (!o || !o.fam) return '<td class="r" style="color:var(--gray-400)" title="Not in SKU Mgr">—</td><td class="r" style="color:var(--gray-400)">—</td>';
+  var F = AWDSS.fams[o.fam] || {}, all = F.shelfPcs != null ? F.shelfPcs : (o.shelfPcs || 0) + (o.otherShelfPcs || 0);
+  var b = awdRecStockCells._b || awdFamInBuilder();
+  var u = b[o.fam], over = u && u.pcs > all;
+  var stock = '<td class="r awd-rec-stock"><b>' + fn(all) + '</b> pcs<div style="font-size:10px;color:var(--gray-500)">' + awdH(o.fam) + (all !== (o.shelfPcs || 0) ? ' · this size ' + fn(o.shelfPcs || 0) : '') + '</div></td>';
+  var inB = '<td class="r awd-rec-inb"' + (over ? ' style="background:#FEF2F2"' : '') + '>' + (u ? '<b style="color:' + (over ? 'var(--red)' : '#1A56DB') + '">' + fn(u.pcs) + '</b> pcs'
+    + '<div style="font-size:10px;color:var(--gray-500);white-space:normal">' + u.parts.map(function(x) { var sz = x.sku.split('=').slice(1).join('=') || x.sku; return awdH((x.sku === r.sku ? '▶ ' : '') + '=' + sz + ' ' + fn(x.qty) + (x.pk > 1 ? '×' + x.pk : '')); }).join(' · ') + '</div>'
+    + (over ? '<div style="font-size:10px;color:var(--red);font-weight:700">more than in stock</div>' : '') : '<span style="color:var(--gray-400)">0</span>') + '</td>';
+  return stock + inB;
 }
 function awdFamWarnHtml() {
   if (!AWDSS.loaded) return '';
@@ -3150,6 +3176,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
+  if (n === 'recommendations' && typeof renderRecs === 'function') renderRecs(); // 📦 In Builder (same parent) up to date after builder changes
   if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
@@ -3542,9 +3569,10 @@ function renderRecs() {
   const tb = ge('rec-tbody');
   if (!tb) return;
   if (!data.length) {
-    tb.innerHTML = '<tr><td colspan="13"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';
+    tb.innerHTML = '<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';
     return;
   }
+  awdRecStockCells._b = awdFamInBuilder(); // the Shipment Builder by parent SKU, once for the whole table
   tb.innerHTML = data.map(r => {
     const inB = !!S.shipment[r.sku];
     const ws = checkWarehouseStock(r.sku);
@@ -3565,6 +3593,7 @@ function renderRecs() {
       <td class="r">${fn(r.sold90)}</td>
       <td class="r">${r.dailySales > 0 ? r.dailySales.toFixed(1) : '—'}</td>
       <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
+      ${awdRecStockCells(r)}
       <td class="r">${fn(r.fbaFul)}</td>
       <td class="r">${fn(r.awdAvail)}</td>
       <td class="r">${fn(r.totalNetwork)}${r.fbaInb ? '<div style="font-size:10px;color:#1A56DB" title="Already counted in Total Network">incl. 🚚 ' + fn(r.fbaInb) + ' on the way to FBA</div>' : ''}</td>
@@ -3575,7 +3604,7 @@ function renderRecs() {
           : `<button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button>`}
         &nbsp;${discBtn}
       </td>
-    </tr>${awdStockRow(r, 13)}`;
+    </tr>${awdStockRow(r, 15)}`;
   }).join('');
 }
 
