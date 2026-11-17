@@ -14118,5 +14118,26 @@ console.log('\n🏚 Stock Out: the Grandpa Basement is used last — every spot 
   check('…the spot list shows Grandpa Basement at the bottom, saying why', rk.slice(-2).every(l => /Grandpa/.test(l.location) && /🏚 Grandpa Basement — used last/.test(l._pick.why)) && !/Grandpa/.test(rk[0].location), rk.map(l => l.location));
 }
 
+console.log('\n⚡ AWD Net Days: the faster of the last 30 days and the 90-day average; FBA-only days + Amazon\'s days of supply shown');
+{
+  // Owner (2026-11-17): "for the 'B0CL3PVWR8' and 'B074W2MCLQ' it showing net days way more then what it showing in Amazon, both will not
+  // last long, but our recommendations showing net days over 50 days?"
+  const { readFileSync: rfN } = await import('node:fs'); const ah = rfN(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const one = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 3); };
+  const src = ah.slice(ah.indexOf('function gf(row,col)'), ah.indexOf('\n', ah.indexOf('function pn(v)'))) + '\n' + one('buildRow') + one('skuOf') + one('awdDaysSub') + one('awdPaceSub');
+  const api = new Function('C', 'fn', src + '\n; return { buildRow, awdDaysSub, awdPaceSub };')({ targetDays: 60 }, n => String(n));
+  // B0CL3PVWR8-like: 90 days 90 sold (1 a day) but the last 30 days 60 sold (2 a day); FBA 20 + AWD 80 = 100
+  const row = { sku: 'X-1=10', asin: 'B0CL3PVWR8', 'afn-fulfillable-quantity': '20' };
+  const inv = { 'X-1=10': 90, '30|X-1=10': 60, 'dos|X-1=10': 9 };
+  const r = api.buildRow(row, inv, { 'X-1=10': { avail: 80, reserved: 0, outbound: 0 } }, {}, {}, {});
+  check('selling faster lately (2 a day in 30 days vs 1 a day over 90): pace 2 a day → Net Days 50 (was 100 with the 90-day pace), Rec Send 60 × 2 − 100 = 20 (was 0); FBA only 10 days',
+    r.dailySales === 2 && Math.round(r.netDays) === 50 && r.recSend === 20 && Math.round(r.fbaDays) === 10 && r.amzDos === 9, r);
+  const slow = api.buildRow(row, { 'X-1=10': 90, '30|X-1=10': 15 }, { 'X-1=10': { avail: 80 } }, {}, {}, {});
+  check('…selling slower lately (0.5 a day) → the 90-day pace stays (1 a day, never the slower one): Net Days 100', slow.dailySales === 1 && Math.round(slow.netDays) === 100, slow);
+  const ds = api.awdDaysSub(r), ps = api.awdPaceSub(r);
+  check('…the row says it: under Net Days "FBA only 10d" (red, ≤ 30) and "Amazon says 9d"; under Daily Sales "30d 2.0 ⬆ used · 90d 1.0"',
+    /FBA only <b style="color:var\(--red\)">10d<\/b>/.test(ds) && /Amazon says <b>9d<\/b>/.test(ds) && /30d 2\.0 ⬆ used<br>90d 1\.0/.test(ps) && /\$\{awdDaysSub\(r\)\}/.test(ah) && /\$\{awdPaceSub\(r\)\}/.test(ah), { ds, ps });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
