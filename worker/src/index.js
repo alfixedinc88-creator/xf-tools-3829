@@ -5627,18 +5627,21 @@ async function inventoryLookup(url, env) {
 
   // 2. Read Master_List from D1 (fast) + pending map in parallel
   let mlRows = [], pendingMapLookup = {};
-  // 🔗 Owner (2026-11-14): "we still have 24-2-1&2=OLD, but we don't have 24-2-1&2 on our shelving, only 24-2-1 and 24-2-2 … all the
-  // 24-2-1&2=OLD we never been used". ?sets=1 (Stock Out Shelving) = a search for 24-2-1 also brings the set boxes that hold it.
+  // 🔗 Hot & cold sets on Stock Out Shelving (?sets=1). Owner (2026-11-17, replaces 2026-11-14's "24-2-1 also brings the 24-2-1&2 set
+  // boxes"): "if we only request cold, we should only getting the cold, don't mix for those, if hot, only hot, if we need hot and cold, we
+  // bring hot and cold". So a search for 24-2-1 (hot) or 24-2-2 (cold) brings only that part; a search for the SET 24-2-1&2 brings its
+  // own boxes (24-2-1&2=OLD …) AND the hot and the cold boxes (24-2-1, 24-2-2), each marked with which part of the set it is (setPart).
   const withSets = url.searchParams.get('sets') === '1';
   if (env.DB) {
     try {
       // Only this item's rows come back (was: every SKU Mgr row on every scan) — the same order and the same row
       // number (rn) each would have had in the full list, then the same match rules below.
       const B0 = parentOf(sku || partNum || ''), likeB = B0.replace(/[\\%_]/g, '\\$&') + '%';
-      const likeSet = withSets ? setLikeFor(B0) : null; // 🔗 Stock Out Shelving: the hot & cold set boxes that hold this part too
+      const comps = withSets ? (setPartsOf(B0) || []) : []; // 🔗 the SET searched → its hot and cold parts too
+      const likeC = comps.map(c => c.replace(/[\\%_]/g, '\\$&') + '%');
       const [d1Rows, pMap] = await Promise.all([
         d1All(env, `SELECT * FROM (SELECT id,sku,name,part_num,location,cases,units_per_case, ROW_NUMBER() OVER () AS rn FROM master_list)
-          WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${likeSet ? " OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'" : ''}`, [String(partNum).toUpperCase(), likeB, likeB, ...(likeSet ? [likeSet] : [])]),
+          WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${likeC.map(() => " OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'").join('')}`, [String(partNum).toUpperCase(), likeB, likeB, ...likeC]),
         buildPendingMap(env)
       ]);
       mlRows = [['hdr']];
@@ -5683,7 +5686,8 @@ async function inventoryLookup(url, env) {
     const matchBase     = rowBase    === baseSku && baseSku.length > 2;
     const matchPartBase = rowPartBase === baseSku && baseSku.length > 2;
 
-    const matchSet      = withSets && baseSku.length > 2 && !matchExact && !matchBase && !matchPartBase && setHolds(rowPartBase, baseSku);
+    const setComps      = withSets ? (setPartsOf(baseSku) || []) : [];
+    const matchSet      = setComps.length > 0 && !matchExact && !matchBase && !matchPartBase && setComps.includes(rowPartBase); // a hot / cold box for the set searched
     if (!matchExact && !matchBase && !matchPartBase && !matchSet) continue;
 
     if (!name && r[4]) name = String(r[4]).trim();
@@ -5702,7 +5706,7 @@ async function inventoryLookup(url, env) {
         rowIndex:      i + 1,
         masterId:      r[15] || null, // real D1 master_list id, when sourced from D1
         isPlaceholder: /will be here/i.test(loc),
-        ...(matchSet ? { setOf: rowPartBase } : {})
+        ...(matchSet ? { setOf: baseSku, setPart: rowPartBase } : {})
       });
     }
   }
@@ -24214,14 +24218,13 @@ async function shipPickVerify(request, url, env, session) {
   return J(res);
 }
 
-// 🧭 Picking by scan: a part's spots (its family + the hot & cold set boxes that hold it; FIRST, then OLD, then the most cases) and the
-// barcodes of the family (digits without leading 0s → the part # on that bag / box).
+// 🧭 Picking by scan: a part's spots (its family; FIRST, then OLD, then the most cases) and the barcodes of the family (digits without
+// leading 0s → the part # on that bag / box). Hot & cold are never mixed (owner 2026-11-17: "if we only request cold, we should only
+// getting the cold") — a hot or a cold order is sent to that part's own boxes only, never to the mixed hot & cold set boxes.
 async function shipPickFamily(env, parent) {
   const P = String(parent || '').trim().toUpperCase(), cols = 'part_num, location, cases, units_per_case';
   if (!P || !_psIsFamilyCode(P)) return { spots: [], codes: {} };
   let rows = await d1All(env, _PS_FAMILY_SQL(cols), _psFamilyParams(P));
-  const like = setLikeFor(P);
-  if (like) rows = rows.concat((await d1All(env, `SELECT ${cols} FROM master_list WHERE UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'`, [like])).filter(r => setHolds(parentOf(r.part_num), P)));
   const seen = {}, parts = {};
   rows = rows.filter(r => { const k = String(r.part_num || '').toUpperCase() + '|' + String(r.location || '').toUpperCase(); if (r.part_num) parts[String(r.part_num).trim().toUpperCase()] = 1; return seen[k] ? false : (seen[k] = 1); });
   const rank = pn => /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2;
