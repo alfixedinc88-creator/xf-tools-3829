@@ -9287,11 +9287,20 @@ console.log('\n🗄 Off the Google Sheet, step 1b: tabs moved into our database 
   const csNow = sq.prepare("SELECT r, v FROM xs_row WHERE book = 'TEST' AND tab = 'CS_MsgLog' ORDER BY r").all().map(x => x.r + ':' + JSON.parse(x.v)[0]).join(' ');
   check('…a clean-up that deletes rows works in our database too: CS log older than 30 days (a-old, c-old) deleted, the rest move up — and the RIGHT rows (it used to delete the row below each old one)',
     mvCs.ok && cl.ok && cl.deleted === 2 && / 2:b-new 3:d-new$/.test(csNow) && /^1:/.test(csNow), { cl, csNow }); // row 1 = the app's own header
-  googleUp = true; G.Velocity = [['12']];
+  googleUp = true; G.Velocity = [['12']]; G.Price_Flags = [['SKU', 'Flag'], ['1-1-1', 'low']];
   const fz = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: 'Velocity' }), ho = await post('/admin/db-move/copy', { book: 'SHEET_ID', tab: 'Price_Flags' });
-  check('…NOT moved: a tab Google calculates (formulas — its numbers would freeze) and a tab filled outside the app (Price_Flags) — "⏸ later", said why',
-    fz.ok === false && fz.hold && fz.formulas === 1 && /Google calculates this tab/.test(fz.error) && ho.ok === false && ho.hold && /outside the app/.test(ho.error)
-      && !sq.prepare("SELECT 1 FROM xs_tab WHERE tab IN ('Velocity','Price_Flags')").get(), { fz, ho });
+  // Owner (2026-11-17): "no one change anything on the google sheet … I am only one working on this … move everything" → Price_Flags moves now.
+  check('…NOT moved: a tab Google calculates (formulas — its numbers would freeze), "⏸ later", said why; Price_Flags (was held: "filled outside the app") moves now (owner 2026-11-17)',
+    fz.ok === false && fz.hold && fz.formulas === 1 && /Google calculates this tab/.test(fz.error) && ho.ok === true
+      && !sq.prepare("SELECT 1 FROM xs_tab WHERE tab = 'Velocity'").get() && !!sq.prepare("SELECT 1 FROM xs_tab WHERE tab = 'Price_Flags'").get(), { fz, ho });
+  // 📥 Move everything (owner 2026-11-17: "move everything to our data base, I want no more google sheet")
+  G.Extra_Tab = [['A', 'B'], ['1', '2']]; G.Master_List = [['x']];
+  const ev = await post('/admin/db-move/all', {}), ev2 = await post('/admin/db-move/all', {});
+  const movedNow = sq.prepare("SELECT tab FROM xs_tab WHERE book = 'TEST'").all().map(r => r.tab);
+  check('📥 Move everything: every tab not moved yet is copied + checked (Extra_Tab ✅); a formula tab (Velocity) is left with why; SKU Mgr (Master_List) is never copied — it IS our database; the next run tries nothing again',
+    ev.ok && ev.done.some(x => x.tab === 'Extra_Tab') && ev.left.some(x => x.tab === 'Velocity' && /calculates/.test(x.why)) && ev.left.some(x => x.tab === 'Master_List' && /SKU Mgr in our database/.test(x.why))
+      && movedNow.includes('Extra_Tab') && !movedNow.includes('Master_List') && ev2.ok && ev2.done.length === 0, { ev, ev2, movedNow });
+  delete G.Master_List;
   googleUp = false;
   const un = await post('/admin/db-move/undo', { book: 'SHEET_ID', tab: 'Prefixes' });
   check('…↩ Back to Google puts a tab back on the Google Sheet (asks Google again)', un.ok && !sq.prepare("SELECT 1 FROM xs_tab WHERE book = 'TEST' AND tab = 'Prefixes'").get(), un);
@@ -13988,6 +13997,34 @@ console.log('\n🗄 Warehouse → Item Search: Products in our database (no Goog
   check('…the page: the item list (or AWD) not loading no longer stops the whole page — stock still loads, "⚠ Not everything loaded — Item list (Products): … Tap 🔄" at the top',
     a.DB.master.length === 1 && a.setup !== 'flex' && a.warn.style.display === 'block' && /Item list \(Products\): Sheet "Products": Google did not answer · AWD list/.test(a.warn.textContent), { warn: a.warn.textContent, setup: a.setup });
   check('…nothing at all loaded → sign-in screen as before', c.setup === 'flex', { c: c.setup });
+}
+
+console.log('\n🗄 No more Google Sheet: SKU Mgr stock and History never go to Google; every other tab moves into our database on its own');
+{
+  // Owner (2026-11-17): "no one change anything on the google sheet right now, I am only one working on this, move that to our data base too,
+  // move everything to our data base, I want no more google sheet".
+  const keep = globalThis.fetch; let gML = 0, gAll = 0;
+  globalThis.fetch = async (u, o) => { u = String(u); if (u.includes('sheets.googleapis')) { gAll++; if (/Master_List|Inventory_Log/.test(decodeURIComponent(u)) || /Master_List|Inventory_Log/.test(String(o && o.body || ''))) gML++; } return keep(u, o); };
+  await post('/inventory/review-mode', { mode: 'manual' });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('99-9-1', 'ph test', '99-9-1=10', 'GARAGE will be here', 1, 10), ('99-9-2', 'out test', '99-9-2=10', 'C1=9-9-2', 5, 10)").run();
+  const ph = sq.prepare("SELECT id FROM master_list WHERE part_num = '99-9-1=10'").get(), oc = sq.prepare("SELECT id FROM master_list WHERE part_num = '99-9-2=10'").get();
+  const t0 = shelf();
+  const lin = await post('/inventory/log', { type: 'IN', partNum: '99-9-1=10', sku: '99-9-1=10', location: 'GARAGE will be here', overwriteLocation: 'C1=9-9-1', isPlaceholder: true, cases: 3, initials: 'TS', notes: '' });
+  const lout = await post('/inventory/log', { type: 'OUT', partNum: '99-9-2=10', sku: '99-9-2=10', location: 'C1=9-9-2', cases: 2, initials: 'TS', notes: '', masterId: oc.id });
+  const pend = (await get('/inventory/pending')).items || [], pi = pend.find(x => x.d1Id === lin.d1Id), po = pend.find(x => x.d1Id === lout.d1Id);
+  const va = await post('/inventory/verify', { rowIndex: pi.rowIndex, action: 'Approved', item: pi }), vb = await post('/inventory/verify', { rowIndex: po.rowIndex, action: 'Approved', item: po });
+  const phNow = sq.prepare('SELECT location, cases FROM master_list WHERE id = ?').get(ph.id), ocNow = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(oc.id);
+  check('Stock In to a "will be here" spot + a Stock Out, both approved: SKU Mgr found / changed in our database only — 0 calls to Google for SKU Mgr or History',
+    va.ok !== false && vb.ok !== false && phNow.location === 'C1=9-9-1' && phNow.cases === 4 && ocNow.cases === 3 && gML === 0, { va, vb, phNow, ocNow, gML });
+  check('…numbers add up: 1 + 3 = 4 at the placeholder, 5 − 2 = 3, whole shelf ' + t0 + ' + 3 − 2', shelf() === t0 + 1, { before: t0, after: shelf() });
+  globalThis.fetch = keep;
+  const { readFileSync: rfG } = await import('node:fs'); const wk = rfG(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…any other SKU Mgr / History sheet call is answered from our database (reads) or skipped (copies); the 2 tools that copied the old sheet over our database are off',
+    /if \(book === env\.SHEET_ID\) \{ \/\/ SKU Mgr \/ History: our database, never Google/.test(wk) && /const XS_D1_TABS = new Set\(\['Master_List', 'Inventory_Log'\]\)/.test(wk)
+      && /status: 410[^\n]*\/\/ 🗄 was: return await updateCogsFromMaster/.test(wk) && /status: 410[^\n]*\/\/ 🗄 was: return await inventoryD1Migrate/.test(wk), null);
+  check('…every other tab moves on its own (server timer, a few per run) + Admin "📥 Move everything now"; Product_Catalog / Price_Flags / PRICE_DECISION no longer held; formula tabs still wait (would freeze)',
+    /ctx\.waitUntil\(xsAutoMoveAll\(env, 20000, 'auto'\)/.test(wk) && /url\.pathname === '\/admin\/db-move\/all'/.test(wk) && !/^\s*(Price_Flags|PRICE_DECISION|Product_Catalog):/m.test(wk)
+      && /adDbEverything/.test(rfG(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8')), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

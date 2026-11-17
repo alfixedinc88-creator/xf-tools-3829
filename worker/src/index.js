@@ -163,11 +163,43 @@ async function xsClear(env, book, a1) {
   return { spreadsheetId: book, clearedRange: a1 };
 }
 const xsJ = o => new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } });
+// 🗄 SKU Mgr (Master_List) and History (Inventory_Log) live in our database already (master_list / inventory_log). Owner (2026-11-17):
+// "I want no more google sheet" → no call for those two tabs reaches Google any more: a read is answered from the database in the
+// sheet's columns (Master_List A..P = skuMgrSheetValues; Inventory_Log A..R), and a write — only ever a copy of what was just saved
+// in the database — is skipped (answered "done"). The stock itself is only ever counted in the database, so nothing changes in it.
+const XS_D1_TABS = new Set(['Master_List', 'Inventory_Log']);
+async function xsD1TabValues(env, tab) {
+  if (tab === 'Master_List') return await skuMgrSheetValues(env);
+  const rows = (await env.DB.prepare('SELECT * FROM inventory_log ORDER BY id').all()).results || [];
+  const B = v => v === 1 || v === '1' || v === true || v === 'TRUE' ? 'TRUE' : 'FALSE';
+  return [['Timestamp', 'Type', 'PartNum', 'Location', 'Cases', 'Initials', 'Notes', 'Status', 'VerifiedBy', 'VerifiedAt', 'OverwriteLocation', 'IsNew', 'IsPlaceholder', 'MasterRowIndex', 'SKU', 'TransferId', 'PairedLocation', 'Name']]
+    .concat(rows.map(r => [r.timestamp || '', r.type || '', r.part_num || '', r.location || '', r.cases ?? '', r.initials || '', r.notes || '', r.status || '', r.verified_by || '', r.verified_at || '',
+      r.overwrite_loc || '', B(r.is_new), B(r.is_placeholder), r.master_row_index ?? '', r.sku || '', r.transfer_id || '', r.paired_location || '', r.name || '']));
+}
+async function xsD1Get(env, a1) {
+  const R = xsRange(a1), all = await xsD1TabValues(env, R.tab), out = [];
+  for (let r = R.r1; r <= Math.min(all.length, R.r2); r++) out.push((all[r - 1] || []).slice(R.c1 - 1, R.c2 === Infinity ? undefined : R.c2).map(xsCell));
+  while (out.length && !out[out.length - 1].length) out.pop();
+  return { range: a1, majorDimension: 'ROWS', values: out };
+}
+const xsD1Done = (book, a1, n) => ({ spreadsheetId: book, updatedRange: '', updatedRows: n || 0, updates: { spreadsheetId: book, updatedRange: '', updatedRows: n || 0 }, clearedRange: a1, skipped: 'kept in our database' });
 // One Google Sheets REST call → answered from the database when its tab(s) moved; null = send to Google.
 async function xsHandle(env, url, init) {
   const U = new URL(url), method = String((init && init.method) || 'GET').toUpperCase();
   const m = /^\/v4\/spreadsheets\/([^/:?]+)(.*)$/.exec(U.pathname); if (!m) return null;
-  const book = decodeURIComponent(m[1]), rest = m[2], moved = await xsMoved(env, book);
+  const book = decodeURIComponent(m[1]), rest = m[2];
+  if (book === env.SHEET_ID) { // SKU Mgr / History: our database, never Google
+    const isD1 = a1 => XS_D1_TABS.has(xsRange(a1).tab);
+    let w;
+    if ((w = /^\/values\/(.+?)(:append|:clear)?$/.exec(rest)) && isD1(decodeURIComponent(w[1]))) {
+      const a1 = decodeURIComponent(w[1]);
+      return xsJ(!w[2] && method === 'GET' ? await xsD1Get(env, a1) : xsD1Done(book, a1));
+    }
+    if (rest === '/values:batchGet') { const rg = U.searchParams.getAll('ranges'); if (rg.length && rg.every(isD1)) return xsJ({ spreadsheetId: book, valueRanges: await Promise.all(rg.map(a => xsD1Get(env, a))) }); }
+    if (rest === '/values:batchUpdate') { let b = {}; try { b = JSON.parse(typeof init.body === 'string' ? init.body : '{}'); } catch (_) {}
+      const data = b.data || []; if (data.length && data.every(d => isD1(d.range))) return xsJ({ spreadsheetId: book, totalUpdatedRows: 0, responses: data.map(d => xsD1Done(book, d.range)), skipped: 'kept in our database' }); }
+  }
+  const moved = await xsMoved(env, book);
   if (!moved.size) return null;
   const body = async () => { try { return JSON.parse(typeof init.body === 'string' ? init.body : await new Response(init.body).text()); } catch (_) { return {}; } };
   const tabOf = a1 => xsRange(a1).tab;
@@ -254,7 +286,7 @@ async function adminDbMoveList(env) {
     try { const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(b.id)}?fields=sheets.properties(title,gridProperties(rowCount,columnCount))`, { headers: { Authorization: 'Bearer ' + token } });
       const d = await g.json(); if (d.error) throw new Error(d.error.message); tabs = (d.sheets || []).map(x => x.properties.title); } catch (e) { err = String(e.message || e).slice(0, 160); }
     Object.values(moved).filter(t => t.book === b.id && !tabs.includes(t.tab)).forEach(t => tabs.push(t.tab));
-    books.push({ key: b.key, name: b.names.join(' + '), err, tabs: tabs.map(t => { const m = moved[b.id + '|' + t]; return { tab: t, moved: !!m, hold: XS_HOLD[t] || '', rows: m ? m.rows : null, cells: m ? m.cells : null, at: m ? m.copied_at : null, by: m ? m.by_user : null }; }) });
+    books.push({ key: b.key, name: b.names.join(' + '), err, tabs: tabs.map(t => { const d1 = b.id === env.SHEET_ID && XS_D1_TABS.has(t), m = d1 ? { rows: t === 'Master_List' ? 'SKU Mgr' : 'History', cells: 'live', copied_at: 'always' } : moved[b.id + '|' + t]; return { tab: t, moved: !!m, hold: d1 ? '' : XS_HOLD[t] || '', rows: m ? m.rows : null, cells: m ? m.cells : null, at: m ? m.copied_at : null, by: m ? m.by_user : null }; }) });
   }
   return cors(new Response(JSON.stringify({ ok: true, books }), { headers: { 'Content-Type': 'application/json' } }));
 }
@@ -279,13 +311,42 @@ async function adminDbMoveDo(undo, request, env, s) {
 // Copy one tab from Google into the database (once), then check it: same rows, same filled cells, same text.
 // Not moved (yet): a tab Google CALCULATES (formulas — in our database its numbers would freeze), and a tab filled or edited
 // outside the app (new rows there would never reach the app). Each needs its own database version first.
+// Owner (2026-11-17): "no one change anything on the google sheet right now, I am only one working on this … move everything to our
+// data base, I want no more google sheet" → Price_Flags, PRICE_DECISION and Product_Catalog are moved like every other tab now.
 const XS_HOLD = {
-  Price_Flags: 'filled by a tool outside the app (price alerts) — needs its own database version first',
-  PRICE_DECISION: 'filled outside the app — needs its own database version first',
-  Product_Catalog: 'edited by hand in Google, then imported — edit it in the app first',
-  Master_List: 'the live SKU Mgr is already in our database — next step answers this tab from it directly',
-  Inventory_Log: 'the live History is already in our database — next step answers this tab from it directly',
+  Master_List: 'answered from SKU Mgr in our database directly (no copy needed)',
+  Inventory_Log: 'answered from History in our database directly (no copy needed)',
 };
+// 🗄 Owner (2026-11-17): "move everything to our data base, I want no more google sheet". Every tab of every spreadsheet the app
+// uses is moved on its own (the same checked copy as Admin → 🗄 Database: rows + cells + text checked ✅, else not moved), a few at a
+// time on the server's timer and from Admin → "📥 Move everything now". A tab Google CALCULATES (formulas) stays until it has its own
+// version in the app (its numbers would freeze); it is listed with why. Each try is kept in xs_auto (when, ok, why).
+async function xsAutoMoveAll(env, budgetMs, who) {
+  await xsTables(env);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS xs_auto (book TEXT NOT NULL, tab TEXT NOT NULL, at TEXT, ok INTEGER, note TEXT, PRIMARY KEY (book, tab))').run();
+  const t0 = Date.now(), done = [], left = [];
+  let token; try { token = await getToken(env); } catch (e) { return { ok: false, error: 'Google sign-in: ' + ((e && e.message) || e), done, left }; }
+  for (const b of xsBooks(env)) {
+    let tabs = [];
+    try { const g = await globalThis.fetch(`${SHEETS_URL}/${encodeURIComponent(b.id)}?fields=sheets.properties(title)`, { headers: { Authorization: 'Bearer ' + token } });
+      const d = await g.json(); if (d.error) throw new Error(d.error.message); tabs = (d.sheets || []).map(x => x.properties.title); }
+    catch (e) { left.push({ book: b.key, tab: '*', why: 'Google: ' + String((e && e.message) || e).slice(0, 120) }); continue; }
+    const moved = await xsMoved(env, b.id);
+    for (const tab of tabs) {
+      if (moved.has(tab)) continue;
+      if (XS_HOLD[tab]) { left.push({ book: b.key, tab, why: XS_HOLD[tab] }); continue; }
+      const prev = await env.DB.prepare('SELECT at, ok, note FROM xs_auto WHERE book = ? AND tab = ?').bind(b.id, tab).first().catch(() => null);
+      if (prev && !prev.ok && Date.now() - Date.parse(prev.at) < 6 * 3600000) { left.push({ book: b.key, tab, why: prev.note || 'not moved' }); continue; } // tried in the last 6 h
+      if (Date.now() - t0 > budgetMs) { left.push({ book: b.key, tab, why: 'next run' }); continue; }
+      let r; try { r = await xsCopyTab(env, b.id, tab, who || 'auto'); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+      const note = r.ok ? `${r.rows} rows, ${r.cells} cells ✅` : (r.error || (r.want ? `check failed — Google ${r.want.rows} rows / ${r.want.cells} cells, database ${r.got.rows} / ${r.got.cells}` : 'not moved'));
+      await env.DB.prepare('INSERT INTO xs_auto (book, tab, at, ok, note) VALUES (?,?,?,?,?) ON CONFLICT(book, tab) DO UPDATE SET at = excluded.at, ok = excluded.ok, note = excluded.note')
+        .bind(b.id, tab, new Date().toISOString(), r.ok ? 1 : 0, String(note).slice(0, 300)).run().catch(() => {});
+      (r.ok ? done : left).push({ book: b.key, tab, ...(r.ok ? { rows: r.rows } : { why: note }) });
+    }
+  }
+  return { ok: true, done, left, more: left.some(x => x.why === 'next run') };
+}
 async function xsCopyTab(env, book, tab, who) {
   await xsTables(env);
   if (XS_HOLD[tab]) return { ok: false, tab, hold: true, error: 'Not moved: ' + XS_HOLD[tab] };
@@ -6751,8 +6812,16 @@ async function inventoryVerifyInner(request, env) {
           .run().catch(()=>{});
       }
 
+    } else if (isPlaceholder && overwriteLocation && type === 'IN' && env.DB) {
+      // 🗄 Owner (2026-11-17): "move everything to our data base, I want no more google sheet". The "will be here" placeholder row is found
+      // in SKU Mgr (our database) — was the Google Sheet, whose cases were added to. Same result: that row gets the real spot and
+      // its cases + the cases put in.
+      const ph = await d1First(env, "SELECT id, cases FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND LOWER(location) LIKE '%will be here%' ORDER BY id LIMIT 1", [partNum.toUpperCase()]);
+      if (!ph) return cors(new Response(JSON.stringify({ error: 'Placeholder row not found in SKU Mgr — may have been edited' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      const newCases = Math.round(((parseFloat(ph.cases) || 0) + cases) * 10000) / 10000;
+      await env.DB.prepare('UPDATE master_list SET location=?,cases=?,updated_at=? WHERE id=?').bind(overwriteLocation, newCases, new Date().toISOString(), ph.id).run();
     } else if (isPlaceholder && overwriteLocation && type === 'IN') {
-      // isPlaceholder needs full ML scan — load Sheets only here
+      // isPlaceholder needs full ML scan — load Sheets only here (no database at all)
       if (!mlRows.length) {
         const mlData = await invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] }));
         mlRows = mlData.values || [];
@@ -6802,14 +6871,19 @@ async function inventoryVerifyInner(request, env) {
             if (fuzzyRow && fuzzyRow.sheet_row) resolvedRowIndex = fuzzyRow.sheet_row;
           } catch(e) { console.error('[D1] fuzzy row lookup:', e.message); }
         }
-        if (!resolvedRowIndex) {
+        if (!resolvedRowIndex && env.DB) { // 🗄 SKU Mgr (our database) by part # + spot — not the Google Sheet (owner 2026-11-17)
+          const byText = await d1First(env, 'SELECT id FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC, id LIMIT 1',
+            [partNum.toUpperCase(), String(overwriteLocation || location || '').trim().toUpperCase()]).catch(() => null);
+          if (byText) targetId = byText.id;
+        }
+        if (!resolvedRowIndex && !targetId && !env.DB) {
           if (!mlRows.length) {
             const mlData = await invSheetGet(env, 'Master_List!A1:O15000').catch(() => ({ values: [] }));
             mlRows = mlData.values || [];
           }
           resolvedRowIndex = findMasterRow(mlRows, partNum, overwriteLocation || location);
         }
-        if (!resolvedRowIndex) return cors(new Response(JSON.stringify({ error: `Row not found in Master_List for ${partNum} @ ${location} — sheet may have changed` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+        if (!resolvedRowIndex && !targetId) return cors(new Response(JSON.stringify({ error: `Row not found in Master_List for ${partNum} @ ${location} — sheet may have changed` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
       }
 
       // Everything below targets whichever key was resolved above — id
@@ -10618,6 +10692,7 @@ function findMasterRowPlaceholder(mlRows, partNum) {
 // Helper: get Master_List sheetId (gid) for batchUpdate
 // Helper: set background color on a cell range in Master_List
 async function invSetPurpleCell(env, rowNum) {
+  return; // 🗄 SKU Mgr's colours were on the Google Sheet only — it is not used any more (owner 2026-11-17: "no more google sheet")
   try {
     const sheetId = await getMasterListSheetId(env);
     // Col I = index 8 (0-based), rowNum is 1-based so startRowIndex = rowNum-1
@@ -10645,6 +10720,7 @@ async function invSetPurpleCell(env, rowNum) {
 }
 
 async function invSetTealCell(env, rowNum) {
+  return; // 🗄 (as above) no Google Sheet any more
   try {
     const sheetId = await getMasterListSheetId(env);
     // Cyan on cols H+I (location + cases) for audit/found-on-shelf operations
@@ -10919,6 +10995,7 @@ const _app = {
       }
       if (url.pathname === '/admin/users/list' && method === 'GET')            return await adminListUsers(env, credSession);
       if (url.pathname === '/admin/db-move' && method === 'GET')               return await adminDbMoveList(env);
+      if (url.pathname === '/admin/db-move/all' && method === 'POST') { const r = await xsAutoMoveAll(env, 22000, String((credSession && (credSession.displayName || credSession.username)) || 'admin').slice(0, 40)); if (credSession && credSession.userId) await logUserActivity(env, credSession.userId, 'db_move_all', { done: r.done.length, left: r.left.length }).catch(() => {}); return cors(new Response(JSON.stringify(r), { headers: { 'Content-Type': 'application/json' } })); }
       if ((url.pathname === '/admin/db-move/copy' || url.pathname === '/admin/db-move/undo') && method === 'POST') return await adminDbMoveDo(url.pathname.endsWith('undo'), request, env, credSession);
       if (url.pathname === '/admin/users/create' && method === 'POST')        return await adminCreateUser(request, env, credSession);
       if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
@@ -11672,7 +11749,7 @@ const _app = {
       }
       if (path === '/inventory/update-cogs-from-master' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await updateCogsFromMaster(request, env);
+        return cors(new Response(JSON.stringify({ ok: false, error: 'Turned off: it copied the old Google Sheet over our database (owner 2026-11-17: no more Google Sheet)' }), { status: 410, headers: { 'Content-Type': 'application/json' } })); // 🗄 was: return await updateCogsFromMaster(request, env);
       }
       if (path === '/inventory/import-products' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -11788,7 +11865,7 @@ const _app = {
       }
       if (path === '/inventory/d1-migrate' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventoryD1Migrate(request, env);
+        return cors(new Response(JSON.stringify({ ok: false, error: 'Turned off: it copied the old Google Sheet over our database (owner 2026-11-17: no more Google Sheet)' }), { status: 410, headers: { 'Content-Type': 'application/json' } })); // 🗄 was: return await inventoryD1Migrate(request, env);
       }
       if (path === '/inventory/d1-verify' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -12006,6 +12083,8 @@ const _app = {
     const dow = now.getUTCDay();
     // Every 30 min: auto-fetch eBay messages
     ctx.waitUntil(cronFetchEbayMessages(env));
+    // 🗄 Every Google Sheet tab moves into our database on its own, a few each time (owner 2026-11-17: "I want no more google sheet")
+    ctx.waitUntil(xsAutoMoveAll(env, 20000, 'auto').then(r => console.log('[db move auto]', JSON.stringify({ done: (r.done || []).length, left: (r.left || []).length }))).catch(e => console.error('[db move auto]', e.message)));
     // 🧑‍💼 Office: every hour, read the channels' messages / returns / cancellations / feedback / account health into the to-do list
     if (min < 30) ctx.waitUntil(officePull(env, true).catch(e => console.error('[office pull]', e.message)));
     // 🛡 Audit: anything not matching the Audit number is set to it (History [AUDIT FIX], with why)
@@ -12157,7 +12236,12 @@ function getSheetId(tab, env) {
 // was in our data base". Products (Item Search's list: name, warehouse short name, weight, keywords) is kept in OUR DATABASE now (D1
 // `products`), like SKU Mgr. The old Google Sheet is read ONE last time to copy it in (the sheet was where people typed until now: its
 // rows win in that copy), then never again — every ✏️ save, weight fill and read uses the database only.
+let _prodReady = null, _prodReadyAt = 0; // ⚡ once the copy is done, the set-up isn't re-checked on every request
 async function productsDbReady(env) {
+  if (_prodReady && _prodReady.copied && Date.now() - _prodReadyAt < 3600000) return _prodReady;
+  const r = await productsDbReady0(env); if (r && r.copied) { _prodReady = r; _prodReadyAt = Date.now(); } return r;
+}
+async function productsDbReady0(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id TEXT, sku TEXT NOT NULL, base_sku TEXT NOT NULL,
     name TEXT, warehouse_name TEXT, weight REAL DEFAULT 0, updated_at TEXT)`).run().catch(() => {});
   for (const c of ['product_id TEXT', 'base_sku TEXT', 'warehouse_name TEXT', 'weight REAL', 'updated_at TEXT', 'keywords TEXT'])
