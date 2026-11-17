@@ -1617,7 +1617,7 @@ body {
       <div style="font-size:12px;color:var(--text3);margin-bottom:14px;">Search by tracking number or customer name. Shows order items, customer, and channel.</div>
       <div class="ps-lookup-row" style="margin-bottom:8px;">
         <input class="ps-lookup-input" id="ps-ol-input" type="text"
-          placeholder="Tracking number or customer name…"
+          placeholder="Tracking #, customer name, order # or part # / SKU…"
           autocomplete="off" autocorrect="off" autocapitalize="off"
           onkeydown="if(event.key==='Enter')psOrderLookup()">
         <button class="ps-btn-go" onclick="psOrderLookup()">Search</button>
@@ -5310,7 +5310,7 @@ window.psOrderLookup = async function() {
   var days   = document.getElementById('ps-ol-days').value || '30'; // owner 2026-11-14: Order Lookup looks back 30 days
   var status = document.getElementById('ps-ol-status');
   var results= document.getElementById('ps-ol-results');
-  if (!q || q.length < 2) { status.textContent = 'Enter a tracking number or customer name.'; return; }
+  if (!q || q.length < 2) { status.textContent = 'Enter a tracking number, customer name, order # or part # / SKU.'; return; }
 
   status.textContent = 'Searching…';
   results.innerHTML  = '';
@@ -5333,7 +5333,7 @@ window.psOrderLookup = async function() {
 
     if (list.length === 0) return;
 
-    results.innerHTML = list.map(_psRenderOrderLookupCard).join('');
+    results.innerHTML = psOlItemSummaryHtml(d.itemSummary, days) + list.map(_psRenderOrderLookupCard).join('');
   } catch(e) {
     status.textContent = 'Request failed: ' + e.message;
   }
@@ -9764,6 +9764,18 @@ var _PS_AL_LABELS = {
 // 💲 Owner (2026-11-06): "hide the price of the label, sometime we screen shoot it to show our customers, don't want to show them how much is
 // our label cost us" — the Order lookup card never shows a dollar amount (the label's or a carrier's rate). Only what is SHOWN changes: Auto
 // Label's record (📜 Labels bought, the office's Auto Label screens) keeps every price.
+// 📦 Owner (2026-11-17): "search for the part number / sku too, so we know when and how many pieces we ship that date too". When the
+// search matched order ITEMS (a part # / parent / listing SKU), a card on top: in all, and day by day — orders, units ordered, pieces.
+function psOlItemSummaryHtml(sm, days) {
+  if (!sm || !sm.orders) return '';
+  var e = _psAlEsc, n = function(v) { return (Math.round((+v || 0) * 100) / 100).toLocaleString(); };
+  return '<div class="ps-card ps-ol-item-sum" style="margin-bottom:12px;border:2px solid var(--accent)">'
+    + '<div style="font-weight:800;font-size:15px">📦 ' + e(sm.q) + ' shipped — last ' + e(days === 'today' ? 'today' : days + ' days') + '</div>'
+    + '<div style="font-size:14px;margin:4px 0 8px"><b>' + n(sm.pcs) + ' pcs</b> in <b>' + n(sm.orders) + '</b> order' + (sm.orders === 1 ? '' : 's') + ' <span style="color:var(--text3)">(' + n(sm.units) + ' ordered)</span></div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="color:var(--text3);font-size:11px;text-align:left"><th style="padding:3px 6px">Date</th><th style="padding:3px 6px;text-align:right">Orders</th><th style="padding:3px 6px;text-align:right">Ordered</th><th style="padding:3px 6px;text-align:right">Pieces</th></tr>'
+    + sm.byDay.map(function(x) { return '<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;font-family:var(--mono)">' + e(x.date) + '</td><td style="padding:3px 6px;text-align:right">' + n(x.orders) + '</td><td style="padding:3px 6px;text-align:right">' + n(x.units) + '</td><td style="padding:3px 6px;text-align:right;font-weight:700">' + n(x.pcs) + '</td></tr>'; }).join('')
+    + '</table>' + (sm.orders > 50 ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">The 50 newest orders are listed below; the totals count all ' + n(sm.orders) + '.</div>' : '') + '</div>';
+}
 function psOlNoPrice(t) {
   return String(t == null ? '' : t)
     .replace(/Label \$\s?[\d,]+(?:\.\d+)? vs order \$\s?[\d,]+(?:\.\d+)?/g, 'Label cost is high for this order')

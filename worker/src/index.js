@@ -23940,26 +23940,46 @@ async function shipOrderLookup(url, env) {
   const rows = rowsResult.results || [];
 
   const results = [];
+  // 📦 Owner (2026-11-17): "for the 'order lookup' I want I am able to search for the part number / sku too, so we know when and how many
+  // pieces we ship that date too". An order also matches when one of its items is that part # / SKU: the whole part # (24-1-8=10X), its
+  // parent (24-1-8 → every bag size), or the listing SKU (10=3/8XA, or a piece of it like 3/8XA). Pieces of a line = qty × the pack:
+  // a part # → the number after "=" (24-1-8=10X → 10); a listing SKU → the number before "=" (10=3/8XA → 10).
+  const qItem = qUpper.replace(/\s+/g, '');
+  const itemPcsEach = s0 => { const s1 = String(s0 || '').toUpperCase().replace(/\s+/g, ''); const a = /^(\d+)=/.exec(s1); if (a) return parseInt(a[1], 10) || 1; const b = /=(\d+)/.exec(s1); return b ? parseInt(b[1], 10) || 1 : 1; };
+  const itemHit = li => { const sk = String(li.s || '').toUpperCase().replace(/\s+/g, ''), bn = String(li.b || '').toUpperCase().replace(/\s+/g, '');
+    if (qItem.length < 3) return false;
+    return sk === qItem || bn === qItem || sk.startsWith(qItem + '=') || bn.startsWith(qItem + '=') || (/[=\/A-Z]/.test(qItem) && qItem.length >= 4 && sk.includes(qItem)); };
+  const byDay = {}; let itemOrders = 0, itemPcs = 0, itemUnits = 0;
   for (const r of rows) {
     // Same tri-field match as before: tracking, name, AND order number,
     // every time, regardless of what the query looks like.
     const rowTracking = (r.tracking||'').trim().toUpperCase().replace(/[\s-]/g, '');
     const name       = (r.customer_name||'').toLowerCase();
     const orderNum   = (r.order_num||'').toLowerCase();
-    const match = (rowTracking.length > 0 && (rowTracking === qStripped || rowTracking.includes(qStripped)))
-      || (name.length > 0 && name.includes(qLower))
-      || (orderNum.length > 0 && orderNum.includes(qLower));
-    if (!match) continue;
     let lineItems = [];
     try { lineItems = JSON.parse(r.line_items || '[]'); } catch(_) {}
+    const hits = isTracking ? [] : (Array.isArray(lineItems) ? lineItems : []).filter(itemHit);
+    const match = (rowTracking.length > 0 && (rowTracking === qStripped || rowTracking.includes(qStripped)))
+      || (name.length > 0 && name.includes(qLower))
+      || (orderNum.length > 0 && orderNum.includes(qLower)) || hits.length > 0;
+    if (!match) continue;
+    let itemMatch = null;
+    if (hits.length) {
+      const units = hits.reduce((a, li) => a + (parseFloat(li.q) || 1), 0), pcs = hits.reduce((a, li) => a + (parseFloat(li.q) || 1) * itemPcsEach(li.s || li.b), 0);
+      itemMatch = { units, pcs, items: hits.map(li => ({ s: li.s || '', b: li.b || '', q: parseFloat(li.q) || 1, pcs: (parseFloat(li.q) || 1) * itemPcsEach(li.s || li.b) })) };
+      const d = r.date || ''; const o = byDay[d] = byDay[d] || { date: d, orders: 0, units: 0, pcs: 0 };
+      o.orders++; o.units += units; o.pcs += pcs; itemOrders++; itemUnits += units; itemPcs += pcs;
+    }
     results.push({
       date: r.date||'', tracking: r.tracking||'', orderNum: r.order_num||'', channel: r.channel||'',
       carrier: r.carrier||'', service: r.service||'', shipToState: r.ship_to_state||'',
       reconcileStatus: r.reconcile_status||'', customerName: r.customer_name||'',
       city: r.city||'', zip: r.zip||'', lineItems, address1: r.address1||'', address2: r.address2||'',
       weightLb: r.weight_lb != null ? r.weight_lb : null,
+      ...(itemMatch ? { itemMatch } : {}),
     });
   }
+  const itemSummary = itemOrders ? { q: raw, orders: itemOrders, units: itemUnits, pcs: itemPcs, byDay: Object.values(byDay).sort((a, b) => b.date.localeCompare(a.date)) } : null;
   try { await shipOrderLookupLabels(env, qStripped, isTracking, results); } catch (e) { console.error('[order-lookup labels]', e.message); }
   results.sort((a,b) => b.date.localeCompare(a.date));
   const debugInfo = {
@@ -23968,7 +23988,7 @@ async function shipOrderLookup(url, env) {
     cutoff: todayOnly ? todayStr : cutoff,
     sampleDate: rows.length ? (rows[0].date || '') : '',
   };
-  return cors(new Response(JSON.stringify({ ok: true, q: raw, results: results.slice(0,50), debug: debugInfo }), { headers: { 'Content-Type': 'application/json' } }));
+  return cors(new Response(JSON.stringify({ ok: true, q: raw, results: results.slice(0,50), debug: debugInfo, ...(itemSummary ? { itemSummary } : {}) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 // 🔎 Owner (2026-11-06): "tracking 9334610990370311028492, eBay order 02-15262-72498 — they tried to cancel it, we didn't stop it, and the

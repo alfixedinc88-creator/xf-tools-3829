@@ -14171,5 +14171,29 @@ console.log('\n🛒 AWD Recommendations: a sold-out listing is not dropped — o
     /const source=S\.live\.length\?S\.live\.concat\(S\.fba\|\|\[\]\):S\.fba;/.test(ah) && /AWDSS\.amz = d\.amz \|\| \{\};[^\n]*awdApplyOwnSales\(\);/.test(ah) && /if \(AWDSS\.loaded\) \{ awdApplyOwnSales\(\); awdApplyPlan\(\); \}/.test(ah), null);
 }
 
+console.log('\n📦 Order Lookup: search a part # / SKU — which orders, when, and how many pieces each day');
+{
+  // Owner (2026-11-17): "for the 'order lookup' I want I am able to search for the part number / sku too, so we know when and how many pieces we ship that date too".
+  const cols = sq.prepare('PRAGMA table_info(ship_manifest_log)').all().map(c => c.name);
+  const day = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  const add = (date, tracking, order, items) => { const rw = { date, tracking, order_num: order, customer_name: 'Test ' + order, line_items: JSON.stringify(items) };
+    const k = Object.keys(rw).filter(x => cols.includes(x)); sq.prepare('INSERT INTO ship_manifest_log (' + k.join(',') + ') VALUES (' + k.map(() => '?').join(',') + ')').run(...k.map(x => rw[x])); };
+  add(day(1), '1ZOLSKU0000000001', 'OL-1', [{ s: '77-1-8=10X', q: 2, b: '77-1-8' }, { s: '55-5-5=5', q: 1, b: '55-5-5' }]);
+  add(day(1), '1ZOLSKU0000000002', 'OL-2', [{ s: '10=7/8XQ', q: 3, b: '77-1-8' }]);
+  add(day(3), '1ZOLSKU0000000003', 'OL-3', [{ s: '77-1-8=25', q: 1, b: '77-1-8' }]);
+  add(day(3), '1ZOLSKU0000000004', 'OL-4', [{ s: '77-1-80=5', q: 9, b: '77-1-80' }]);
+  const whole = await get('/ship/order-lookup?q=' + encodeURIComponent('77-1-8=10X') + '&days=30'), parent = await get('/ship/order-lookup?q=77-1-8&days=30'), listing = await get('/ship/order-lookup?q=' + encodeURIComponent('7/8XQ') + '&days=30');
+  const ords = d => (d.results || []).map(x => x.orderNum).sort().join();
+  check('the whole part # 77-1-8=10X → order OL-1 only: 2 × 10 = 20 pcs, ' + day(1),
+    ords(whole) === 'OL-1' && whole.itemSummary.pcs === 20 && whole.itemSummary.orders === 1 && whole.itemSummary.byDay.length === 1 && whole.itemSummary.byDay[0].date === day(1), whole.itemSummary);
+  check('…the parent 77-1-8 → every bag size: OL-1 (2×10) + OL-2 (listing 10=7/8XQ ×3 = 30) on ' + day(1) + ' = 50 pcs, OL-3 (1×25) on ' + day(3) + ' = 25 pcs; 75 pcs in 3 orders — never 77-1-80',
+    ords(parent) === 'OL-1,OL-2,OL-3' && parent.itemSummary.pcs === 75 && parent.itemSummary.orders === 3
+      && JSON.stringify(parent.itemSummary.byDay.map(x => [x.date, x.orders, x.pcs])) === JSON.stringify([[day(1), 2, 50], [day(3), 1, 25]]), parent.itemSummary);
+  check('…a listing SKU (7/8XQ) → OL-2: 3 × 10 = 30 pcs; customer name / order # search unchanged (no item card)',
+    ords(listing) === 'OL-2' && listing.itemSummary.pcs === 30 && !(await get('/ship/order-lookup?q=' + encodeURIComponent('Test OL-4') + '&days=30')).itemSummary, listing.itemSummary);
+  const { readFileSync: rfL } = await import('node:fs'); const ph = rfL(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the page shows it on top: "📦 … shipped", pieces + orders, a line for each day', /results\.innerHTML = psOlItemSummaryHtml\(d\.itemSummary, days\) \+ list\.map/.test(ph) && /function psOlItemSummaryHtml\(sm, days\)/.test(ph) && /part # \/ SKU…/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
