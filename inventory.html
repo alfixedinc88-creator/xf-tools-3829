@@ -4266,11 +4266,12 @@ window.invCredLogin = async function() {
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; l._left -= n; left = Math.round((left - n) * 100) / 100;
       var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, pallet: !!l._pick.pallet }); };
     // FIRST boxes (open / damaged), then =OLD: always used up first, even when that means more than one spot (owner).
-    rankedAll.forEach(function(l) { if (left > 0 && l._pick.first < 2 && !l._pick.nf) take(l, Math.min(l._left, left)); });
+    rankedAll.forEach(function(l) { if (left > 0 && l._pick.first < 2 && !l._pick.nf && !l._pick.gp) take(l, Math.min(l._left, left)); });
     // Shelf spots first (all the rules below), then spots still on pallets (same rules).
-    [0, 1, 2].forEach(function(onPal) { // shelves, pallets, then ⚠ None Found spots
+    [0, 1, 2, 3].forEach(function(onPal) { // shelves, pallets, 🏚 Grandpa Basement, then ⚠ None Found spots
     if (left <= 0) return;
-    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
+    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 3 : l._pick.gp ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
+    if (onPal === 2) ranked.forEach(function(l) { if (left > 0 && l._pick.first < 2) take(l, Math.min(l._left, left)); }); // in the basement too: FIRST, then =OLD
     [0, 1].forEach(function(tier) {
       if (left <= 0) return;
       var c = ranked.filter(function(l) { return l._pick.tier === tier; });
@@ -4344,14 +4345,15 @@ window.invCredLogin = async function() {
       var note = tier === 2 ? 'FBA bag of ' + pn + ' — kept for its own listing'
         : tier === 1 ? 'same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA'
         : '';
-      var pal = invOnPallet(l);
-      l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal, nf: !!l.noneFound,
-        why: (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
+      var pal = invOnPallet(l), gp = /GRANDPA/i.test(String(l.location || '')) /* 🏚 Grandpa Basement — see invOnPallet */;
+      l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal, nf: !!l.noneFound, gp: gp,
+        why: (gp ? '🏚 Grandpa Basement — used last, only when the spots here don\'t have enough · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
           + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b), A = a._pick, B = b._pick;
       if (A.nf !== B.nf) return A.nf ? 1 : -1; // ⚠ reported None Found, not counted since → last of all (owner 2026-10-29)
+      if (A.gp !== B.gp) return A.gp ? 1 : -1; // 🏚 Grandpa Basement after every spot here (owner 2026-11-17)
       if (A.pallet !== B.pallet) return A.pallet ? 1 : -1; // shelves before pallets
       if (A.tier !== B.tier) return A.tier - B.tier;
       if (A.score !== B.score) return A.score - B.score;
@@ -4395,9 +4397,9 @@ window.invCredLogin = async function() {
       if (ex) { ex.cases += n; ex.pieces += n * u; } else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, how: l._pick.how, pieces: n * u, pallet: !!l._pick.pallet }); };
     var casesFor = function(l) { return Math.min(l._left, Math.ceil(left / unitOf(l) - 1e-9)); };
     // Shelf spots first (all the rules below), then spots still on pallets (same rules).
-    [0, 1, 2].forEach(function(onPal) { // shelves, pallets, then ⚠ None Found spots
+    [0, 1, 2, 3].forEach(function(onPal) { // shelves, pallets, 🏚 Grandpa Basement, then ⚠ None Found spots
     if (left <= 0.001) return;
-    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
+    var ranked = rankedAll.filter(function(l) { return (l._pick.nf ? 3 : l._pick.gp ? 2 : l._pick.pallet ? 1 : 0) === onPal; });
     // Tiers -1 (the part # itself), 0 (not FBA), 1 (kept for a low FBA part #):
     // part # by part # in rank order; one spot that has them all, else the
     // fullest spots first.
@@ -4720,6 +4722,10 @@ window.invCredLogin = async function() {
   // (not moved off in 🚢 Container here). Owner: pallets stand against each
   // other and are hard to get at — use every shelf spot first, FBA bags on
   // shelves included, and these last (the FBA rules still apply among them).
+  // 🏚 Owner (2026-11-17): "for inventory out don't recommend the grandpa basement — if we have something here, get the stuff here first,
+  // except we don't have nothing here" (a spot named "Grandpa Basement", e.g. for 30-3-4=10X — NOT BSMT, "nothing to do the BSMT").
+  // Both Stock Out tabs: every spot here first (shelves, then pallets — FIRST / =OLD boxes here too), Grandpa Basement only for what is
+  // still missing after that (even a FIRST / =OLD box there waits); ⚠ None Found spots stay last of all.
   function invOnPallet(l) {
     var avail = l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0);
     return (parseFloat(l.palletBoxes) || 0) > 0 && avail <= (parseFloat(l.palletBoxes) || 0) + 1e-9;
@@ -4749,8 +4755,8 @@ window.invCredLogin = async function() {
     // (8-8-8=OLDFIRST, 8-8-8=10FIRST): always use it first", then =OLD ("=OLD always first"), then the rules below.
     function firstOf(pn) { return /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2; }
     locs.forEach(function(l) {
-      var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn);
-      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, why: (l.setOf ? '🔗 Hot & cold set box ' + l.setOf + ' — take only the ' + String(invPart && invPart.baseSku || '').toUpperCase() + ' pieces · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
+      var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn), gp = /GRANDPA/i.test(String(l.location || '')) /* 🏚 Grandpa Basement — see invOnPallet */;
+      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, gp: gp, why: (gp ? '🏚 Grandpa Basement — used last, only when the spots here don\'t have enough · ' : '') + (l.setOf ? '🔗 Hot & cold set box ' + l.setOf + ' — take only the ' + String(invPart && invPart.baseSku || '').toUpperCase() + ' pieces · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
         : f === 1 ? '=OLD — always used first (after FIRST boxes)' + (pal ? ' · 🚢 on a pallet' : '') : ((t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
         : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : ''))) };
@@ -4758,6 +4764,7 @@ window.invCredLogin = async function() {
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b);
       if (a._pick.nf !== b._pick.nf) return a._pick.nf ? 1 : -1; // ⚠ reported None Found, not counted since → last of all (owner 2026-10-29)
+      if (a._pick.gp !== b._pick.gp) return a._pick.gp ? 1 : -1; // 🏚 Grandpa Basement after every spot here (owner 2026-11-17)
       if (a._pick.first !== b._pick.first) return a._pick.first - b._pick.first; // FIRST boxes, then =OLD, before everything
       if (a._pick.pallet !== b._pick.pallet) return a._pick.pallet ? 1 : -1; // shelves (even FBA bags) before pallets
       if (a._pick.tier !== b._pick.tier) return a._pick.tier - b._pick.tier;
