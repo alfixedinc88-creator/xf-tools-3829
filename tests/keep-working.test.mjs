@@ -13657,6 +13657,13 @@ console.log('\n🏆 Packing / Picking by scan: Top 3 — most orders in any 60 m
     box.inserted && /⚠ 2 labels were marked printed but never sent to the printer/.test(box.innerHTML) && /How we know: every label that goes to the printer is saved in a 🗂 batch/.test(box.innerHTML) && /<b>1 more<\/b> like this was scanned after/.test(box.innerHTML) && /CUT-B/.test(box.innerHTML) && /psAlCutoffPrint\(this\)">🖨 Print all 2 now/.test(box.innerHTML)
       && /psAlCutoffClear\(this\)/.test(box.innerHTML) && /\/veeqo\/autolabel\/labels-unbatched/.test(psS) && /addEventListener\('beforeunload', function\(ev\) \{ if \(_psAlLabelBusy && _psAlBatch\)/.test(psS)
       && /source: 'cut off — printed again'/.test(psS), box.innerHTML.slice(0, 200));
+  // Owner (2026-11-17): "we have the Print report — every printed label, that picks up 'not scanned anywhere yet'; I wait for tomorrow … make sure
+  // it works over there" — it was built from the 🗂 batches only, so these cut-off labels were not in it at all.
+  const rpc = await get('/ship/auto-print-report?days=3'), RC = n => (rpc.rows || []).find(x => x.order === n) || {};
+  check('🧾 Print report (every printed label) has the cut-off labels too: CUT-C / CUT-H "⚠ cut off" ❌ not scanned anywhere yet; CUT-G cut off but packed → ⚠ scanned later; CUT-B (printed again) and CUT-A (by hand) in; cancelled / still waiting / 5 days old not',
+    rpc.ok && RC('CUT-C').how === 'cut' && RC('CUT-C').state === 'missing' && RC('CUT-H').how === 'cut' && RC('CUT-H').state === 'missing' && RC('CUT-G').how === 'cut' && RC('CUT-G').state === 'later'
+      && RC('CUT-B').how === 'cutfix' && RC('CUT-A').how === 'hand' && !RC('CUT-F').order && !RC('CUT-E').order && !RC('CUT-D').order
+      && /r\.how === 'cut' \? ' <span style="color:var\(--red\)" title="marked printed, but the round was cut off/.test(psS), (rpc.rows || []).filter(r => /^CUT-/.test(r.order)).map(r => [r.order, r.how, r.state]));
   for (const id of [A, B, C, D, E, F, G, Hh]) sq.prepare('DELETE FROM label_print_queue WHERE id = ?').run(id);
   sq.exec("DELETE FROM ship_scan_log WHERE tracking LIKE 'CUTCUT-%'");
   sq.exec("DELETE FROM label_print_batch WHERE source IN ('cut off — printed again') OR label_ids = '[" + A + "]'");

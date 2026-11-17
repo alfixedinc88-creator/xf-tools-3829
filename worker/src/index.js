@@ -23568,9 +23568,19 @@ async function shipAckPrintDupe(request, env) {
 // Print Log's 🤖 AUTO PRINT tag stays the printer station's only.
 async function shipAutoPrinted(env, sinceIso, withHand) {
   await labelBatchEnsure(env);
-  const batches = await d1All(env, "SELECT ts, label_ids, source FROM label_print_batch WHERE (source = 'printer station'" + (withHand ? " OR source = 'by hand'" : '') + ") AND ts >= ? ORDER BY ts", [sinceIso]);
+  const batches = await d1All(env, "SELECT ts, label_ids, source FROM label_print_batch WHERE (source = 'printer station'" + (withHand ? " OR source = 'by hand' OR source LIKE 'cut off%'" : '') + ") AND ts >= ? ORDER BY ts", [sinceIso]);
   const at = new Map(), how = new Map();
-  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {} ids.forEach(id => { id = parseInt(id); if (id > 0) { at.set(id, b.ts); how.set(id, b.source === 'by hand' ? 'hand' : 'auto'); } }); });
+  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {} ids.forEach(id => { id = parseInt(id); if (id > 0) { at.set(id, b.ts); how.set(id, b.source === 'by hand' ? 'hand' : /^cut off/.test(b.source || '') ? 'cutfix' : 'auto'); } }); });
+  // 🧾 Owner (2026-11-17): "we have the Print report — every printed label, that picks up 'not scanned anywhere yet'; I wait for tomorrow to see
+  // if anything is left, then decide to reprint — make sure it works over there". It was built from the 🗂 batches only, so a label marked
+  // printed by a round that was cut off (no batch — the red "never sent to the printer" box) was NOT in it at all. Those are in now too
+  // (how 'cut': marked printed, no batch), so a cut-off label nobody scans stays "❌ Not scanned anywhere yet" here as well.
+  if (withHand) {
+    const cut = await d1All(env, `SELECT id, printed_at FROM label_print_queue q WHERE printed_at >= ? AND cancel_hold IS NULL AND COALESCE(printed_by, '') NOT LIKE '⏭%'
+      AND NOT EXISTS (SELECT 1 FROM label_print_batch b, json_each(b.label_ids) j WHERE b.ts >= ? AND CAST(j.value AS INTEGER) = q.id) LIMIT 500`,
+      [sinceIso, new Date(Date.parse(sinceIso) - 864e5).toISOString()]).catch(() => []);
+    cut.forEach(r => { if (!at.has(r.id)) { at.set(r.id, r.printed_at); how.set(r.id, 'cut'); } });
+  }
   const out = new Map(), ids = [...at.keys()];
   for (let i = 0; i < ids.length; i += 90) {
     const part = ids.slice(i, i + 90);
