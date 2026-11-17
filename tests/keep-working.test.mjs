@@ -13741,19 +13741,27 @@ console.log('\n🔗 Hot & cold sets (24-2-1&2): Stock Out Shelving uses the set 
     ('96-6-1','ball valve hot','96-6-1=10','C4=6-6-1',4,10), ('96-6-2','ball valve cold','96-6-2=10','C4=6-6-2',3,10),
     ('96-6-1&2','ball valve set','96-6-1&2=OLD','BO=6-6-9',2,20), ('96-6-1&2','ball valve set','96-6-1&2=2','BO=6-6-8',0,2), ('96-6-10','other','96-6-10=5','C5=6-6-0',1,5)`).run();
   const c0 = shelf();
-  const plain = await get('/inventory/lookup?code=96-6-1'), sets = await get('/inventory/lookup?code=96-6-1&sets=1'), cold = await get('/inventory/lookup?code=96-6-2&sets=1');
-  const pl = l => (l.locations || []).map(x => x.partNum + '@' + x.location + (x.setOf ? ' 🔗' + x.setOf : '')).sort().join(', ');
-  check('Stock Out Shelving search 96-6-1 → its own spot AND the set box 96-6-1&2=OLD (marked 🔗 set); 96-6-2 the same; 96-6-10 never; other screens (no sets=1) unchanged',
-    pl(sets) === '96-6-1&2=2@BO=6-6-8 🔗96-6-1&2, 96-6-1&2=OLD@BO=6-6-9 🔗96-6-1&2, 96-6-1=10@C4=6-6-1' && /96-6-1&2=OLD@BO=6-6-9 🔗/.test(pl(cold)) && /96-6-2=10@C4=6-6-2/.test(pl(cold)) && !/96-6-1=10/.test(pl(cold))
-      && pl(plain) === '96-6-1=10@C4=6-6-1', { plain: pl(plain), sets: pl(sets), cold: pl(cold) });
+  // Owner (2026-11-17) changed the 2026-11-14 rule: "if we only request cold, we should only getting the cold, don't mix for those, if hot,
+  // only hot, if we need hot and cold, we bring hot and cold" → a hot / cold search never gets the mixed set boxes; the SET gets hot + cold.
+  const plain = await get('/inventory/lookup?code=96-6-1'), hot = await get('/inventory/lookup?code=96-6-1&sets=1'), cold = await get('/inventory/lookup?code=96-6-2&sets=1');
+  const sets = await get('/inventory/lookup?code=' + encodeURIComponent('96-6-1&2') + '&sets=1'), setPlain = await get('/inventory/lookup?code=' + encodeURIComponent('96-6-1&2'));
+  const pl = l => (l.locations || []).map(x => x.partNum + '@' + x.location + (x.setPart ? ' 🔗' + x.setPart : '')).sort().join(', ');
+  check('Stock Out Shelving: hot 96-6-1 → only hot (no mixed set box), cold 96-6-2 → only cold; the SET 96-6-1&2 → its own boxes + the hot and the cold boxes (marked); other screens (no sets=1) unchanged',
+    pl(hot) === '96-6-1=10@C4=6-6-1' && pl(cold) === '96-6-2=10@C4=6-6-2' && pl(plain) === '96-6-1=10@C4=6-6-1'
+      && pl(sets) === '96-6-1&2=2@BO=6-6-8, 96-6-1&2=OLD@BO=6-6-9, 96-6-1=10@C4=6-6-1 🔗96-6-1, 96-6-2=10@C4=6-6-2 🔗96-6-2' && !/96-6-10/.test(pl(sets))
+      && pl(setPlain) === '96-6-1&2=2@BO=6-6-8, 96-6-1&2=OLD@BO=6-6-9', { hot: pl(hot), cold: pl(cold), sets: pl(sets), setPlain: pl(setPlain) });
   const { readFileSync: rfS } = await import('node:fs');
   const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ph = rfS(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
   const P = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return { pick: invPickForShelving, plan: invPlanShelvingPull };')(Object.assign({}, sets, { fbaParts: [] }), []);
-  const plan = P.plan(3), ranked = P.pick(sets.locations.filter(l => l.cases > 0));
-  check('…Shelving Pull List for 3 cases of 96-6-1: the =OLD set box first (2 cases, "🔗 Hot & cold set box … take only the 96-6-1 pieces"), then 1 from 96-6-1=10; nothing counted twice',
-    plan.takes.map(t => t.partNum + ' ' + t.cases).join(', ') === '96-6-1&2=OLD 2, 96-6-1=10 1' && /🔗 Hot & cold set box 96-6-1&2 — take only the 96-6-1 pieces/.test(ranked[0]._pick.why)
-      && plan.takes.reduce((a, t) => a + t.cases, 0) === 3, { takes: plan.takes.map(t => t.partNum + ' ' + t.cases), why: ranked[0]._pick.why });
+  const plan = P.plan(3), ranked = P.pick(sets.locations.filter(l => l.cases > 0)), plan9 = P.plan(9);
+  const Ph = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return invPlanShelvingPull;')(Object.assign({}, hot, { fbaParts: [] }), []);
+  const ph3 = Ph(3);
+  check('…Shelving Pull List for 3 sets 96-6-1&2: the set\'s own =OLD box first (2), then the 1 still missing as 1 hot + 1 cold; 9 sets → OLD 2 + hot 4 + cold 3, "short 96-6-1 3, 96-6-2 4"; hot alone (3) → 3 hot, no set box',
+    plan.takes.map(t => t.partNum + ' ' + t.cases).join(', ') === '96-6-1&2=OLD 2, 96-6-1=10 1, 96-6-2=10 1' && plan.short === 0 && plan.set
+      && plan9.takes.map(t => t.partNum + ' ' + t.cases).join(', ') === '96-6-1&2=OLD 2, 96-6-1=10 4, 96-6-2=10 3' && plan9.short === 4 && plan9.shortOf === '96-6-1 3, 96-6-2 4'
+      && ranked.some(l => /🔗 96-6-1 for the hot & cold set 96-6-1&2/.test(l._pick.why)) && ph3.takes.map(t => t.partNum + ' ' + t.cases).join() === '96-6-1=10 3',
+    { p3: plan.takes.map(t => t.partNum + ' ' + t.cases), p9: plan9.takes.map(t => t.partNum + ' ' + t.cases), s9: [plan9.short, plan9.shortOf], h: ph3.takes.map(t => t.partNum + ' ' + t.cases) });
   check('…the Stock Out page asks for the set boxes only on Stock Out Shelving (search, the other-code retry, None Found next spot) — not Big Company / Stock In',
     /_invFetchLookupRaw\(code, invMode === 'out' && invStockOutDest === 'shelving'\)/.test(ih) && /var sets = invMode === 'out' && invStockOutDest === 'shelving';/.test(ih) && /_invFetchLookupRaw\(invParent\(it\.partNum\), it\.dest !== 'company'\)/.test(ih), null);
   // Picking by scan: an order of 2 sets 96-6-1&2=2 + the server's package read
@@ -13763,8 +13771,8 @@ console.log('\n🔗 Hot & cold sets (24-2-1&2): Stock Out Shelving uses the set 
   sq.prepare('INSERT INTO ship_manifest_log (' + k.join(',') + ') VALUES (' + k.map(() => '?').join(',') + ')').run(...k.map(x => rw[x]));
   sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('96-6-1=10','96-6-1','0810000096610',''), ('96-6-2=10','96-6-2','810000096620','')").run();
   const pk = await get('/ship/package?tracking=1Z999AA1SETPICK001'), it = (pk.items || [])[0] || {}, cp = it.components || [];
-  check('…/ship/package: the set 96-6-1&2=2 → its parts 96-6-1 (spots: the =OLD set box first, then C4=6-6-1) and 96-6-2, each with its bag barcodes',
-    cp.map(c => c.parent).join() === '96-6-1,96-6-2' && cp[0].spots.map(x => x.partNum + '@' + x.location).join() === '96-6-1&2=OLD@BO=6-6-9,96-6-1=10@C4=6-6-1'
+  check('…/ship/package: the set 96-6-1&2=2 → its parts 96-6-1 (spots: its own C4=6-6-1 only — hot / cold never mixed) and 96-6-2, each with its bag barcodes',
+    cp.map(c => c.parent).join() === '96-6-1,96-6-2' && cp[0].spots.map(x => x.partNum + '@' + x.location).join() === '96-6-1=10@C4=6-6-1'
       && cp[0].codes['810000096610'] === '96-6-1=10' && cp[1].codes['810000096620'] === '96-6-2=10' && it.partNum === '96-6-1&2=2', it);
   check('…read-only: no stock changed', shelf() === c0, null);
   const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));

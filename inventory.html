@@ -4246,6 +4246,7 @@ window.invCredLogin = async function() {
       if (plan.short > 0.001) invFlash(msg + ' — ⚠ ' + plan.short + (plan.byPieces ? ' pcs' : ' cases') + ' short' + (plan.noSize.length ? ' (Each/Case not on file for ' + plan.noSize.join(', ') + ')' : ''), 'warn');
       else invFlash(msg, plan.takes.some(function(t) { return t.tier > 0 || t.how || t.pallet; }) ? 'warn' : 'success');
     }
+    else if (plan.set) { if (plan.short > 0.001) invFlash(msg + ' — ⚠ hot & cold set: short ' + plan.shortOf + ' case(s)', 'warn'); else invFlash(msg, 'success'); } // 🔗 a set: hot AND cold
     else if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
     else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2 || t.pallet; }) ? 'warn' : 'success');
     if (inp) inp.value = '';
@@ -4255,7 +4256,29 @@ window.invCredLogin = async function() {
     if (inp) inp.focus();
   }
   // → { takes:[{loc, partNum, cases, tier}] } — never more than a spot has.
-  function invPlanShelvingPull(need) {
+  function invPlanShelvingPull(need, oneGroup) {
+    // 🔗 Owner (2026-11-17): "if we only request cold, we should only getting the cold, don't mix … if hot, only hot, if we need hot and
+    // cold, we bring hot and cold". A SET asked for (24-2-1&2): its own set boxes first (=OLD …, the usual rules); for what is still
+    // missing, the SAME number of cases of hot AND of cold (24-2-1 and 24-2-2, each with the usual rules). A hot or a cold asked for
+    // alone never gets set boxes (the lookup doesn't send them).
+    var _all = (invPart && invPart.locations) || [];
+    if (!oneGroup && _all.some(function(l) { return l.setPart; })) {
+      var keep = invPart, comps = [], out = { takes: [], short: 0, set: true }, sum = function(p) { return p.takes.reduce(function(a, t) { return a + t.cases; }, 0); };
+      _all.forEach(function(l) { if (l.setPart && comps.indexOf(l.setPart) < 0) comps.push(l.setPart); });
+      try {
+        invPart = Object.assign({}, keep, { locations: _all.filter(function(l) { return !l.setPart; }) });
+        var own = invPlanShelvingPull(need, true); out.takes = own.takes.slice();
+        var rest = Math.round((need - sum(own)) * 100) / 100;
+        if (rest > 0) comps.forEach(function(c) {
+          invPart = Object.assign({}, keep, { locations: _all.filter(function(l) { return l.setPart === c; }), partNum: c });
+          var pc = invPlanShelvingPull(rest, true);
+          pc.takes.forEach(function(t) { t.setPart = c; }); out.takes = out.takes.concat(pc.takes);
+          out.short = Math.max(out.short, Math.round((rest - sum(pc)) * 100) / 100);
+          if (rest - sum(pc) > 0.001) out.shortOf = (out.shortOf ? out.shortOf + ', ' : '') + c + ' ' + Math.round((rest - sum(pc)) * 100) / 100;
+        });
+      } finally { invPart = keep; }
+      return out;
+    }
     function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
     function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
     var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[x.key] = (onList[x.key] || 0) + (parseFloat(x.cases) || 0); });
@@ -4756,7 +4779,7 @@ window.invCredLogin = async function() {
     function firstOf(pn) { return /FIRST\s*$/.test(pn) ? 0 : /=\s*OLD\s*$/.test(pn) ? 1 : 2; }
     locs.forEach(function(l) {
       var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l), f = firstOf(pn), gp = /GRANDPA/i.test(String(l.location || '')) /* 🏚 Grandpa Basement — see invOnPallet */;
-      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, gp: gp, why: (gp ? '🏚 Grandpa Basement — used last, only when the spots here don\'t have enough · ' : '') + (l.setOf ? '🔗 Hot & cold set box ' + l.setOf + ' — take only the ' + String(invPart && invPart.baseSku || '').toUpperCase() + ' pieces · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
+      l._pick = { tier: t, pallet: pal, first: f, nf: !!l.noneFound, gp: gp, why: (gp ? '🏚 Grandpa Basement — used last, only when the spots here don\'t have enough · ' : '') + (l.setPart ? '🔗 ' + l.setPart + ' for the hot & cold set ' + l.setOf + ' — the same number of hot and of cold · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (f === 0 ? '⚠ FIRST — open / damaged box, always used first' + (pal ? ' · 🚢 on a pallet' : '')
         : f === 1 ? '=OLD — always used first (after FIRST boxes)' + (pal ? ' · 🚢 on a pallet' : '') : ((t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
         : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : ''))) };
