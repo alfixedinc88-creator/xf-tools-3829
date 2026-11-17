@@ -14027,5 +14027,30 @@ console.log('\n🗄 No more Google Sheet: SKU Mgr stock and History never go to 
       && /adDbEverything/.test(rfG(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8')), null);
 }
 
+console.log('\n🔒 Auto Label on / off: Admin only, and a busy database never turns it off');
+{
+  // Owner (2026-11-17): "hide the 'auto label' on and off, make only Admin level up can see right now, somehow it see it was been turn off for some reason".
+  const mgr = await (await call('/auth/login', { method: 'POST', body: '{"username":"manager1","password":"password1"}' })).json();
+  const asMgr = async b => (await call('/veeqo/autolabel/config', { method: 'POST', headers: { 'X-Cred-Token': mgr.token, 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+  await post('/veeqo/autolabel/config', { config: { mode: 'auto', waitMinutes: 7 } });
+  const m1 = await asMgr({ config: { mode: 'off' } }), m2 = await asMgr({ config: { mode: 'auto', waitMinutes: 9 } });
+  const c1 = (await get('/veeqo/autolabel/config')).config;
+  check('a Manager (not Admin) can\'t turn Auto Label off ("Only an Admin can turn Auto Label on or off"); other rules still save; the Admin can',
+    m1.ok === false && /Only an Admin/.test(m1.error) && m2.ok && c1.mode === 'auto' && c1.waitMinutes === 9, { m1, m2, c1 });
+  // the database didn't answer when the settings were read
+  let failing = true;
+  const badDB = { prepare(sql) { if (failing && /FROM app_config WHERE key/.test(sql)) { const st = { bind() { return st; }, first: async () => { throw new Error('D1_ERROR: busy'); }, all: async () => { throw new Error('D1_ERROR: busy'); }, run: async () => { throw new Error('D1_ERROR: busy'); } }; return st; } return DB.prepare(sql); }, batch: l => DB.batch(l) };
+  const callBad = (u, o = {}) => worker.fetch(new Request('https://w' + u, o), { ...env, DB: badDB }, { waitUntil() {} });
+  const g = await (await callBad('/veeqo/autolabel/config', { headers: H })).json();
+  const p = await (await callBad('/veeqo/autolabel/config', { method: 'POST', headers: H, body: JSON.stringify({ config: { waitMinutes: 3 } }) })).json();
+  failing = false;
+  const c2 = (await get('/veeqo/autolabel/config')).config;
+  check('…the database busy when the settings are read → "could not be read just now — nothing changed" (was: read as empty → OFF + every rule back to default, then SAVED over the real ones); still ⚡ Auto, 9 min after',
+    g.ok === false && /could not be read just now/.test(g.error || '') && p.ok === false && /could not be read just now/.test(p.error || '') && c2.mode === 'auto' && c2.waitMinutes === 9, { g, p, c2 });
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });
+  const { readFileSync: rfA } = await import('node:fs'); const ph = rfA(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the page: Off / Preview / Auto hidden unless Admin / Owner', /id="ps-al-mode-btns"/.test(ph) && /<div style="display:none;[^"]*" id="ps-al-mode-btns">/.test(ph) && /mb\.style\.display = _psPaceAdmin\(\) \? 'flex' : 'none'/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
