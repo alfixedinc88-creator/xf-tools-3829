@@ -14147,5 +14147,29 @@ console.log('\n⚡ AWD Net Days: the faster of the last 30 days and the 90-day a
     /FBA only <b style="color:var\(--red\)">10d<\/b>/.test(ds) && /Amazon says <b>9d<\/b>/.test(ds) && /30d 2\.0 ⬆ used<br>90d 1\.0/.test(ps) && /\$\{awdDaysSub\(r\)\}/.test(ah) && /\$\{awdPaceSub\(r\)\}/.test(ah), { ds, ps });
 }
 
+console.log('\n🛒 AWD Recommendations: a sold-out listing is not dropped — our own Amazon sales record gives its pace');
+{
+  // Owner (2026-11-17): "why there's also a lot of the listing it not even in the 'recommendations'? example like 'B0CWJ6DWX2'? already sold out, but still not in the recommendations?"
+  sq.exec("CREATE TABLE IF NOT EXISTS amazon_sales_weekly (sku TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT, units_ordered REAL, ordered_product_sales REAL, asin TEXT, fetched_at TEXT, PRIMARY KEY (sku, period_start))");
+  const wk = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  sq.prepare("INSERT OR REPLACE INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('SOLDOUT-1=10', ?, 12, 'B0CWJ6DWX2'), ('SOLDOUT-1=10', ?, 30, 'B0CWJ6DWX2'), ('SOLDOUT-1=10', ?, 48, 'B0CWJ6DWX2')").run(wk(14), wk(60), wk(150));
+  const ss = await post('/awd/stock-summary', { skus: ['SOLDOUT-1=10'] });
+  check('/awd/stock-summary sends our own Amazon sales of each FBA SKU: 30 days 12 · 90 days 42 · 180 days 90, last sold',
+    ss.ok && ss.amz && ss.amz['SOLDOUT-1=10'] && ss.amz['SOLDOUT-1=10'].d30 === 12 && ss.amz['SOLDOUT-1=10'].d90 === 42 && ss.amz['SOLDOUT-1=10'].d180 === 90 && ss.amz['SOLDOUT-1=10'].last === wk(14), ss.amz);
+  const { readFileSync: rfO } = await import('node:fs'); const ah = rfO(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const one = name => { const a = ah.indexOf('function ' + name + '('); return ah.slice(a, ah.indexOf('\n}\n', a) + 3); };
+  const S = { joined: [
+    { sku: 'SOLDOUT-1=10', asin: 'B0CWJ6DWX2', fbaFul: 0, fcProc: 0, fcTrans: 0, fbaInb: 0, totalNetwork: 0, dailySales: 0, target: 0, recSend: 0, netDays: 999, fbaDays: 999 },
+    { sku: 'INSTOCK-1=10', fbaFul: 50, fcProc: 0, fcTrans: 0, fbaInb: 0, totalNetwork: 50, dailySales: 1, target: 60, recSend: 10, netDays: 50, fbaDays: 50 }] };
+  const AWDSS = { amz: { 'SOLDOUT-1=10': ss.amz['SOLDOUT-1=10'], 'INSTOCK-1=10': { d30: 300, d90: 900, d180: 1800, last: wk(7) } } };
+  new Function('S', 'AWDSS', 'C', 'fn', 'awdH', one('awdApplyOwnSales') + '\nawdApplyOwnSales();')(S, AWDSS, { targetDays: 60 }, n => String(n), v => String(v));
+  const so = S.joined[0], ins = S.joined[1];
+  check('…sold out at Amazon (Amazon says 0 sold): pace from our record = the fastest of 12/30 · 42/90 · 90/180 = 0.5 a day → Target 30, Rec Send 30, Net Days 0 — shown on Recommendations, "❌ sold out at Amazon"',
+    so.soldOut && so.dailySales === 0.5 && so.target === 30 && so.recSend === 30 && so.netDays === 0 && /our sales/.test(so.paceFrom), so);
+  check('…an item in stock that Amazon gives a pace for keeps Amazon\'s pace (our record not used): 1 a day, Rec Send 10', ins.dailySales === 1 && ins.recSend === 10 && !ins.paceFrom, ins);
+  check('…and every SKU in FBA_Inventory is on the planner, not only FBA_Live; applied again when our stock numbers come in',
+    /const source=S\.live\.length\?S\.live\.concat\(S\.fba\|\|\[\]\):S\.fba;/.test(ah) && /AWDSS\.amz = d\.amz \|\| \{\};[^\n]*awdApplyOwnSales\(\);/.test(ah) && /if \(AWDSS\.loaded\) \{ awdApplyOwnSales\(\); awdApplyPlan\(\); \}/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

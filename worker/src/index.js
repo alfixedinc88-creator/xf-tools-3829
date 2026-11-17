@@ -16874,8 +16874,18 @@ async function awdStockSummary(request, env) {
       makingPcs: r2(mi.making), waterPcs: r2(mi.water), otherShelfPcs: r2(oShelf), otherMakingPcs: r2(oMaking), otherWaterPcs: r2(oWater),
       otherParts: others.filter(x => ((shelf[x] || {}).pcs || 0) + ((inc[x] || {}).making || 0) + ((inc[x] || {}).water || 0) > 0).slice(0, 8), discontinued: disc.has(p) };
   }
+  // 🛒 Owner (2026-11-17): "why there's also a lot of the listing it not even in the 'recommendations'? example like 'B0CWJ6DWX2'? already
+  // sold out, but still not in the recommendations?" — Amazon's sales numbers (Inventory Health, units shipped 30 / 90 days) only come
+  // for items that still have stock there: a sold-out listing read as "sells 0" and dropped out. Our OWN record of each FBA SKU's Amazon
+  // sales (amazon_sales_weekly, kept every week) goes with each row: units in the last 30 / 90 / 180 days and the last week it sold.
+  const amz = {};
+  const d180 = new Date(Date.now() - 180 * 864e5).toISOString().slice(0, 10), d30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+  for (let i = 0; i < list.length; i += 90) { const ch = list.slice(i, i + 90).map(U);
+    (await all(`SELECT UPPER(TRIM(sku)) AS k, period_start AS ps, units_ordered AS u FROM amazon_sales_weekly WHERE period_start >= ? AND UPPER(TRIM(sku)) IN (${ch.map(() => '?').join(',')})`, d180, ...ch)).forEach(r => {
+      const o = amz[r.k] = amz[r.k] || { d30: 0, d90: 0, d180: 0, last: '' }, u = parseFloat(r.u) || 0;
+      o.d180 += u; if (r.ps >= d90) o.d90 += u; if (r.ps >= d30) o.d30 += u; if (u > 0 && r.ps > o.last) o.last = r.ps; }); }
   const cfg = (await awdAutoGet(env).catch(() => ({}))).planCfg || null;
-  return J({ ok: true, rows, fams, cfg });
+  return J({ ok: true, rows, fams, cfg, amz });
 }
 
 async function awdVelocityRequest(env) {
