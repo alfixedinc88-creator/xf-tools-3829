@@ -11961,6 +11961,7 @@ const _app = {
     if (method === 'GET') {
       const t = url.searchParams.get('sheet');
       if (t === 'Master_List' && env.DB) return await inventoryMasterList(env); // 🏬 stock = SKU Mgr, not the old sheet (owner 2026-10-27)
+      if (t === 'Products' && env.DB) return await warehouseProductsGet(env); // 🔍 Item Search's list: the sheet, else our database copy
       if (!t || !ALLOWED_TABS.has(t)) {
         return cors(new Response(JSON.stringify({ error: `Tab "${t}" not allowed` }), {
           status: 400, headers: { 'Content-Type': 'application/json' }
@@ -12154,6 +12155,26 @@ function getSheetId(tab, env) {
 }
 
 // ─── EXISTING handleGet (unchanged) ──────────────────────────────────────────
+// 🔍 Owner (2026-11-17): "under the 'warehouse look up' 'item search' it was nothing show up". Item Search's list of items is the
+// Products Google Sheet; when Google doesn't answer (or sends it back empty) the whole Warehouse page stopped / found nothing. Now the
+// database copy of Products (kept on every ✏️ save) is used instead, in the same rows, and the page is told (from: 'database').
+async function warehouseProductsGet(env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  let sheetErr = '';
+  try {
+    const data = await invSheetGet(env, 'Products');
+    if (data && data.error) throw new Error((data.error && data.error.message) || String(data.error));
+    const vals = (data && data.values) || [];
+    if (vals.filter(r => String((r || [])[1] || '').trim()).length > 1) return J({ values: vals, from: 'sheet' });
+    sheetErr = 'the Products sheet came back empty';
+  } catch (e) { sheetErr = (e && e.message) || 'Google did not answer'; }
+  const rows = await d1All(env, "SELECT * FROM products WHERE TRIM(COALESCE(sku, '')) != ''");
+  const seen = new Set(), out = [['', 'sku', 'name', 'warehouse_name', 'weight', '', 'keywords']];
+  rows.forEach(r => { const k = String(r.sku).trim().toUpperCase(); if (seen.has(k)) return; seen.add(k); out.push(['', String(r.sku).trim(), r.name || '', r.warehouse_name || '', r.weight == null ? '' : String(r.weight), '', '']); });
+  console.warn('[Products] sheet not used:', sheetErr, '→ database copy', out.length - 1);
+  return J({ values: out, from: 'database', sheetError: sheetErr });
+}
+
 async function handleGet(tab, env) {
   try {
     const token   = await getToken(env);

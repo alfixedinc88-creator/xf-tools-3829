@@ -13921,5 +13921,42 @@ console.log('\n🚚 AWD planner: shipments on the way to FBA — the ones coming
   globalThis.fetch = realFetch; env.AMAZON_REFRESH_TOKEN = envKeep.r; env.AMAZON_CLIENT_ID = envKeep.c; env.AMAZON_CLIENT_SECRET = envKeep.s;
 }
 
+console.log('\n🔍 Warehouse → Item Search: still works when the Products Google Sheet does not answer');
+{
+  // Owner (2026-11-17): "under the 'warehouse look up' 'item search' it was nothing show up".
+  sq.prepare("INSERT INTO products (sku, name) VALUES ('98-8-1', '1/2 PEX Coupling (db copy)'), ('98-8-1', 'dup'), ('98-8-2', '3/4 PEX Tee (db copy)')").run();
+  const keep = globalThis.fetch;
+  globalThis.fetch = async u => { u = String(u); const J = x => new Response(JSON.stringify(x)); if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
+    if (u.includes('/values/Products')) return J({ error: { message: 'The caller does not have permission' } }); return J({ values: [] }); };
+  const down = await get('/?sheet=Products');
+  globalThis.fetch = async u => { u = String(u); const J = x => new Response(JSON.stringify(x)); if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
+    if (u.includes('/values/Products')) return J({ values: [['', 'sku', 'name'], ['', '23-2-3', 'Tee (sheet)'], ['', '40-1-1', 'Elbow (sheet)']] }); return J({ values: [] }); };
+  const up = await get('/?sheet=Products');
+  globalThis.fetch = keep;
+  const skus = d => (d.values || []).slice(1).map(r => r[1] + ':' + r[2]);
+  check('Products sheet refused → our database copy, same rows (sku in B, name in C), each SKU once, from: "database" + why; sheet working → the sheet as before',
+    down.from === 'database' && /permission/.test(down.sheetError) && skus(down).join() === '98-8-1:1/2 PEX Coupling (db copy),98-8-2:3/4 PEX Tee (db copy)'
+      && up.from === 'sheet' && skus(up).join() === '23-2-3:Tee (sheet),40-1-1:Elbow (sheet)', { down, up });
+  const { readFileSync: rfW } = await import('node:fs');
+  const wh = rfW(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const src = wh.slice(wh.indexOf('var _whLoadProblems = [];'), wh.indexOf('async function refreshAllSheets()'));
+  const els = {}; const el = id => els[id] || (els[id] = { id, style: {}, textContent: '', innerHTML: '', value: '' });
+  const run = async (fail, from) => {
+    const DB = {}, win = { _whProductsFrom: '' }; let shown = '';
+    const sheets = { Master_List: [['h'], ['', '', '', '24-1-8', 'elbow', '', '24-1-8=10X', 'C1=1-1-1', '5', '10']], Products: [['h'], ['', '24-1-8', 'Elbow']], AWD_Master: [['h']], UPC: [['h']], Out_of_Stock: [['h']] };
+    const fetchSheet = async n => { if (fail.includes(n)) throw new Error('Sheet "' + n + '": Google did not answer'); if (n === 'Products') win._whProductsFrom = from || ''; return sheets[n]; };
+    Object.keys(els).forEach(k => delete els[k]);
+    await new Function('window', 'document', 'fetchSheet', 'wFetch', 'SHEET_NAMES', 'DB', 'parseMasterListRows', 'parseProductsRows', 'parseAWDMasterRows', 'parseUPCRows', 'parseOOSRows', 'showLoading', 'setSyncLabel', 'showToast', 'renderOOS', 'whLoadPallets', 'SHEET_ID',
+      src + '; return loadAllSheets();')(win, { getElementById: el }, fetchSheet, async () => { throw new Error('x'); }, { master: 'Master_List', products: 'Products', awd: 'AWD_Master', upc: 'UPC', oos: 'Out_of_Stock' }, DB,
+      r => r.slice(1), r => r.slice(1), r => r.slice(1), r => r.slice(1), r => r.slice(1), () => {}, () => {}, () => {}, () => {}, () => {}, '');
+    return { DB, warn: el('wh-load-warn'), setup: el('setup-screen').style.display };
+  };
+  const a = await run(['Products', 'AWD_Master']), b = await run([], 'database'), c = await run(['Master_List', 'Products', 'AWD_Master', 'UPC', 'Out_of_Stock']);
+  check('…the page: the item list (or AWD) not loading no longer stops the whole page — stock still loads, "⚠ Not everything loaded — Item list (Products): … Tap 🔄" at the top',
+    a.DB.master.length === 1 && a.setup !== 'flex' && a.warn.style.display === 'block' && /Item list \(Products\): Sheet "Products": Google did not answer · AWD list/.test(a.warn.textContent), { warn: a.warn.textContent, setup: a.setup });
+  check('…from the database copy → said ("the Products Google Sheet did not answer — Item Search uses our database copy"); nothing at all loaded → sign-in screen as before',
+    b.DB.products.length === 1 && /database copy/.test(b.warn.textContent) && c.setup === 'flex', { b: b.warn.textContent, c: c.setup });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
