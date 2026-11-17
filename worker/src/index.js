@@ -12084,7 +12084,10 @@ const _app = {
     // Every 30 min: auto-fetch eBay messages
     ctx.waitUntil(cronFetchEbayMessages(env));
     // 🗄 Every Google Sheet tab moves into our database on its own, a few each time (owner 2026-11-17: "I want no more google sheet")
-    ctx.waitUntil(xsAutoMoveAll(env, 20000, 'auto').then(r => console.log('[db move auto]', JSON.stringify({ done: (r.done || []).length, left: (r.left || []).length }))).catch(e => console.error('[db move auto]', e.message)));
+    // ⏳ Owner (2026-11-17, photo "D1 DB is overloaded" on Warehouse Lookup: "I need it to work now"): moving a big tab is ~20 s of heavy
+    // database writing, so the timer only moves tabs after work (owner: "anything heavy after we finish work, 6 pm to 9 am" New York). Admin "📥 Move everything now" still works any time.
+    const nyHr = +new Date(now).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }) % 24;
+    if (nyHr >= 18 || nyHr < 9) ctx.waitUntil(xsAutoMoveAll(env, 20000, 'auto').then(r => console.log('[db move auto]', JSON.stringify({ done: (r.done || []).length, left: (r.left || []).length }))).catch(e => console.error('[db move auto]', e.message)));
     // 🧑‍💼 Office: every hour, read the channels' messages / returns / cancellations / feedback / account health into the to-do list
     if (min < 30) ctx.waitUntil(officePull(env, true).catch(e => console.error('[office pull]', e.message)));
     // 🛡 Audit: anything not matching the Audit number is set to it (History [AUDIT FIX], with why)
@@ -12280,14 +12283,21 @@ async function productsDbReady0(env) {
 // &skumgr=1 (Warehouse → Item Search): every SKU Mgr parent not on the list is added too, with SKU Mgr's name — so the search matches SKU Mgr.
 async function warehouseProductsGet(env, url) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
-  const ready = await productsDbReady(env);
-  const rows = await d1All(env, "SELECT * FROM products WHERE TRIM(COALESCE(sku, '')) != '' ORDER BY rowid");
+  // ⏳ Owner (2026-11-17, photo: "D1 DB is overloaded", Item Search 0): a busy database used to come back as an EMPTY list (0 items, no
+  // warning). Now a read that fails says so (503 "database busy"), so the page asks again by itself instead of showing nothing.
+  const ready = await productsDbReady(env).catch(e => ({ copied: null, note: 'the old Products sheet could not be copied yet (' + ((e && e.message) || 'busy') + ') — the database list is used' }));
+  const all = async sql => (await env.DB.prepare(sql).all()).results || [];
+  let rows, skuMgr = [];
+  try {
+    rows = await all("SELECT * FROM products WHERE TRIM(COALESCE(sku, '')) != '' ORDER BY rowid");
+    if (url && url.searchParams.get('skumgr') === '1') skuMgr = await all("SELECT sku, base_sku, part_num, name FROM master_list WHERE TRIM(COALESCE(name, '')) != ''");
+  } catch (e) { return cors(new Response(JSON.stringify({ error: 'database busy — ' + ((e && e.message) || e) }), { status: 503, headers: { 'Content-Type': 'application/json' } })); }
   const seen = new Set(), out = [['product_id', 'sku', 'name', 'warehouse_name', 'weight', '', 'keywords']];
   rows.forEach(r => { const k = String(r.sku).trim().toUpperCase(); if (seen.has(k)) return; seen.add(k);
     out.push([r.product_id || '', String(r.sku).trim(), r.name || '', r.warehouse_name || '', r.weight ? String(r.weight) : '', '', r.keywords || '']); });
   let fromSkuMgr = 0;
   if (url && url.searchParams.get('skumgr') === '1') {
-    (await d1All(env, "SELECT sku, base_sku, part_num, name FROM master_list WHERE TRIM(COALESCE(name, '')) != ''")).forEach(r => {
+    skuMgr.forEach(r => {
       const b = parentOf(r.base_sku || r.sku || r.part_num || ''); if (!b || b.length < 3 || seen.has(b)) return; seen.add(b); fromSkuMgr++;
       out.push(['', b, String(r.name).trim(), '', '', '', '']);
     });

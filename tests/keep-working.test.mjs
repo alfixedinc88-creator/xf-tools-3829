@@ -14073,5 +14073,27 @@ console.log('\n📦 AWD Recommendations: 🏬 in stock now + 📦 already in the
     /🏬 In Stock Now<\/th>/.test(ah) && /📦 In Builder<br>/.test(ah) && /\$\{awdRecStockCells\(r\)\}/.test(ah) && /if \(n === 'recommendations' && typeof renderRecs === 'function'\) renderRecs\(\);/.test(ah), null);
 }
 
+// Owner (2026-11-17, photo: Warehouse Lookup "⚠ Not everything loaded — D1 DB is overloaded …", Item Search 0): "still not working, I need it
+// to work now" + "anything heavy, do it after we finish work, around 6 pm to 9 am — make sure our app still works".
+console.log('\n⏳ Warehouse Lookup: a busy database is asked again by itself; heavy sheet moving only 6 pm – 9 am');
+{
+  const { readFileSync: rfB } = await import('node:fs');
+  const wk = rfB(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'), wh = rfB(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('the timer moves Google Sheet tabs only after work (New York 6 pm – 9 am); Admin "Move everything now" still any time',
+    /if \(nyHr >= 18 \|\| nyHr < 9\) ctx\.waitUntil\(xsAutoMoveAll\(env, 20000, 'auto'\)/.test(wk) && /url\.pathname === '\/admin\/db-move\/all'/.test(wk), null);
+  const real = env.DB, orig = real.prepare.bind(real);
+  env.DB = Object.create(real); env.DB.prepare = sql => { if (/FROM products WHERE/.test(sql)) throw new Error('D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.'); return orig(sql); };
+  const r = await call('/?sheet=Products&skumgr=1', { headers: H }), j = await r.json();
+  env.DB = real;
+  check('database busy → Item list says so (503 "database busy"), never an empty list of 0 items', r.status === 503 && /^database busy — D1_ERROR/.test(j.error || '') && !j.values, j);
+  const fsrc = wh.slice(wh.indexOf('async function fetchSheet(name) {'), wh.indexOf('function parseMasterListRows('));
+  let n = 0; const answers = [{ status: 503, body: { error: 'database busy — D1 overloaded' } }, { status: 200, body: { values: [['h']] } }, { status: 200, body: { values: [['h'], ['', '30-3-4', 'Hex nipple']], from: 'database' } }];
+  const realT = globalThis.setTimeout; globalThis.setTimeout = (f) => realT(f, 0);
+  const fetchSheet = new Function('wFetch', 'setSyncLabel', 'window', fsrc + '; return fetchSheet;')(async () => { const a = answers[Math.min(n++, 2)]; return { status: a.status, json: async () => a.body }; }, () => {}, {});
+  const rows = await fetchSheet('Products'); globalThis.setTimeout = realT;
+  check('…the page asks again by itself (busy → empty → the list): 3 tries, the item comes in', n === 3 && rows.length === 2 && rows[1][1] === '30-3-4', { n, rows });
+  check('…the UPC list is asked again too', /_whRetry\(function\(\) \{ return wFetch\('https:\/\/xfitting-lookup\.alfixedinc88\.workers\.dev\/inventory\/upc-list'\)/.test(wh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

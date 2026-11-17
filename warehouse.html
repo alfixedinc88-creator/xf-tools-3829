@@ -1915,9 +1915,22 @@ async function fetchSheet(name) {
   var url = D1_ROUTES[name]
     ? 'https://xfitting-lookup.alfixedinc88.workers.dev' + D1_ROUTES[name]
     : 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name) + (name === 'Products' ? '&skumgr=1' : ''); // 🗄 Products = our database + every SKU Mgr item (owner 2026-11-17)
-  var res  = await wFetch(url);
-  var json = await res.json();
-  if (json.error) throw new Error('Sheet "' + name + '": ' + json.error);
+  // ⏳ Owner (2026-11-17, photo "D1 DB is overloaded … Item Search 0": "I need it to work now"): when the database is busy for a few seconds the
+  // list is asked for again by itself (1 s, 2 s, 4 s, 8 s) instead of failing; an Item list that comes back empty is asked for again too.
+  var json, tries = 0;
+  for (;;) {
+    try {
+      var res = await wFetch(url);
+      json = await res.json().catch(function() { return { error: 'HTTP ' + res.status }; });
+      if (!json.error && res.status >= 500) json = { error: 'HTTP ' + res.status };
+      if (!json.error && name === 'Products' && (json.values || []).length < 2) json = { error: 'the item list came back empty' };
+    } catch (e) { json = { error: (e && e.message) || 'no answer' }; }
+    if (!json.error || tries >= 4) break;
+    var wait = 1000 * Math.pow(2, tries++);
+    setSyncLabel('Database busy — trying again (' + tries + ')…', true);
+    await new Promise(function(r) { setTimeout(r, wait); });
+  }
+  if (json.error) throw new Error('Sheet "' + name + '": ' + (json.error.message || json.error));
   if (name === 'Products') { window._whProductsFrom = json.from || ''; window._whProductsNote = json.note || ''; }
   var rows = (json.values || []).map(function(r) {
     while (r.length < 16) r.push('');
@@ -2025,6 +2038,8 @@ function parseOOSRows(rows) {
 // Google Sheet, AWD …) used to stop the WHOLE page. Now each list loads on its own: the ones that came are used, the ones that didn't are
 // said plainly at the top (and asked for again by 🔄). Products comes from our database copy when Google doesn't answer.
 var _whLoadProblems = [];
+// ⏳ a request the busy database refused is asked again by itself: 1 s, 2 s, 4 s, 8 s (owner 2026-11-17: "I need it to work now")
+async function _whRetry(fn) { for (var t = 0; ; t++) { try { return await fn(); } catch (e) { if (t >= 4) throw e; await new Promise(function(r) { setTimeout(r, 1000 * Math.pow(2, t)); }); } } }
 function _whSoft(name, p) { return p.catch(function(e) { _whLoadProblems.push(name + ': ' + ((e && e.message) || 'did not load')); return [['hdr']]; }); }
 function _whShowLoadWarn(extra) {
   var w = document.getElementById('wh-load-warn'); if (!w) return;
@@ -2045,8 +2060,9 @@ async function loadAllSheets() {
       _whSoft('AWD list', fetchSheet(SHEET_NAMES.awd)),
       // UPCs from our database (owner 2026-10-16: "all saved under our database"): SKU Mgr → 🔢 UPC codes first, then the
       // database UPC table, the old Google sheet only for part #s not in the database yet. The sheet itself if that fails.
-      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/upc-list').then(function(r) { return r.json(); })
-        .then(function(d) { if (!d || !d.ok) throw new Error('upc-list'); return [['', 'Part #', 'Inside', 'Outside']].concat(d.rows.map(function(x) { return ['', x.part, x.inside, x.outside]; })); })
+      _whRetry(function() { return wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/upc-list').then(function(r) { return r.json(); })
+        .then(function(d) { if (!d || !d.ok) throw new Error('upc-list'); return d; }); })
+        .then(function(d) { return [['', 'Part #', 'Inside', 'Outside']].concat(d.rows.map(function(x) { return ['', x.part, x.inside, x.outside]; })); })
         .catch(function() { return _whSoft('UPC list', fetchSheet(SHEET_NAMES.upc)); }),
       _whSoft('Out of stock list', fetchSheet(SHEET_NAMES.oos)),
     ];
