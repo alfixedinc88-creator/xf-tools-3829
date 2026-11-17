@@ -169,7 +169,7 @@ const lkP = await get('/inventory/lookup?code=' + encodeURIComponent('60-1-1=10'
 const lkG = (lkP.locations || []).find(l => l.location === 'GARAGE'), lkC = (lkP.locations || []).find(l => l.location === 'C1=1-1-2');
 check('Stock Out lookup marks boxes still on pallets per spot: GARAGE 60-1-1=10 has 20 on pallets, the shelf spot none', lkG && lkG.palletBoxes === 20 && lkC && !lkC.palletBoxes, { lkG, lkC });
 check('Stock Out picks shelf spots (FBA bags too) before spots still on pallets, on both tabs; Pull List 🔁 Replace; None Found offers one more spot',
-  /function invOnPallet\(l\)/.test(invH) && (invH.match(/\[0, 1, 2\]\.forEach\(function\(onPal\) \{ \/\/ shelves, pallets, then ⚠ None Found spots/g) || []).length === 2 && /if \(a\._pick\.pallet !== b\._pick\.pallet\)/.test(invH)
+  /function invOnPallet\(l\)/.test(invH) && (invH.match(/\[0, 1, 2, 3\]\.forEach\(function\(onPal\) \{ \/\/ shelves, pallets, 🏚 Grandpa Basement, then ⚠ None Found spots/g) || []).length === 2 && /if \(a\._pick\.pallet !== b\._pick\.pallet\)/.test(invH)
   && /if \(A\.pallet !== B\.pallet\)/.test(invH) && /window\.invPalletReplace = function/.test(invH) && /\[REPLACED: asked for /.test(invH)
   && /window\.invNoneFoundAlt = function/.test(invH) && /window\.invNoneFoundNow = function/.test(invH), null);
 check('which pallet needs a sign-in', (await call('/inventory/containers/where', { method: 'POST', body: '{"parts":["60-1-1=10"]}' })).status === 401, null);
@@ -14093,6 +14093,29 @@ console.log('\n⏳ Warehouse Lookup: a busy database is asked again by itself; h
   const rows = await fetchSheet('Products'); globalThis.setTimeout = realT;
   check('…the page asks again by itself (busy → empty → the list): 3 tries, the item comes in', n === 3 && rows.length === 2 && rows[1][1] === '30-3-4', { n, rows });
   check('…the UPC list is asked again too', /_whRetry\(function\(\) \{ return wFetch\('https:\/\/xfitting-lookup\.alfixedinc88\.workers\.dev\/inventory\/upc-list'\)/.test(wh), null);
+}
+
+console.log('\n🏚 Stock Out: the Grandpa Basement is used last — every spot here first (BSMT is a normal spot)');
+{
+  // Owner (2026-11-17): "when they need to grab something, for inventory out don't recommend the grandpa basement, if we have something here,
+  // get the stuff here first, except we don't have nothing here" — "only the 'Grandpa Basement' … e.g. 30-3-4=10X" — "nothing to do the BSMT".
+  const { readFileSync: rfB } = await import('node:fs'); const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const L = () => [{ partNum: '30-3-4=10X', location: 'Grandpa Basement', cases: 5 }, { partNum: '30-3-4=10XFIRST', location: 'Grandpa Basement', cases: 3 },
+    { partNum: '30-3-4=10X', location: 'C1=1-1-1', cases: 2 }, { partNum: '30-3-4=10X', location: 'BSMT=3-3-3', cases: 1 }, { partNum: '30-3-4=10X', location: 'GARAGE', cases: 1, palletBoxes: 1 }];
+  const shelf = (locs, need) => new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return invPlanShelvingPull;')({ partNum: '30-3-4', locations: locs, fbaParts: [] }, [])(need);
+  const comp = (locs, need) => new Function('ctx', 'var invPart = ctx.part, invPullList = [], INV_FBA_LOW_CASES = 2; function invFifoBoxSize() { return 0; }\n' + fn('invOnPallet') + fn('invRankForCompany') + fn('invPlanCompanyPull') + '; return invPlanCompanyPull;')({ part: { partNum: '30-3-4=10X', locations: locs, fbaParts: [] } })('30-3-4=10X', need);
+  const tk = p => p.takes.map(t => t.loc.location + ' ' + t.partNum + ' ' + t.cases).join(' + ');
+  const s4 = shelf(L(), 4), s6 = shelf(L(), 6), s10 = shelf(L(), 10), c4 = comp(L(), 4), c6 = comp(L(), 6);
+  check('Stock Out Shelving, need 4: here first — C1 2 + BSMT 1 (a normal spot) + the GARAGE pallet 1; Grandpa Basement not touched (not even its FIRST box)',
+    tk(s4) === 'C1=1-1-1 30-3-4=10X 2 + BSMT=3-3-3 30-3-4=10X 1 + GARAGE 30-3-4=10X 1' && s4.short === 0, tk(s4));
+  check('…need 6: here has only 4 → 2 more from Grandpa Basement (its FIRST box first); need 10: here 4 + FIRST 3 + 3 of 10X there; nothing counted twice',
+    /^C1=1-1-1 30-3-4=10X 2 \+ BSMT=3-3-3 30-3-4=10X 1 \+ GARAGE 30-3-4=10X 1 \+ Grandpa Basement 30-3-4=10XFIRST 2$/.test(tk(s6))
+      && /Grandpa Basement 30-3-4=10XFIRST 3 \+ Grandpa Basement 30-3-4=10X 3$/.test(tk(s10)) && s10.takes.reduce((a, t) => a + t.cases, 0) === 10, { s6: tk(s6), s10: tk(s10) });
+  check('Stock Out Big Company the same: need 4 → C1 2 + BSMT 1 + pallet 1 (no Grandpa Basement); need 6 → + 2 from Grandpa Basement',
+    tk(c4) === 'C1=1-1-1 30-3-4=10X 2 + BSMT=3-3-3 30-3-4=10X 1 + GARAGE 30-3-4=10X 1' && /\+ Grandpa Basement 30-3-4=10X 2$/.test(tk(c6)), { c4: tk(c4), c6: tk(c6) });
+  const rk = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + 'return invPickForShelving;')({ partNum: '30-3-4', locations: [], fbaParts: [] }, [])(L());
+  check('…the spot list shows Grandpa Basement at the bottom, saying why', rk.slice(-2).every(l => /Grandpa/.test(l.location) && /🏚 Grandpa Basement — used last/.test(l._pick.why)) && !/Grandpa/.test(rk[0].location), rk.map(l => l.location));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
