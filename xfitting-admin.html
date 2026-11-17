@@ -495,6 +495,7 @@ window.adDbHtml = function(d) {
   if (!d || !d.ok) return '<div class="ad-empty" style="color:var(--red)">' + adEsc((d && d.error) || 'Could not load') + '</div>';
   var all = 0, mv = 0; d.books.forEach(function(b) { b.tabs.forEach(function(t) { all++; if (t.moved) mv++; }); });
   return '<div class="ad-db-sum" style="font-size:15px;font-weight:800;margin-bottom:12px">' + (mv === all && all ? '✅ ' : '') + mv + ' of ' + all + ' tabs are in our database</div>'
+    + (mv < all ? '<button class="ad-btn" style="width:auto;margin-bottom:10px" onclick="adDbEverything(this)">📥 Move everything now</button> <span style="font-size:12px;color:var(--text3)">(it also moves on its own every 30 min)</span><div id="ad-db-all" style="font-size:13px;margin:6px 0 12px"></div>' : '')
     + d.books.map(function(b, bi) {
       var n = b.tabs.filter(function(t) { return t.moved; }).length;
       return '<details class="ad-li" style="border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:8px;background:var(--bg2)"' + (n < b.tabs.length ? ' open' : '') + '><summary style="cursor:pointer;font-weight:800">' + adEsc(b.name) + ' — ' + n + ' of ' + b.tabs.length + ' moved'
@@ -516,6 +517,21 @@ window.adDbOne = async function(bi, ti, undo, btn) {
   if (!d.ok) { if (st) st.innerHTML = '<b style="color:var(--red)">❌ ' + adEsc(d.error || (d.want ? 'check failed — Google ' + d.want.rows + ' rows / ' + d.want.cells + ' cells, database ' + d.got.rows + ' / ' + d.got.cells + ' (not moved)' : 'failed')) + '</b>'; if (btn) btn.disabled = false; return false; }
   if (undo) { t.moved = false; } else { t.moved = true; t.rows = d.rows; t.cells = d.cells; t.at = new Date().toISOString(); t.by = (AD.user && AD.user.displayName) || ''; }
   return true;
+};
+// 🗄 Owner (2026-11-17): "move everything to our data base, I want no more google sheet" — every tab of every spreadsheet, a few per
+// call (the server's time limit), until nothing is left; what can't move yet is listed with why.
+window.adDbEverything = async function(btn) {
+  if (btn) btn.disabled = true; var out = ge('ad-db-all'), moved = 0, left = [], guard = 0;
+  while (guard++ < 40) {
+    if (out) out.textContent = '⏳ Moving… ' + moved + ' moved so far';
+    var r = await adFetch('/admin/db-move/all', { method: 'POST', body: '{}' }), d = r.data || {};
+    if (!d.ok) { if (out) out.innerHTML = '<b style="color:var(--red)">❌ ' + adEsc(d.error || 'failed') + '</b>'; if (btn) btn.disabled = false; return; }
+    moved += (d.done || []).length; left = (d.left || []).filter(function(x) { return x.why !== 'next run'; });
+    if (!d.more) break;
+  }
+  if (out) out.innerHTML = '✅ ' + moved + ' moved' + (left.length ? '<div style="margin-top:6px"><b>Not moved yet (' + left.length + '):</b><ul style="margin:4px 0 0 18px">' + left.map(function(x) { return '<li><b>' + adEsc(x.tab) + '</b> — ' + adEsc(x.why) + '</li>'; }).join('') + '</ul></div>' : ' — everything is in our database');
+  var r2 = await adFetch('/admin/db-move'); AD_DB = r2.data; var keep = out ? out.innerHTML : '';
+  ge('ad-db-body').innerHTML = adDbHtml(AD_DB); var o2 = ge('ad-db-all'); if (o2) o2.innerHTML = keep;
 };
 window.adDbMoveAll = async function(bi, btn) {
   var b = AD_DB.books[bi]; if (btn) btn.disabled = true;
