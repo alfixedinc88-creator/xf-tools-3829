@@ -14591,5 +14591,25 @@ console.log('\n📤🔒 Send to Stock Out Big Company locks what the shipment ne
   sq.exec("DELETE FROM master_list WHERE base_sku = '71-1-1'; DELETE FROM awd_lock WHERE shipment IN ('FBA Nov 18 T','FBA19TESTSL1','FBA19TESTSL2','AWD OTHER T')");
 }
 
+// 🏷 Owner (2026-11-18, Stock Out Big Company card with no label counts): "I want it to show how many labels it's going to have under Stock Out
+// Big Company too, that way easier for them to know if the label they're holding will match what they're going to grab"
+{
+  console.log('\n🏷 Stock Out Big Company: a Shipment Builder send shows the box labels made for it (by group + area)');
+  const sd = await post('/awd/ship-send', { shipment: 'KIND SEND 1', lines: [{ sku: '61-1-1=10-', units: 30, boxes: 3, unitsPerBox: 10 }, { sku: '62-2-2=5-', units: 5, boxes: 1, unitsPerBox: 5 }] });
+  await post('/awd/label-map', { shipment: 'FBAKINDT1', labels: [
+    { sscc: '201952611628558001', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-1', units: 10, loc: 'C2=1-1-1', kind: 'full' }, { sscc: '201952611628558002', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-2', units: 10, loc: 'C2=1-1-1', kind: 'full' },
+    { sscc: '201952611628558003', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-3', units: 10, loc: 'C2=1-1-1', kind: 'full' }, { sscc: '201952611628558004', sku: '62-2-2=5-', part: '62-2-2=5', seq: '2-1', units: 5, loc: 'BSMT=1-1-1', kind: 'label' }] });
+  sq.prepare("UPDATE awd_label_map SET at = ? WHERE shipment = 'FBAKINDT1'").run(new Date(Date.now() - 3600000).toISOString()); // labels made BEFORE the send
+  sq.prepare("INSERT INTO awd_ship_done (shipment, action, at, by_user) VALUES ('FBAKINDT1', 'done', ?, 'TS')").run(new Date().toISOString()); // its own line ✅ done
+  const op = await get('/awd/ship-send?open=1'), ks = (op.shipments || []).find(x => x.shipment === 'KIND SEND 1') || {};
+  check('the send "KIND SEND 1" gets its box labels (FBAKINDT1: 3 ✅ full at C2, 1 🏷 at BSMT) even though they were made before it; the label set is not listed twice',
+    sd.ok && ks.labelsFrom === 'FBAKINDT1' && (ks.labels || []).length === 4 && ks.labels.filter(b => b.kind === 'full' && /C2/.test(b.loc)).length === 3 && !(op.shipments || []).some(x => x.shipment === 'FBAKINDT1'), { ks: { from: ks.labelsFrom, n: (ks.labels || []).length } });
+  const ih2 = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('page: the card counts a send\'s box labels (by group + area: "✅ C2 · for 3 box labels") and the shipment line says "🏷 4 box labels (FBAKINDT1)"',
+    /\(sh\.source === 'labels' \? sh\.lines \|\| \[\] : sh\.labels\)\.forEach\(function\(b\) \{ var k = K\[b\.kind\];/.test(ih2) && /\(sh\.source === 'labels' \? sh\.lines \|\| \[\] : sh\.labels\)\.forEach\(function\(b\) \{ \/\* 🏷 a send/.test(ih2)
+      && /class="inv-awdship-labsof"[^>]*>🏷 ' \+ sh\.labels\.filter/.test(ih2), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBAKINDT1'; DELETE FROM awd_ship_send WHERE shipment = 'KIND SEND 1'; DELETE FROM awd_ship_done WHERE shipment = 'FBAKINDT1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
