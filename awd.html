@@ -1050,6 +1050,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             </div>
             <div class="card"><div class="card-body">
               <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01" oninput="awdBldName(this.value)"></div>
+              <!-- ✔ Owner (2026-11-18): "before I start to export as .txt I want I am able to click check box quantities, make sure our case pack unit
+                   per box is work with our send qty quantities" -->
+              <button class="btn btn-secondary" id="bld-check-btn" style="width:100%;justify-content:center;margin-bottom:6px;font-weight:700" onclick="bldCheckQty()">✔ Check quantities (case pack)</button>
+              <div id="bld-check-out" style="margin-bottom:8px"></div>
               <button class="btn btn-success" style="width:100%;justify-content:center;margin-bottom:6px" onclick="exportShipment('txt')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .txt
               </button>
@@ -2893,7 +2897,8 @@ async function awdLabelsDo(file) {
   } catch (e) { out.innerHTML = '<span style="color:#DC2626">Could not read the labels: ' + (e.message || e) + '</span>'; }
 }
 function awdForceTpl(sku, on) { S.forceTpl = S.forceTpl || {}; if (on) S.forceTpl[sku] = true; else delete S.forceTpl[sku]; (typeof awdAct === 'function') && awdAct('make_template', { sku, on: !!on }); renderBuilder(); }
-function updateSummary(){
+function updateSummary(){if(typeof bldCheckQty==='function'){const co=ge('bld-check-out');if(co&&co.innerHTML)setTimeout(bldCheckQty,0);} // ✔ an open check follows every change
+
   const items=Object.entries(S.shipment);let tot=0;
   ge('sum-items').innerHTML=items.slice(0,16).map(([sku,i])=>{tot+=i.qty;return'<div class="sum-item"><span class="sum-sku">'+sku+'</span><span class="sum-qty">'+fn(i.qty)+'</span></div>';}).join('')
     +(items.length>16?'<div style="font-size:11px;color:var(--gray-400);text-align:center;padding:6px 0">+' +(items.length-16)+' more</div>':'');
@@ -4470,6 +4475,50 @@ function awdPrepAgain(outId) {
   const skus = t.split(/[\n,;\t ]+/).map(x => x.trim()).filter(x => x && /\d/.test(x));
   if (skus.length && confirm('Send "No prep needed" again for ' + skus.length + ' SKU' + (skus.length === 1 ? '' : 's') + '?\n\n' + skus.join('\n'))) awdPrepFix(skus, outId, true);
 }
+
+// ✔ Check quantities before Export (owner 2026-11-18). Each SKU in the builder on screen, against its case pack template — the same numbers
+// the export uses (boxes = send qty ÷ units per box, rounded UP; the file says boxes × units per box):
+//   ❌ no case pack template (the file has no box info) · ❌ send qty 0 (left out of the file)
+//   ⚠ not a full box: e.g. 50 with 24 a box → the file would say 72 (3 boxes) — tap ↓ 48 (2 boxes) or ↑ 72 (3 boxes)
+//   ⚠ box size / weight missing in the template · ⚠ a box over 50 lb or a side over 25 in (Amazon's standard box limits)
+// Read only until a fix is tapped (each fix is a normal qty change: saved + on record). Export works the same as before.
+function bldCheckRows() {
+  return Object.entries(S.shipment).map(([sku, i]) => {
+    const cp = S.cpackMap[sku.toUpperCase()], u = cp && cp.unitsPerBox > 0 ? cp.unitsPerBox : 0, q = i.qty || 0, issues = [];
+    let down = null, up = null;
+    if (!q) issues.push({ bad: true, t: 'Send qty is 0 — left out of the file' });
+    if (!u) issues.push({ bad: true, t: 'No case pack template — the file has no units per box / boxes' });
+    else if (q && q % u) { down = Math.floor(q / u) * u; up = Math.ceil(q / u) * u;
+      issues.push({ bad: false, t: q + ' is not full boxes of ' + u + ' (' + (q / u).toFixed(2) + ' boxes) — the file would say ' + up + ' (' + (up / u) + ' boxes)' }); }
+    if (u) { const miss = ['lengthIn', 'widthIn', 'heightIn', 'weightLb'].filter(k => !(parseFloat(cp[k]) > 0));
+      if (miss.length) issues.push({ bad: false, t: 'Template is missing ' + miss.map(k => ({ lengthIn: 'length', widthIn: 'width', heightIn: 'height', weightLb: 'weight' })[k]).join(', ') });
+      if (parseFloat(cp.weightLb) > 50) issues.push({ bad: false, t: 'Box is ' + cp.weightLb + ' lb — over 50 lb (Amazon needs a "team lift" label / may refuse)' });
+      const big = ['lengthIn', 'widthIn', 'heightIn'].map(k => parseFloat(cp[k]) || 0).filter(v => v > 25); if (big.length) issues.push({ bad: false, t: 'A box side is ' + Math.max(...big) + ' in — over 25 in (Amazon\'s standard box limit)' }); }
+    return { sku, q, u, boxes: u ? Math.ceil(q / u) : null, down, up, issues };
+  });
+}
+window.bldCheckQty = function () {
+  const out = ge('bld-check-out'); if (!out) return;
+  const L = bldCheckRows(), P = L.filter(x => x.issues.length), units = L.reduce((a, x) => a + (x.u ? x.boxes * x.u : x.q), 0), boxes = L.reduce((a, x) => a + (x.boxes || 0), 0);
+  const h = v => String(v == null ? '' : v).replace(/[<&"]/g, ''), k = v => h(JSON.stringify(v));
+  if (!L.length) { out.innerHTML = '<div style="font-size:12px;color:var(--gray-500)">Nothing in this builder.</div>'; return; }
+  const off = P.filter(x => x.up != null);
+  out.innerHTML = '<div style="border:2px solid ' + (P.length ? '#D97706' : '#16A34A') + ';border-radius:8px;padding:8px;font-size:12px">'
+    + (P.length ? '<b style="color:#B45309">⚠ ' + P.length + ' of ' + L.length + ' SKUs need a look</b>' : '<b style="color:#15803D">✅ All ' + L.length + ' SKUs fit their case pack</b>')
+    + '<div style="color:var(--gray-500);margin:2px 0 6px">The file would send ' + units.toLocaleString() + ' units in ' + boxes.toLocaleString() + ' boxes.</div>'
+    + (off.length > 1 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn btn-sm btn-secondary" onclick="bldCheckFixAll(\'down\')">↓ All ' + off.length + ' to full boxes (down)</button><button type="button" class="btn btn-sm btn-secondary" onclick="bldCheckFixAll(\'up\')">↑ All ' + off.length + ' to full boxes (up)</button></div>' : '')
+    + P.map(x => '<div class="bld-check-row" style="border-top:1px solid var(--gray-200);padding:5px 0"><b style="font-family:monospace">' + h(x.sku) + '</b> — send ' + x.q + (x.u ? ' · ' + x.u + '/box' : '')
+      + x.issues.map(i => '<div style="color:' + (i.bad ? '#DC2626' : '#B45309') + '">' + (i.bad ? '❌ ' : '⚠ ') + h(i.t) + '</div>').join('')
+      + (x.up != null ? '<div style="display:flex;gap:6px;margin-top:3px">' + (x.down > 0 ? '<button type="button" class="btn btn-sm btn-secondary" onclick="bldCheckFix(' + k(x.sku) + ',' + x.down + ')">↓ ' + x.down + ' (' + (x.down / x.u) + ' box' + (x.down / x.u === 1 ? '' : 'es') + ')</button>' : '')
+        + '<button type="button" class="btn btn-sm btn-secondary" onclick="bldCheckFix(' + k(x.sku) + ',' + x.up + ')">↑ ' + x.up + ' (' + (x.up / x.u) + ' box' + (x.up / x.u === 1 ? '' : 'es') + ')</button></div>' : '')
+      + (!x.u ? '<button type="button" class="btn btn-sm btn-secondary" style="margin-top:3px" onclick="openAddTemplateModal(' + k(x.sku) + ')">＋ Add a template</button>' : '') + '</div>').join('') + '</div>';
+};
+window.bldCheckFix = function (sku, qty) { if (!S.shipment[sku]) return; updQty(sku, qty); renderBuilder(); bldCheckQty(); };
+window.bldCheckFixAll = function (dir) {
+  const L = bldCheckRows().filter(x => x.up != null).map(x => [x.sku, dir === 'down' && x.down > 0 ? x.down : x.up]);
+  if (!L.length || !confirm('Change ' + L.length + ' SKU(s) to full boxes (' + (dir === 'down' ? 'down' : 'up') + ')?\n\n' + L.slice(0, 25).map(([s, q]) => s + ' → ' + q).join('\n') + (L.length > 25 ? '\n…' : '') + (dir === 'down' ? '\n\n(One that is under 1 box goes UP to 1 box.)' : ''))) return;
+  L.forEach(([s, q]) => updQty(s, q)); renderBuilder(); bldCheckQty(); awd_planner_toast('✔ ' + L.length + ' SKUs now full boxes');
+};
 
 // ── EXPORT SHIPMENT (.txt or .xlsx) ──
 function exportShipment(format) {
@@ -7107,6 +7156,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118c"></script>
+<script src="xf-access.js?v=20261118d"></script>
 </body>
 </html>
