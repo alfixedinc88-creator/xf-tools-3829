@@ -3877,6 +3877,7 @@ function flPicked(){ return (S.flShown || []).map(function(x){ var o = flSel(x);
 function flSum(){ var b = ge('fl-send'); if (!b) return; var P = flPicked(), u = P.reduce(function(a, p){ return a + p.qty; }, 0);
   b.textContent = '🚚 Send ticked from AWD to FBA' + (P.length ? ' (' + P.length + ' SKU' + (P.length === 1 ? '' : 's') + ', ' + u.toLocaleString() + ' units)' : ''); b.disabled = !P.length; }
 // 🚚 owner 2026-11-18: "click confirm to sent it from our AWD to our FBA right on our app, select and sent"
+var FL_SEND_MAX = 50; // the server takes up to 50 SKUs in one Amazon replenishment order
 window.flSend = async function(btn){
   var P = flPicked(); if (!P.length) { ge('fl-msg').textContent = 'Tick the rows to send first.'; return; }
   var bad = P.filter(function(p){ return p.qty > p.x.awdLeft; });
@@ -3884,14 +3885,28 @@ window.flSend = async function(btn){
   if (!navigator.onLine) { alert('📴 No internet — sending from AWD needs Amazon. Try again when the WiFi is back.'); return; }
   var u = P.reduce(function(a, p){ return a + p.qty; }, 0);
   if (!confirm('Send from AWD to FBA now?\n\n' + P.slice(0, 25).map(function(p){ return p.x.r.sku + ' — ' + p.qty + ' units'; }).join('\n') + (P.length > 25 ? '\n… and ' + (P.length - 25) + ' more' : '')
-    + '\n\n' + P.length + ' SKU(s), ' + u.toLocaleString() + ' units. Amazon checks it, then ships it from AWD to FBA (it can\'t be undone here).')) return;
+    + '\n\n' + P.length + ' SKU(s), ' + u.toLocaleString() + ' units' + (P.length > FL_SEND_MAX ? ' — sent as ' + Math.ceil(P.length / FL_SEND_MAX) + ' Amazon orders (up to ' + FL_SEND_MAX + ' SKUs each)' : '') + '. Amazon checks it, then ships it from AWD to FBA (it can\'t be undone here).')) return;
   btn.disabled = true; ge('fl-msg').textContent = '🚚 Sending to Amazon…';
-  try {
-    var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: P.map(function(p){ return { sku: p.x.r.sku, qty: p.qty }; }), _requestId: 'awdrepl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })).json();
-    if (!d.ok) { ge('fl-msg').textContent = '❌ ' + (d.error || 'failed'); alert('❌ Not sent:\n' + (d.error || 'failed')); }
-    else { ge('fl-msg').textContent = '✅ Sent to Amazon — order ' + d.orderId + ' (' + P.length + ' SKUs, ' + u + ' units). Amazon checks it, then ships it; status below.'; P.forEach(function(p){ delete FLSEL[p.x.r.sku]; }); }
-  } catch (e) { ge('fl-msg').textContent = '❌ ' + e.message; }
+  // 📦 Owner (2026-11-18, photo: 87 SKUs ticked → "❌ Not sent: At most 50 SKUs in one send"): more than 50 ticked → sent as several Amazon
+  // orders of up to 50 SKUs each, one after another (each with its own request #, never sent twice); what went and what didn't is said.
+  var B = [], sent = [], failed = null; for (var i = 0; i < P.length; i += FL_SEND_MAX) B.push(P.slice(i, i + FL_SEND_MAX));
+  var rid0 = 'awdrepl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  for (var k = 0; k < B.length && !failed; k++) {
+    var part = B[k], pu = part.reduce(function(a, p){ return a + p.qty; }, 0);
+    ge('fl-msg').textContent = '🚚 Sending to Amazon' + (B.length > 1 ? ' — order ' + (k + 1) + ' of ' + B.length + ' (' + part.length + ' SKUs)' : '') + '…';
+    try {
+      var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: part.map(function(p){ return { sku: p.x.r.sku, qty: p.qty }; }), _requestId: rid0 + '-' + (k + 1) }) })).json();
+      if (!d.ok) failed = { k: k, error: d.error || 'failed' };
+      else { sent.push({ orderId: d.orderId, n: part.length, u: pu }); part.forEach(function(p){ delete FLSEL[p.x.r.sku]; }); }
+    } catch (e) { failed = { k: k, error: e.message || 'no answer' }; }
+  }
+  var okTxt = sent.length ? '✅ Sent to Amazon — ' + sent.map(function(o){ return 'order ' + o.orderId + ' (' + o.n + ' SKUs, ' + o.u.toLocaleString() + ' units)'; }).join(' · ') + '. Amazon checks it, then ships it; status below.' : '';
+  if (failed) {
+    var left = B.slice(failed.k).reduce(function(a, b){ return a + b.length; }, 0);
+    ge('fl-msg').textContent = (okTxt ? okTxt + ' ' : '') + '❌ ' + left + ' SKU' + (left === 1 ? '' : 's') + ' NOT sent: ' + failed.error + ' (still ticked — press Send again)';
+    alert((sent.length ? '✅ ' + sent.length + ' order(s) sent.\n\n' : '') + '❌ Not sent (' + left + ' SKUs, still ticked):\n' + failed.error);
+  } else ge('fl-msg').textContent = okTxt;
   btn.disabled = false; await flReplLoad(true); renderFbaLow(); updateBadges();
 };
 var FL_ST = { CREATED: '🕐 Created', VALIDATING: '🔎 Amazon checking', ELIGIBLE: '✅ OK — confirming', CONFIRMED: '✅ Confirmed', EXECUTING: '⚙ Amazon working on it', INVENTORY_OUTBOUND: '🚚 On its way to FBA', SUCCESS: '✅ Received in FBA', INELIGIBLE: '❌ Amazon said no', FAILURE: '❌ Failed', CANCELLED: '✖ Cancelled', ERROR: '❌ Not sent' };
