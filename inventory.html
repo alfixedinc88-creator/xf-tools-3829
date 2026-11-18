@@ -2342,7 +2342,8 @@ window.invCredLogin = async function() {
   function invBcNorm(c) { c = String(c || '').trim().toUpperCase(); return /^\d+$/.test(c) ? c.replace(/^0+/, '') : c; }
   // 🗺 Owner (2026-10-25): "they scan our Amazon box label, then the box they grabbed; match → next label, not a match → a warning".
   // The big SSCC barcode on an Amazon box label (18 digits, scanned as 00 + 18) → the box the office printed (SKU, box N-k, spot).
-  function invBcSscc(code) { var d = String(code || '').replace(/\D/g, ''); return /^\d{18,20}$/.test(String(code || '').trim()) && d.length >= 18 ? d.slice(-18) : ''; }
+  // 🏷 an AWD box label's SSCC (18–20 digits), or an FBA box label's box ID FBA19XPR747PU000041 (owner 2026-11-18)
+  function invBcSscc(code) { var c = String(code || '').trim().toUpperCase().replace(/\s+/g, ''), f = /^(FBA[0-9A-Z]{6,14}U\d{3,6})$/.exec(c); if (f) return f[1]; var d = c.replace(/\D/g, ''); return /^\d{18,20}$/.test(c) && d.length >= 18 ? d.slice(-18) : ''; }
   function invBcPart(code) {
     var c = String(code || '').trim().toUpperCase(), ss = invBcSscc(c);
     if (ss) return wFetch(W + '/awd/label-map?code=' + ss).then(function(r) { return r.json(); }).then(function(d) {
@@ -3483,7 +3484,8 @@ window.invCredLogin = async function() {
   // where to grab — the same plan as 📦 AWD shipments ready (Rule #1, least rebag, 🔒 locked plans), minus what is already grabbed or on
   // a Pull List for that shipment (any phone), so nothing is grabbed twice. ➕ Put on my Pull List = the same Pull List items as that card.
   var AML = null;
-  function invAmlSscc(v) { var s = String(v || '').trim(); if (!/^[\d\s()]+$/.test(s)) return ''; var d = s.replace(/\D/g, ''); return d.length >= 18 && d.length <= 20 ? d.slice(-18) : ''; }
+  function invAmlSscc(v) { var s = String(v || '').trim(), f = /^(FBA[0-9A-Z]{6,14}U\d{3,6})$/.exec(s.toUpperCase().replace(/\s+/g, '')); if (f) return f[1]; // 🏷 FBA box ID too
+    if (!/^[\d\s()]+$/.test(s)) return ''; var d = s.replace(/\D/g, ''); return d.length >= 18 && d.length <= 20 ? d.slice(-18) : ''; }
   window.invAmlIsLabel = function(v) { return !!invAmlSscc(v); };
   function invAmlPart(b) { return String((b && (b.part || b.sku)) || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''); }
   function invAmlTodo(A) { return A.boxes.filter(function(b) { return !b.prev; }); }
