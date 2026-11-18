@@ -14535,5 +14535,39 @@ console.log('\n🗂 AWD box labels: the ✅ Already packed list belongs to ONE s
   sq.exec("DELETE FROM amazon_barcode_choice; DELETE FROM amazon_barcode_choice_log"); try { sq.exec("DELETE FROM fba_catalog WHERE sku IN ('77-3-8=100JC', '77-4-4=10')"); } catch (_) {}
 }
 
+// Owner (2026-11-18): "I want as soon as I click on 'send this shipment to stock out big company' it will lock it, and lock the builder 2
+// FBA direct 56 SKUs for me".
+console.log('\n📤🔒 Send to Stock Out Big Company locks what the shipment needs at once; the box labels\' lock takes over later (never held twice)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('71-1-1','sl tee','71-1-1=10','C1=7-7-1',3,100), ('71-1-1','sl tee','71-1-1=10','C2=7-7-2',2,100)").run();
+  const at = async l => ((await get('/inventory/lookup?code=71-1-1=10')).locations || []).find(x => x.location === l) || {};
+  const lines = n1 => [{ forPart: '71-1-1=10', sku: '71-1-1=10-', boxes: 3, grabs: [{ loc: 'C1=7-7-1', part: '71-1-1=10', n: n1, pcs: n1 * 100, used: n1 * 100, exact: true, labels: n1 }, ...(n1 < 3 ? [{ loc: 'C2=7-7-2', part: '71-1-1=10', n: 3 - n1, pcs: 100, used: 100, exact: true, labels: 3 - n1 }] : [])] }];
+  const s1 = await post('/awd/lock', { shipment: 'FBA Nov 18 T', source: 'send', lines: lines(3) });
+  const c1 = await at('C1=7-7-1');
+  check('📤 Send locks at once (source "send", the builder\'s name): C1=7-7-1 3 of 3 held for "FBA Nov 18 T" — no other Stock Out sees them (0 free)',
+    s1.ok && s1.source === 'send' && c1.heldCases === 3 && c1.adjustedCases === 0 && (c1.heldFor || []).includes('FBA Nov 18 T'), { s1, c1 });
+  const s2 = await post('/awd/lock', { shipment: 'FBA19TESTSL1', lines: lines(2) }); // the Amazon box labels of that shipment, locked later
+  const c1b = await at('C1=7-7-1'), c2b = await at('C2=7-7-2');
+  check('…the box labels\' 🔒 Lock it (FBA19TESTSL1, same part #s) takes over: the Send lock is "replaced" (who / when kept) → C1 2 + C2 1 held, not 3 + 2 + 1 (never twice)',
+    s2.ok && (s2.replaced || []).includes('FBA Nov 18 T') && c1b.heldCases === 2 && c1b.adjustedCases === 1 && c2b.heldCases === 1 && c2b.adjustedCases === 1
+      && /box labels FBA19TESTSL1/.test(sq.prepare("SELECT unlocked_by u FROM awd_lock WHERE shipment = 'FBA Nov 18 T'").get().u) && sq.prepare("SELECT status FROM awd_lock WHERE shipment = 'FBA Nov 18 T'").get().status === 'replaced', { s2, c1b, c2b });
+  const s3 = await post('/awd/lock', { shipment: 'AWD OTHER T', source: 'send', lines: [{ forPart: '99-9-9=5', sku: '99-9-9=5', boxes: 1, grabs: [{ loc: 'C3=1-1-1', part: '99-9-9=5', n: 1 }] }] });
+  await post('/awd/lock', { shipment: 'FBA19TESTSL2', lines: lines(2) });
+  check('…a Send lock of OTHER part #s stays locked when someone else\'s labels are locked', s3.ok && sq.prepare("SELECT status FROM awd_lock WHERE shipment = 'AWD OTHER T'").get().status === 'locked', null);
+  // the page: 📤 Send → awdLockForSend → the same grab plan as the labels, one box per case pack
+  const { readFileSync: rfS } = await import('node:fs');
+  const ah = rfS(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const src = ah.slice(ah.indexOf('async function awdLockForSend('), ah.indexOf('async function awdSendToStockOut('));
+  let sent = null, asked = [];
+  const lockFor = new Function('awdGrabPlan', 'awdFbaLoad', 'normalizeAmazonSKU', 'wFetch', 'W', 'awdAct', src + '; return awdLockForSend;')(
+    (sku, units) => { asked.push([sku, units.join(',')]); return sku.startsWith('NONE') ? null : { grabs: [{ loc: 'C1=7-7-1', part: '71-1-1=10', n: units.length }], locOf: units.map(() => 'C1=7-7-1'), others: [], short: 0 }; },
+    async () => {}, x => x, async (u, o) => { sent = JSON.parse(o.body); return { json: async () => ({ ok: true, spots: 1, cases: 3 }) }; }, '', () => {});
+  const r = await lockFor('FBA Nov 18', [{ sku: '71-1-1=10X', units: 30, boxes: 3, unitsPerBox: 10 }, { sku: 'NONE-1=5', units: 7, boxes: 0, unitsPerBox: 0 }]);
+  check('…the page: 📤 Send → the same grab plan as the labels (3 boxes of 10 → [10,10,10]; no case pack → [7]); locked as source "send" under the builder\'s name; a SKU with nothing on the shelf is said',
+    r.ok && r.noPlan === 1 && sent && sent.source === 'send' && sent.shipment === 'FBA Nov 18' && sent.lines.length === 1 && sent.lines[0].forPart === '71-1-1=10X' && sent.lines[0].boxes === 3 && sent.lines[0].pcs === 300 && sent.lines[0].grabs[0].labels === 3
+      && JSON.stringify(asked) === JSON.stringify([['71-1-1=10X', '10,10,10'], ['NONE-1=5', '7']]) && /const lk = await awdLockForSend\(name, lines\)/.test(ah) && /🔒 What it needs is LOCKED at once/.test(ah), { r, sent, asked });
+  sq.exec("DELETE FROM master_list WHERE base_sku = '71-1-1'; DELETE FROM awd_lock WHERE shipment IN ('FBA Nov 18 T','FBA19TESTSL1','FBA19TESTSL2','AWD OTHER T')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

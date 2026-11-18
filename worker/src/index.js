@@ -1924,6 +1924,7 @@ async function awdBoxPallet(request, url, env, session) {
 async function awdLockTable(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_lock (shipment TEXT PRIMARY KEY, at TEXT, by_user TEXT, lines TEXT, status TEXT DEFAULT 'locked',
     unlocked_at TEXT, unlocked_by TEXT)`).run();
+  await env.DB.prepare('ALTER TABLE awd_lock ADD COLUMN source TEXT').run().catch(() => {}); // 'send' = locked by 📤 Send (owner 2026-11-18)
 }
 let _awdHeldCache = null;
 // what the open locked shipments still need at each part # + spot → { 'PART|SPOT': { cases, ships: [...] } } (kept 20 s)
@@ -1977,10 +1978,27 @@ async function awdLock(request, url, env, session) {
     grabs: (Array.isArray(x.grabs) ? x.grabs : []).slice(0, 200).map(g => ({ loc: t(g.loc, 60), part: t(g.part, 60).toUpperCase(), n: num(g.n), pcs: num(g.pcs), used: num(g.used), exact: !!g.exact, caseOf: t(g.caseOf, 60), labels: num(g.labels), how: t(g.how, 160), why: t(g.why, 240) }))
       .filter(g => g.loc && g.part && g.n > 0) })).filter(x => x.forPart && x.grabs.length);
   if (!lines.length) return J({ ok: false, error: 'Nothing to lock — no spot to grab from' }, 400);
-  await env.DB.prepare('INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status) VALUES (?,?,?,?,?)').bind(sh, new Date().toISOString(), who, JSON.stringify(lines), 'locked').run();
+  // 📤🔒 Owner (2026-11-18): "as soon as I click 'Send this shipment to Stock Out Big Company' it locks what we need for that shipment".
+  // source 'send' = the lock made by 📤 Send (the builder's name). When the Amazon box labels of that shipment are locked later (their
+  // Amazon Shipment ID), that lock takes over: a Send lock with at least half its part #s in it is marked 'replaced' (who / when kept) —
+  // the same rule as the shipments list (labels replace a send) — so the same boxes are never held twice.
+  const source = b.source === 'send' ? 'send' : 'labels', now = new Date().toISOString();
+  await env.DB.prepare('INSERT OR REPLACE INTO awd_lock (shipment, at, by_user, lines, status, source) VALUES (?,?,?,?,?,?)').bind(sh, now, who, JSON.stringify(lines), 'locked', source).run();
+  const replaced = [];
+  if (source === 'labels') {
+    const mine = new Set(lines.map(x => x.forPart));
+    for (const r of ((await env.DB.prepare("SELECT shipment, lines FROM awd_lock WHERE status = 'locked' AND source = 'send' AND shipment != ?").bind(sh).all()).results || [])) {
+      let sl = []; try { sl = JSON.parse(r.lines || '[]'); } catch (_) {}
+      const parts = new Set(sl.map(x => String(x.forPart || '').toUpperCase())), hit = [...parts].filter(p => mine.has(p)).length;
+      if (parts.size && hit * 2 >= parts.size) {
+        await env.DB.prepare("UPDATE awd_lock SET status = 'replaced', unlocked_at = ?, unlocked_by = ? WHERE shipment = ? AND status = 'locked'").bind(now, (who + ' — box labels ' + sh).slice(0, 80), r.shipment).run();
+        replaced.push(r.shipment);
+      }
+    }
+  }
   _awdHeldCache = null;
   const spots = new Set(); let cases = 0; lines.forEach(x => x.grabs.forEach(g => { spots.add(g.part + '|' + g.loc); cases += g.n; }));
-  return J({ ok: true, shipment: sh, by: who, spots: spots.size, cases: Math.round(cases * 1000) / 1000 });
+  return J({ ok: true, shipment: sh, by: who, source, spots: spots.size, cases: Math.round(cases * 1000) / 1000, ...(replaced.length ? { replaced } : {}) });
 }
 async function awdPlanCache(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
