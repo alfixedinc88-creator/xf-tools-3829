@@ -8917,6 +8917,11 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// ✅ Owner (2026-11-18): "still able to see previous shipment info here … a button click on 'done' then it will save it to history right under, not show up in our front page"
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), wk = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('🏷 Saved box labels: ✅ Done — move to History → the shipment\'s labels leave the page (also after a reload), stay in 🕘 History (↩ Bring back), kept on record (labels_done); a lock / pallet scans are not touched',
+    /onclick="awdLblDone\(\)"[^>]*>✅ Done — move to History/.test(ah) && /if \(!idx\.some\(x => x\.at === rec\.at\)\) await awdLblSave\(rec\);/.test(ah) && /await awdLblPut\(await awdLblDb\(\), \[\['last', undefined\]\]\);/.test(ah)
+      && /awdAct\('labels_done'/.test(ah) && /'labels_bring_back', 'labels_done',/.test(wk) && !/awdLblDone[\s\S]{0,1500}\/awd\/lock/.test(ah), null); }
 // ✔ Owner (2026-11-18): "before I start to export as .txt I want I am able to click check box quantities, make sure our case pack unit per box is work with our send qty quantities"
 { const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   const src = ah.slice(ah.indexOf('function bldCheckRows() {'), ah.indexOf('window.bldCheckQty = function'));

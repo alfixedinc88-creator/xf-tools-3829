@@ -2583,6 +2583,7 @@ function awdActTxt(r) {
     case 'label_reprint': return '🖨 Reprinted ' + h(d.labels) + ' label' + (d.labels === 1 ? '' : 's') + ' of ' + h(d.shipment || '?') + ' (not on a pallet yet): Box ' + L(d.boxes);
     case 'bag_print': return d.box ? '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' for Box ' + h(d.box) + ' (' + h(d.part) + ') of ' + h(d.shipment || '?') + ' — from its Amazon label (UPC Barcodes)'
       : '🏷 Printed ' + h(d.qty) + ' × ' + h(d.what) + ' (' + h(d.part) + ') — from the shipment list (UPC Barcodes)';
+    case 'labels_done': return '✅ Done with the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels) — moved to History';
     case 'labels_bring_back': return '↩ Brought back the labels of ' + h(d.shipment || '?') + ' (' + h(d.labels) + ' labels)';
     case 'label_map': return '🏷 Made the box labels of <b>' + h(d.shipment || '?') + '</b> (' + h(d.boxes) + ' boxes)';
     case 'ship_send': return '📤 Sent <b>' + h(d.shipment) + '</b> to Stock Out Big Company (' + h(d.skus) + ' SKUs · ' + h(d.units) + ' units · ' + h(d.boxes) + ' boxes)';
@@ -2682,7 +2683,26 @@ function awdPalReprint(idx, ticked) {
 function awdLblSavedHead(rec) {
   const n = (rec.groups || []).reduce((a, g) => a + g.pages.length, 0), h = v => String(v == null ? '' : v).replace(/[<&]/g, '');
   return '<div style="color:#475569;margin-bottom:3px">💾 Saved labels' + (rec.shipment ? ' — <b>' + h(rec.shipment) + '</b>' : '') + ' · ' + n + ' to print · made ' + h(new Date(rec.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))
-    + (rec.file ? ' from ' + h(rec.file) : '') + ' — kept until you upload new ones</div>';
+    + (rec.file ? ' from ' + h(rec.file) : '') + ' — kept until you upload new ones'
+    + ' <button type="button" class="btn btn-sm btn-secondary awd-lbl-done" style="padding:2px 8px;font-size:11px;font-weight:700;color:#15803D;border-color:#86EFAC" onclick="awdLblDone()" title="This shipment is finished — take it off this page; it stays in 🕘 History (↩ Bring back any time)">✅ Done — move to History</button></div>';
+}
+// ✅ Owner (2026-11-18): "still able to see previous shipment info here, is there's anyway I can have a button click on 'done' then it will save it
+// to history right under, not show up in our front page, sometime it just showing too much info we don't need". Done → the saved labels of that
+// shipment leave this page (and its pallet check panel); they stay in 🕘 History on this computer (↩ Bring back makes them the saved labels again).
+// Kept on record (who, when, which shipment). Nothing on the server changes (a 🔒 lock / pallet scans stay as they are).
+async function awdLblDone() {
+  const rec = await awdLblLoad(); const ship = (rec && rec.shipment) || window.AWD_LBL_SHIP || '';
+  if (!confirm('Done with ' + (ship || 'these labels') + '?\n\nThey leave this page and stay in 🕘 History (↩ Bring back any time).\nA 🔒 lock or pallet scans on the server are not changed.')) return;
+  try { if (rec) { const db = await awdLblDb(); const idx = (await awdLblGet(db, 'idx')) || [];
+      if (!idx.some(x => x.at === rec.at)) await awdLblSave(rec); // make sure it is in History first
+      await awdLblPut(await awdLblDb(), [['last', undefined]]); } }
+  catch (e) { awd_planner_toast('Could not move it to History: ' + e.message, 'error'); return; }
+  window.AWD_LBL_GROUPS = null; window.AWD_LBL_SHIP = ''; window.AWD_LOCK_DRAFT = null;
+  const out = ge('awd-lbl-out'); if (out) out.innerHTML = '';
+  (typeof awdPalShow === 'function') && awdPalShow();
+  (typeof awdAct === 'function') && awdAct('labels_done', { shipment: ship, made: rec ? rec.at : '', labels: rec ? (rec.groups || []).reduce((a, g) => a + g.pages.length, 0) : 0 });
+  const hd = ge('awd-lbl-hist'); if (hd && awdLblIsAdmin()) { hd.open = true; awdLblHistShow(); }
+  awd_planner_toast('✅ ' + (ship || 'Labels') + ' moved to 🕘 History');
 }
 async function awdLblRestore() {
   const out = ge('awd-lbl-out'); awdLblHistShow(); if (!out || window.AWD_LBL_GROUPS) return;
@@ -7156,6 +7176,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118d"></script>
+<script src="xf-access.js?v=20261118e"></script>
 </body>
 </html>

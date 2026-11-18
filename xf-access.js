@@ -75,6 +75,7 @@ document.addEventListener('input', function (e) {
         { key: 'awdlock', label: '…🔒 Lock it (hold the shipment\'s grab plan for Stock Out Big Company)', sel: '#awd-lock-box' },
         { key: 'lblnotpal', label: '…⚠ Labels not on a pallet yet + 🖨 Reprint them', sel: '#awd-lbl-pal' },
         { key: 'boxlabelshist', label: '…🕘 Earlier box labels (Admin only)', sel: '#awd-lbl-hist' },
+        { key: 'boxlabelsdone', label: '…✅ Done — move to History', sel: '.awd-lbl-done' },
         { key: 'bldhist', label: '🕘 History — everything done in the Shipment Builder (Admin only)', sel: '#awd-bld-hist' },
         { key: 'prevpacked', label: '✅ Already packed (PREVIOUS PACKED) list', sel: '#awd-prev-wrap' },
         { key: 'forcetpl', label: '✅ Make template (rows short on stock)', sel: '#page-builder .awd-force-tpl' },
