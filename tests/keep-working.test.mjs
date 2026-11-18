@@ -8917,6 +8917,22 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// ⚡ Owner (2026-11-18): "for inventory sku mgr when I click editing, when I click to save it take while to save it, can you check and fix the delay"
+{ const wk = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'), ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const ap = wk.slice(wk.indexOf('async function _invApplySkuRowUpdate'), wk.indexOf('// Shared "append a brand-new row to master_list"'));
+  check('⚡ SKU Mgr ✏️ Save answers as soon as SKU Mgr\'s own data is saved: the database first, the old Google Sheet copy after it (after the answer), the whole-inventory value math after the answer, the column checks once per worker; the button says ⏳ Saving… and can\'t be tapped twice',
+    ap.indexOf('d1Result = await d1Run(env,') < ap.indexOf('const sheetCopy = () => invSheetUpdate(') && /ctx\.waitUntil\(sheetCopy\(\)/.test(ap)
+      && /return await inventorySkuRow\(request, env, session, undefined, ctx\);/.test(wk) && /ctx\.waitUntil\(vp\(\)\.catch/.test(wk) && /let _totColsReady = false;\nasync function ensureTotalTrackingColumns\(env\) \{\n  if \(_totColsReady\) return;/.test(wk)
+      && /if \(saveBtn\) \{ if \(saveBtn\.disabled\) return; saveBtn\.disabled = true; saveBtn\.textContent = '⏳ Saving…'; \}/.test(ih), null);
+  // the History line still has the totals at once, and the value math still lands (after the answer)
+  const row = sq.prepare("SELECT id, part_num, location, cases FROM master_list WHERE cases > 0 AND COALESCE(units_per_case,0) > 0 ORDER BY id LIMIT 1").get();
+  if (row) { const bg = []; const r = await worker.fetch(new Request('https://w/inventory/sku-row', { method: 'POST', headers: H, body: JSON.stringify({ mode: 'update', d1Id: row.id, sheetRow: 0, partNum: row.part_num, location: row.location, cases: (+row.cases) + 1, name: 'speed test', unitsPerCase: 10, price: 2.5 }) }), env, { waitUntil(p) { bg.push(p); } }).then(x => x.json());
+    const L = sq.prepare("SELECT total_before, total_after, val_after FROM inventory_log WHERE type = 'EDIT' AND part_num = ? ORDER BY id DESC LIMIT 1").get(String(row.part_num).toUpperCase());
+    await Promise.all(bg); const L2 = sq.prepare("SELECT val_after FROM inventory_log WHERE type = 'EDIT' AND part_num = ? ORDER BY id DESC LIMIT 1").get(String(row.part_num).toUpperCase());
+    check('…the saved edit: History has Part Total before → after (+1 case) right away; the value before → after is filled in right after (background)',
+      r.ok && L && L.total_after - L.total_before === 1 && L2 && L2.val_after != null, { r, L, L2 });
+    sq.prepare('UPDATE master_list SET cases = ? WHERE id = ?').run(row.cases, row.id); }
+}
 // ✅ Owner (2026-11-18): "still able to see previous shipment info here … a button click on 'done' then it will save it to history right under, not show up in our front page"
 { const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), wk = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('🏷 Saved box labels: ✅ Done — move to History → the shipment\'s labels leave the page (also after a reload), stay in 🕘 History (↩ Bring back), kept on record (labels_done); a lock / pallet scans are not touched',
