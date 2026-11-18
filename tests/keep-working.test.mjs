@@ -8917,6 +8917,19 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// 📦 Owner (2026-11-18, Stock Out Big Company C2): "when we scan the click on the box it always showing up 'wrong box' even it was right spot and right box, try 4 different boxes"
+{ const row = sq.prepare("SELECT part_num FROM master_list WHERE TRIM(COALESCE(part_num,'')) != '' AND part_num NOT GLOB '[0-9]*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' ORDER BY id LIMIT 1").get();
+  const ck = d => { let t = 0; for (let i = 0; i < d.length; i++) t += (+d[d.length - 1 - i]) * (i % 2 ? 1 : 3); return (10 - t % 10) % 10; }; // GS1 check digit (UPC-A / GTIN-14)
+  const u11 = '81774400123', upc = u11 + ck(u11), g13 = '10' + u11, gtin = g13 + ck(g13); // GTIN-14: indicator 1 + "0" + the UPC's 11 digits + check
+  const ln = await post('/inventory/upc-link', { upc, part: row.part_num });
+  const look = await get('/inventory/lookup?lite=1&code=' + gtin), look2 = await get('/inventory/lookup?lite=1&code=' + upc);
+  const ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('a vendor carton\'s 14-digit case code (GTIN-14: 1 + the item UPC + a new check digit) finds the part # of the UPC inside it; the plain UPC still does',
+    ln.ok && String(look.partNum).toUpperCase() === String(row.part_num).toUpperCase() && String(look2.partNum).toUpperCase() === String(row.part_num).toUpperCase(), { ln, look, look2, gtin });
+  check('Pull List grab scan: a box barcode not linked to any part # shows the code scanned + 🔗 "the label says <part #> — link this barcode" (confirm, kept with who / when) and then counts the box',
+    /This barcode <b style="font-family:var\(--mono\)">' \+ invEsc\(code\) \+ '<\/b> is not linked to any part # yet/.test(ih) && /onclick="invPsgLink\(/.test(ih) && /window\.invPsgLink = function\(code\) \{/.test(ih)
+      && /wFetch\(W \+ '\/inventory\/upc-link', \{ method: 'POST'[^\n]*JSON\.stringify\(\{ upc: code, part: it\.partNum \}\)/.test(ih), null);
+  sq.prepare('DELETE FROM upc_link WHERE upc = ?').run(upc); }
 // ⚡ Owner (2026-11-18): "for inventory sku mgr when I click editing, when I click to save it take while to save it, can you check and fix the delay"
 { const wk = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'), ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   const ap = wk.slice(wk.indexOf('async function _invApplySkuRowUpdate'), wk.indexOf('// Shared "append a brand-new row to master_list"'));
