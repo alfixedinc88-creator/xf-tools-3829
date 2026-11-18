@@ -10162,7 +10162,7 @@ window.invCredLogin = async function() {
       html += skumgrInlineField('Notes',     'skumgr-f-notes-'    + idx, row.prev_notes||'',   'text',   false);
       html += '</div>';
       html += '<div style="display:flex;gap:8px">';
-      html += '<button onclick="skumgrSaveEdit(' + globalIdx + ')" style="padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Save</button>';
+      html += '<button id="skumgr-save-' + globalIdx + '" onclick="skumgrSaveEdit(' + globalIdx + ')" style="padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Save</button>';
       html += '<button onclick="skumgrCancelEdit(' + globalIdx + ')" style="padding:8px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>';
       html += '</div></td></tr>';
     });
@@ -10371,7 +10371,11 @@ window.invCredLogin = async function() {
     var vendor   = fld('skumgr-f-vendor-' + idx);
     var notes    = fld('skumgr-f-notes-' + idx);
     if (!partNum || !location || cases === '') { invFlash('Part#, Location, and Cases are required', 'error'); return; }
-    var saveBtn = g('skumgr-edit-' + idx) && g('skumgr-edit-' + idx).querySelector('button');
+    // ⚡ Owner (2026-11-18): "when I click to save it take while to save it … don't want to keep waiting there" — the button says so at once
+    // (and can't be tapped twice); the server now answers as soon as SKU Mgr's own data is saved (the old Sheet copy + value math after).
+    var saveBtn = g('skumgr-save-' + idx);
+    if (saveBtn) { if (saveBtn.disabled) return; saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving…'; }
+    var unbusy = function() { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; } };
     wFetch(W + '/inventory/sku-row', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -10408,10 +10412,10 @@ window.invCredLogin = async function() {
         skumgrRenderResults(); // re-renders whole table with updated data
         invFlash('Saved ✓', 'success');
       } else {
-        invFlash('Error: ' + (d.error||'unknown'), 'error');
+        unbusy(); invFlash('Error: ' + (d.error||'unknown'), 'error');
       }
     })
-    .catch(function() { invFlash('Save failed', 'error'); });
+    .catch(function() { unbusy(); invFlash('Save failed', 'error'); });
   };
 
   // ── Export full Master List ──────────────────────────────────────────────

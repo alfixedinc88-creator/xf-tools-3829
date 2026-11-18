@@ -6440,7 +6440,11 @@ async function inventoryLog(request, env) {
 // cancel-entry): self-healing schema (safe no-op once these columns
 // exist) and a single place that defines "the total" the same way
 // everywhere — SUM of cases across active master_list rows.
+// ⚡ Owner (2026-11-18: SKU Mgr "when I click to save it take while to save it … don't want to keep waiting there"): these ~15 column
+// checks ran on EVERY History line (several times a save, one database trip each). The columns never go away — checked once per worker.
+let _totColsReady = false;
 async function ensureTotalTrackingColumns(env) {
+  if (_totColsReady) return;
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_before REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_after REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_warning TEXT').run().catch(()=>{});
@@ -6459,6 +6463,7 @@ async function ensureTotalTrackingColumns(env) {
   // vendor price before → after this entry (same count as SKU Mgr's total).
   for (const c of ['val_before', 'val_after', 'wval_before', 'wval_after'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c + ' REAL').run().catch(()=>{});
+  _totColsReady = true;
 }
 // History's "before → after" check, per PART # (every shelf of that part,
 // any number of cases). It used to be the whole warehouse, so anyone else's
@@ -12006,7 +12011,7 @@ const _app = {
       }
       if (path === '/inventory/sku-row' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventorySkuRow(request, env, session);
+        return await inventorySkuRow(request, env, session, undefined, ctx); // ctx: the Sheet copy + value math finish after the answer
       }
       // GET /inventory/sku-row-check?id=123 — diagnostic: read one row's
       // CURRENT raw D1 state directly, bypassing every cache/search layer.
@@ -17903,7 +17908,7 @@ async function inventorySkuSearch(url, env) {
 // than each keeping a separate, driftable copy of this logic). Returns a
 // plain result object ({ok, d1Changes} or {ok:false, error, status}) instead
 // of a Response so both callers can shape their own HTTP reply around it.
-async function _invApplySkuRowUpdate(env, fields) {
+async function _invApplySkuRowUpdate(env, fields, ctx) {
   const { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor, price, prevNotes } = fields;
   if (!partNum || !location || cases === undefined || cases === null) {
     return { ok: false, status: 400, error: 'partNum, location, cases required' };
@@ -17924,24 +17929,6 @@ async function _invApplySkuRowUpdate(env, fields) {
       : await d1First(env, 'SELECT * FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]).catch(() => null);
   }
 
-  // Only touch Sheets if this row actually has a real Sheets row number —
-  // sheet_row=0 means this row was never written to Sheets, so there's
-  // nothing there to update (skip, don't create a stray Sheets row).
-  if (sheetRow) {
-    await invSheetUpdate(env, `Master_List!D${sheetRow}:N${sheetRow}`, [[
-      parent,
-      name || '',
-      '', // col F unused
-      partNum.toUpperCase(),
-      location,
-      casesNum,
-      unitsPerCaseN,
-      prevNotes || '',
-      '',  // col L
-      vendor || '',
-      priceN
-    ]]);
-  }
   // Update D1 — prefer the unique id when available; fall back to
   // sheet_row only for older callers that don't send d1Id yet.
   // IMPORTANT: d1Run swallows errors and returns null on failure, and a
@@ -17976,6 +17963,28 @@ async function _invApplySkuRowUpdate(env, fields) {
         d1Id, sheetRow
       };
     }
+  }
+  // Only touch Sheets if this row actually has a real Sheets row number —
+  // sheet_row=0 means this row was never written to Sheets, so there's
+  // nothing there to update (skip, don't create a stray Sheets row).
+  if (sheetRow) {
+    const sheetCopy = () => invSheetUpdate(env, `Master_List!D${sheetRow}:N${sheetRow}`, [[
+      parent,
+      name || '',
+      '', // col F unused
+      partNum.toUpperCase(),
+      location,
+      casesNum,
+      unitsPerCaseN,
+      prevNotes || '',
+      '',  // col L
+      vendor || '',
+      priceN
+    ]]);
+    // ⚡ (owner 2026-11-18: SKU Mgr save "take while") the old Google Sheet copy is written AFTER the database (SKU Mgr's own data) and,
+    // when the save gave us ctx, after the answer — the person doesn't wait on Google. A failed copy is logged; the database is the truth.
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(sheetCopy().catch(e => console.error('[Master_List sheet copy]', e.message)));
+    else await sheetCopy();
   }
   await invalidateMasterListCache(env);
   return { ok: true, sheetRow, d1Id, d1Changes: d1Result?.meta?.changes ?? d1Result?.changes ?? 0, before };
@@ -18040,7 +18049,7 @@ async function _invApplySkuRowInsert(env, fields) {
 // POST /inventory/sku-row — update existing row OR insert new row
 // Body: { mode: 'update'|'insert', sheetRow, partNum, location, cases,
 //         name, sku, unitsPerCase, vendor, price, prevNotes }
-async function inventorySkuRow(request, env, session, opts) {
+async function inventorySkuRow(request, env, session, opts, ctx) {
   try {
     const body = await request.json().catch(() => ({}));
     const { mode, sheetRow, d1Id, partNum, location, cases,
@@ -18072,7 +18081,7 @@ async function inventorySkuRow(request, env, session, opts) {
       const newPrice = parseFloat(price) || 0, oldPrice = was ? parseFloat(was.price) || 0 : 0;
       const priceMoved = !!was && newPrice > 0 && Math.abs(newPrice - oldPrice) > 1e-6;
       if (priceMoved) await costSafe(() => costReconcile(env, was.part_num, was.location));
-      const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
+      const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes }, ctx);
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
@@ -18085,7 +18094,7 @@ async function inventorySkuRow(request, env, session, opts) {
         if (opts && opts.fillUnpriced) await costSafe(() => env.DB.prepare('UPDATE cost_layer SET price = ? WHERE part = ? AND location = ? AND (price IS NULL OR price <= 0)')
           .bind(newPrice, _costKey(partNum), _costKey(location)).run());
       }
-      await skuMgrLogEdit(env, who, result.before, d1Id, sheetRow, tot).catch(e => console.error('[skumgr history]', e.message));
+      await skuMgrLogEdit(env, who, result.before, d1Id, sheetRow, tot, ctx).catch(e => console.error('[skumgr history]', e.message));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'update', sheetRow, d1Id, d1Changes: result.d1Changes }),
         { headers: { 'Content-Type': 'application/json' } }));
 
@@ -18095,7 +18104,7 @@ async function inventorySkuRow(request, env, session, opts) {
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
-      await skuMgrLogAdd(env, who, { partNum, location, cases, name }, tot).catch(e => console.error('[skumgr history]', e.message));
+      await skuMgrLogAdd(env, who, { partNum, location, cases, name }, tot, ctx).catch(e => console.error('[skumgr history]', e.message));
       await costSafe(() => priceLogAdd(env, { part: partNum, location, price, source: 'SKU Mgr new row', by: who, cases }));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'insert', sheetRow: result.sheetRow }),
         { headers: { 'Content-Type': 'application/json' } }));
@@ -18131,7 +18140,7 @@ function _skuMgrVal(k, v) {
   if (k === 'cases' || k === 'units_per_case' || k === 'price') return String(parseFloat(v) || 0);
   return String(v).trim();
 }
-async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
+async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn, ctx) {
   await invLogEnsureColumns(env);
   await ensureTotalTrackingColumns(env);
   const ts = new Date().toISOString();
@@ -18151,9 +18160,12 @@ async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
   ).bind(0, ts, 'EDIT', String(r.part_num || '').toUpperCase(), r.location || '', parseFloat(r.cases) || 0, who,
     notes.slice(0, 1500), 'Verified', who, ts, '', 0, 0, r.id || 0, mlParent(r.part_num), '', '', r.name || '',
     before, after, warn, 'part', whB, whA).run();
-  if (tot && tot.vb) await invSaveValue(env, [ins.meta && ins.meta.last_row_id], tot.vb);
+  // 💲 the value before → after (whole inventory at vendor price — reads every cost batch): after the answer when the save gave us ctx
+  // (SKU Mgr ✏️ Save, owner 2026-11-18 "take while to save"), so the person isn't kept waiting; the line itself (cases before → after) is above.
+  if (tot && tot.vb) { const vp = () => invSaveValue(env, [ins.meta && ins.meta.last_row_id], tot.vb);
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(vp().catch(e => console.error('[history value]', e.message))); else await vp(); }
 }
-async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot) {
+async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot, ctx) {
   if (!env.DB) return;
   const now = d1Id ? await d1First(env, 'SELECT * FROM master_list WHERE id=?', [d1Id])
     : await d1First(env, 'SELECT * FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]);
@@ -18181,15 +18193,15 @@ async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot) {
     }
     if (Math.abs(newAfter - expNew) > 1e-9) warn = '⚠ ' + tot.newPart + ' total should be ' + _n(expNew) + ', but it is ' + _n(newAfter) + ' (was ' + _n(tot.newBefore) + '). Another change landed at the same moment — check its shelves.';
   }
-  await _skuMgrInsertLog(env, who, now, notes, tot, warn);
+  await _skuMgrInsertLog(env, who, now, notes, tot, warn, ctx);
 }
-async function skuMgrLogAdd(env, who, f, tot) {
+async function skuMgrLogAdd(env, who, f, tot, ctx) {
   if (!env.DB) return;
   const part = String(f.partNum || '').trim().toUpperCase();
   const now = await d1First(env, 'SELECT * FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? ORDER BY id DESC LIMIT 1',
     [part, String(f.location || '').trim().toUpperCase()]).catch(() => null);
   const r = now || { part_num: part, location: f.location, cases: f.cases, name: f.name };
-  await _skuMgrInsertLog(env, who, r, '[SKU MGR ADD] New row: ' + part + ' @ ' + (r.location || '') + ', ' + (parseFloat(r.cases) || 0) + ' cases', tot, null);
+  await _skuMgrInsertLog(env, who, r, '[SKU MGR ADD] New row: ' + part + ' @ ' + (r.location || '') + ', ' + (parseFloat(r.cases) || 0) + ' cases', tot, null, ctx);
 }
 
 // ── 🧬 Parent doesn't match Part # — find and fix ─────────────────────────
