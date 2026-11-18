@@ -10792,7 +10792,7 @@ const TM_KEEP = new Set([
 ]);
 // Routes that change things outside the app (can't be erased afterwards).
 const TM_BLOCK = new Set([
-  '/amazon/listing-create', '/amazon/update-price', '/amazon/price-set', '/amazon/variation-create', '/amazon/titles-feed-submit',
+  '/amazon/listing-create', '/amazon/update-price', '/amazon/price-set', '/awd/replenish', '/amazon/variation-create', '/amazon/titles-feed-submit',
   '/ebay/listing-publish', '/ebay/variation-publish', '/ebay/offer-delete', '/ebay/update-price', '/ebay/location-create',
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
@@ -11234,6 +11234,9 @@ const _app = {
       return cors(new Response(JSON.stringify({ ok: true, cfg }), { headers: { 'Content-Type': 'application/json' } }));
     }
     // 📭 What happened to an item Amazon never received: { key, decision: 'not-shipped' | 'shipped' | null } — who / when kept, for everyone.
+    // 🚚 Owner (2026-11-18): "I want we able to click confirm to sent it from our AWD to our FBA right on our app, select and sent"
+    if (url.pathname === '/awd/replenish' && method === 'POST') return await awdReplenish(request, env, session);
+    if (url.pathname === '/awd/replenish-list' && method === 'GET') return await awdReplenishList(url, env, session);
     if (url.pathname === '/awd/not-received' && method === 'POST') {
       const b = await request.json().catch(() => ({})), key = String(b.key || '').trim().slice(0, 120);
       if (!key) return cors(new Response(JSON.stringify({ ok: false, error: 'key needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -16759,6 +16762,75 @@ async function awdFbaLowRecord(env, st, fbaNow, inv, now) {
   await awdAutoSet(env, 'fbaLow', cur);
   await awdAutoSet(env, 'fbaLowLog', log.slice(0, 300));
   return cur;
+}
+// 🚚 AWD → FBA replenishment from the app (owner 2026-11-18: "click confirm to sent it from our AWD to our FBA right on our app, select and
+// sent"). Amazon's AWD API createReplenishmentOrder: one order for the ticked SKUs, confirmation AUTO (the click in the app IS the confirm —
+// Amazon checks the order and sends it once it is ELIGIBLE; an INELIGIBLE one says why and nothing moves). Before it is sent, each SKU is
+// checked against what AWD has available NOW (Amazon's own number) — never asks for more. Every order is kept (awd_repl: who, when, what was
+// asked, Amazon's order #, status, what was eligible / shipped, why not) and its status is read again from Amazon when the list is opened.
+// Management only (Admin / Owner / Mgmt). Blocked in test mode. A repeated click / replayed request (_requestId) is sent once.
+const AWD_REPL_TABLE = 'CREATE TABLE IF NOT EXISTS awd_repl (id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT UNIQUE, order_id TEXT, by_user TEXT, at TEXT, items TEXT, status TEXT, detail TEXT, checked_at TEXT, error TEXT)';
+const AWD_REPL_FINAL = new Set(['SUCCESS', 'FAILURE', 'INELIGIBLE', 'CANCELLED', 'ERROR']);
+async function awdReplenish(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || !(session.roles || []).some(r => r === 'mgmt' || r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Only management (Admin / Owner / Mgmt) can send from AWD' }, 403);
+  if (!env.AMAZON_REFRESH_TOKEN) return J({ ok: false, error: 'Amazon seller API not set up' }, 400);
+  await env.DB.prepare(AWD_REPL_TABLE).run();
+  const b = await request.json().catch(() => ({})), rid = String(b._requestId || '').slice(0, 80);
+  if (rid) { const was = await env.DB.prepare('SELECT * FROM awd_repl WHERE request_id = ?').bind(rid).first(); if (was) return J({ ok: !was.error, duplicate: true, orderId: was.order_id, status: was.status, error: was.error || undefined }); }
+  const m = {}; (Array.isArray(b.items) ? b.items : []).forEach(x => { const k = String((x && x.sku) || '').trim(), q = Math.floor(+((x && x.qty) || 0)); if (k && q > 0) m[k] = (m[k] || 0) + q; });
+  const items = Object.keys(m).map(sku => ({ sku, qty: m[sku] }));
+  if (!items.length) return J({ ok: false, error: 'Tick at least one SKU with units to send' }, 400);
+  if (items.length > 50) return J({ ok: false, error: 'At most 50 SKUs in one send' }, 400);
+  if (items.some(x => x.qty > 100000)) return J({ ok: false, error: 'Too many units for one SKU' }, 400);
+  const token = await getAmazonToken(env), by = String(session.displayName || session.username || '?').slice(0, 40), now = new Date().toISOString();
+  // what AWD has available now, from Amazon (never ask for more than that)
+  const over = [];
+  for (const x of items) {
+    let avail = 0;
+    try { const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inventory?${new URLSearchParams({ sku: x.sku, details: 'SHOW' })}`);
+      (d.inventory || []).filter(i => String(i.sku || '').trim().toUpperCase() === x.sku.toUpperCase()).forEach(i => { const dt = i.inventoryDetails || {}, res = dt.reservedDistributableQuantity || 0, onh = i.totalOnhandQuantity || 0;
+        avail += dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res); }); }
+    catch (e) { return J({ ok: false, error: 'Could not read AWD stock of ' + x.sku + ' from Amazon — nothing sent. ' + String(e.message || e).slice(0, 200) }, 502); }
+    x.awdAvail = avail; if (x.qty > avail) over.push(x.sku + ': asked ' + x.qty + ', AWD has ' + avail);
+  }
+  if (over.length) return J({ ok: false, error: 'More than AWD has now — nothing sent: ' + over.join(' · '), over }, 400);
+  let orderId = '', err = '';
+  try {
+    orderId = (await spApiRetry(async () => {
+      const r = await fetch('https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/replenishmentOrders', { method: 'POST',
+        headers: { 'x-amz-access-token': token, 'x-amz-date': awdAmzDate(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: items.map(x => ({ sku: x.sku, quantity: x.qty })), preferences: { confirmation: 'AUTO' } }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { const e = JSON.stringify(d.errors || d).slice(0, 400); if (r.status === 429) throw new Error('QuotaExceeded:' + e); throw new Error('HTTP ' + r.status + ': ' + e); }
+      return d;
+    }, 3, 6000)).orderId || '';
+    if (!orderId) err = 'Amazon gave no order #';
+  } catch (e) { const msg = String(e.message || e); err = (/HTTP 40[13]/.test(msg) ? 'Amazon refused (the seller-API app needs the "Amazon Warehousing and Distribution" role) — ' : '') + msg.slice(0, 300); }
+  await env.DB.prepare('INSERT INTO awd_repl (request_id, order_id, by_user, at, items, status, detail, checked_at, error) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(rid || null, orderId || null, by, now, JSON.stringify(items), err ? 'ERROR' : 'CREATED', null, now, err || null).run();
+  if (err) return J({ ok: false, error: 'Amazon did not take it — nothing sent: ' + err }, 502);
+  return J({ ok: true, orderId, status: 'CREATED', items });
+}
+async function awdReplenishList(url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session) return J({ ok: false, error: 'Sign in' }, 401);
+  await env.DB.prepare(AWD_REPL_TABLE).run();
+  const rows = ((await env.DB.prepare('SELECT * FROM awd_repl ORDER BY id DESC LIMIT 100').all()).results) || [];
+  // read again from Amazon: open orders, checked more than 2 minutes ago, up to 8 a time
+  const open = rows.filter(r => r.order_id && !AWD_REPL_FINAL.has(r.status) && (!r.checked_at || Date.now() - Date.parse(r.checked_at) > 120000)).slice(0, 8);
+  if (open.length && env.AMAZON_REFRESH_TOKEN) {
+    let token = null; try { token = await getAmazonToken(env); } catch (_) {}
+    for (const r of open) { if (!token) break;
+      try { const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/replenishmentOrders/${encodeURIComponent(r.order_id)}`);
+        const det = { eligible: d.eligibleProducts || [], shipped: d.shippedProducts || [], why: (d.distributionIneligibleReasons || []).map(x => ({ sku: x.sku || '', code: x.failureCode, reasons: x.failureReasons || [] })),
+          shipments: (d.outboundShipments || []).map(x => ({ id: x.shipmentId, status: x.shipmentStatus })), confirmedOn: d.confirmedOn || null, updatedAt: d.updatedAt || null };
+        r.status = d.status || r.status; r.detail = JSON.stringify(det); r.checked_at = new Date().toISOString();
+        await env.DB.prepare('UPDATE awd_repl SET status = ?, detail = ?, checked_at = ? WHERE id = ?').bind(r.status, r.detail, r.checked_at, r.id).run();
+      } catch (e) { r.checkError = String(e.message || e).slice(0, 150); } }
+  }
+  return J({ ok: true, orders: rows.map(r => { let items = [], detail = null; try { items = JSON.parse(r.items || '[]'); } catch (_) {} try { detail = r.detail ? JSON.parse(r.detail) : null; } catch (_) {}
+    return { id: r.id, orderId: r.order_id, by: r.by_user, at: r.at, items, status: r.status, final: AWD_REPL_FINAL.has(r.status), detail, error: r.error || null, checkedAt: r.checked_at, checkError: r.checkError || null }; }) });
 }
 async function awdAutoTick(env, force) {
   if (!env.DB || !env.AMAZON_REFRESH_TOKEN) return { ok: false, error: 'Amazon seller API not set up' };

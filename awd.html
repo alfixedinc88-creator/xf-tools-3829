@@ -1125,16 +1125,19 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">🚨 FBA low — AWD has stock</h2>
         <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Every FBA listing that is <b>sold out</b> or <b>running out</b> in FBA while <b>AWD has units it could send now</b> —
           sold out first. <b>Send from AWD</b> = enough for the days below (minus what FBA has and what AWD is already sending), never more than AWD has.
-          To send: Seller Central → <b>Inventory → AWD → Replenish to FBA</b> (📋 Copy gives the SKU + units list), or turn on <b>auto-replenishment</b> for these SKUs there.</p>
+          <b>To send:</b> tick the rows (change the units if you like) → <b>🚚 Send ticked from AWD to FBA</b> → confirm. Amazon checks it and ships it from AWD to FBA; each send is kept below with its Amazon status.
+          (Or Seller Central → Inventory → AWD → Replenish to FBA with 📋 Copy, and turn on <b>auto-replenishment</b> for SKUs that keep showing up.)</p>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
           <label>Warn when FBA has less than <input type="number" id="fl-days" class="cfg-inp" style="width:64px" value="14" min="1" onchange="flSave();renderFbaLow()"> days</label>
           <label>Send enough for <input type="number" id="fl-cover" class="cfg-inp" style="width:64px" value="30" min="1" onchange="flSave();renderFbaLow()"> days in FBA</label>
           <select id="fl-f" class="cfg-inp" onchange="renderFbaLow()"><option value="">All</option><option value="out">🔴 Sold out only</option><option value="low">🟠 Running out only</option><option value="send">Need a send (not covered yet)</option></select>
           <input id="fl-q" class="cfg-inp" placeholder="Search SKU / ASIN / name" oninput="renderFbaLow()" style="width:220px">
           <button class="btn" id="fl-copy" onclick="flCopy()">📋 Copy SKU + units to send</button>
+          <button class="btn btn-primary" id="fl-send" onclick="flSend(this)" style="background:var(--blue,#2563eb);color:#fff;font-weight:700">🚚 Send ticked from AWD to FBA</button>
           <span id="fl-msg" style="color:var(--gray-500)"></span>
         </div>
         <div id="fl-out"></div>
+        <div id="fl-sent-card" style="margin-top:14px"><div style="display:flex;gap:8px;align-items:center"><b style="font-size:13px">🚚 Sent from AWD to FBA (from this app)</b><button class="btn" onclick="flReplLoad(true)" style="padding:2px 10px">↻</button><span id="fl-sent-msg" style="font-size:12px;color:var(--gray-500)"></span></div><div id="fl-sent" style="margin-top:6px"></div></div>
         <details id="fl-rec" style="margin-top:14px"><summary style="cursor:pointer;font-weight:700;font-size:13px">📜 Record — sold out in FBA while AWD had stock (checked every morning)</summary><div id="fl-log" style="margin-top:8px"></div></details>
       </div>
     </div>
@@ -3263,7 +3266,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
-  if (n === 'fbalow') renderFbaLow();
+  if (n === 'fbalow') { renderFbaLow(); flReplLoad(true).then(function(){ renderFbaLow(); }); }
   if (n === 'recommendations' && typeof renderRecs === 'function') renderRecs(); // 📦 In Builder (same parent) up to date after builder changes
   if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
@@ -3635,6 +3638,12 @@ function addSku(sku) {
 function flSave(){ try { localStorage.setItem('awd_fl_cfg', JSON.stringify({ days: +ge('fl-days').value || 14, cover: +ge('fl-cover').value || 30 })); } catch (e) {} }
 function flCfg(){ var c = { days: 14, cover: 30 }; try { var o = JSON.parse(localStorage.getItem('awd_fl_cfg') || '{}'); if (o.days > 0) c.days = o.days; if (o.cover > 0) c.cover = o.cover; } catch (e) {}
   if (ge('fl-days') && +ge('fl-days').value > 0) c.days = +ge('fl-days').value; if (ge('fl-cover') && +ge('fl-cover').value > 0) c.cover = +ge('fl-cover').value; return c; }
+// units of a SKU in app sends made AFTER the last AWD sync and not finished / refused — Amazon's AWD numbers don't show them yet
+function flAsked(sku){ var k = String(sku).toUpperCase(), since = S.awdSyncAt ? Date.parse(S.awdSyncAt) : 0, n = 0;
+  (S.repl || []).forEach(function(o){ if (o.error || o.status === 'INELIGIBLE' || o.status === 'FAILURE' || o.status === 'CANCELLED' || !(Date.parse(o.at) > since)) return;
+    (o.items || []).forEach(function(x){ if (String(x.sku).toUpperCase() === k) n += +x.qty || 0; }); }); return n; }
+var FLSEL = {}; // sku → { on, qty } (what's ticked / typed on this screen)
+function flSel(x){ var k = x.r.sku, o = FLSEL[k]; if (!o) o = FLSEL[k] = { on: x.send > 0, qty: x.send > 0 ? x.send : '' }; return o; }
 function flH(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function flRows(){
   if (!S.loaded) return [];
@@ -3644,9 +3653,10 @@ function flRows(){
     var fbaNow = (r.fbaFul||0) + (r.fcProc||0) + (r.fcTrans||0) + (r.fbaInb||0), d = r.dailySales || 0, left = d > 0 ? fbaNow / d : null;
     var out = !(r.fbaFul > 0);
     if (!out && !(left != null && left < c.days)) return null;
-    var need = d > 0 ? Math.max(0, Math.ceil(d * c.cover) - fbaNow - (r.awdOutbound||0)) : null, send = need == null ? null : Math.min(r.awdNow, need);
+    var asked = flAsked(r.sku), awdLeft = Math.max(0, r.awdNow - asked); // 🚚 sent from the app after the last AWD sync — not in Amazon's numbers yet
+    var need = d > 0 ? Math.max(0, Math.ceil(d * c.cover) - fbaNow - (r.awdOutbound||0) - asked) : null, send = need == null ? null : Math.min(awdLeft, need);
     var seen = (S.fbaLowSeen || {})[String(r.sku).toUpperCase()] || null;
-    return { r: r, fbaNow: fbaNow, left: left, out: out, send: send, need: need, covered: need === 0, seen: seen };
+    return { r: r, fbaNow: fbaNow, left: left, out: out, send: send, need: need, covered: need === 0, seen: seen, asked: asked, awdLeft: awdLeft };
   }).filter(Boolean).sort(function(a, b){ // sold out first (best sellers first — they lose the most), then the fewest days left
     return (b.out - a.out) || (a.out ? ((b.r.dailySales||0) - (a.r.dailySales||0)) : (a.left - b.left)) || String(a.r.sku).localeCompare(String(b.r.sku)); });
 }
@@ -3662,16 +3672,20 @@ window.renderFbaLow = function(){
   el.innerHTML = '<div style="font-size:13px;margin-bottom:8px"><b style="color:var(--red)">🔴 ' + nOut + ' sold out in FBA</b> · <b style="color:#c2410c">🟠 ' + nLow + ' under ' + c.days + ' days</b> — AWD has stock for all of them'
     + (V.length ? ' · showing ' + V.length + ', <b>' + units.toLocaleString() + ' units</b> to send from AWD' : '') + '</div>'
     + (!V.length ? '<div style="color:var(--green);font-size:13px">✅ Nothing here — every FBA listing with AWD stock has more than ' + c.days + ' days.</div>'
-    : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><th ' + th.replace('right', 'left') + '>Status</th><th ' + th.replace('right', 'left') + '>SKU · ASIN · name</th><th ' + th + '>Sells a day<br>(30 d · 90 d)</th><th ' + th + '>FBA now<br>(avail + processing + on the way)</th><th ' + th + '>FBA days left</th><th ' + th + '>AWD can send now<br>(+ inbound to AWD)</th><th ' + th + '>AWD already<br>sending to FBA</th><th ' + th + '>Send from AWD</th></tr>'
+    : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><th ' + th.replace('right', 'center') + '><input type="checkbox" id="fl-all" title="Tick / untick all shown" onclick="flTickAll(this.checked)"></th><th ' + th.replace('right', 'left') + '>Status</th><th ' + th.replace('right', 'left') + '>SKU · ASIN · name</th><th ' + th + '>Sells a day<br>(30 d · 90 d)</th><th ' + th + '>FBA now<br>(avail + processing + on the way)</th><th ' + th + '>FBA days left</th><th ' + th + '>AWD can send now<br>(+ inbound to AWD)</th><th ' + th + '>AWD already<br>sending to FBA</th><th ' + th + '>Send from AWD</th></tr>'
     + V.map(function(x){ var r = x.r, st = x.out ? '<b style="color:var(--red)">🔴 Sold out in FBA</b>' + (x.seen ? '<div style="font-size:11px;color:var(--gray-500)">since ' + flH(new Date(x.seen.first).toLocaleDateString()) + ' (' + x.seen.days + ' d)</div>' : '') : '<b style="color:#c2410c">🟠 Running out</b>';
       if (x.covered && r.awdOutbound > 0) st += '<div style="font-size:11px;color:var(--green)">🚚 AWD is already sending enough</div>';
-      return '<tr class="fl-row"><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)">' + st + '</td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)"><b style="font-family:monospace">' + flH(r.sku) + '</b> <span style="color:var(--gray-500);font-family:monospace">' + flH(r.asin) + '</span><div style="font-size:11.5px;color:var(--gray-500)">' + flH(String(r.name || '').slice(0, 80)) + '</div></td>'
+      var sel = flSel(x), kk = flH(JSON.stringify(r.sku));
+      if (x.asked > 0) st += '<div style="font-size:11px;color:var(--blue,#2563eb)">🚚 ' + x.asked + ' sent from the app — waiting for Amazon</div>';
+      return '<tr class="fl-row"><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100);text-align:center"><input type="checkbox" class="fl-ck" ' + (sel.on ? 'checked ' : '') + 'onclick="FLSEL[' + kk + '].on=this.checked;flSum()"></td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)">' + st + '</td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)"><b style="font-family:monospace">' + flH(r.sku) + '</b> <span style="color:var(--gray-500);font-family:monospace">' + flH(r.asin) + '</span><div style="font-size:11.5px;color:var(--gray-500)">' + flH(String(r.name || '').slice(0, 80)) + '</div></td>'
         + '<td ' + td + '>' + (r.dailySales > 0 ? '<b>' + r.dailySales.toFixed(1) + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.daily30||0).toFixed(1) + ' · ' + (r.daily90||0).toFixed(1) + '</div>' : '<span style="color:var(--gray-500)">no sales in 90 d</span>') + '</td>'
         + '<td ' + td + '><b>' + x.fbaNow + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.fbaFul||0) + ' + ' + ((r.fcProc||0) + (r.fcTrans||0)) + ' + ' + (r.fbaInb||0) + '</div></td>'
         + '<td ' + td + '>' + (x.out ? '<b style="color:var(--red)">0</b>' : x.left == null ? '—' : '<b>' + Math.floor(x.left) + '</b>') + '</td>'
         + '<td ' + td + '><b>' + r.awdNow + '</b>' + (r.awdAvail > r.awdNow ? '<div style="font-size:11px;color:var(--gray-500)">+ ' + (r.awdAvail - r.awdNow) + ' inbound</div>' : '') + '</td>'
         + '<td ' + td + '>' + (r.awdOutbound > 0 ? '<b>' + r.awdOutbound + '</b>' : '0') + '</td>'
-        + '<td ' + td + '>' + (x.send == null ? '<span style="color:var(--gray-500)" title="No sales in 90 days — no pace to work it out">your call</span>' : x.send > 0 ? '<b style="font-size:15px;color:var(--blue,#2563eb)">' + x.send + '</b>' + (x.need > x.send ? '<div style="font-size:11px;color:#c2410c">AWD has only ' + r.awdNow + ' (needs ' + x.need + ')</div>' : '') : '<span style="color:var(--green)">0 — covered</span>') + '</td></tr>'; }).join('') + '</table></div>');
+        + '<td ' + td + '>' + (x.send == null ? '<div style="font-size:11px;color:var(--gray-500)" title="No sales in 90 days — no pace to work it out">your call</div>' : x.send > 0 ? '<div style="font-size:11px;color:var(--gray-500)">suggested <b>' + x.send + '</b></div>' + (x.need > x.send ? '<div style="font-size:11px;color:#c2410c">AWD has only ' + x.awdLeft + ' (needs ' + x.need + ')</div>' : '') : x.need > 0 ? '<div style="font-size:11px;color:#c2410c">AWD has none left to send (needs ' + x.need + ')</div>' : '<div style="font-size:11px;color:var(--green)">0 — covered</div>')
+        + '<input type="number" class="fl-qty" min="0" max="' + x.awdLeft + '" step="1" value="' + flH(sel.qty) + '" style="width:76px;text-align:right;font-weight:700;padding:3px 5px;border:1px solid var(--gray-300,#ccc);border-radius:6px" oninput="FLSEL[' + kk + '].qty=this.value;if(+this.value>0){FLSEL[' + kk + '].on=true;this.closest(\'tr\').querySelector(\'.fl-ck\').checked=true;}flSum()"></td></tr>'; }).join('') + '</table></div>');
+  S.flShown = V; flSum();
   flLog();
 };
 function flLog(){
@@ -3679,6 +3693,47 @@ function flLog(){
   el.innerHTML = !L.length ? '<div style="font-size:12px;color:var(--gray-500)">Nothing yet — kept from 11-18-2026 on, each morning\'s Amazon sync (and ⚡ Sync).</div>'
     : '<div style="overflow:auto;max-height:320px"><table style="border-collapse:collapse;font-size:12px;width:100%"><tr><th style="text-align:left;padding:4px 6px">SKU</th><th style="text-align:left;padding:4px 6px">Sold out in FBA (first seen)</th><th style="text-align:left;padding:4px 6px">Ended</th><th style="padding:4px 6px">Days</th><th style="text-align:right;padding:4px 6px">AWD had</th><th style="text-align:left;padding:4px 6px">Why it ended</th></tr>'
     + L.map(function(x){ return '<tr><td style="padding:4px 6px;font-family:monospace">' + flH(x.sku) + '</td><td style="padding:4px 6px">' + flH(new Date(x.first).toLocaleString()) + '</td><td style="padding:4px 6px">' + flH(new Date(x.ended).toLocaleString()) + '</td><td style="padding:4px 6px;text-align:center"><b>' + x.days + '</b></td><td style="padding:4px 6px;text-align:right">' + (x.awd || 0) + '</td><td style="padding:4px 6px">' + flH(x.why) + '</td></tr>'; }).join('') + '</table></div>';
+}
+window.flTickAll = function(on){ (S.flShown || []).forEach(function(x){ var o = flSel(x); o.on = on && +o.qty > 0; }); renderFbaLow(); };
+function flPicked(){ return (S.flShown || []).map(function(x){ var o = flSel(x); return { x: x, qty: Math.floor(+o.qty || 0), on: o.on }; }).filter(function(p){ return p.on && p.qty > 0; }); }
+function flSum(){ var b = ge('fl-send'); if (!b) return; var P = flPicked(), u = P.reduce(function(a, p){ return a + p.qty; }, 0);
+  b.textContent = '🚚 Send ticked from AWD to FBA' + (P.length ? ' (' + P.length + ' SKU' + (P.length === 1 ? '' : 's') + ', ' + u.toLocaleString() + ' units)' : ''); b.disabled = !P.length; }
+// 🚚 owner 2026-11-18: "click confirm to sent it from our AWD to our FBA right on our app, select and sent"
+window.flSend = async function(btn){
+  var P = flPicked(); if (!P.length) { ge('fl-msg').textContent = 'Tick the rows to send first.'; return; }
+  var bad = P.filter(function(p){ return p.qty > p.x.awdLeft; });
+  if (bad.length) { alert('More than AWD has now:\n' + bad.map(function(p){ return p.x.r.sku + ': ' + p.qty + ' (AWD has ' + p.x.awdLeft + ')'; }).join('\n')); return; }
+  if (!navigator.onLine) { alert('📴 No internet — sending from AWD needs Amazon. Try again when the WiFi is back.'); return; }
+  var u = P.reduce(function(a, p){ return a + p.qty; }, 0);
+  if (!confirm('Send from AWD to FBA now?\n\n' + P.slice(0, 25).map(function(p){ return p.x.r.sku + ' — ' + p.qty + ' units'; }).join('\n') + (P.length > 25 ? '\n… and ' + (P.length - 25) + ' more' : '')
+    + '\n\n' + P.length + ' SKU(s), ' + u.toLocaleString() + ' units. Amazon checks it, then ships it from AWD to FBA (it can\'t be undone here).')) return;
+  btn.disabled = true; ge('fl-msg').textContent = '🚚 Sending to Amazon…';
+  try {
+    var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: P.map(function(p){ return { sku: p.x.r.sku, qty: p.qty }; }), _requestId: 'awdrepl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })).json();
+    if (!d.ok) { ge('fl-msg').textContent = '❌ ' + (d.error || 'failed'); alert('❌ Not sent:\n' + (d.error || 'failed')); }
+    else { ge('fl-msg').textContent = '✅ Sent to Amazon — order ' + d.orderId + ' (' + P.length + ' SKUs, ' + u + ' units). Amazon checks it, then ships it; status below.'; P.forEach(function(p){ delete FLSEL[p.x.r.sku]; }); }
+  } catch (e) { ge('fl-msg').textContent = '❌ ' + e.message; }
+  btn.disabled = false; await flReplLoad(true); renderFbaLow(); updateBadges();
+};
+var FL_ST = { CREATED: '🕐 Created', VALIDATING: '🔎 Amazon checking', ELIGIBLE: '✅ OK — confirming', CONFIRMED: '✅ Confirmed', EXECUTING: '⚙ Amazon working on it', INVENTORY_OUTBOUND: '🚚 On its way to FBA', SUCCESS: '✅ Received in FBA', INELIGIBLE: '❌ Amazon said no', FAILURE: '❌ Failed', CANCELLED: '✖ Cancelled', ERROR: '❌ Not sent' };
+window.flReplLoad = async function(force){
+  var el = ge('fl-sent'); if (!el) return;
+  if (!force && S.repl) { flReplDraw(); return; }
+  ge('fl-sent-msg').textContent = 'loading…';
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish-list')).json(); if (d.ok) S.repl = d.orders || []; ge('fl-sent-msg').textContent = d.ok ? '' : '⚠ ' + (d.error || ''); }
+  catch (e) { ge('fl-sent-msg').textContent = '⚠ ' + e.message; }
+  flReplDraw();
+};
+function flReplDraw(){
+  var el = ge('fl-sent'); if (!el) return; var L = S.repl || [];
+  el.innerHTML = !L.length ? '<div style="font-size:12px;color:var(--gray-500)">Nothing sent from the app yet.</div>' : '<div style="overflow:auto;max-height:360px"><table style="border-collapse:collapse;font-size:12px;width:100%"><tr><th style="text-align:left;padding:4px 6px">When</th><th style="text-align:left;padding:4px 6px">Who</th><th style="text-align:left;padding:4px 6px">Amazon order #</th><th style="text-align:left;padding:4px 6px">Status</th><th style="text-align:left;padding:4px 6px">SKU — units asked (eligible · shipped)</th><th style="text-align:left;padding:4px 6px">Why not / note</th></tr>'
+    + L.map(function(o){ var dt = o.detail || {}, f = function(arr, sku){ var t = 0; (arr || []).forEach(function(p){ if (String(p.sku).toUpperCase() === String(sku).toUpperCase()) t += +p.quantity || 0; }); return t; };
+      var why = (dt.why || []).map(function(w){ return (w.sku ? w.sku + ': ' : '') + w.code + (w.reasons && w.reasons.length ? ' — ' + w.reasons.join('; ') : ''); }).join(' · ');
+      return '<tr style="border-top:1px solid var(--gray-100)"><td style="padding:4px 6px;white-space:nowrap">' + flH(new Date(o.at).toLocaleString()) + '</td><td style="padding:4px 6px">' + flH(o.by) + '</td><td style="padding:4px 6px;font-family:monospace">' + flH(o.orderId || '—') + '</td>'
+        + '<td style="padding:4px 6px;white-space:nowrap"><b>' + flH(FL_ST[o.status] || o.status) + '</b>' + ((dt.shipments || []).length ? '<div style="font-size:11px;color:var(--gray-500)">' + dt.shipments.map(function(sh){ return flH(sh.id + ' ' + sh.status); }).join('<br>') + '</div>' : '') + '</td>'
+        + '<td style="padding:4px 6px">' + (o.items || []).map(function(x){ var e = f(dt.eligible, x.sku), sp = f(dt.shipped, x.sku); return '<span style="font-family:monospace">' + flH(x.sku) + '</span> — <b>' + x.qty + '</b>' + (dt.eligible ? ' <span style="color:var(--gray-500)">(' + e + ' · ' + sp + ')</span>' : ''); }).join('<br>') + '</td>'
+        + '<td style="padding:4px 6px;color:#b91c1c">' + flH(o.error || why || '') + (o.checkError ? '<div style="color:var(--gray-500)">couldn\'t re-check: ' + flH(o.checkError) + '</div>' : '') + '</td></tr>'; }).join('') + '</table></div>';
 }
 window.flCopy = function(){
   var L = flRows().filter(function(x){ return x.send > 0; });
@@ -3873,7 +3928,7 @@ async function loadReportsFromSheet() {
     try { const [ri, rs] = await Promise.all([wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inbound').then(r=>r.json()), wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports').then(r=>r.json())]);
       S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {};
       S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {};
-      S.fbaLowSeen = (rs && rs.fbaLow) || {}; S.fbaLowLog = (rs && rs.fbaLowLog) || []; } catch (e) { S.inb = []; }
+      S.fbaLowSeen = (rs && rs.fbaLow) || {}; S.fbaLowLog = (rs && rs.fbaLowLog) || []; S.awdSyncAt = (rs && rs.awd && !rs.awd.error && rs.awd.at) || null; } catch (e) { S.inb = []; }
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
     if (!fbaData.length) {
@@ -6963,6 +7018,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118a"></script>
+<script src="xf-access.js?v=20261118b"></script>
 </body>
 </html>

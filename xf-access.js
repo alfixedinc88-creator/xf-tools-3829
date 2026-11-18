@@ -51,6 +51,8 @@ document.addEventListener('input', function (e) {
       { key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv' },
       { key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow', parts: [
         { key: 'flcopy', label: '📋 Copy SKU + units to send', sel: '#fl-copy' },
+        { key: 'flsend', label: '🚚 Send ticked from AWD to FBA', sel: '#fl-send' },
+        { key: 'flsent', label: '🚚 Sent from AWD to FBA (list)', sel: '#fl-sent-card' },
         { key: 'flrec', label: '📜 Record (sold out in FBA while AWD had stock)', sel: '#fl-rec' } ] },
       { key: 'history', label: '🕘 History (shipments exported)', sel: '#tab-history' },
       { key: 'dashboard', label: 'Dashboard', sel: '#tab-dashboard', parts: [
