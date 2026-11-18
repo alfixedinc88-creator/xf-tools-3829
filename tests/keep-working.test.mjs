@@ -14375,5 +14375,37 @@ console.log('\n🚚 AWD Planner export: a builder that ships to FBA direct uses 
     A[6].includes('Palletized?') && A[6].length === 12 && A[7][0] === '30-3-4=10X' && A[7][1] === '30' && A[7][4] === '3', A.slice(5, 9));
 }
 
+// 🗄 Owner (2026-11-18): "we moved almost everything from our Google Sheet to our database — make sure everything is working fine,
+// not lost any data and not making any error". End to end, with Google counted: Stock In 50 + Stock Out 20 of a part with 2 spots
+// (and another pack size untouched) → SKU Mgr / History are in our database only, the numbers add up exactly, and not ONE
+// SKU Mgr (Master_List) or History (Inventory_Log) call leaves for Google.
+{
+  console.log('\n🗄 No more Google Sheet: Stock In / Out end to end — numbers add up, nothing goes to Google');
+  const realG = globalThis.fetch, toGoogle = [];
+  globalThis.fetch = async (u, o) => { const s = String(u); if (s.includes('sheets.googleapis.com')) toGoogle.push(((o && o.method) || 'GET') + ' ' + decodeURIComponent(s.split('/spreadsheets/')[1] || '')); return realG(u, o); };
+  const ins = (part, loc, cases, ea) => Number(sq.prepare('INSERT INTO master_list (sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES (?,?,?,?,?,?,?,0)').run('88-1-1', '88-1-1', 'Test valve', part, loc, cases, ea).lastInsertRowid);
+  const A = ins('88-1-1=10', 'C1=8-8-1', 100, 10), B = ins('88-1-1=10', 'C2=8-8-2', 30, 10), C = ins('88-1-1=50', 'C3=8-8-3', 12, 50);
+  const pcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p, SUM(cases) c FROM master_list WHERE base_sku = '88-1-1'").get();
+  const all0 = shelf(), p0 = pcs(), logN0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const si = await post('/inventory/log', { type: 'IN', partNum: '88-1-1=10', sku: '88-1-1=10', location: 'C1=8-8-1', cases: 50, initials: 'TS', notes: '', masterId: A });
+  const so = await post('/inventory/log', { type: 'OUT', partNum: '88-1-1=10', sku: '88-1-1=10', location: 'C2=8-8-2', cases: 20, initials: 'TS', notes: '', masterId: B });
+  await post('/inventory/review-mode', { mode: 'manual' });
+  const p1 = pcs(), cA = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(A).cases, cB = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(B).cases, cC = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(C).cases;
+  check('Stock In 50 + Stock Out 20 (=10, two spots; =50 untouched): 130 + 50 − 20 = 160 cases of =10 (100+50=150 / 30−20=10), =50 still 12; pieces 1,900 + 500 − 200 = 2,200; every shelf +30 exactly',
+    si.autoApproved && so.autoApproved && cA === 150 && cB === 10 && cC === 12 && p0.p === 1900 && p1.p === 2200 && p1.c === p0.c + 30 && shelf() === all0 + 30, { si: si.autoApproved, so: so.autoApproved, cA, cB, cC, p0, p1 });
+  check('…History: both kept with Part Total Before → After (130 → 180, 180 → 160), 2 rows added, nothing lost or doubled',
+    row(si.d1Id).b === 130 && row(si.d1Id).a === 180 && row(so.d1Id).b === 180 && row(so.d1Id).a === 160 && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === logN0 + 2, { i: row(si.d1Id), o: row(so.d1Id) });
+  const sk = (await get('/inventory/sku-search?q=88-1-1')).results || [];
+  const ml = (await get('/inventory/master-list')).values || [];
+  const mlA = ml.find(r => r[6] === '88-1-1=10' && r[7] === 'C1=8-8-1');
+  check('…SKU Mgr search and the SKU Mgr list (old sheet layout) show the database numbers (150 / 10 / 12)',
+    sk.find(r => r.location === 'C1=8-8-1').cases === 150 && sk.find(r => r.location === 'C2=8-8-2').cases === 10 && sk.find(r => r.part_num === '88-1-1=50').cases === 12 && mlA && Number(mlA[8]) === 150, { sk: sk.map(r => r.location + ':' + r.cases), mlA });
+  const g = toGoogle.filter(x => /Master_List|Inventory_Log/.test(x));
+  check('…not ONE SKU Mgr (Master_List) / History (Inventory_Log) call went to Google (the old sheet copies are skipped, answered from our database)', g.length === 0, g);
+  globalThis.fetch = realG;
+  sq.exec("DELETE FROM master_list WHERE base_sku = '88-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '88-1-1%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
