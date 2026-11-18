@@ -1091,7 +1091,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                   <button type="button" class="btn btn-sm btn-secondary" style="margin:3px 0" onclick="document.getElementById('awd-prev-file').click()">⬆ Upload a list (Excel / CSV / text)</button>
                   <input type="file" id="awd-prev-file" accept=".xlsx,.xls,.csv,.txt" style="display:none" onchange="awdPrevFile(this.files[0]); this.value=''">
                   <span id="awd-prev-msg" style="font-size:11px;color:var(--gray-600)"></span>
-                  <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.</div>
+                  <div style="font-size:11px;color:var(--gray-400);line-height:1.4">Upload the labels after this: their labels say <b>✅ PREVIOUS PACKED — already on the pallet</b> instead of our template (no trip to the warehouse). A number after it = only that many boxes.
+                    The list is for ONE shipment: labels of another shipment move it to 🗂 History by themselves.</div>
+                  <button type="button" class="btn btn-sm btn-secondary" style="margin:3px 0" onclick="awdPrevMoveNow()">🗂 Done with this shipment — move the list to History</button>
+                  <details id="awd-prev-hist" style="display:none;font-size:12px;margin-top:4px" ontoggle="if(this.open)awdPrevHistShow()"><summary style="cursor:pointer">🗂 History</summary><div id="awd-prev-hist-body"></div></details>
                 </div>
                 <div id="awd-lbl-out" style="font-size:12px;margin-top:6px"></div>
                 <!-- ⚠ Owner (2026-10-28): "keep track of the labels on a pallet / not on a pallet yet, which ones, and reprint a label if we need to". -->
@@ -2298,7 +2301,38 @@ function awdDrawBlock(ctx, rect, lines, bc, photo, maxFs) {
 }
 // ✅ PREVIOUS PACKED (owner 2026-10-23): the ASINs / SKUs typed in the box → { key: boxes left (Infinity = all) }.
 const AWD_PREV_KEY = 'awd_prev_packed';
-function awdPrevSave() { try { localStorage.setItem(AWD_PREV_KEY, (ge('awd-prev-list') || {}).value || ''); } catch (e) {} }
+// 🗂 Owner (2026-11-18, a new shipment's label said "✅ PREVIOUS PACKED · Box 1-1"): "need to move the previous shipment to the history, it still
+// have previous shipment record, there's no more 'previous packed'". The list belongs to ONE shipment: it remembers which one it was used
+// for (AWD_PREV_KEY + '_ship'). Labels of ANOTHER shipment → the old list goes to 🗂 History (kept: when, which shipment, the list) and is
+// NOT used. A list with no shipment yet (typed before this) → asked once: is it for this shipment? Also 🗂 Move to History by hand.
+const AWD_PREV_HIST = 'awd_prev_hist';
+function awdPrevSave() { try { const v = (ge('awd-prev-list') || {}).value || ''; localStorage.setItem(AWD_PREV_KEY, v); if (!v.trim()) localStorage.removeItem(AWD_PREV_KEY + '_ship'); } catch (e) {} awdPrevHistShow(); }
+// the shipment of an FBA box ID on the label: FBA19XPR747PU000041 → FBA19XPR747P ('' when none)
+function awdBoxShip(texts) { const m = /\b(FBA[0-9A-Z]{6,12}?)U\d{4,6}\b/.exec((texts || []).join(' ')); return m ? m[1].toUpperCase() : ''; }
+function awdPrevShip() { try { return localStorage.getItem(AWD_PREV_KEY + '_ship') || ''; } catch (e) { return ''; } }
+function awdPrevHistList() { try { return JSON.parse(localStorage.getItem(AWD_PREV_HIST) || '[]') || []; } catch (e) { return []; } }
+function awdPrevToHistory(why) {
+  const ta = ge('awd-prev-list'), text = ((ta && ta.value) || '').trim(); if (!text) return false;
+  const h = awdPrevHistList(); h.unshift({ at: new Date().toISOString(), shipment: awdPrevShip(), text, why: why || '', by: (typeof AWD_USER !== 'undefined' && AWD_USER && AWD_USER.displayName) || '' });
+  try { localStorage.setItem(AWD_PREV_HIST, JSON.stringify(h.slice(0, 30))); localStorage.setItem(AWD_PREV_KEY, ''); localStorage.removeItem(AWD_PREV_KEY + '_ship'); } catch (e) {}
+  if (ta) ta.value = '';
+  (typeof awdAct === 'function') && awdAct('prev_to_history', { shipment: h[0].shipment, lines: text.split(/\n+/).length, why: why || '' });
+  awdPrevHistShow(); return true;
+}
+function awdPrevMoveNow() {
+  const ta = ge('awd-prev-list'); if (!ta || !ta.value.trim()) { awd_planner_toast('The ✅ Already packed list is empty'); return; }
+  if (!confirm('Move the ✅ Already packed list' + (awdPrevShip() ? ' (shipment ' + awdPrevShip() + ')' : '') + ' to 🗂 History?\n\nNew labels will NOT say PREVIOUS PACKED for these any more.')) return;
+  awdPrevToHistory('moved by hand'); awd_planner_toast('🗂 Moved to History — the list is empty for the next shipment', 'success');
+};
+function awdPrevHistShow() {
+  const el = ge('awd-prev-hist'); if (!el) return; const h = awdPrevHistList();
+  el.style.display = h.length ? '' : 'none';
+  const sum = el.querySelector('summary'); if (sum) sum.textContent = '🗂 History — earlier ✅ Already packed lists (' + h.length + ')';
+  const body = ge('awd-prev-hist-body'); if (!body || !el.open) return;
+  body.innerHTML = h.map(x => '<div style="border-top:1px solid var(--gray-200);padding:4px 0"><b>' + awdH(String(x.at || '').slice(0, 16).replace('T', ' ')) + '</b>'
+    + (x.shipment ? ' · shipment <b style="font-family:monospace">' + awdH(x.shipment) + '</b>' : '') + (x.by ? ' · ' + awdH(x.by) : '') + (x.why ? ' <span style="color:var(--gray-500)">(' + awdH(x.why) + ')</span>' : '')
+    + '<div style="font-family:monospace;font-size:11px;white-space:pre-wrap;color:var(--gray-600)">' + awdH(x.text) + '</div></div>').join('');
+};
 function awdPrevParse(text) {
   const m = {};
   String(text || '').split(/[\n,;]+/).forEach(l => { const t = l.trim().toUpperCase().split(/\s+/).filter(Boolean); if (!t.length) return;
@@ -2796,14 +2830,25 @@ async function awdLabelsDo(file) {
       tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
       return Object.keys(byY).map(Number).sort((a, b) => a - b).map(y => ({ y, text: byY[y].sort((a, b) => a.transform[4] - b.transform[4]).map(i => i.str).join(' ') })); };
     // 1) Every label first: SKU, bags ("Units"), box N-k (owner: 5-1 … 5-5), PREVIOUS PACKED or not — then each SKU's grab plan.
-    const metas = [], bySku = {}; let shipId = '';
+    const metas = [], bySku = {}, metaTexts = []; let shipId = '';
     for (let p = 1; p <= pdf.numPages; p++) {
-      const lines = await readPage(await pdf.getPage(p));
+      const lines = await readPage(await pdf.getPage(p)); if (metaTexts.length < 3) metaTexts.push(lines.map(l => l.text).join(' '));
       if (!shipId) { const sm = /Shipment\s*ID\s*:?\s*([A-Z0-9-]{6,})/i.exec(lines.map(l => l.text).join(' ')); if (sm) shipId = sm[1].toUpperCase(); }
       awdLabelSkus(lines).forEach((f, i) => { const sku = awdLabelMatch(f.sku), K = sku.toUpperCase();
         const cp = (S.cpackMap || {})[K], m = { p, i, sku, units: awdLabelUnits(lines, f.y) || (cp && cp.unitsPerBox) || 0, prevKey: '', sscc: awdLabelSscc(lines, f.y), fnsku: awdLabelFnsku(lines, f.y) };
         const ph = awdPrevHit(prev, sku, amz); if (ph) m.prevKey = ph.key;
         metas.push(m); (bySku[K] = bySku[K] || []).push(m); });
+    }
+    // 🗂 the ✅ Already packed list is for ONE shipment (owner 2026-11-18). Which shipment: "Shipment ID" on the label, else the box ID's
+    // shipment (FBA19XPR747PU000041 → FBA19XPR747P), else the file's name.
+    let prevNote = '';
+    const shipKey = shipId || (typeof awdBoxShip === 'function' && awdBoxShip(metaTexts)) || ('file ' + ((typeof file !== 'undefined' && file && file.name) || ''));
+    if (Object.keys(prev).length && shipKey) {
+      const was = awdPrevShip();
+      const forThis = was ? was === shipKey : typeof confirm !== 'function' ? true : confirm('The ✅ Already packed list has ' + Object.keys(prev).length + ' item(s) typed before.\n\nAre they already packed for THIS shipment (' + shipKey + ')?\n\nOK = yes, use them (their labels say PREVIOUS PACKED)\nCancel = no, they were for an earlier shipment → move them to 🗂 History');
+      if (forThis) { try { localStorage.setItem(AWD_PREV_KEY + '_ship', shipKey); } catch (e) {} }
+      else { awdPrevToHistory(was ? 'labels of another shipment (' + shipKey + ')' : 'not for ' + shipKey); metas.forEach(m => { m.prevKey = ''; });
+        prevNote = '<div style="color:#B45309;font-weight:700;margin-bottom:4px">🗂 The ✅ Already packed list' + (was ? ' of shipment ' + awdH(was) : '') + ' moved to History — no label of ' + awdH(shipKey) + ' says PREVIOUS PACKED.</div>'; }
     }
     out.innerHTML = '⏳ Reading our Amazon listings (Rule #1)…'; await awdFbaLoad(Object.keys(bySku).map(K => bySku[K][0].sku)); out.innerHTML = '⏳ Making the labels…';
     const plans = {}; // 🔒 each SKU's grab plan, for Lock it
@@ -2897,7 +2942,7 @@ async function awdLabelsDo(file) {
     if (!awdPrintPages(pages, 'Box labels with our template')) { out.innerHTML = '<span style="color:#DC2626">Allow pop-ups for this page, then try again</span>'; return; }
     window.AWD_LBL_SHIP = shipId; (typeof awdAct === 'function') && awdAct('label_print', { shipment: shipId, area: 'All', labels: pages.length, made: true }); // 🖨 the first print, right after making them
     const nt = Object.keys(noTpl), pk = Object.keys(prevAsked), pdN = Object.values(prevDone).reduce((a, x) => a + x, 0);
-    out.innerHTML = '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
+    out.innerHTML = prevNote + '✅ <b>' + labels + '</b> label' + (labels === 1 ? '' : 's') + ' · <b>' + (done - pdN) + '</b> with our template · <b>' + withBc + '</b> with the scan barcode · <b>' + withPhoto + '</b> with the photo'
       + mapNote
       + '<div style="color:#1D4ED8">🗺 Printed by where they are grabbed: ' + Object.keys(byArea).sort(awdKindAreaCmp).map(a => '<b>' + String(a).replace(/[<&]/g, '') + '</b> ' + byArea[a]).join(' · ') + '</div>'
       + awdAreaButtons(groups)
@@ -3306,6 +3351,7 @@ function awd_switchTab(n) {
   if (n === 'recommendations' && typeof renderRecs === 'function') renderRecs(); // 📦 In Builder (same parent) up to date after builder changes
   if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
+  if (n === 'builder' && typeof awdPrevHistShow === 'function') awdPrevHistShow(); // 🗂 earlier lists
   if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
     renderDiscontinuedPanel();
   }
