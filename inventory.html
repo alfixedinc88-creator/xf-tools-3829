@@ -3339,6 +3339,8 @@ window.invCredLogin = async function() {
     var out = g('inv-awdship-out'), d = AWDS.data; if (!out || !d) return;
     invAwdSumLine();
     var areas = {}; AWDS.takes.forEach(function(t, i) { (areas[t.area] = areas[t.area] || []).push(i); });
+    var cuts = { full: {}, part: {} }; AWDS.takes.forEach(function(t, i) { var c = invAwdKind(t) === 'full' ? 'full' : 'part'; (cuts[c][t.area] = cuts[c][t.area] || []).push(i); });
+    if (AWDS.area && !(cuts[AWDS.cut] || {})[AWDS.area]) AWDS.cut = cuts.full[AWDS.area] ? 'full' : 'part'; // an area picked before (saved) → its first part
     var labBy = invAwdLabelsByArea(); // 🏷 box labels by area (where each label says to grab it)
     var names = Object.keys(areas).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
     var tm = function(v) { return v ? new Date(v).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
@@ -3359,19 +3361,29 @@ window.invCredLogin = async function() {
       // show it was for 34 labels". The Planner counts BOX LABELS by the spot on each label; these buttons count what to grab off the shelf
       // (one case can fill several Amazon boxes). Both now: the boxes by area, the same count as the Planner's print buttons.
       + invAwdLabelsLine(labBy)
-      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + names.map(function(a) {
-          var n = areas[a].reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = areas[a].every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a;
+      + '<div id="inv-awdship-cuts">' + ['full', 'part'].map(function(cut) {
+          // 📦 / ✂ Owner (2026-11-18): "so far we separate it in location, but I want it to separate into full case or no full case first, then location".
+          var by = cuts[cut], an = Object.keys(by).sort(function(a, b) { return invAwdAreaRank(a) - invAwdAreaRank(b) || a.localeCompare(b); });
+          if (!an.length) return '';
+          var nS = 0, nC = 0; an.forEach(function(a) { nS += by[a].length; by[a].forEach(function(i) { nC += AWDS.takes[i].cases; }); });
+          var hd = cut === 'full' ? ['📦 FULL CASE', 'var(--green-bg,#dcfce7)', 'var(--green)', 'the right part #, one of our cases = one Amazon box — grab the whole case, just put the Amazon label on it']
+            : ['✂ NOT A FULL CASE', '#ffedd5', '#c2410c', 'open it and take what we need (✂ extra step), or another bag to cover the label / rebag (🏷 need to label)'];
+          return '<div class="inv-awdship-cut" data-c="' + cut + '" style="margin:4px 0;padding:5px 9px;border-radius:8px;background:' + hd[1] + ';color:' + hd[2] + ';font-weight:800;font-size:14px">' + hd[0] + ' — ' + nS + ' spot' + (nS === 1 ? '' : 's') + ' · ' + (Math.round(nC * 10) / 10) + ' cs'
+            + ' <span style="font-weight:400;font-size:11px">' + hd[3] + '</span></div>'
+            + '<div class="inv-awdship-areas" data-c="' + cut + '" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + an.map(function(a) { var idx = by[a];
+          var n = idx.reduce(function(s, i) { return s + AWDS.takes[i].cases; }, 0), done = idx.every(function(i) { return AWDS.added[i]; }), on = AWDS.area === a && AWDS.cut === cut;
           // 🔢 Owner (2026-10-27): "2FL 1 spot · 9 cs … I also want how many Part #" — the different part #s grabbed in this area.
-          var nPart = Object.keys(areas[a].reduce(function(m, i) { m[String(AWDS.takes[i].partNum || '').toUpperCase()] = 1; return m; }, {})).length;
-          var nLab = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'label'; }).length, nExt = areas[a].filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'extra'; }).length;
-          var nBox = labBy[a] || 0; // 🏷 the Amazon box labels this area is for (= the AWD Planner's "Print just one area")
-          return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;window.invAwdShipRender()" data-a="' + ckE(a) + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
-            + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + areas[a].length + ' spot' + (areas[a].length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs'
-            + (nBox ? '<br><span class="inv-awdship-boxes" style="color:#1D4ED8;font-weight:700">for ' + nBox + ' box label' + (nBox === 1 ? '' : 's') + '</span>'
+          var nPart = Object.keys(idx.reduce(function(m, i) { m[String(AWDS.takes[i].partNum || '').toUpperCase()] = 1; return m; }, {})).length;
+          var nLab = idx.filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'label'; }).length, nExt = idx.filter(function(i) { return invAwdKind(AWDS.takes[i]) === 'extra'; }).length;
+          var nBox = labBy[a] || 0, both = !!(cuts.full[a] && cuts.part[a]); // 🏷 the Amazon box labels this area is for (= the AWD Planner's "Print just one area")
+          return '<button type="button" class="inv-awdship-area" onclick="AWDS.area=this.dataset.a;AWDS.cut=this.dataset.c;window.invAwdShipRender()" data-a="' + ckE(a) + '" data-c="' + cut + '" style="padding:8px 12px;border-radius:9px;cursor:pointer;font-weight:800;font-size:14px;border:2px solid ' + (on ? '#1D4ED8' : 'var(--border)') + ';background:' + (done ? 'var(--green-bg,#dcfce7)' : on ? '#dbeafe' : 'var(--bg)') + ';color:var(--text)">'
+            + (done ? '✓ ' : '') + ckE(a) + ' <span style="font-weight:400;font-size:12px;color:var(--text2)">' + idx.length + ' spot' + (idx.length === 1 ? '' : 's') + ' · ' + nPart + ' part #' + (nPart === 1 ? '' : 's') + ' · ' + (Math.round(n * 10) / 10) + ' cs'
+            + (nBox ? '<br><span class="inv-awdship-boxes" style="color:#1D4ED8;font-weight:700">for ' + nBox + ' box label' + (nBox === 1 ? '' : 's') + (both ? ' (all of ' + ckE(a) + ')' : '') + '</span>'
               + ((AWDS.labPacked || {})[a] ? '<br><span class="inv-awdship-packedn" style="font-size:11px;font-weight:700"><span style="color:var(--green)">✓ ' + AWDS.labPacked[a] + ' already packed</span> · <span style="color:#b45309">' + Math.max(0, nBox - AWDS.labPacked[a]) + ' to go</span></span>' : '') : '')
-            + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab || nExt ? (nLab ? '🏷 ' + nLab + ' to label' : '') + (nExt ? (nLab ? ' · ' : '') + '✂ ' + nExt + ' extra step' : '') + (nLab + nExt < areas[a].length ? ' · ✓ ' + (areas[a].length - nLab - nExt) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
-    if (AWDS.area && areas[AWDS.area]) {
-      var L = areas[AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });
+            + '<br><span class="inv-awdship-lab" style="color:' + (nLab ? '#b45309' : 'var(--green)') + '">' + (nLab || nExt ? (nLab ? '🏷 ' + nLab + ' to label' : '') + (nExt ? (nLab ? ' · ' : '') + '✂ ' + nExt + ' extra step' : '') + (nLab + nExt < idx.length ? ' · ✓ ' + (idx.length - nLab - nExt) + ' prelabel' : '') : '✓ all prelabel') + '</span></span></button>'; }).join('') + '</div>';
+        }).join('') + '</div>';
+    if (AWDS.area && (cuts[AWDS.cut] || {})[AWDS.area]) {
+      var L = cuts[AWDS.cut][AWDS.area].slice().sort(function(x, y) { return String(AWDS.takes[x].loc.location).localeCompare(String(AWDS.takes[y].loc.location), undefined, { numeric: true }); });
       var spotHtml = function(i) { var t = AWDS.takes[i], k = invAwdKind(t), pre = k !== 'label';
           return '<div class="inv-awdship-spot" data-pre="' + (k === 'full' ? 1 : k === 'extra' ? 2 : 0) + '" style="padding:6px 0;border-bottom:1px solid var(--border)' + (AWDS.added[i] ? ';opacity:.5' : '') + '">'
             + (k === 'full' ? '<span style="font-size:11px;font-weight:800;color:var(--green)">✓ PRELABEL</span> ' : k === 'extra' ? '<span style="font-size:11px;font-weight:800;color:#c2410c">✂ PRELABEL · EXTRA STEP</span> ' : '<span style="font-size:11px;font-weight:800;color:#b45309">🏷 NEED TO LABEL</span> ')
@@ -3384,20 +3396,20 @@ window.invCredLogin = async function() {
         + grp('✓ Prelabel', ['var(--green-bg,#dcfce7)', 'var(--green)'], Lp, 'full case = one Amazon box — the bags already have the label, just put the Amazon label on the outside of the box')
         + grp('✂ Prelabel, extra step', ['#ffedd5', '#c2410c'], Lx, 'the right part #, but the case is not one Amazon box — open it, split / take what we need (how on each line) — keep them in their own spot')
         + grp('🏷 Need to label', ['#fef3c7', '#b45309'], Ll, 'another bag of the same part — cover the label / rebag / relabel (how on each line) — keep them in their own spot')
-        + '<button type="button" id="inv-awdship-add" onclick="invAwdShipAdd(AWDS.area)" style="width:100%;margin-top:8px;padding:13px;border:none;border-radius:10px;background:#1D4ED8;color:#fff;font-size:16px;font-weight:800;cursor:pointer">➕ Put ' + ckE(AWDS.area) + ' on my Pull List</button></div>';
+        + '<button type="button" id="inv-awdship-add" onclick="invAwdShipAdd(AWDS.area, AWDS.cut)" style="width:100%;margin-top:8px;padding:13px;border:none;border-radius:10px;background:#1D4ED8;color:#fff;font-size:16px;font-weight:800;cursor:pointer">➕ Put ' + ckE(AWDS.area) + (AWDS.cut === 'full' ? ' 📦 full cases' : ' ✂ not full cases') + ' on my Pull List</button></div>';
     }
     if ((AWDS.short || []).length) h += '<div style="color:var(--red);font-size:12px;margin-top:6px">⚠ Not enough on the shelves: ' + AWDS.short.map(ckE).join(' · ') + '</div>';
     if ((AWDS.noSize || []).length) h += '<div style="color:var(--orange);font-size:12px">⚠ Each/Case not on file (counted in cases): ' + AWDS.noSize.map(ckE).join(', ') + ' — set it in SKU Mgr</div>';
     var T = AWDS.tot, r1 = function(v) { return Math.round((v || 0) * 10) / 10; };
     if (T && T.need > 0) {
       var notYet = Math.max(0, T.need - T.grabbed), toList = Math.max(0, notYet - T.list), all = notYet < 0.001;
-      h = h.replace('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">', (all
+      h = h.replace('<div id="inv-awdship-cuts">', (all
         ? '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:10px 12px;border-radius:10px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;font-size:16px">✅ Everything grabbed — ' + r1(T.grabbed) + ' cases · ' + T.parts + ' part #' + (T.parts === 1 ? '' : 's') + invAwdPackedHtml(T, r1) + '</div>'
         : '<div class="inv-awdship-tot" style="margin:6px 0 8px;padding:8px 10px;border-radius:10px;border:1.5px solid #1D4ED8;font-size:13px;line-height:1.6">'
           + '<b style="color:var(--green)">✅ Grabbed ' + r1(T.grabbed) + ' of ' + r1(T.need) + ' cases</b> (' + Math.round(T.grabbed / T.need * 100) + '%) · <b>' + T.partsGrabbed + ' of ' + T.parts + ' part #s</b> all grabbed'
           + '<br><b style="color:var(--red)">⏳ Not grabbed yet: ' + r1(notYet) + ' cases</b>'
           + (T.list > 0.001 ? ' — <span style="color:#b45309">📝 ' + r1(T.list) + ' on a Pull List</span>' : '') + (toList > 0.001 ? ' · ' + r1(toList) + ' not on a list yet' : '') + invAwdPackedHtml(T, r1) + '</div>')
-        + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">');
+        + '<div id="inv-awdship-cuts">');
     } else if (!AWDS.takes.length) h += '<div style="color:var(--green);font-weight:700;margin-top:6px">✓ Nothing left to grab</div>';
     out.innerHTML = h + invAwdDoneHtml();
   };
@@ -3411,11 +3423,12 @@ window.invCredLogin = async function() {
       + L.map(function(o) { return '<div style="margin-top:2px">' + (o.me ? '<b>you</b>' : '<b>' + ckE(o.by) + '</b>') + ' — ' + ckE(o.area || '?') + ' · ' + o.n + ' spot' + (o.n === 1 ? '' : 's') + ' · since ' + ckE(xfrFmtT(o.at))
         + (o.me ? '' : ' <a href="#" onclick="invAwdGiveBack(' + ckE(JSON.stringify(o.by)) + ',' + ckE(JSON.stringify(o.area)) + ');return false" style="color:#B91C1C">↩ Give back</a>') + '</div>'; }).join('') + '</div>';
   }
-  window.invAwdShipAdd = function(area) {
+  window.invAwdShipAdd = function(area, cut) { // cut: 'full' / 'part' = only those spots of the area (none = every spot)
     if (invStockOutDest !== 'company') { invFlash('Switch to 🏢 Big Company first', 'error'); return; }
     var keep = invPart, n = 0, claims = [], sorted = false;
     AWDS.takes.forEach(function(t, i) {
       if (t.area !== area || AWDS.added[i]) return;
+      if (cut && (invAwdKind(t) === 'full' ? 'full' : 'part') !== cut) return;
       var cid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // 👤 taken for everyone (made here: no WiFi is fine)
       claims.push({ id: cid, part: t.partNum, forPart: t.target, cases: t.cases, ships: t.ships || [], loc: t.loc.location });
       var key = invPullItemKey(t.partNum, t.loc), ex = null;
