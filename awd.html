@@ -801,6 +801,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Not Received
       <span class="tbadge" id="nr-badge" style="display:none;background:var(--red)">0</span>
     </div>
+    <div class="tab" onclick="awd_switchTab('fbalow')" id="tab-fbalow">🚨 FBA low — AWD has stock
+      <span class="tbadge" id="fl-badge" style="display:none;background:var(--red)">0</span>
+    </div>
     <div class="tab" onclick="awd_switchTab('asin')" id="tab-asin">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>ASIN Lookup
     </div>
@@ -1115,6 +1118,27 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       </div>
     </div>
 
+    <!-- 🚨 Owner (2026-11-18): "a lot of the listing we already sold out of in FBA, but we still have some in our AWD, it just never get auto ship
+         it to our FBA — design something for it, so we can keep eyes on it and make it not to run out in FBA" -->
+    <div class="page" id="page-fbalow">
+      <div style="max-width:1200px">
+        <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">🚨 FBA low — AWD has stock</h2>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Every FBA listing that is <b>sold out</b> or <b>running out</b> in FBA while <b>AWD has units it could send now</b> —
+          sold out first. <b>Send from AWD</b> = enough for the days below (minus what FBA has and what AWD is already sending), never more than AWD has.
+          To send: Seller Central → <b>Inventory → AWD → Replenish to FBA</b> (📋 Copy gives the SKU + units list), or turn on <b>auto-replenishment</b> for these SKUs there.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
+          <label>Warn when FBA has less than <input type="number" id="fl-days" class="cfg-inp" style="width:64px" value="14" min="1" onchange="flSave();renderFbaLow()"> days</label>
+          <label>Send enough for <input type="number" id="fl-cover" class="cfg-inp" style="width:64px" value="30" min="1" onchange="flSave();renderFbaLow()"> days in FBA</label>
+          <select id="fl-f" class="cfg-inp" onchange="renderFbaLow()"><option value="">All</option><option value="out">🔴 Sold out only</option><option value="low">🟠 Running out only</option><option value="send">Need a send (not covered yet)</option></select>
+          <input id="fl-q" class="cfg-inp" placeholder="Search SKU / ASIN / name" oninput="renderFbaLow()" style="width:220px">
+          <button class="btn" id="fl-copy" onclick="flCopy()">📋 Copy SKU + units to send</button>
+          <span id="fl-msg" style="color:var(--gray-500)"></span>
+        </div>
+        <div id="fl-out"></div>
+        <details id="fl-rec" style="margin-top:14px"><summary style="cursor:pointer;font-weight:700;font-size:13px">📜 Record — sold out in FBA while AWD had stock (checked every morning)</summary><div id="fl-log" style="margin-top:8px"></div></details>
+      </div>
+    </div>
+
     <!-- 🕘 Owner (2026-10-23): "a History of record — when, what shipment we did and by who". Every Shipment Builder export is kept. -->
     <div class="page" id="page-history">
       <div style="max-width:1100px">
@@ -1426,6 +1450,7 @@ async function processData(skipSave){
       const sku=(gf(r,'SKU')||'').trim().toUpperCase();if(!sku)return;
       awdMap[sku]={
         avail:pn(gf(r,'Available in AWD (units)'))+Math.max(0,pn(gf(r,'Inbound to AWD (units)'))-(awdNR[sku]||0)),
+        now:pn(gf(r,'Available in AWD (units)')), // 🚨 can go to FBA now (not counting what is still on its way into AWD)
         reserved:pn(gf(r,'Reserved in AWD (units)')),
         outbound:pn(gf(r,'Outbound to FBA (units)'))
       };
@@ -1460,7 +1485,7 @@ async function processData(skipSave){
       .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap));
     S.loaded=true;
     if (AWDSS.loaded) { awdApplyOwnSales(); awdApplyPlan(); }
-    renderDashboard();renderInv();renderRecs();updateBadges();
+    renderDashboard();renderInv();renderRecs();updateBadges();if(typeof renderFbaLow==='function')renderFbaLow();
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
@@ -1505,7 +1530,8 @@ function buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap){
   const recSend=Math.max(0,target-totalNetwork);
   const netDays=dailySales>0?totalNetwork/dailySales:999;
   const fbaDays=dailySales>0?(fbaFul+fcProc+fcTrans+fbaInb)/dailySales:999; // FBA side only (no AWD) — what Amazon's days of supply counts
-  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,fbaInb,sold90,sold30,daily90,daily30,dailySales,target,totalNetwork,recSend,netDays,fbaDays,amzDos};
+  const awdNow=awd.now||0;
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdNow,awdReserved,awdOutbound,fbaInb,sold90,sold30,daily90,daily30,dailySales,target,totalNetwork,recSend,netDays,fbaDays,amzDos};
 }
 function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
 
@@ -3237,6 +3263,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
+  if (n === 'fbalow') renderFbaLow();
   if (n === 'recommendations' && typeof renderRecs === 'function') renderRecs(); // 📦 In Builder (same parent) up to date after builder changes
   if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
@@ -3601,6 +3628,65 @@ function addSku(sku) {
   renderBuilder();
 }
 
+// 🚨 FBA low — AWD has stock (owner 2026-11-18). FBA now = available + FC processing + FC transfer + on the way from our warehouse.
+// Days left = FBA now ÷ the faster of the 30-day / 90-day sales a day (the same pace as Recommendations). Listed when AWD has units it can
+// send NOW and FBA is sold out (0 available) or has less than "Warn when" days. Send = enough for "Send enough for" days − FBA now − what
+// AWD is already sending to FBA, at most what AWD has now. A SKU that sold nothing in 90 days is listed (sold out) but not given a number.
+function flSave(){ try { localStorage.setItem('awd_fl_cfg', JSON.stringify({ days: +ge('fl-days').value || 14, cover: +ge('fl-cover').value || 30 })); } catch (e) {} }
+function flCfg(){ var c = { days: 14, cover: 30 }; try { var o = JSON.parse(localStorage.getItem('awd_fl_cfg') || '{}'); if (o.days > 0) c.days = o.days; if (o.cover > 0) c.cover = o.cover; } catch (e) {}
+  if (ge('fl-days') && +ge('fl-days').value > 0) c.days = +ge('fl-days').value; if (ge('fl-cover') && +ge('fl-cover').value > 0) c.cover = +ge('fl-cover').value; return c; }
+function flH(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function flRows(){
+  if (!S.loaded) return [];
+  var c = flCfg();
+  return S.joined.map(function(r){
+    if (!(r.awdNow > 0) || DISC.skus.has(String(r.sku).toUpperCase())) return null;
+    var fbaNow = (r.fbaFul||0) + (r.fcProc||0) + (r.fcTrans||0) + (r.fbaInb||0), d = r.dailySales || 0, left = d > 0 ? fbaNow / d : null;
+    var out = !(r.fbaFul > 0);
+    if (!out && !(left != null && left < c.days)) return null;
+    var need = d > 0 ? Math.max(0, Math.ceil(d * c.cover) - fbaNow - (r.awdOutbound||0)) : null, send = need == null ? null : Math.min(r.awdNow, need);
+    var seen = (S.fbaLowSeen || {})[String(r.sku).toUpperCase()] || null;
+    return { r: r, fbaNow: fbaNow, left: left, out: out, send: send, need: need, covered: need === 0, seen: seen };
+  }).filter(Boolean).sort(function(a, b){ // sold out first (best sellers first — they lose the most), then the fewest days left
+    return (b.out - a.out) || (a.out ? ((b.r.dailySales||0) - (a.r.dailySales||0)) : (a.left - b.left)) || String(a.r.sku).localeCompare(String(b.r.sku)); });
+}
+window.renderFbaLow = function(){
+  var el = ge('fl-out'); if (!el) return;
+  try { var o = JSON.parse(localStorage.getItem('awd_fl_cfg') || '{}'); if (o.days > 0 && document.activeElement !== ge('fl-days')) ge('fl-days').value = o.days; if (o.cover > 0 && document.activeElement !== ge('fl-cover')) ge('fl-cover').value = o.cover; } catch (e) {}
+  if (!S.loaded) { el.innerHTML = '<div style="color:var(--gray-500);font-size:13px">Load the reports first (⚡ Sync from Amazon or Import Reports).</div>'; flLog(); return; }
+  var L = flRows(), f = ge('fl-f').value, q = (ge('fl-q').value || '').trim().toLowerCase(), c = flCfg();
+  var V = L.filter(function(x){ if (f === 'out' && !x.out) return false; if (f === 'low' && x.out) return false; if (f === 'send' && !(x.send > 0)) return false;
+    return !q || (x.r.sku + ' ' + x.r.asin + ' ' + x.r.name).toLowerCase().indexOf(q) >= 0; });
+  var nOut = L.filter(function(x){ return x.out; }).length, nLow = L.length - nOut, units = V.reduce(function(a, x){ return a + (x.send || 0); }, 0);
+  var th = 'style="padding:6px 8px;text-align:right;font-size:11px;color:var(--gray-500);border-bottom:2px solid var(--gray-200);white-space:nowrap"', td = 'style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--gray-100);white-space:nowrap"';
+  el.innerHTML = '<div style="font-size:13px;margin-bottom:8px"><b style="color:var(--red)">🔴 ' + nOut + ' sold out in FBA</b> · <b style="color:#c2410c">🟠 ' + nLow + ' under ' + c.days + ' days</b> — AWD has stock for all of them'
+    + (V.length ? ' · showing ' + V.length + ', <b>' + units.toLocaleString() + ' units</b> to send from AWD' : '') + '</div>'
+    + (!V.length ? '<div style="color:var(--green);font-size:13px">✅ Nothing here — every FBA listing with AWD stock has more than ' + c.days + ' days.</div>'
+    : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><th ' + th.replace('right', 'left') + '>Status</th><th ' + th.replace('right', 'left') + '>SKU · ASIN · name</th><th ' + th + '>Sells a day<br>(30 d · 90 d)</th><th ' + th + '>FBA now<br>(avail + processing + on the way)</th><th ' + th + '>FBA days left</th><th ' + th + '>AWD can send now<br>(+ inbound to AWD)</th><th ' + th + '>AWD already<br>sending to FBA</th><th ' + th + '>Send from AWD</th></tr>'
+    + V.map(function(x){ var r = x.r, st = x.out ? '<b style="color:var(--red)">🔴 Sold out in FBA</b>' + (x.seen ? '<div style="font-size:11px;color:var(--gray-500)">since ' + flH(new Date(x.seen.first).toLocaleDateString()) + ' (' + x.seen.days + ' d)</div>' : '') : '<b style="color:#c2410c">🟠 Running out</b>';
+      if (x.covered && r.awdOutbound > 0) st += '<div style="font-size:11px;color:var(--green)">🚚 AWD is already sending enough</div>';
+      return '<tr class="fl-row"><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)">' + st + '</td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)"><b style="font-family:monospace">' + flH(r.sku) + '</b> <span style="color:var(--gray-500);font-family:monospace">' + flH(r.asin) + '</span><div style="font-size:11.5px;color:var(--gray-500)">' + flH(String(r.name || '').slice(0, 80)) + '</div></td>'
+        + '<td ' + td + '>' + (r.dailySales > 0 ? '<b>' + r.dailySales.toFixed(1) + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.daily30||0).toFixed(1) + ' · ' + (r.daily90||0).toFixed(1) + '</div>' : '<span style="color:var(--gray-500)">no sales in 90 d</span>') + '</td>'
+        + '<td ' + td + '><b>' + x.fbaNow + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.fbaFul||0) + ' + ' + ((r.fcProc||0) + (r.fcTrans||0)) + ' + ' + (r.fbaInb||0) + '</div></td>'
+        + '<td ' + td + '>' + (x.out ? '<b style="color:var(--red)">0</b>' : x.left == null ? '—' : '<b>' + Math.floor(x.left) + '</b>') + '</td>'
+        + '<td ' + td + '><b>' + r.awdNow + '</b>' + (r.awdAvail > r.awdNow ? '<div style="font-size:11px;color:var(--gray-500)">+ ' + (r.awdAvail - r.awdNow) + ' inbound</div>' : '') + '</td>'
+        + '<td ' + td + '>' + (r.awdOutbound > 0 ? '<b>' + r.awdOutbound + '</b>' : '0') + '</td>'
+        + '<td ' + td + '>' + (x.send == null ? '<span style="color:var(--gray-500)" title="No sales in 90 days — no pace to work it out">your call</span>' : x.send > 0 ? '<b style="font-size:15px;color:var(--blue,#2563eb)">' + x.send + '</b>' + (x.need > x.send ? '<div style="font-size:11px;color:#c2410c">AWD has only ' + r.awdNow + ' (needs ' + x.need + ')</div>' : '') : '<span style="color:var(--green)">0 — covered</span>') + '</td></tr>'; }).join('') + '</table></div>');
+  flLog();
+};
+function flLog(){
+  var el = ge('fl-log'); if (!el) return; var L = S.fbaLowLog || [];
+  el.innerHTML = !L.length ? '<div style="font-size:12px;color:var(--gray-500)">Nothing yet — kept from 11-18-2026 on, each morning\'s Amazon sync (and ⚡ Sync).</div>'
+    : '<div style="overflow:auto;max-height:320px"><table style="border-collapse:collapse;font-size:12px;width:100%"><tr><th style="text-align:left;padding:4px 6px">SKU</th><th style="text-align:left;padding:4px 6px">Sold out in FBA (first seen)</th><th style="text-align:left;padding:4px 6px">Ended</th><th style="padding:4px 6px">Days</th><th style="text-align:right;padding:4px 6px">AWD had</th><th style="text-align:left;padding:4px 6px">Why it ended</th></tr>'
+    + L.map(function(x){ return '<tr><td style="padding:4px 6px;font-family:monospace">' + flH(x.sku) + '</td><td style="padding:4px 6px">' + flH(new Date(x.first).toLocaleString()) + '</td><td style="padding:4px 6px">' + flH(new Date(x.ended).toLocaleString()) + '</td><td style="padding:4px 6px;text-align:center"><b>' + x.days + '</b></td><td style="padding:4px 6px;text-align:right">' + (x.awd || 0) + '</td><td style="padding:4px 6px">' + flH(x.why) + '</td></tr>'; }).join('') + '</table></div>';
+}
+window.flCopy = function(){
+  var L = flRows().filter(function(x){ return x.send > 0; });
+  if (!L.length) { ge('fl-msg').textContent = 'Nothing to send.'; return; }
+  var txt = 'SKU\tUnits\n' + L.map(function(x){ return x.r.sku + '\t' + x.send; }).join('\n');
+  var done = function(){ ge('fl-msg').textContent = '📋 Copied ' + L.length + ' SKU(s), ' + L.reduce(function(a, x){ return a + x.send; }, 0) + ' units — paste in Seller Central → AWD → Replenish to FBA'; };
+  try { navigator.clipboard.writeText(txt).then(done, function(){ prompt('Copy this list:', txt); }); } catch (e) { prompt('Copy this list:', txt); }
+};
 function updateBadges() {
   const n = Object.keys(S.shipment).length;
   const bb = ge('bld-badge');
@@ -3608,6 +3694,8 @@ function updateBadges() {
   const rt = S.joined.filter(r => r.recSend > 0 && !DISC.skus.has(r.sku.toUpperCase())).length;
   const rb = ge('rec-badge');
   if (rb) { rb.textContent = rt; rb.style.display = rt ? '' : 'none'; }
+  const fl = typeof flRows === 'function' ? flRows().filter(x => (x.out && !x.covered) || x.send > 0).length : 0, fb = ge('fl-badge'); // 🚨 sold out or running out, and AWD isn't already sending enough
+  if (fb) { fb.textContent = fl; fb.style.display = fl ? '' : 'none'; }
 }
 
 function renderRecs() {
@@ -3784,7 +3872,8 @@ async function loadReportsFromSheet() {
     // 🚚 open FBA inbound shipments (straight from our warehouse) + which ones count — never blocks the rest
     try { const [ri, rs] = await Promise.all([wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inbound').then(r=>r.json()), wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports').then(r=>r.json())]);
       S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {};
-      S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {}; } catch (e) { S.inb = []; }
+      S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {};
+      S.fbaLowSeen = (rs && rs.fbaLow) || {}; S.fbaLowLog = (rs && rs.fbaLowLog) || []; } catch (e) { S.inb = []; }
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
     if (!fbaData.length) {
@@ -6874,6 +6963,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261113a"></script>
+<script src="xf-access.js?v=20261118a"></script>
 </body>
 </html>

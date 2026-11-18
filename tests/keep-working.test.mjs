@@ -8877,6 +8877,47 @@ console.log('\n👪 AWD: per part (all sizes) — Builder warns past our stock; 
   sq.exec("DELETE FROM master_list WHERE base_sku = '31-1-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM reorder_incoming WHERE title = 'CT-31 10/9'; DELETE FROM reorder_title WHERE title = 'CT-31 10/9'; DELETE FROM inventory_log WHERE part_num LIKE '31-1-5%'; DELETE FROM awd_auto");
 }
 
+// 🚨 Owner (2026-11-18): "a lot of the listing we already sold out of in FBA, but we still have some in our AWD, it just never get auto ship it
+// to our FBA — design something for it, so we can keep eyes on it and make it not to run out in FBA"
+console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA while AWD has units → listed + kept on record (first seen → ended)');
+{
+  const realFetch = globalThis.fetch; let fbaA = 0;
+  const ago = n => new Date(Date.now() - n * 864e5).toISOString();
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/fba/inventory/v1/summaries')) return J({ payload: { inventorySummaries: [
+      { sellerSku: '41-1-1=10', asin: 'B0L1', totalQuantity: fbaA, inventoryDetails: { fulfillableQuantity: fbaA, reservedQuantity: {} } },   // sold out (then 12)
+      { sellerSku: '41-1-2=5', asin: 'B0L2', totalQuantity: 5, inventoryDetails: { fulfillableQuantity: 5, reservedQuantity: {} } },         // has FBA stock
+      { sellerSku: '41-1-3=2', asin: 'B0L3', totalQuantity: 0, inventoryDetails: { fulfillableQuantity: 0, reservedQuantity: {} } }] }, pagination: {} }); // sold out, AWD none
+    if (u.includes('/awd/2024-05-09/inventory')) return J({ inventory: [
+      { sku: '41-1-1=10', totalOnhandQuantity: 40, inventoryDetails: { availableDistributableQuantity: 40, reservedDistributableQuantity: 0 } },
+      { sku: '41-1-2=5', totalOnhandQuantity: 30, inventoryDetails: { availableDistributableQuantity: 30, reservedDistributableQuantity: 0 } },
+      { sku: '41-1-3=2', totalOnhandQuantity: 0, totalInboundQuantity: 8, inventoryDetails: { availableDistributableQuantity: 0, reservedDistributableQuantity: 0 } }] });
+    if (u.includes('/fba/inbound/v0/shipments')) return J({ payload: { ShipmentData: [] } });
+    if (u.includes('/awd/2024-05-09/inboundShipments')) return J({ shipments: [] });
+    if (u.endsWith('/reports/2021-06-30/reports') && m === 'POST') return J({ reportId: 'RL' }, 202);
+    if (u.includes('sheets.googleapis.com')) return J({});
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
+  sq.prepare("DELETE FROM awd_auto WHERE k IN ('fbaLow','fbaLowLog')").run();
+  sq.prepare("INSERT INTO awd_auto (k, v) VALUES ('fbaLow', ?)").run(JSON.stringify({ '41-1-1=10': { first: ago(3), awd: 40 } })); // first seen 3 days ago
+  await call('/awd/auto-reports', { method: 'POST', headers: H });
+  const s1 = await get('/awd/auto-reports'), L1 = s1.fbaLow || {};
+  check('sold out in FBA + AWD has 40 → 41-1-1=10 listed, still "since 3 days ago" (first seen kept); 41-1-2=5 (FBA has 5) and 41-1-3=2 (AWD only inbound) not listed',
+    Object.keys(L1).join() === '41-1-1=10' && L1['41-1-1=10'].awd === 40 && L1['41-1-1=10'].days === 3, L1);
+  fbaA = 12; await call('/awd/auto-reports', { method: 'POST', headers: H });
+  const s2 = await get('/awd/auto-reports'), g2 = (s2.fbaLowLog || [])[0] || {};
+  check('…FBA gets 12 → off the list and on the 📜 record: 41-1-1=10, first seen → ended, 3 days, AWD had 40, "FBA has stock again (12)"',
+    !Object.keys(s2.fbaLow || {}).length && g2.sku === '41-1-1=10' && g2.days === 3 && g2.awd === 40 && /FBA has stock again \(12\)/.test(g2.why), s2.fbaLowLog);
+  const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('page: 🚨 tab (badge) + list sold out first, Send from AWD = days × sales − FBA now − AWD already sending, never more than AWD has now; 📋 Copy; 📜 Record; in 🧩 Pages & Tabs',
+    /id="tab-fbalow"/.test(ah) && /id="fl-badge"/.test(ah) && /var need = d > 0 \? Math\.max\(0, Math\.ceil\(d \* c\.cover\) - fbaNow - \(r\.awdOutbound\|\|0\)\) : null, send = need == null \? null : Math\.min\(r\.awdNow, need\);/.test(ah)
+      && /now:pn\(gf\(r,'Available in AWD \(units\)'\)\)/.test(ah) && /id="fl-copy"/.test(ah) && /id="fl-rec"/.test(ah)
+      && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  globalThis.fetch = realFetch;
+}
+
 // Owner (2026-10-22): "one more tab: items we shipped from our warehouse to FBA or AWD — if everything else got received but after 10 days
 // that item still isn't, clear it out, don't count it as stock in FBA / AWD (likely we sold out and didn't ship it). List them with a
 // 'not received' warning so I can click shipped / not shipped, so next time we ship more instead of thinking more is coming".
