@@ -10268,8 +10268,11 @@ console.log('\n🗺 AWD box labels: the grab plan on the 1st label, each box its
   const heads = texts.filter(t => /^Box \d+-\d+ · /.test(t));
   check('8-8-8=10- (4 boxes × 100 pcs = 400 pcs, cases of 300 pcs): the 1st label says GRAB 2 cases (400 pcs): C1=1-1-1 ×1 split into 3 boxes · C2=5-1-1 ×1 open, take 100 pcs (1 box), rest stays; boxes 1–3 say C1=1-1-1, box 4 C2=5-1-1; 9-9-9 (20 pcs = a case) FULL CASE',
     // a long plan is drawn on 2+ lines (owner 2026-10-25: "way too small, no one can read it") — read back in the order drawn, same words
-    texts.join(' ').includes('GRAB 2 cases (enough for our 4 boxes): C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case — take 100 pcs, rest stays') && texts.includes('GRAB 1 case (enough for our 1 box): BSMT=1-1-1: grab 1 case') // wording: owner 2026-10-25
+    texts.join(' ').includes('GRAB 2 cases (enough for our 4 boxes): C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case — take 100 pcs, rest stays') && texts.includes('GRAB 1 case (enough for our 1 box):') && texts.includes('BSMT=1-1-1: grab 1 case') // wording: owner 2026-10-25; the spots on the next line: owner 2026-11-18
       && heads.slice(0, 4).join('|') === 'Box 4-1 · C1=1-1-1|Box 4-2 · C1=1-1-1|Box 4-3 · C1=1-1-1|Box 4-4 · C2=5-1-1' && texts.filter(t => /^GRAB /.test(t)).length === 2, { heads, grab: texts.filter(t => /^GRAB/.test(t)) });
+  // 📐 Owner (2026-11-18): "move that C2=2-1-7: grab 1 case C2=2-1-11 grab 1 case to second line — the words become too small in the same row"
+  check('…"GRAB 2 cases (enough for our 4 boxes):" is a line of its own and the spots start on the next line (C1=1-1-1: grab 1 case · C2=5-1-1 …), 2 spots a line',
+    texts.includes('GRAB 2 cases (enough for our 4 boxes):') && texts.some(t => /^C1=1-1-1: grab 1 case · C2=5-1-1: grab 1 case/.test(t)) && !texts.some(t => /^GRAB .*\): C/.test(t)), texts.filter(t => /GRAB|grab/.test(t)));
   check('…every label: the label line as the name, bags × pcs = total (8-8-8: 10 bags × 10 pcs = 100 pcs; 9-9-9: 4 bags × 5 pcs = 20 pcs; PREVIOUS PACKED 7-7-7: 5 bags × 2 pcs = 10 pcs)',
     texts.filter(t => t === '10=ELBOW 1/2 PEX').length === 4 && texts.includes('5=TEE 3/4') && texts.includes('2X=CAP 1/2') && texts.filter(t => t === '10 bags × 10 pcs = 100 pcs').length === 4 && texts.includes('4 bags × 5 pcs = 20 pcs') && texts.includes('5 bags × 2 pcs = 10 pcs'), texts.slice(0, 20));
   check('…every label has the scan barcode and the photo — PREVIOUS PACKED too (its FNSKU is X00… → the Amazon barcode)',
