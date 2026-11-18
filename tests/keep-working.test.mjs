@@ -8796,7 +8796,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 10\)\}`;/.test(ah), null); // the Builder table has 10 columns: 🕒 Added (2026-10-24) + ASIN (owner 2026-11-18)
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 11\)\}`;/.test(ah), null); // the Builder table has 11 columns: 🕒 Added (2026-10-24) + ASIN + 🏷 Amazon label (owner 2026-11-18)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -8950,7 +8950,7 @@ console.log('\n🛟 Shipment Builder: a save never wipes another screen\'s items
 // Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also"
 { const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   check('🚚 Shipment Builder: an ASIN column next to SKU (from the row, else the loaded Amazon reports; links to Amazon), the filter finds an ASIN too; the stock row spans the extra column',
-    /<th class="bld-asin-h">ASIN<\/th><th>Product<\/th>/.test(ah) && /function bldAsin\(sku,item\)/.test(ah) && /<td class="bld-asin"/.test(ah) && /bldAsin\(sku,item\)\.toLowerCase\(\)\.includes\(q\)/.test(ah) && /awdStockRow\(r, 10\)/.test(ah), null); }
+    /<th class="bld-asin-h">ASIN<\/th><th>Product<\/th>/.test(ah) && /function bldAsin\(sku,item\)/.test(ah) && /<td class="bld-asin"/.test(ah) && /bldAsin\(sku,item\)\.toLowerCase\(\)\.includes\(q\)/.test(ah) && /awdStockRow\(r, 11\)/.test(ah), null); } // 11: + 🏷 Amazon label (owner 2026-11-18)
 // 🚚 Owner (2026-11-18): "I want it we able to click confirm to sent it from our AWD to our FBA right on our app, select and sent"
 console.log('\n🚚 AWD planner → send from AWD to FBA (Amazon replenishment order) from the app: checked against AWD stock, kept with its status');
 {
@@ -14502,6 +14502,34 @@ console.log('\n🗂 AWD box labels: the ✅ Already packed list belongs to ONE s
   check('page: the box labels use the list (awdAmzBcSet → awdScanCode); the label card says "🏷 Amazon\'s barcode (FNSKU) only on: …" with ✏️ Change (Admin); 🧩 check mark',
     /const amz = await awdAmzList\(\), amzBc = await awdAmzBcSet\(\);/.test(ah) && /awdScanCode\(sku, \[I\.tpl\.upc\], amz, lfn, amzBc\)/.test(ah) && /id="awd-lbl-amzbc"/.test(ah)
       && /awdLblIsAdmin\(\) \? ' <a href="#" class="awd-amzbc-edit"/.test(ah) && /sel: '#awd-lbl-amzbc'/.test(xa), null);
+}
+
+// 🏷 Owner (2026-11-18): "I see the system make mistakes using the Amazon label or not — after I add the items to the builder, show if that
+// listing uses the Amazon label, we can check or uncheck it, and the system auto saves it so all of our systems know, even the Reorder Planner"
+{
+  console.log('\n🏷 Shipment Builder: ✅ / ☐ Amazon label per listing — saved once, every screen follows it');
+  const fsm = await import('node:fs'), ah = fsm.readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = fsm.readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  await get('/inventory/amazon-barcode'); // makes the Amazon copies' tables
+  try { sq.prepare("INSERT INTO fba_catalog (sku, asin, fnsku, product_name) VALUES ('77-3-8=100JC', 'B0JCLAMP77', 'X002RRA9E7', 'J clamp'), ('77-4-4=10', 'B07BCPX6Z5', 'X00AMZ0077', 'Valve')").run(); } catch (e) { console.log('   (fba_catalog insert:', e.message, ')'); }
+  const L0 = (await get('/inventory/amazon-barcode')).list || [], f = (L, sk) => L.find(x => x.sku === sk) || {};
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pkR = await call('/inventory/amazon-barcode/choice', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ sku: '77-3-8=100JC', amazon: true }] }) });
+  const s1 = await post('/inventory/amazon-barcode/choice', { items: [{ sku: '77-3-8=100JC', asin: 'B0JCLAMP77', amazon: false }, { sku: '77-9-9=5', asin: 'B0NOTREP01', amazon: true }] });
+  const s2 = await post('/inventory/amazon-barcode/choice', { items: [{ sku: '77-3-8=100JC', asin: 'B0JCLAMP77', amazon: false }] });
+  const L1 = (await get('/inventory/amazon-barcode')).list || [], ch = await get('/inventory/amazon-barcode/choice');
+  check('before: Amazon\'s X0… FNSKU reads as "Amazon barcode" (77-3-8=100JC); the owner\'s box-label list makes B07BCPX6Z5 (77-4-4=10) Amazon too',
+    f(L0, '77-3-8=100JC').barcode === 'amazon' && f(L0, '77-4-4=10').barcode === 'amazon' && f(L0, '77-4-4=10').choice && f(L0, '77-4-4=10').choice.src === 'list', { a: f(L0, '77-3-8=100JC'), b: f(L0, '77-4-4=10') });
+  check('☐ unticked in the builder → 77-3-8=100JC is "our UPC" on the shared list (Reorder Planner, Stock Out, UPC, box labels read it), with who / when; a listing no Amazon report has yet (77-9-9=5) is added as Amazon; the same choice again changes nothing; a picker can\'t change it; every change in the log (not set → our UPC)',
+    pkR.status === 403 && s1.ok && s1.changed === 2 && s2.ok && s2.changed === 0 && f(L1, '77-3-8=100JC').barcode === 'maker' && f(L1, '77-3-8=100JC').choice.src === 'saved' && !!f(L1, '77-3-8=100JC').choice.by
+      && f(L1, '77-3-8=100JC').guess === 'amazon' && f(L1, '77-9-9=5').barcode === 'amazon' && ch.ok && ch.log.some(l => l.sku === '77-3-8=100JC' && l.before === 'not set' && l.after === 'our UPC'), { a: f(L1, '77-3-8=100JC'), c: f(L1, '77-9-9=5'), s1, s2 });
+  const a = ah.indexOf('function awdScanCode('), sc = new Function(ah.slice(a, ah.indexOf('\n}\n', a) + 3) + '; return awdScanCode;')();
+  const lab = sc('77-3-8=100JC', ['810097208902'], L1, 'X002RRA9E7', null), lab2 = sc('77-4-4=10', ['810097200077'], L1, 'X00AMZ0077', null);
+  check('box labels follow the saved choice even before the owner\'s list is read: 77-3-8=100JC → our UPC 810097208902 (not X002RRA9E7); 77-4-4=10 (on the list) → Amazon\'s X00AMZ0077',
+    lab && lab.code === '810097208902' && lab2 && lab2.code === 'X00AMZ0077', { lab, lab2 });
+  check('page: the builder has a "🏷 Amazon label" column (✅ Amazon / ☐ Our UPC, ✓ saved, ? not saved yet), ticking saves at once (bldAmzSet → /inventory/amazon-barcode/choice), "💾 Save 🏷 Amazon label as shown" for the rest; 🧩 check mark',
+    /<th class="bld-amzbc-h"[^>]*>🏷 Amazon label<\/th>/.test(ah) && /<td class="bld-amzbc">\$\{bldAmzCell\(sku,item\)\}<\/td>/.test(ah) && /onchange="bldAmzSet\(this\.dataset\.sku,this\.checked\)"/.test(ah)
+      && /\/inventory\/amazon-barcode\/choice/.test(ah) && /id="bld-amzbc-all"[^>]*onclick="bldAmzSaveAll\(\)"/.test(ah) && /awdStockRow\(r, 11\)/.test(ah) && /sel: '\.bld-amzbc-h, \.bld-amzbc, #bld-amzbc-all'/.test(xa), null);
+  sq.exec("DELETE FROM amazon_barcode_choice; DELETE FROM amazon_barcode_choice_log"); try { sq.exec("DELETE FROM fba_catalog WHERE sku IN ('77-3-8=100JC', '77-4-4=10')"); } catch (_) {}
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

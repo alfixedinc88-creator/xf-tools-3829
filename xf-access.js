@@ -73,6 +73,7 @@ document.addEventListener('input', function (e) {
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },
         { key: 'lblamzbc', label: "…🏷 Amazon's barcode only on these ASINs (✏️ Admin)", sel: '#awd-lbl-amzbc' },
+        { key: 'bldamzbc', label: '…🏷 Amazon label ✅ / ☐ per listing in the Shipment Builder (+ 💾 Save as shown)', sel: '.bld-amzbc-h, .bld-amzbc, #bld-amzbc-all' },
         { key: 'awdlock', label: '…🔒 Lock it (hold the shipment\'s grab plan for Stock Out Big Company)', sel: '#awd-lock-box' },
         { key: 'lblnotpal', label: '…⚠ Labels not on a pallet yet + 🖨 Reprint them', sel: '#awd-lbl-pal' },
         { key: 'boxlabelshist', label: '…🕘 Earlier box labels (Admin only)', sel: '#awd-lbl-hist' },

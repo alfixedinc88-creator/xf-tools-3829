@@ -2252,6 +2252,64 @@ async function awdShipSend(request, env, session, url) {
   if (session && session.userId) await logUserActivity(env, session.userId, 'awd_ship_send', { shipment, skus: lines.length, units, boxes }).catch(() => {});
   return J({ ok: true, id: ins.meta.last_row_id, shipment, skus: lines.length, units, boxes, at: now, by });
 }
+// 🏷 Owner (2026-11-18): "I see the system make mistakes using the Amazon label or not — after I add the items to the builder, show if the
+// listing uses the Amazon label, we can check or uncheck it, and it auto saves so ALL our systems know, even the Reorder Planner".
+// One saved choice per listing (Amazon SKU): ✅ = the bags carry Amazon's barcode (FNSKU), ☐ = our own UPC. It wins over what we work
+// out from Amazon's FNSKU (X0… = Amazon barcode — Amazon prints X0… for listings we pack with our own UPC too). Every screen reads
+// /inventory/amazon-barcode (Reorder Planner 🏷 list, Stock Out Big Company, UPC, AWD box labels), so they all follow it. The owner's
+// box-label list (✏️ on the label card: ASINs / SKUs with Amazon's barcode) counts as ✅ for a listing with no choice of its own.
+// Every change kept: amazon_barcode_choice_log (who, when, before → after).
+async function amazonBarcodeChoiceTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_barcode_choice (sku TEXT PRIMARY KEY, asin TEXT, amazon INTEGER, by_user TEXT, at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS amazon_barcode_choice_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, sku TEXT, asin TEXT, before TEXT, after TEXT)').run();
+}
+async function amazonBarcodeApplyChoices(env, list, P) {
+  const U = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  let ch = []; try { await amazonBarcodeChoiceTables(env); ch = (await env.DB.prepare('SELECT sku, asin, amazon, by_user, at FROM amazon_barcode_choice').all()).results || []; } catch (_) {}
+  let lst = null; try { const raw = await autolabelGetKey(env, 'awd_amz_barcode'); lst = raw ? JSON.parse(raw) : { list: AWD_AMZ_BC_SEED, by: 'owner (2026-11-18)', at: '2026-11-18T00:00:00.000Z' }; } catch (_) {}
+  const bySku = {}; ch.forEach(c => { bySku[U(c.sku)] = c; });
+  const inList = new Set(((lst && lst.list) || []).map(U));
+  for (const o of list) {
+    const c = bySku[U(o.sku)];
+    if (c) { o.guess = o.barcode; o.barcode = c.amazon ? 'amazon' : 'maker'; o.choice = { amazon: !!c.amazon, by: c.by_user || '', at: c.at || '', src: 'saved' }; delete bySku[U(o.sku)]; }
+    else if (inList.has(U(o.sku)) || (o.asin && inList.has(U(o.asin))) || (o.part && inList.has(U(o.part)))) { o.guess = o.barcode; o.barcode = 'amazon'; o.choice = { amazon: true, by: (lst && lst.by) || '', at: (lst && lst.at) || '', src: 'list' }; }
+    if (o.choice && o.barcode === 'amazon' && !o.why) o.why = 'Set by ' + (o.choice.by || 'us') + ' — the bags carry Amazon\'s barcode';
+    if (o.choice && o.barcode !== 'amazon') o.why = '';
+  }
+  Object.values(bySku).forEach(c => { // a listing chosen in the builder that no Amazon report has yet
+    list.push({ sku: U(c.sku), part: P ? P(c.sku) : U(c.sku), asin: U(c.asin), fnsku: '', name: '', from: ['set by us'], at: c.at || '', barcode: c.amazon ? 'amazon' : 'maker', why: c.amazon ? 'Set by ' + (c.by_user || 'us') + ' — the bags carry Amazon\'s barcode' : '', choice: { amazon: !!c.amazon, by: c.by_user || '', at: c.at || '', src: 'saved' } });
+  });
+}
+async function amazonBarcodeChoice(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await amazonBarcodeChoiceTables(env);
+  const U = x => String(x || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  if (request.method === 'GET') {
+    const rows = (await env.DB.prepare('SELECT sku, asin, amazon, by_user, at FROM amazon_barcode_choice').all()).results || [];
+    const log = (await env.DB.prepare('SELECT at, by_user, sku, asin, before, after FROM amazon_barcode_choice_log ORDER BY id DESC LIMIT 100').all()).results || [];
+    return J({ ok: true, choices: rows, log });
+  }
+  const b = await request.json().catch(() => ({}));
+  const rid = String(b._requestId || '').slice(0, 80);
+  if (rid) { const claim = await claimRequestId(env, rid, 'amazon-barcode/choice'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const items = (Array.isArray(b.items) ? b.items : []).slice(0, 500).map(x => ({ sku: U(x.sku).slice(0, 80), asin: U(x.asin).slice(0, 20), amazon: !!x.amazon })).filter(x => x.sku);
+  if (!items.length) return J({ ok: false, error: 'No listing' }, 400);
+  const by = String((session && (session.displayName || session.username)) || '?').slice(0, 40), at = new Date().toISOString();
+  let changed = 0;
+  for (const it of items) {
+    const prev = await env.DB.prepare('SELECT amazon FROM amazon_barcode_choice WHERE sku = ?').bind(it.sku).first();
+    const before = prev ? (prev.amazon ? 'Amazon barcode' : 'our UPC') : 'not set', after = it.amazon ? 'Amazon barcode' : 'our UPC';
+    if (before === after) continue;
+    await env.DB.prepare('INSERT INTO amazon_barcode_choice (sku, asin, amazon, by_user, at) VALUES (?,?,?,?,?) ON CONFLICT(sku) DO UPDATE SET asin = COALESCE(NULLIF(excluded.asin, \'\'), asin), amazon = excluded.amazon, by_user = excluded.by_user, at = excluded.at')
+      .bind(it.sku, it.asin, it.amazon ? 1 : 0, by, at).run();
+    await env.DB.prepare('INSERT INTO amazon_barcode_choice_log (at, by_user, sku, asin, before, after) VALUES (?,?,?,?,?,?)').bind(at, by, it.sku, it.asin, before, after).run();
+    changed++;
+  }
+  if (changed && session && session.userId) await logUserActivity(env, session.userId, 'amazon_barcode_choice', { n: changed, items: items.slice(0, 20) }).catch(() => {});
+  const res = { ok: true, changed, by, at };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
 async function inventoryAmazonBarcode(env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   await ensureFbaCatalogTable(env);
@@ -2295,6 +2353,7 @@ async function inventoryAmazonBarcode(env) {
   const list = Object.values(rows).map(o => { const bc = /^X0/.test(o.fnsku) ? 'amazon' : o.fnsku && o.asin && o.fnsku === o.asin ? 'maker' : /^B0/.test(o.fnsku) ? 'maker' : '';
       return { ...o, barcode: bc, why: bc === 'amazon' ? why(o) : '' }; })
     .sort((a, b) => a.part.localeCompare(b.part, undefined, { numeric: true }) || a.sku.localeCompare(b.sku));
+  await amazonBarcodeApplyChoices(env, list, P);
   const n = k => list.filter(x => x.barcode === k).length;
   return J({ ok: true, list, counts: { amazon: n('amazon'), maker: n('maker'), unknown: n('') }, asOf: list.reduce((a, x) => x.at > a ? x.at : a, '') });
 }
@@ -11863,6 +11922,10 @@ const _app = {
         return await inventorySetFnsku(request, env);
       }
       if (path === '/inventory/amazon-barcode' && method === 'GET') return await inventoryAmazonBarcode(env);
+      if (path === '/inventory/amazon-barcode/choice' && (method === 'GET' || method === 'POST')) { // 🏷 ✅ / ☐ Amazon label, saved per listing
+        if (method === 'POST' && session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await amazonBarcodeChoice(request, env, session);
+      }
       if (path === '/inventory/box-check') return await inventoryBoxCheck(request, url, env, session);
       if (path === '/inventory/fnsku-lookup' && method === 'GET') {
         return await inventoryFnskuLookup(url, env);
