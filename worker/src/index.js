@@ -1567,17 +1567,18 @@ async function awdLabelMap(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
     prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('ALTER TABLE awd_label_map ADD COLUMN kind TEXT').run().catch(() => {}); // ✅ full / 🏷 label / ✂ recount — the AWD Planner's group of the label (owner 2026-11-18)
   await awdLabelAmpRepair(env);
   const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), S18 = c => { const d = String(c || '').replace(/\D/g, ''); return d.length >= 18 ? d.slice(-18) : ''; };
   if (request.method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const shipment = t(b.shipment, 60) || 'shipment ' + new Date().toISOString().slice(0, 10), now = new Date().toISOString(), by = t((session && (session.displayName || session.username)) || '?', 40);
     const L = (Array.isArray(b.labels) ? b.labels : []).slice(0, 3000).map(x => ({ sscc: S18(x.sscc), sku: t(x.sku), part: t(x.part), seq: t(x.seq, 12), units: parseFloat(x.units) || 0,
-      loc: t(x.loc, 120), prev: x.prev ? 1 : 0, fnsku: t(x.fnsku, 20), upc: t(x.upc, 20), name: t(x.name, 120) })).filter(x => x.sscc && x.sku);
-    for (let i = 0; i < L.length; i += 40) await env.DB.batch(L.slice(i, i + 40).map(x => env.DB.prepare(`INSERT INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, upc, name, at, by_user)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(sscc) DO UPDATE SET shipment = excluded.shipment, sku = excluded.sku, part = excluded.part, seq = excluded.seq, units = excluded.units,
-      loc = excluded.loc, prev = excluded.prev, fnsku = excluded.fnsku, upc = excluded.upc, name = excluded.name, at = excluded.at, by_user = excluded.by_user`)
-      .bind(x.sscc, shipment, x.sku, x.part, x.seq, x.units, x.loc, x.prev, x.fnsku, x.upc, x.name, now, by)));
+      loc: t(x.loc, 120), prev: x.prev ? 1 : 0, fnsku: t(x.fnsku, 20), upc: t(x.upc, 20), name: t(x.name, 120), kind: t(x.kind, 12) })).filter(x => x.sscc && x.sku);
+    for (let i = 0; i < L.length; i += 40) await env.DB.batch(L.slice(i, i + 40).map(x => env.DB.prepare(`INSERT INTO awd_label_map (sscc, shipment, sku, part, seq, units, loc, prev, fnsku, upc, name, at, by_user, kind)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(sscc) DO UPDATE SET shipment = excluded.shipment, sku = excluded.sku, part = excluded.part, seq = excluded.seq, units = excluded.units,
+      loc = excluded.loc, prev = excluded.prev, fnsku = excluded.fnsku, upc = excluded.upc, name = excluded.name, at = excluded.at, by_user = excluded.by_user, kind = excluded.kind`)
+      .bind(x.sscc, shipment, x.sku, x.part, x.seq, x.units, x.loc, x.prev, x.fnsku, x.upc, x.name, now, by, x.kind)));
     if (session && session.userId) await logUserActivity(env, session.userId, 'awd_label_map', { shipment, boxes: L.length }).catch(() => {});
     return J({ ok: true, shipment, saved: L.length });
   }
@@ -1742,6 +1743,7 @@ async function awdShipOpen(env, url) {
   const days = 14, since = new Date(Date.now() - days * 86400000).toISOString(), U = x => String(x || '').trim().toUpperCase();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
     prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('ALTER TABLE awd_label_map ADD COLUMN kind TEXT').run().catch(() => {}); // ✅ full / 🏷 label / ✂ recount — the AWD Planner's group of the label (owner 2026-11-18)
   await awdLabelAmpRepair(env); // 🔗 labels cut at "&" put right first
   const sends = {};
   ((await env.DB.prepare('SELECT * FROM awd_ship_send WHERE at >= ? ORDER BY id').bind(since).all()).results || []).forEach(r => {
@@ -1756,10 +1758,10 @@ async function awdShipOpen(env, url) {
   const packedSs = {};
   try { ((await env.DB.prepare('SELECT sscc, kind FROM awd_box_scan WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY id').bind(since).all()).results || [])
     .forEach(r => { packedSs[r.sscc] = r.kind !== 'mismatch'; }); } catch (_) {}
-  ((await env.DB.prepare('SELECT sscc, shipment, sku, part, units, prev, name, at, by_user, loc FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY sku, seq').bind(since).all()).results || []).forEach(r => {
+  ((await env.DB.prepare('SELECT sscc, shipment, sku, part, units, prev, name, at, by_user, loc, kind FROM awd_label_map WHERE shipment IN (SELECT shipment FROM awd_label_map GROUP BY shipment HAVING MAX(at) >= ?) ORDER BY sku, seq').bind(since).all()).results || []).forEach(r => {
     const o = labs[r.shipment] = labs[r.shipment] || { shipment: r.shipment, source: 'labels', at: '', by: r.by_user, boxes: 0, lines: [] };
     if (String(r.at || '') > o.at) { o.at = r.at; o.by = r.by_user; }
-    o.boxes++; o.lines.push({ sku: r.sku, part: r.part, units: r.units, boxes: 1, name: r.name || '', prev: r.prev ? 1 : 0, loc: r.loc || '', packed: packedSs[r.sscc] ? 1 : 0 }); // loc: where the label says to grab it
+    o.boxes++; o.lines.push({ sku: r.sku, part: r.part, units: r.units, boxes: 1, name: r.name || '', prev: r.prev ? 1 : 0, loc: r.loc || '', kind: r.kind || '', packed: packedSs[r.sscc] ? 1 : 0 }); // loc: where the label says to grab it
   });
   const all = {};
   Object.values(sends).forEach(x => { all[x.shipment] = x; });
@@ -1869,6 +1871,7 @@ async function awdBoxPallet(request, url, env, session) {
     }
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS awd_label_map (sscc TEXT PRIMARY KEY, shipment TEXT, sku TEXT, part TEXT, seq TEXT, units REAL, loc TEXT,
       prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('ALTER TABLE awd_label_map ADD COLUMN kind TEXT').run().catch(() => {}); // ✅ full / 🏷 label / ✂ recount — the AWD Planner's group of the label (owner 2026-11-18)
     const boxes = ((await env.DB.prepare('SELECT sscc, sku, part, seq, units, prev, name, loc FROM awd_label_map WHERE shipment = ? ORDER BY sku, seq').bind(sh).all()).results || []);
     const x = await latest('shipment = ?', sh), pallets = {}, kinds = { split: [], rebag: [], mismatch: [], ok: [], off: [] };
     // 🟫 Owner (2026-10-27: "pallet 1 has 14 cases, the record shows 7"): a pallet counts AMAZON boxes — and now our CASES too (one Amazon box

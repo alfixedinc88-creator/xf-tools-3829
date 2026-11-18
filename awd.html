@@ -3015,7 +3015,7 @@ async function awdLabelsDo(file) {
     // 🗺 Every Amazon box kept on the server (SSCC → SKU, box N-k, bags, spot, PREVIOUS PACKED): the phones' Box check reads the box label,
     // and Stock Out Big Company → 📦 Current AWD shipment lists what to grab by location.
     const mapRows = metas.filter(m => m.sscc).map(m => { const tpl = awdTplInfo(m.sku); return { sscc: m.sscc, sku: m.sku, part: String(normalizeAmazonSKU(m.sku)).toUpperCase().replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')), seq: m.seq, units: m.units,
-      loc: m.loc || '', prev: !!m.prevKey, fnsku: m.fnsku || '', upc: tpl.upc || '', name: tpl.label || '' }; });
+      loc: m.loc || '', prev: !!m.prevKey, fnsku: m.fnsku || '', upc: tpl.upc || '', name: tpl.label || '', kind: m.prevKey ? '' : (m.kind || '') }; }); // ✅ / 🏷 / ✂ group → Stock Out Big Company splits the same way (owner 2026-11-18)
     // 🔒 Owner (2026-10-27): "after the labels: how many cases to grab where (C1, C2…), and a Lock it button — save everything this shipment
     // wants us to grab, don't let any other Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots".
     const lockDraft = { shipment: shipId, lines: Object.keys(plans).map(K => { const x = plans[K];
