@@ -9765,7 +9765,7 @@ console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown 
   const it = S0.shipment['30-3-4=10X'] || {};
   check('a SKU put in the shipment gets the time it was put in (and is saved)', it.qty === 24 && !isNaN(Date.parse(it.addedAt)) && Date.now() - Date.parse(it.addedAt) < 60000 && saved === 1, it);
   check('…kept with the shipment (sheet column "added") and read back after a reload; also kept in 🕘 History',
-    /const values = \[\['sku','qty','added'\], \.\.\.items\.map\(\(\[sku,i\]\) => \[sku, i\.qty, i\.addedAt \|\| ''\]\)\];/.test(ah) && /S\.shipment\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
+    /const values = \[\['sku','qty','added','builder'\], \.\.\.items\.map\(\(\[sku,i,b\]\) => b === 1 \? \[sku, i\.qty, i\.addedAt \|\| ''\] : \[sku, i\.qty, i\.addedAt \|\| '', String\(b\)\]\)/.test(ah) && /S\.builders\[b\]\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
   check('…"🕒 Added" column (New York time), tap to sort oldest → newest / newest → oldest; SKUs put in before 10-24 show — and sort as oldest',
     /onclick="bldToggleSort\('time'\)"[^>]*>🕒 Added/.test(ah) && /class="bld-added"/.test(ah) && /_bldSortKey==='time'\s*\n\s*\? \(\[a,x\],\[b,y\]\)=>_bldSortDir\*\(String\(x\.addedAt\|\|''\)\.localeCompare\(String\(y\.addedAt\|\|''\)\)/.test(ah), null);
 }
@@ -14207,6 +14207,45 @@ console.log('\n📦 Order Lookup: search a part # / SKU — which orders, when, 
     ords(listing) === 'OL-2' && listing.itemSummary.pcs === 30 && !(await get('/ship/order-lookup?q=' + encodeURIComponent('Test OL-4') + '&days=30')).itemSummary, listing.itemSummary);
   const { readFileSync: rfL } = await import('node:fs'); const ph = rfL(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…the page shows it on top: "📦 … shipped", pieces + orders, a line for each day', /results\.innerHTML = psOlItemSummaryHtml\(d\.itemSummary, days\) \+ list\.map/.test(ph) && /function psOlItemSummaryHtml\(sm, days\)/.test(ph) && /part # \/ SKU…/.test(ph), null);
+}
+
+// Owner (2026-11-18): "my AWD shipment builder already has 109 items, I don't want to delete all — I need one more tab, builder 2, so I can do
+// a second shipment: one to ship directly to FBA and one to AWD".
+console.log('\n📦 AWD Shipment Builder: Builder 1 + Builder 2 (e.g. AWD + FBA direct), each its own items, saved together');
+{
+  const { readFileSync: rfB2 } = await import('node:fs');
+  const ah = rfB2(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const cut = (a, b) => ah.slice(ah.indexOf(a), ah.indexOf(b, ah.indexOf(a)));
+  const src = cut('const S={fba:', '\n', 0) + '\n' + cut('const AWD_BUILDERS = 2;', '\n') + '\n' + cut('S.builders = { 1: S.shipment', '\n') + '\n'
+    + cut('// ── 📦 BUILDER 1 / BUILDER 2', '// ── SHIPMENT BUILDER PERSISTENCE ──') + cut('var _shipmentSaveTimer', '\n// ── LOAD AWD PLANNER DB');
+  let sheet = [['sku', 'qty', 'added'], ['30-3-4=10X', '24', '2026-11-17T10:00:00Z'], ['31-1-1=5', '10', '']]; // what is saved today (builder 1 only, 3 columns)
+  const els = { 'ship-name': { value: '' }, 'awd-bld-tabs': { innerHTML: '' }, 'awd-send-so-out': { innerHTML: '' } };
+  const realT = globalThis.setTimeout; let pend = null;
+  const run = new Function('ge', 'wFetch', 'findRow', 'updateBadges', 'renderBuilder', 'renderRecs', 'awd_planner_toast', 'awdAct', 'setTimeout', 'clearTimeout',
+    src + '; return { S, save: saveShipmentToSheet, load: loadShipmentFromSheet, sw: awdBldSwitch, dest: awdBldDest, name: awdBldName, def: awdBldDefaultName, other: awdOtherBuilders, tabs: () => ge("awd-bld-tabs").innerHTML };')(
+    id => els[id] || { innerHTML: '', value: '' },
+    async (u, o) => { if (o && o.method === 'PUT') { sheet = JSON.parse(o.body).values; return { ok: true }; } return { json: async () => ({ values: sheet }) }; },
+    sku => ({ sku }), () => {}, () => {}, () => {}, () => {}, () => {}, f => { pend = f; return 1; }, () => {});
+  const flush = async () => { const f = pend; pend = null; if (f) await f(); };
+  await run.load();
+  const S = run.S;
+  check('today\'s saved shipment (3 columns) loads into Builder 1 unchanged: 2 SKUs, qty + added kept; Builder 2 empty, ships to FBA direct',
+    S.bActive === 1 && Object.keys(S.builders[1]).length === 2 && S.builders[1]['30-3-4=10X'].qty === 24 && S.builders[1]['30-3-4=10X'].addedAt === '2026-11-17T10:00:00Z' && !Object.keys(S.builders[2]).length && S.bMeta[2].dest === 'FBA' && S.shipment === S.builders[1], S.builders);
+  run.sw(2); S.shipment['40-1-1=10X'] = { row: { sku: '40-1-1=10X' }, qty: 30, addedAt: '2026-11-18T09:00:00Z' }; run.name('FBA Nov 18'); await flush();
+  check('…switch to Builder 2 → "+ Add" goes there; Builder 1 keeps its 2 SKUs; the 4th column says builder 2; the name is kept per builder',
+    S.bActive === 2 && Object.keys(S.builders[1]).length === 2 && S.builders[2]['40-1-1=10X'].qty === 30
+      && JSON.stringify(sheet.find(r => r[0] === '40-1-1=10X')) === JSON.stringify(['40-1-1=10X', 30, '2026-11-18T09:00:00Z', '2']) && JSON.stringify(sheet.find(r => r[0] === '30-3-4=10X')) === JSON.stringify(['30-3-4=10X', 24, '2026-11-17T10:00:00Z'])
+      && sheet.some(r => r[0] === '#B2' && r[2] === 'FBA Nov 18' && r[4] === 'FBA') && run.def() === 'FBA Nov 18', sheet);
+  check('…the other builder\'s items are listed for the shared-shelf check / "📦 in Builder 1" on Recommendations', run.other().map(x => x[0] + '@' + x[2]).join(',') === '30-3-4=10X@1,31-1-1=5@1', run.other());
+  // reload on another device
+  const run2 = new Function('ge', 'wFetch', 'findRow', 'updateBadges', 'renderBuilder', 'renderRecs', 'awd_planner_toast', 'awdAct', 'setTimeout', 'clearTimeout',
+    src + '; return { S, load: loadShipmentFromSheet };')(id => els[id] || { innerHTML: '', value: '' }, async () => ({ json: async () => ({ values: sheet }) }), sku => ({ sku }), () => {}, () => {}, () => {}, () => {}, () => {}, f => 1, () => {});
+  await run2.load();
+  check('…after a reload: Builder 1 = the same 2 SKUs, Builder 2 = 40-1-1=10X ×30 "FBA Nov 18" (FBA direct); "#B2" is never read as a SKU',
+    Object.keys(run2.S.builders[1]).join(',') === '30-3-4=10X,31-1-1=5' && Object.keys(run2.S.builders[2]).join(',') === '40-1-1=10X' && run2.S.bMeta[2].name === 'FBA Nov 18' && run2.S.bMeta[2].dest === 'FBA', run2.S.builders);
+  check('…the builder page shows both tabs with their counts; Export / Send use the builder\'s own name (Builder 1 → "AWD shipment" when empty)',
+    /📦 Builder 1 · 🏭 AWD <span[^>]*>\(2 SKUs\)/.test(run.tabs()) && /📦 Builder 2 · 🚚 FBA direct · FBA Nov 18 <span[^>]*>\(1 SKU\)/.test(run.tabs()) && run.def(1) === 'AWD shipment'
+      && /\|\| awdBldDefaultName\(\);/.test(ah) && /id="awd-bld-tabs"/.test(ah) && /S\.shipment=\{\};S\.builders\[S\.bActive\]=S\.shipment;/.test(ah), run.tabs());
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
