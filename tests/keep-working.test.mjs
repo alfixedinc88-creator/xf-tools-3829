@@ -13955,6 +13955,10 @@ console.log('\n⚡ Picking by scan: every barcode of the order known at once (fa
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setTimeout(r, 0)); };
   win.psPksScan('1Z999AA1FASTPICK01'); await settle();
   check('…the label: the order\'s items are asked for at the same time as the pick is saved (not after it)', calls.join() === 'package,pick', calls);
+  // Owner (2026-11-18): "for 'picking by scan' it take long to just scan the label, please fix" — the items show while the pick save is still going
+  check('…the items are on screen while the pick save (it can ask Veeqo) is still going — never waited for; the order read skips the Activity History (&pick=1)',
+    /97-7-1=10/.test(el('ps-pks-out').innerHTML) && /2️⃣ Go to the shelf/.test(el('ps-pks-step').textContent) && /\/ship\/package\?pick=1&tracking=/.test(ph)
+      && /const forPick = url\.searchParams\.get\('pick'\) === '1';/.test(rfF(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8')), { out: el('ps-pks-out').innerHTML.slice(0, 200), step: el('ps-pks-step').textContent });
   pickDone(); await settle();
   const l0 = lookups;
   win.psPksScan('810000097710'); win.psPksScan('10000097710'); // a bag of 10, then one from a scanner that drops the first digit
