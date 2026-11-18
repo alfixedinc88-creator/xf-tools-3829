@@ -8917,6 +8917,20 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone"
+console.log('\n🛟 Shipment Builder: a save never wipes another screen\'s items; every save kept; ♻ bring back from the record');
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('page: a save first reads the saved list — if another screen saved since (version #V differs), NOTHING is overwritten, the newest list is loaded and the screen says so; nothing saved before the list loaded; one save at a time',
+    /if \(\(curVer \|\| ''\) !== \(S\.shipVer \|\| ''\)\) \{/.test(ah) && /\['#V', '', newVer\]\]/.test(ah) && /if \(!S\.shipLoaded\) \{ awdBldSaveState\('⚠ Not saved/.test(ah) && /_shipSaveChain = _shipSaveChain\.then\(_shipSaveNow, _shipSaveNow\)/.test(ah), null);
+  check('page: a SKU not in the loaded reports is KEPT on loading (never silently dropped); ♻ Bring back from the record (adds / removes / qty / clear of THAT builder); 🕘 Saved versions → bring one back',
+    /row: findRow\(sku\) \|\| awdBldStubRow\(sku\)/.test(ah) && /async function awdBldRebuild\(\)/.test(ah) && /if \(\(parseInt\(x\.builder, 10\) \|\| 1\) !== b\) return;/.test(ah) && /async function awdBldSnapUse\(id\)/.test(ah) && /id="awd-bld-rebuild"/.test(ah) && /id="awd-bld-snaps-btn"/.test(ah), null);
+  const v1 = [['sku','qty','added','builder'], ['A-1', 10, ''], ['B-2', 5, '', '2'], ['#V', '', 'v1']];
+  const s1 = await post('/awd/shipment-snap', { values: v1, b1: 1, b2: 1 }), s2 = await post('/awd/shipment-snap', { values: v1.slice(0, 3).concat([['#V', '', 'v2']]), b1: 1, b2: 1 });
+  const s3 = await post('/awd/shipment-snap', { values: v1.slice(0, 2).concat([['#V', '', 'v3']]), b1: 1, b2: 0 });
+  const L = await get('/awd/shipment-snaps'), one = await get('/awd/shipment-snaps?id=' + L.list[1].id);
+  check('🕘 every save is kept on the server (who, when, SKUs in each builder, the whole list) — the same list again is not kept twice; an older one can be read back whole',
+    s1.ok && s2.same && s3.ok && L.list.length >= 2 && L.list[0].b2 === 0 && L.list[1].b2 === 1 && one.values.some(r => r[0] === 'B-2' && r[3] === '2'), { L: L.list.slice(0, 3), one });
+}
 // Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also"
 { const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
   check('🚚 Shipment Builder: an ASIN column next to SKU (from the row, else the loaded Amazon reports; links to Amazon), the filter finds an ASIN too; the stock row spans the extra column',
@@ -9841,7 +9855,7 @@ console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown 
   const it = S0.shipment['30-3-4=10X'] || {};
   check('a SKU put in the shipment gets the time it was put in (and is saved)', it.qty === 24 && !isNaN(Date.parse(it.addedAt)) && Date.now() - Date.parse(it.addedAt) < 60000 && saved === 1, it);
   check('…kept with the shipment (sheet column "added") and read back after a reload; also kept in 🕘 History',
-    /const values = \[\['sku','qty','added','builder'\], \.\.\.items\.map\(\(\[sku,i,b\]\) => b === 1 \? \[sku, i\.qty, i\.addedAt \|\| ''\] : \[sku, i\.qty, i\.addedAt \|\| '', String\(b\)\]\)/.test(ah) && /S\.builders\[b\]\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
+    /const values = \[\['sku','qty','added','builder'\], \.\.\.items\.map\(\(\[sku,i,b\]\) => b === 1 \? \[sku, i\.qty, i\.addedAt \|\| ''\] : \[sku, i\.qty, i\.addedAt \|\| '', String\(b\)\]\)/.test(ah) && /out\.items\[b\]\[sku\] = \{ qty: parseInt\(row\[1\]\) \|\| 0, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\) \};/.test(ah) && /keep\[sku\] = \{ row: findRow\(sku\) \|\| awdBldStubRow\(sku\), qty: it\.qty, addedAt: it\.addedAt \};/.test(ah) /* loader rewritten 2026-11-18 (Builder 2 lost items) — "added" still read back */ && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
   check('…"🕒 Added" column (New York time), tap to sort oldest → newest / newest → oldest; SKUs put in before 10-24 show — and sort as oldest',
     /onclick="bldToggleSort\('time'\)"[^>]*>🕒 Added/.test(ah) && /class="bld-added"/.test(ah) && /_bldSortKey==='time'\s*\n\s*\? \(\[a,x\],\[b,y\]\)=>_bldSortDir\*\(String\(x\.addedAt\|\|''\)\.localeCompare\(String\(y\.addedAt\|\|''\)\)/.test(ah), null);
 }
@@ -14298,11 +14312,11 @@ console.log('\n📦 AWD Shipment Builder: Builder 1 + Builder 2 (e.g. AWD + FBA 
   const els = { 'ship-name': { value: '' }, 'awd-bld-tabs': { innerHTML: '' }, 'awd-send-so-out': { innerHTML: '' } };
   const realT = globalThis.setTimeout; let pend = null;
   const run = new Function('ge', 'wFetch', 'findRow', 'updateBadges', 'renderBuilder', 'renderRecs', 'awd_planner_toast', 'awdAct', 'setTimeout', 'clearTimeout',
-    src + '; return { S, save: saveShipmentToSheet, load: loadShipmentFromSheet, sw: awdBldSwitch, dest: awdBldDest, name: awdBldName, def: awdBldDefaultName, other: awdOtherBuilders, tabs: () => ge("awd-bld-tabs").innerHTML };')(
+    src + '; return { S, save: saveShipmentToSheet, load: loadShipmentFromSheet, sw: awdBldSwitch, dest: awdBldDest, name: awdBldName, def: awdBldDefaultName, other: awdOtherBuilders, tabs: () => ge("awd-bld-tabs").innerHTML, chain: () => _shipSaveChain };')(
     id => els[id] || { innerHTML: '', value: '' },
-    async (u, o) => { if (o && o.method === 'PUT') { sheet = JSON.parse(o.body).values; return { ok: true }; } return { json: async () => ({ values: sheet }) }; },
+    async (u, o) => { if (o && o.method === 'PUT') { sheet = JSON.parse(o.body).values; return { ok: true, json: async () => ({ ok: true }) }; } return { json: async () => ({ values: sheet }) }; }, // a Response-like answer (2026-11-18: the save now reads the answer)
     sku => ({ sku }), () => {}, () => {}, () => {}, () => {}, () => {}, f => { pend = f; return 1; }, () => {});
-  const flush = async () => { const f = pend; pend = null; if (f) await f(); };
+  const flush = async () => { const f = pend; pend = null; if (f) await f(); await run.chain(); }; // the save runs on a chain (one at a time) since 2026-11-18
   await run.load();
   const S = run.S;
   check('today\'s saved shipment (3 columns) loads into Builder 1 unchanged: 2 SKUs, qty + added kept; Builder 2 empty, ships to FBA direct',

@@ -66,6 +66,8 @@ document.addEventListener('input', function (e) {
       { key: 'builder', label: 'Shipment Builder', sel: '#tab-builder', parts: [
         { key: 'bldtabs', label: '📦 Builder 1 / Builder 2 tabs (a 2nd shipment, e.g. FBA direct)', sel: '#awd-bld-tabs' },
         { key: 'addsku', label: '＋ Add SKU (manual)', sel: '#page-builder button[onclick="bldShowManualAdd()"], #bld-manual-panel' },
+        { key: 'bldrebuild', label: '♻ Bring back from the record', sel: '#awd-bld-rebuild' },
+        { key: 'bldsnaps', label: '🕘 Saved versions', sel: '#awd-bld-snaps-btn, #awd-bld-snaps' },
         { key: 'clearall', label: 'Clear All', sel: '#page-builder button[onclick="clearBuilder()"]' },
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },

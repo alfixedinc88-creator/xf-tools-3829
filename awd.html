@@ -993,6 +993,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="page" id="page-builder">
       <!-- 📦 Owner (2026-11-18): two builders — e.g. one shipment to AWD and one straight to FBA, at the same time -->
       <div id="awd-bld-tabs" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>
+      <!-- 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone" -->
+      <div id="awd-bld-safe" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:12px">
+        <span id="awd-bld-savestate" style="color:var(--gray-500)"></span>
+        <button type="button" class="btn btn-sm btn-secondary" id="awd-bld-rebuild" onclick="awdBldRebuild()" title="Builds this builder again from the record of every add / remove / qty change (Admin / Owner)">♻ Bring back from the record</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="awd-bld-snaps-btn" onclick="awdBldSnaps()" title="Every save of the Shipment Builder is kept — bring one back">🕘 Saved versions</button>
+      </div>
+      <div id="awd-bld-snaps" style="display:none;margin-bottom:10px"></div>
       <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here, or add one manually.</p><br><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button><button class="btn btn-secondary" onclick="bldShowManualAdd()">&#65291; Add SKU Manually</button></div></div>
       <div id="bld-body" style="display:none">
         <div class="bld-layout">
@@ -1308,7 +1315,7 @@ const S={fba:[],live:[],awd:[],res:[],inb:[],inbCount:{},joined:[],cpackMap:{},c
 // a second shipment at the same time: one to ship directly to FBA and one to AWD". Two builders, each with its own items, name and where it
 // ships to (AWD / FBA direct). S.shipment is always the builder on screen (every screen keeps working the same); both are saved together.
 const AWD_BUILDERS = 2;
-S.builders = { 1: S.shipment, 2: {} }; S.bMeta = { 1: { name: '', dest: 'AWD' }, 2: { name: '', dest: 'FBA' } }; S.bActive = 1;
+S.builders = { 1: S.shipment, 2: {} }; S.shipLoaded = false; S.shipVer = ''; S.bMeta = { 1: { name: '', dest: 'AWD' }, 2: { name: '', dest: 'FBA' } }; S.bActive = 1;
 
 // ── FILE UPLOAD ──
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
@@ -1659,7 +1666,7 @@ function awdActQty(sku, from, to) { // typing 1, 12, 120 → one record: 0 → 1
   _awdQtyLog[k].t = setTimeout(() => { const x = _awdQtyLog[k]; delete _awdQtyLog[k]; if (x.from !== x.to) awdAct('builder_qty', { sku: k, from: x.from, to: x.to }); }, 1500);
 }
 function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
-function toggleAllVis(c){const L=visRecs().filter(r=>c?!S.shipment[r.sku]:!!S.shipment[r.sku]).map(r=>r.sku);S._quiet=true;try{visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});}finally{S._quiet=false;}if(L.length&&typeof awdAct==='function')awdAct(c?'builder_add_all':'builder_remove_all',{n:L.length,skus:L.slice(0,60)});updateBadges();renderRecs();renderBuilder();}
+function toggleAllVis(c){const L=visRecs().filter(r=>c?!S.shipment[r.sku]:!!S.shipment[r.sku]).map(r=>r.sku);S._quiet=true;try{visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});}finally{S._quiet=false;}if(L.length&&typeof awdAct==='function')awdAct(c?'builder_add_all':'builder_remove_all',{n:L.length,skus:L.slice(0,60)});updateBadges();renderRecs();renderBuilder();if(!c&&L.length)saveShipmentToSheet();}
 function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
 
 // ── BUILDER ──
@@ -4033,57 +4040,135 @@ function awdBldDest(v) { S.bMeta[S.bActive] = Object.assign({}, S.bMeta[S.bActiv
 // Pieces of the same part already in the OTHER builder (both shipments come off the same shelves — never counted as free twice)
 function awdOtherBuilders() { const o = []; for (let b = 1; b <= AWD_BUILDERS; b++) if (b !== S.bActive) Object.keys(S.builders[b] || {}).forEach(k => o.push([k, S.builders[b][k], b])); return o; }
 
+// ♻ Build the builder on screen again from the record (every add / remove / qty change / clear, with which builder). SKUs already in it
+// stay; only the missing ones come back, with their last qty. Admin / Owner (the record is theirs to read).
+async function awdBldRebuild() {
+  const b = S.bActive, days = parseInt(prompt('Bring back Builder ' + b + ' from the record of the last how many days?', '2'), 10); if (!(days > 0)) return;
+  let d; try { d = await wFetch(W + '/awd/activity?tab=builder&days=' + Math.min(30, days)).then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok) { alert('Could not read the record: ' + ((d && d.error) || '')); return; }
+  const st = {}; (d.list || []).slice().reverse().forEach(r => { const x = r.detail || {}; if ((parseInt(x.builder, 10) || 1) !== b) return;
+    if (r.action === 'builder_add' && x.sku) st[x.sku] = { qty: parseInt(x.qty, 10) || 0, at: r.at };
+    else if (r.action === 'builder_add_all') (x.skus || []).forEach(k => { const row = findRow(k); st[k] = { qty: row ? (row.recSend || 0) : 0, at: r.at }; });
+    else if (r.action === 'builder_remove' && x.sku) delete st[x.sku];
+    else if (r.action === 'builder_remove_all') (x.skus || []).forEach(k => delete st[k]);
+    else if (r.action === 'builder_qty' && x.sku && st[x.sku]) st[x.sku].qty = parseInt(x.to, 10) || 0;
+    else if (r.action === 'builder_clear') Object.keys(st).forEach(k => delete st[k]); });
+  const miss = Object.keys(st).filter(k => !S.shipment[k]), units = miss.reduce((a, k) => a + st[k].qty, 0);
+  if (!miss.length) { alert('The record has ' + Object.keys(st).length + ' SKU(s) for Builder ' + b + ' in the last ' + days + ' day(s) — all already in it. Nothing to bring back.'); return; }
+  if (!confirm('The record shows ' + miss.length + ' SKU(s) (' + units + ' units) in Builder ' + b + ' that are not on screen:\n\n' + miss.slice(0, 30).map(k => k + ' — ' + st[k].qty).join('\n') + (miss.length > 30 ? '\n… and ' + (miss.length - 30) + ' more' : '') + '\n\nBring them back into Builder ' + b + '? (What is there now stays.)')) return;
+  S._quiet = true; try { miss.forEach(k => { S.shipment[k] = { row: findRow(k) || awdBldStubRow(k), qty: st[k].qty, addedAt: st[k].at }; }); } finally { S._quiet = false; }
+  S.builders[b] = S.shipment; awdAct('builder_add_all', { n: miss.length, skus: miss.slice(0, 60), restored: 'from the record' });
+  updateBadges(); renderRecs(); renderBuilder(); saveShipmentToSheet(); awd_planner_toast('♻ ' + miss.length + ' SKUs brought back into Builder ' + b);
+}
+async function awdBldSnaps() {
+  const box = ge('awd-bld-snaps'); if (!box) return; if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  box.style.display = 'block'; box.innerHTML = '⏳ Loading…';
+  let d; try { d = await wFetch(W + '/awd/shipment-snaps').then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok) { box.innerHTML = '<span style="color:#DC2626">' + String((d && d.error) || 'Could not load').replace(/</g, '&lt;') + '</span>'; return; }
+  const h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
+  box.innerHTML = '<div class="card" style="padding:8px 12px;font-size:12px"><b>🕘 Saved versions of the Shipment Builder</b> (newest first — every save is kept)'
+    + (!d.list.length ? '<div style="color:var(--gray-500)">None yet — kept from 11-18-2026 on.</div>' : '<table style="border-collapse:collapse;width:100%;margin-top:6px"><tr><th style="text-align:left;padding:3px 6px">When</th><th style="text-align:left;padding:3px 6px">Who</th><th style="text-align:right;padding:3px 6px">Builder 1</th><th style="text-align:right;padding:3px 6px">Builder 2</th><th></th></tr>'
+    + d.list.map(x => '<tr style="border-top:1px solid var(--gray-100)"><td style="padding:3px 6px">' + h(new Date(x.at).toLocaleString()) + '</td><td style="padding:3px 6px">' + h(x.by) + '</td><td style="padding:3px 6px;text-align:right">' + x.b1 + ' SKUs</td><td style="padding:3px 6px;text-align:right">' + x.b2 + ' SKUs</td>'
+      + '<td style="padding:3px 6px"><button type="button" class="btn btn-sm btn-secondary" onclick="awdBldSnapUse(' + x.id + ')">↩ Bring this back</button></td></tr>').join('') + '</table>') + '</div>';
+}
+async function awdBldSnapUse(id) {
+  let d; try { d = await wFetch(W + '/awd/shipment-snaps?id=' + id).then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok || !d.values) { alert('Could not load it: ' + ((d && d.error) || '')); return; }
+  const P = awdShipParse(d.values), n = b => Object.keys(P.items[b] || {}).length;
+  if (!confirm('Bring back this saved version?\n\nBuilder 1: ' + n(1) + ' SKUs · Builder 2: ' + n(2) + ' SKUs\n\nIt REPLACES what both builders have now (what is there now is kept in 🕘 Saved versions too).')) return;
+  for (let b = 1; b <= AWD_BUILDERS; b++) { const keep = {}; Object.keys(P.items[b]).forEach(k => { keep[k] = { row: findRow(k) || awdBldStubRow(k), qty: P.items[b][k].qty, addedAt: P.items[b][k].addedAt }; }); S.builders[b] = keep; if (P.meta[b]) S.bMeta[b] = P.meta[b]; }
+  S.shipment = S.builders[S.bActive];
+  const cur = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment').then(r => r.json()).catch(() => null); if (cur && Array.isArray(cur.values)) S.shipVer = awdShipParse(cur.values).ver; // a deliberate bring-back: on top of the newest
+  awdAct('builder_add_all', { n: n(1) + n(2), skus: Object.keys(P.items[S.bActive]).slice(0, 60), restored: 'saved version #' + id });
+  awdBldTabs(); updateBadges(); renderRecs(); renderBuilder(); saveShipmentToSheet(); ge('awd-bld-snaps').style.display = 'none'; awd_planner_toast('↩ Saved version brought back');
+}
+
 // ── SHIPMENT BUILDER PERSISTENCE ──
 var _shipmentSaveTimer = null;
 function saveShipmentToSheet() {
-  // Debounce — wait 1s after last change before saving
+  // Debounce — wait 1s after last change before saving; one save at a time, in order
   clearTimeout(_shipmentSaveTimer);
-  _shipmentSaveTimer = setTimeout(async function() {
+  _shipmentSaveTimer = setTimeout(function() { _shipSaveChain = _shipSaveChain.then(_shipSaveNow, _shipSaveNow); }, 1000);
+}
+var _shipSaveChain = Promise.resolve();
+async function _shipSaveNow() {
     try {
       // 📦 both builders in one list: builder 1's rows as before (sku, qty, added); builder 2's rows carry "2" in the 4th column;
       // each builder's name / ships-to on a "#B" row (skipped as a SKU when read).
+      _shipmentSaveTimer = null;
       S.builders[S.bActive] = S.shipment;
+      if (!S.shipLoaded) { awdBldSaveState('⚠ Not saved — the saved Shipment Builder was not loaded yet. Refresh the page.', true); return; }
+      // someone else saved since this screen loaded it? → never overwrite their list
+      const cur = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment').then(r => r.json());
+      if (!cur || cur.error || !Array.isArray(cur.values)) { awdBldSaveState('⚠ Not saved — could not check the saved list (' + ((cur && cur.error) || 'no WiFi?') + '). Try again.', true); return; }
+      const curVer = awdShipParse(cur.values).ver;
+      if ((curVer || '') !== (S.shipVer || '')) {
+        awdBldSaveState('⚠ The Shipment Builder was changed on another screen — loaded the newest list; redo your last change if it is missing.', true);
+        awd_planner_toast('⚠ Changed on another screen — the newest Shipment Builder is loaded (your last change was NOT saved over it)', 'error');
+        S.shipLoaded = false; await loadShipmentFromSheet();
+        awdBldSaveState('⚠ The Shipment Builder was changed on another screen — the newest list is loaded here; redo your last change if it is missing.', true); return;
+      }
+      const newVer = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
       const items = [];
       for (let b = 1; b <= AWD_BUILDERS; b++) Object.entries(S.builders[b] || {}).forEach(([sku, i]) => items.push([sku, i, b]));
       const meta = [];
       for (let b = 1; b <= AWD_BUILDERS; b++) { const m = S.bMeta[b] || {}; if (b > 1 || m.name || m.dest !== 'AWD') meta.push(['#B' + b, '', m.name || '', String(b), m.dest || '']); }
-      const values = [['sku','qty','added','builder'], ...items.map(([sku,i,b]) => b === 1 ? [sku, i.qty, i.addedAt || ''] : [sku, i.qty, i.addedAt || '', String(b)]), ...meta];
-      await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
+      const values = [['sku','qty','added','builder'], ...items.map(([sku,i,b]) => b === 1 ? [sku, i.qty, i.addedAt || ''] : [sku, i.qty, i.addedAt || '', String(b)]), ...meta, ['#V', '', newVer]];
+      const pr = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
-      });
+      }).then(r => r.json()).catch(e => ({ error: e.message }));
+      if (!pr || pr.error) { awdBldSaveState('⚠ Not saved — ' + ((pr && pr.error) || 'no WiFi?') + '. Your list is still on this screen; change anything to try again.', true); return; }
+      S.shipVer = newVer;
+      const cnt = {}; items.forEach(([sku, i, b]) => { cnt[b] = (cnt[b] || 0) + 1; });
+      awdBldSaveState('✅ Saved ' + new Date().toLocaleTimeString() + ' — ' + Object.keys(cnt).map(b => 'Builder ' + b + ': ' + cnt[b]).join(' · '));
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/shipment-snap', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ values, b1: cnt[1] || 0, b2: cnt[2] || 0 }) }).catch(() => {});
       console.log('[XFITTING] Shipments saved:', items.length, 'SKUs in', AWD_BUILDERS, 'builders');
-    } catch(e) { console.error('[XFITTING] saveShipmentToSheet:', e); }
-  }, 1000);
+    } catch(e) { console.error('[XFITTING] saveShipmentToSheet:', e); awdBldSaveState('⚠ Not saved — ' + e.message, true); }
 }
 
+// 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone".
+// The Shipment Builder is saved as ONE list (both builders) and each save replaced the whole list with what THAT screen had — so a second
+// screen / computer (or an older copy of the page) that was opened before the 57 were added wiped them with its own older list, and a SKU
+// not found in the loaded reports was silently dropped on loading. Now:
+//   • every save carries a version (#V row); before saving, the list is read again — if someone else saved since, nothing is overwritten:
+//     the newest list is loaded and the screen says so (redo the last change);
+//   • nothing is saved until the list was loaded (a failed load never saves an empty list over it);
+//   • a SKU not in the reports is kept (with its own name), never dropped;
+//   • every save is kept on the server (🕘 Saved versions → bring one back), and ♻ rebuilds a builder from the record of every add / remove /
+//     qty change (the record is kept since 10-23-2026).
+function awdBldStubRow(sku) { return { sku, asin: '', name: sku, fbaFul: 0, fcProc: 0, fcTrans: 0, awdAvail: 0, awdNow: 0, awdReserved: 0, awdOutbound: 0, sold90: 0, dailySales: 0, target: 0, totalNetwork: 0, recSend: 0, netDays: 999, _manual: true }; }
+function awdShipParse(values) { // sheet rows → { items: { b: { sku: {qty, addedAt} } }, meta, ver }
+  const out = { items: {}, meta: {}, ver: '' }; for (let b = 1; b <= AWD_BUILDERS; b++) out.items[b] = {};
+  (values || []).slice(1).forEach(function(row) {
+    const sku = String(row[0] || '').trim(); if (!sku || sku === 'sku') return;
+    if (sku === '#V') { out.ver = String(row[2] || '').trim(); return; }
+    if (/^#B\d+$/.test(sku)) { const mb = parseInt(sku.slice(2)); if (mb >= 1 && mb <= AWD_BUILDERS) out.meta[mb] = { name: String(row[2] || '').trim(), dest: String(row[4] || '').trim() || (mb === 1 ? 'AWD' : 'FBA') }; return; }
+    const b = Math.min(AWD_BUILDERS, Math.max(1, parseInt(row[3]) || 1));
+    out.items[b][sku] = { qty: parseInt(row[1]) || 0, addedAt: String(row[2] || '').trim() };
+  });
+  return out;
+}
+function awdBldSaveState(t, bad) { const el = ge('awd-bld-savestate'); if (el) { el.textContent = t; if (el.style) el.style.color = bad ? '#DC2626' : 'var(--gray-500)'; } }
 async function loadShipmentFromSheet() {
   try {
+    if (_shipmentSaveTimer) return; // a change of this screen is still waiting to be saved — never load over it
     const res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment');
     const data = await res.json();
-    if (!data.values || data.values.length < 2) return;
-    const rows = data.values.slice(1); // skip header
+    if (!data || data.error || !Array.isArray(data.values)) throw new Error((data && data.error) || 'could not read the Shipment Builder');
+    const P = awdShipParse(data.values);
     let loaded = 0;
-    rows.forEach(function(row) {
-      const sku = String(row[0]||'').trim();
-      const qty = parseInt(row[1]) || 0;
-      if (!sku || sku === 'sku') return;
-      const b = Math.min(AWD_BUILDERS, Math.max(1, parseInt(row[3]) || 1));
-      if (/^#B\d+$/.test(sku)) { const mb = parseInt(sku.slice(2)); if (mb >= 1 && mb <= AWD_BUILDERS) S.bMeta[mb] = { name: String(row[2] || '').trim(), dest: String(row[4] || '').trim() || (mb === 1 ? 'AWD' : 'FBA') }; return; }
-      const r = findRow(sku);
-      if (r) {
-        S.builders[b][sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
-        loaded++;
-      }
-    });
+    for (let b = 1; b <= AWD_BUILDERS; b++) {
+      const keep = {}; Object.keys(P.items[b]).forEach(function(sku) { const it = P.items[b][sku]; keep[sku] = { row: findRow(sku) || awdBldStubRow(sku), qty: it.qty, addedAt: it.addedAt }; loaded++; });
+      S.builders[b] = keep; if (P.meta[b]) S.bMeta[b] = P.meta[b];
+    }
+    S.shipVer = P.ver; S.shipLoaded = true; awdBldSaveState('✅ Saved list loaded (' + loaded + ' SKUs in ' + AWD_BUILDERS + ' builders)');
     S.shipment = S.builders[S.bActive];
     const nm = ge('ship-name'); if (nm && !nm.value) nm.value = (S.bMeta[S.bActive] || {}).name || '';
     awdBldTabs();
-    if (loaded > 0) {
-      updateBadges(); renderBuilder();
-      console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
-    }
-  } catch(e) { console.error('[XFITTING] loadShipmentFromSheet:', e); }
+    updateBadges(); renderBuilder(); if (typeof renderRecs === 'function') renderRecs();
+    console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
+  } catch(e) { console.error('[XFITTING] loadShipmentFromSheet:', e); if (!S.shipLoaded) awdBldSaveState('⚠ The saved Shipment Builder could not be loaded (' + e.message + ') — changes are NOT saved until it loads. Refresh the page.', true); }
 }
 
 
@@ -7022,6 +7107,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118b"></script>
+<script src="xf-access.js?v=20261118c"></script>
 </body>
 </html>
