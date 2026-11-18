@@ -14478,5 +14478,31 @@ console.log('\n🗂 AWD box labels: the ✅ Already packed list belongs to ONE s
   sq.exec("DELETE FROM master_list WHERE base_sku = '88-1-1'; DELETE FROM inventory_log WHERE part_num LIKE '88-1-1%'");
 }
 
+// 🏷 Owner (2026-11-18, box label of 100=3/8 JCLAMP showing X002RRA9E7: "this we using our own UPC code, why this is showing X002 here?" …
+// "we only have B07BCPX6Z5 and B07BN1HWTD using Amazon barcode for this shipment, rest all using our own, please check and fix")
+{
+  console.log('\n🏷 Box labels: Amazon\'s barcode only on the listings on our list, every other one our UPC');
+  const fsm = await import('node:fs'), ah = fsm.readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), xa = fsm.readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const g0 = await get('/awd/amz-barcode');
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pkR = await call('/awd/amz-barcode', { method: 'POST', headers: { 'X-Cred-Token': pkT, 'Content-Type': 'application/json' }, body: JSON.stringify({ list: 'B000000000' }) });
+  const sv = await post('/awd/amz-barcode', { list: 'b07bcpx6z5, B07BN1HWTD, B07BN1HWTD, 61-1-1=10' }), g1 = await get('/awd/amz-barcode');
+  check('server: the list starts with the owner\'s 2 ASINs (B07BCPX6Z5, B07BN1HWTD); only Admin / Owner change it (a picker → 403); a change is cleaned (capitals, once each) and kept with who / when / before → after',
+    g0.ok && g0.list.join() === 'B07BCPX6Z5,B07BN1HWTD' && pkR.status === 403 && sv.ok && sv.list.join() === 'B07BCPX6Z5,B07BN1HWTD,61-1-1=10'
+      && g1.list.join() === sv.list.join() && g1.log.length === 1 && g1.log[0].before === 'B07BCPX6Z5, B07BN1HWTD' && /61-1-1=10/.test(g1.log[0].after) && !!g1.log[0].by_user, { g0, st: pkR.status, sv, g1 });
+  await post('/awd/amz-barcode', { list: 'B07BCPX6Z5, B07BN1HWTD' });
+  const a = ah.indexOf('function awdScanCode('), code = ah.slice(a, ah.indexOf('\n}\n', a) + 3);
+  const sc = new Function(code + '; return awdScanCode;')();
+  const amz = [{ sku: '100=3/8 JCLAMP', part: '100=3/8 JCLAMP', asin: 'B0JCLAMP01', fnsku: 'X002RRA9E7' }, { sku: '24-5-5=10', part: '24-5-5=10', asin: 'B07BCPX6Z5', fnsku: 'X00AMZ0001' }];
+  const L = new Set(['B07BCPX6Z5', 'B07BN1HWTD']);
+  const j = sc('100=3/8 JCLAMP', ['810097208902'], amz, 'X002RRA9E7', L), on = sc('24-5-5=10', ['810097200001'], amz, 'X00AMZ0001', L), on2 = sc('24-5-5=10', ['810097200001'], amz, '', L);
+  const noUpc = sc('100=3/8 JCLAMP', [''], amz, 'X002RRA9E7', L), old = sc('100=3/8 JCLAMP', ['810097208902'], amz, 'X002RRA9E7');
+  check('label: 100=3/8 JCLAMP (Amazon printed X002RRA9E7, not on our list) → our UPC 810097208902; B07BCPX6Z5 (on the list) → Amazon\'s FNSKU (the one on the label, else on record); no UPC on record → no barcode (counted as "no scan barcode"), never X002; the list not read → the old rule',
+    j && j.kind === 'UPC' && j.code === '810097208902' && on.kind === 'FNSKU' && on.code === 'X00AMZ0001' && on2.code === 'X00AMZ0001' && noUpc === null && old.code === 'X002RRA9E7', { j, on, on2, noUpc, old });
+  check('page: the box labels use the list (awdAmzBcSet → awdScanCode); the label card says "🏷 Amazon\'s barcode (FNSKU) only on: …" with ✏️ Change (Admin); 🧩 check mark',
+    /const amz = await awdAmzList\(\), amzBc = await awdAmzBcSet\(\);/.test(ah) && /awdScanCode\(sku, \[I\.tpl\.upc\], amz, lfn, amzBc\)/.test(ah) && /id="awd-lbl-amzbc"/.test(ah)
+      && /awdLblIsAdmin\(\) \? ' <a href="#" class="awd-amzbc-edit"/.test(ah) && /sel: '#awd-lbl-amzbc'/.test(xa), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

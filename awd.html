@@ -1079,6 +1079,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
                 <input type="file" id="awd-lbl-file" accept="application/pdf,.pdf" style="display:none" onchange="awdLabelsDo(this.files[0]); this.value=''">
                 <p style="font-size:11px;color:var(--gray-400);margin-top:6px;line-height:1.4">The FBA or AWD box label PDF Amazon gives you. Each label's SKU is read off the label; our template (need label · name · UPC · spot) is printed in an empty spot on it.</p>
                 <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-bc" checked> <span>Add the scan barcode + product photo (the packer scans the label, then the product — 🔍 Box check on Stock Out Big Company)</span></label>
+                <!-- 🏷 Owner (2026-11-18): "we only have B07BCPX6Z5 and B07BN1HWTD using Amazon barcode for this shipment, rest all using our own" -->
+                <div id="awd-lbl-amzbc" style="font-size:11px;color:var(--gray-600);margin-top:4px;line-height:1.4">🏷 Amazon's barcode (FNSKU) only on: …</div>
                 <!-- 🏷 Owner (2026-10-24): "can we make it the same label? a separate label wastes a lot of labels". Full AWD label → Amazon's at 85%
                      (its SSCC bars stay above the GS1 minimum) with our info in the strip under it, instead of a 2nd label. -->
                 <label style="font-size:11px;color:var(--gray-600);display:flex;gap:5px;align-items:flex-start;margin-top:4px;cursor:pointer"><input type="checkbox" id="awd-lbl-one" checked onchange="try{localStorage.setItem('awd_lbl_one',this.checked?'1':'0')}catch(e){}"> <span><b>One label per box:</b> when Amazon's label is full (AWD), print it at 85% and put our info under it — no 2nd label. Off = our info on its own label right after.</span></label>
@@ -2184,8 +2186,18 @@ function awdDrawTemplate(ctx, rect, lines, maxFs) {
 // that barcode — so the packer scans the label, then the product, and knows they didn't grab the wrong one (main point: never ship
 // the wrong product to AWD / FBA)". The code to scan: the listing's FNSKU when Amazon's barcode is required (every unit carries it),
 // else our UPC (from the template). → { code, kind } or null
-function awdScanCode(sku, lines, amz, labelFn) {
+function awdScanCode(sku, lines, amz, labelFn, amzBc) {
   const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  // 🏷 Owner (2026-11-18): "we only have B07BCPX6Z5 and B07BN1HWTD using Amazon barcode, rest all using our own" — Amazon prints X0… on
+  // its box labels for listings we pack with our own UPC too, so OUR list (ASIN or SKU, ✏️ on the label card) decides: on it → Amazon's
+  // FNSKU (the one on the label, else the one on record); not on it → our UPC.
+  if (amzBc) {
+    const rec = (amz || []).find(x => n(x.sku) === n(sku) || n(x.part) === n(sku)) || {};
+    const on = amzBc.has(n(sku)) || (rec.asin && amzBc.has(n(rec.asin))) || (rec.part && amzBc.has(n(rec.part)));
+    if (on) { const fn = /^X0/i.test(labelFn || '') ? String(labelFn).toUpperCase() : rec.fnsku || (labelFn ? String(labelFn).toUpperCase() : ''); return fn ? { code: fn, kind: 'FNSKU' } : null; }
+    const u0 = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
+    return u0 ? { code: u0, kind: 'UPC' } : null;
+  }
   // 🏷 Owner (2026-10-24): "201-1-9=10- shows Amazon's barcode, but we use our manufacturer UPC on it". The FNSKU Amazon printed on THIS
   // label is the truth for this shipment: X0… = Amazon barcode on every unit; the ASIN (B0…) = manufacturer barcode → our UPC.
   if (labelFn) {
@@ -2276,6 +2288,24 @@ const awdCoKey = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(
 function awdCaseOfLoad() { if (!_awdCaseOfP) _awdCaseOfP = wFetch(W + '/reorder/fix/case-of').then(r => r.json()).then(d => { AWD_CASEOF = {}; ((d && d.list) || []).forEach(x => { if (x.part && x.target) AWD_CASEOF[awdCoKey(x.part)] = String(x.target).toUpperCase(); }); return AWD_CASEOF; })
   .catch(() => { _awdCaseOfP = null; return AWD_CASEOF; }); return _awdCaseOfP; }
 function awdCaseOf(sku) { const k = awdCoKey(sku); return AWD_CASEOF[k] || AWD_CASEOF[k.replace(/X+$/, '')] || Object.keys(AWD_CASEOF).filter(p => p.replace(/X+$/, '') === k.replace(/X+$/, '')).map(p => AWD_CASEOF[p])[0] || ''; }
+let _awdAmzBcP = null;
+function awdAmzBcLoad(force) { if (!_awdAmzBcP || force) _awdAmzBcP = wFetch(W + '/awd/amz-barcode').then(r => r.json()).then(d => { if (!d || !d.ok) throw new Error((d && d.error) || 'no answer'); awdAmzBcPaint(d); return d; }).catch(() => { _awdAmzBcP = null; return null; }); return _awdAmzBcP; }
+async function awdAmzBcSet() { const d = await awdAmzBcLoad(); return d ? new Set((d.list || []).map(x => String(x).toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''))) : null; } // null = not read → the old rule (the label's FNSKU)
+function awdAmzBcPaint(d) {
+  const el = ge('awd-lbl-amzbc'); if (!el || !d) return;
+  const h = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  el.innerHTML = '🏷 Amazon\'s barcode (FNSKU) only on: <b>' + ((d.list || []).length ? (d.list || []).map(h).join(', ') : 'none') + '</b> — every other SKU gets our UPC'
+    + (d.by ? ' <span style="color:var(--gray-400)">(' + h(d.by) + (d.at ? ', ' + h(new Date(d.at).toLocaleDateString()) : '') + ')</span>' : '')
+    + (awdLblIsAdmin() ? ' <a href="#" class="awd-amzbc-edit" onclick="awdAmzBcEdit();return false">✏️ Change</a>' : '');
+}
+async function awdAmzBcEdit() {
+  const d = await awdAmzBcLoad(true); if (!d) { awd_planner_toast('Could not read the list — check WiFi', 'error'); return; }
+  const v = prompt('🏷 ASINs (or SKUs) whose bags carry AMAZON\'s barcode (FNSKU) — every other SKU gets our own UPC on the box label.\n\nSeparate with commas:', (d.list || []).join(', '));
+  if (v === null) return;
+  const r = await wFetch(W + '/awd/amz-barcode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ list: v }) }).then(x => x.json()).catch(() => null);
+  if (!r || !r.ok) { awd_planner_toast((r && r.error) || 'Not saved', 'error'); return; }
+  awdAmzBcPaint(r); _awdAmzBcP = Promise.resolve(r); awd_planner_toast('🏷 Saved — Amazon barcode on ' + r.list.length + ' listing' + (r.list.length === 1 ? '' : 's'));
+}
 function awdAmzList() { if (!_awdAmzP) _awdAmzP = wFetch(W + '/inventory/amazon-barcode').then(r => r.json()).then(d => (d && d.list) || []).catch(() => { _awdAmzP = null; return []; }); return _awdAmzP; }
 async function awdPhoto(base) {
   base = String(base || '').toUpperCase().split('=')[0]; if (!base) return null;
@@ -2824,7 +2854,7 @@ async function awdLabelsDo(file) {
     out.innerHTML = '⏳ Reading the labels…';
     const lib = await awdLoadPdfjs(), pdf = await lib.getDocument({ data: await file.arrayBuffer() }).promise;
     const groups = [], noSku = [], noTpl = {}; let labels = 0, done = 0, withBc = 0, withPhoto = 0, ownPages = 0, oneLabel = 0;
-    const amz = await awdAmzList(); _awdCaseOfP = null; await awdCaseOfLoad(); // fresh: a case just set in Reorder counts
+    const amz = await awdAmzList(), amzBc = await awdAmzBcSet(); _awdCaseOfP = null; await awdCaseOfLoad(); // fresh: a case just set in Reorder counts
     const prev = awdPrevParse((ge('awd-prev-list') || {}).value), prevAsked = Object.assign({}, prev), prevDone = {};
     const readPage = async page => { const vp1 = page.getViewport({ scale: 1 }), tc = await page.getTextContent(), byY = {};
       tc.items.forEach(it => { const y = Math.round((vp1.height - it.transform[5]) / 3) * 3; (byY[y] = byY[y] || []).push(it); });
@@ -2883,7 +2913,7 @@ async function awdLabelsDo(file) {
         if (!I.tpl.label && !I.tpl.upc) noTpl[f.sku] = (noTpl[f.sku] || 0) + 1;
         if (!grp.key) grp.area = m.prevKey ? 'PREVIOUS PACKED' : awdKindArea(m);
         if (!grp.key) grp.key = m.prevKey ? '0' : '1|' + (AWD_KINDS[m.kind] || AWD_KINDS.none).rank + '|' + String(awdAreaRank(m.loc)).padStart(2, '0') + '|' + (m.loc || '') + '|' + sku + '|' + String(metas.indexOf(m)).padStart(5, '0');
-        const sc = extra ? awdScanCode(sku, [I.tpl.upc], amz, lfn) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = extra ? await awdPhoto(sku) : null;
+        const sc = extra ? awdScanCode(sku, [I.tpl.upc], amz, lfn, amzBc) : null, bc = sc ? await awdBarcodeCanvas(sc.code) : null, photo = extra ? await awdPhoto(sku) : null;
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const rect = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         if (!rect) { own.push({ m, I, bc, photo, box: n > 1 ? '' : boxTxt }); done++; continue; }
@@ -7069,6 +7099,7 @@ function awdStandaloneInit() {
   if (awdEl) awdEl.style.display = 'flex';
   // Load all data same as launchApp('awd') in combined app
   if (typeof loadWarehouseStock   === 'function' && !WH.loaded)      loadWarehouseStock();
+  try { awdAmzBcLoad(); } catch (e) {} // 🏷 which listings get Amazon's barcode on the box labels (shown on the label card)
   if (typeof loadAWDPlannerDB     === 'function' && !AWD_DB.loaded)   loadAWDPlannerDB();
   if (typeof loadDiscontinuedSKUs === 'function' && !DISC.loaded)     loadDiscontinuedSKUs();
   if (typeof loadCfg              === 'function')                      loadCfg();
@@ -7237,6 +7268,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118e"></script>
+<script src="xf-access.js?v=20261118f"></script>
 </body>
 </html>

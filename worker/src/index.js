@@ -2181,6 +2181,32 @@ async function awdActivity(request, url, env, session) {
   const rows = await d1All(env, `SELECT user_id, action_type, timestamp, metadata FROM user_activity_log WHERE action_type IN (${AWD_BUILDER_LOGGED.map(() => '?').join(',')}) AND timestamp >= ? ORDER BY timestamp DESC LIMIT 3000`, AWD_BUILDER_LOGGED.concat([since]));
   return J({ ok: true, days, list: await name(rows) });
 }
+// 🏷 Owner (2026-11-18, box label 100=3/8 JCLAMP with X002RRA9E7: "this we using our own UPC code, why this is showing X002 here?" …
+// "we only have B07BCPX6Z5 and B07BN1HWTD using Amazon barcode for this shipment, rest all using our own"). The scan barcode on our box
+// label template used to follow the FNSKU Amazon printed on its box label (X0… = Amazon barcode) — but Amazon prints X0… for listings
+// we pack with our own UPC too. Now OUR list decides: only the ASINs (or SKUs) on it get Amazon's FNSKU; every other one gets our UPC.
+// Kept in app_config 'awd_amz_barcode'; every change (who, when, old → new) in awd_amz_barcode_log. Admin / Owner change it.
+const AWD_AMZ_BC_SEED = ['B07BCPX6Z5', 'B07BN1HWTD'];
+async function awdAmzBarcode(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_amz_barcode_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, before TEXT, after TEXT)').run();
+  const raw = await autolabelGetKey(env, 'awd_amz_barcode');
+  let cur; try { cur = raw ? JSON.parse(raw) : null; } catch (_) { cur = null; }
+  if (!cur) cur = { list: AWD_AMZ_BC_SEED.slice(), by: 'owner (2026-11-18)', at: '2026-11-18T00:00:00.000Z' };
+  const clean = a => [...new Set((Array.isArray(a) ? a : String(a || '').split(/[\s,;]+/)).map(x => String(x || '').trim().toUpperCase()).filter(x => /^[A-Z0-9][A-Z0-9=\-\/&.]{2,40}$/.test(x)))].slice(0, 500);
+  if (request.method === 'GET') {
+    const log = (await env.DB.prepare('SELECT at, by_user, before, after FROM awd_amz_barcode_log ORDER BY id DESC LIMIT 30').all()).results || [];
+    return J({ ok: true, list: cur.list, by: cur.by, at: cur.at, log });
+  }
+  const roles = (session && session.roles) || [];
+  if (!(roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Admin only' }, 403);
+  const b = await request.json().catch(() => ({})), list = clean(b.list), by = String((session && (session.displayName || session.username)) || '?').slice(0, 40), at = new Date().toISOString();
+  await autolabelSetKey(env, 'awd_amz_barcode', JSON.stringify({ list, by, at }));
+  await env.DB.prepare('INSERT INTO awd_amz_barcode_log (at, by_user, before, after) VALUES (?,?,?,?)').bind(at, by, cur.list.join(', '), list.join(', ')).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'awd_amz_barcode', { before: cur.list, after: list }).catch(() => {});
+  return J({ ok: true, list, by, at });
+}
 async function awdShipSend(request, env, session, url) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_send (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, lines TEXT, units REAL, boxes REAL, at TEXT, by_user TEXT)').run();
@@ -11303,6 +11329,7 @@ const _app = {
     if (url.pathname === '/awd/lock' && (method === 'GET' || method === 'POST')) return await awdLock(request, url, env, session);
     if (url.pathname === '/awd/box-pallet' && (method === 'GET' || method === 'POST')) return await awdBoxPallet(request, url, env, session);
     if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
+    if (url.pathname === '/awd/amz-barcode' && (method === 'GET' || method === 'POST')) return await awdAmzBarcode(request, env, session); // 🏷 the ASINs whose bags carry Amazon's barcode
     if (url.pathname === '/awd/box-upc' && method === 'GET') return await awdBoxUpc(url, env); // 🏷 the outside box UPC written on the box labels
     if (url.pathname === '/inventory/amazon-barcode/live' && method === 'POST') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
