@@ -8796,7 +8796,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 10\)\}`;/.test(ah), null); // the Builder table has 10 columns: 🕒 Added (2026-10-24) + ASIN (owner 2026-11-18)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -8917,6 +8917,10 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also"
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('🚚 Shipment Builder: an ASIN column next to SKU (from the row, else the loaded Amazon reports; links to Amazon), the filter finds an ASIN too; the stock row spans the extra column',
+    /<th class="bld-asin-h">ASIN<\/th><th>Product<\/th>/.test(ah) && /function bldAsin\(sku,item\)/.test(ah) && /<td class="bld-asin"/.test(ah) && /bldAsin\(sku,item\)\.toLowerCase\(\)\.includes\(q\)/.test(ah) && /awdStockRow\(r, 10\)/.test(ah), null); }
 // 🚚 Owner (2026-11-18): "I want it we able to click confirm to sent it from our AWD to our FBA right on our app, select and sent"
 console.log('\n🚚 AWD planner → send from AWD to FBA (Amazon replenishment order) from the app: checked against AWD stock, kept with its status');
 {
