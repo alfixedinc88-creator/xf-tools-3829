@@ -11219,7 +11219,7 @@ const _app = {
       if (url.searchParams.get('check') === '1' && env.AMAZON_REFRESH_TOKEN) await awdAutoHealth(env).catch(() => {}); // the page is waiting on Inventory Health
       const o = await awdAutoGet(env);
       return cors(new Response(JSON.stringify({ ok: true, fba: o.fba || null, awd: o.awd || null, inbound: o.inbound || null, awdInbound: o.awdInbound || null, inboundCount: o.inboundCount || {},
-        notRecv: o.notRecv || { items: [] }, notRecvDecide: o.notRecvDecide || {}, health: o.health || null, lastRun: o.lastRun || null }), { headers: { 'Content-Type': 'application/json' } }));
+        notRecv: o.notRecv || { items: [] }, notRecvDecide: o.notRecvDecide || {}, health: o.health || null, lastRun: o.lastRun || null, fbaLow: o.fbaLow || {}, fbaLowLog: o.fbaLowLog || [] }), { headers: { 'Content-Type': 'application/json' } }));
     }
     // 🚚 Count / don't count one inbound shipment in the AWD planner (e.g. an AWD → FBA transfer shipped from our own address).
     // { shipmentId, count: true / false / null (= back to automatic) } — who / when kept with it; shared by everyone.
@@ -16448,6 +16448,7 @@ async function awdWriteFbaInventory(env, base, health) {
 async function awdAutoInventory(env) {
   const st = await awdAutoGet(env), now = new Date().toISOString(), out = {};
   const token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  let fbaNow = null; // SKU → FBA available now (for the 🚨 FBA sold out — AWD has stock record)
   // FBA
   try {
     let items = [], next = null, pages = 0;
@@ -16463,6 +16464,7 @@ async function awdAutoInventory(env) {
     try { await amazonBarcodeLiveSave(env, items); } catch (e) { console.error('[amazon barcode live]', e.message); } // 🏷 each SKU's FNSKU now
     if (next) out.fbaCut = items.length;
     const base = awdFbaBaseRows(items);
+    fbaNow = {}; items.forEach(i => { const k = String(i.sellerSku || '').trim().toUpperCase(); if (k) fbaNow[k] = (fbaNow[k] || 0) + ((i.inventoryDetails || {}).fulfillableQuantity || 0); });
     await awdWriteFbaInventory(env, base, st.healthRows || null);
     await awdSheetWrite(env, 'FBA_Live', [['sku', 'asin', 'product-name', 'afn-fulfillable-quantity', 'afn-total-quantity'], ...items.map(i => { const d = i.inventoryDetails || {}; return [i.sellerSku || '', i.asin || '', i.productName || '', d.fulfillableQuantity || 0, i.totalQuantity || 0]; })]);
     await awdSheetWrite(env, 'FBA_Reserve', [['sku', 'fnsku', 'asin', 'product-name', 'reserved_qty', 'reserved_customerorders', 'reserved_fc-transfers', 'reserved_fc-processing'],
@@ -16484,6 +16486,7 @@ async function awdAutoInventory(env) {
       ...inv.map(x => { const dt = x.inventoryDetails || {}; const res = dt.reservedDistributableQuantity || 0, onh = x.totalOnhandQuantity || 0;
         return [x.sku || '', dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res), x.totalInboundQuantity || 0, res, dt.replenishmentQuantity || 0, onh]; })]);
     out.awd = { at: now, count: inv.length };
+    if (fbaNow) { try { await awdFbaLowRecord(env, st, fbaNow, inv, now); } catch (e) { console.error('[awd fba-low]', e.message); } }
   } catch (e) {
     const m = String(e.message || e);
     out.awd = { at: now, error: (/HTTP 40[13]/.test(m) ? 'Amazon refused AWD (the seller-API app needs the "Amazon Warehousing and Distribution" role) — ' : '') + m.slice(0, 250) };
@@ -16739,6 +16742,23 @@ async function awdShipHistory(request, url, env, session) {
   }
   const rows = ((await env.DB.prepare('SELECT id, ts, by_user, name, format, skus, units, boxes FROM awd_ship_history ORDER BY id DESC LIMIT 200').all()).results || []);
   return J({ ok: true, list: rows });
+}
+// 🚨 Owner (2026-11-18): "a lot of the listing we already sold out of in FBA, but we still have some in our AWD, it just never get auto ship
+// it to our FBA — design something so we can keep eyes on it and make it not run out in FBA". Every Amazon sync (each morning + ⚡ Sync):
+// a SKU with 0 available in FBA while AWD has units available is kept with the day it was FIRST seen like that (fbaLow), and when it is
+// no longer (FBA has stock again, or AWD ran out) it moves to the record (fbaLowLog: first seen → ended, why) — read only, nothing sent.
+async function awdFbaLowRecord(env, st, fbaNow, inv, now) {
+  const seen = st.fbaLow || {}, log = Array.isArray(st.fbaLowLog) ? st.fbaLowLog : [], cur = {};
+  const awdNow = {}; inv.forEach(x => { const k = String(x.sku || '').trim().toUpperCase(); if (!k) return; const dt = x.inventoryDetails || {}, res = dt.reservedDistributableQuantity || 0, onh = x.totalOnhandQuantity || 0;
+    awdNow[k] = (awdNow[k] || 0) + (dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res)); });
+  Object.keys(awdNow).forEach(k => { if (awdNow[k] > 0 && k in fbaNow && fbaNow[k] <= 0) { const o = seen[k] || { first: now };
+    cur[k] = { first: o.first, last: now, awd: awdNow[k], days: Math.floor((Date.parse(now) - Date.parse(o.first)) / 864e5) }; } });
+  Object.keys(seen).forEach(k => { if (cur[k]) return; const o = seen[k];
+    log.unshift({ sku: k, first: o.first, ended: now, days: Math.max(0, Math.round((Date.parse(now) - Date.parse(o.first)) / 864e5)), awd: o.awd,
+      why: (fbaNow[k] || 0) > 0 ? 'FBA has stock again (' + fbaNow[k] + ')' : !(awdNow[k] > 0) ? 'AWD has none left' : 'not listed in FBA any more' }); });
+  await awdAutoSet(env, 'fbaLow', cur);
+  await awdAutoSet(env, 'fbaLowLog', log.slice(0, 300));
+  return cur;
 }
 async function awdAutoTick(env, force) {
   if (!env.DB || !env.AMAZON_REFRESH_TOKEN) return { ok: false, error: 'Amazon seller API not set up' };

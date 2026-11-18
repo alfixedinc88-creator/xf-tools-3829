@@ -49,6 +49,9 @@ document.addEventListener('input', function (e) {
         { key: 'clear', label: 'Clear Saved Data', sel: '#page-upload button[onclick="clearReportData()"]' } ] },
       { key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin' },
       { key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv' },
+      { key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow', parts: [
+        { key: 'flcopy', label: '📋 Copy SKU + units to send', sel: '#fl-copy' },
+        { key: 'flrec', label: '📜 Record (sold out in FBA while AWD had stock)', sel: '#fl-rec' } ] },
       { key: 'history', label: '🕘 History (shipments exported)', sel: '#tab-history' },
       { key: 'dashboard', label: 'Dashboard', sel: '#tab-dashboard', parts: [
         { key: 'stats', label: 'Stats', sel: '#stats-grid' },
