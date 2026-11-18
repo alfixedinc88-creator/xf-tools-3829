@@ -14637,5 +14637,43 @@ console.log('\n🏷 FBA box labels: the box ID (FBA19X…U000041) is the box\'s 
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBA19TESTFB'; DELETE FROM awd_box_scan WHERE shipment = 'FBA19TESTFB'");
 }
 
+// 🏷➡📦 Owner (2026-11-18): "for full case … after we scan our box at the Pull List and it confirms the right box, all we have to do is put the
+// Amazon label outside the box — show an option to scan the Amazon label to make sure it's the right label, so they can put it directly on the pallet,
+// like the Box check, and scan the pallet also, so we know which one we put on which pallet"
+{
+  console.log('\n🏷➡📦 Pull List ✅ full case: scan the Amazon label (right one?) → scan the PALLET, kept like the Box check');
+  const fsm = await import('node:fs'), ih3 = fsm.readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  await post('/awd/label-map', { shipment: 'FBAPSPT1', labels: [
+    { sscc: '201952611628557701', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-1', units: 10, loc: 'C2=1-1-1', kind: 'full' }, { sscc: '201952611628557702', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-2', units: 10, loc: 'C2=1-1-1', kind: 'full' },
+    { sscc: '201952611628557703', sku: '62-2-2=5-', part: '62-2-2=5', seq: '2-1', units: 5, loc: 'BSMT=1-1-1', kind: 'full' }] });
+  const fnS = name => { const a = ih3.indexOf('  function ' + name + '('); return ih3.slice(a, ih3.indexOf('\n', a) + 1); };
+  const blk = ih3.slice(ih3.indexOf('  var PSP = null;'), ih3.indexOf('  window.invPullScanSkip = function() {'));
+  const html = { m: '' }, flashes = [], kept = [], waits = [];
+  const env3 = { g: id => (id === 'inv-psp-inp' ? { focus() {} } : null), invModal: (id, h) => { html.m = h; }, invModalClose: () => { html.m = ''; }, invEsc: v => String(v == null ? '' : v), invFlash: m => flashes.push(m),
+    invSavePullList() {}, invRenderPullList() {}, W: '', navigator: {}, confirm: () => true, setTimeout: f => f(),
+    wFetch: u => { const p = call(u, { headers: H }); waits.push(p); return p; },
+    invBcKeep: (sscc, box, kind, extra) => { const p = post('/awd/box-pallet', Object.assign({ sscc, shipment: box.shipment, seq: box.seq, part: box.part, kind, at: new Date().toISOString() }, extra || {})); kept.push(kind); waits.push(p); return p; } };
+  const run = new Function(...Object.keys(env3), 'window', fnS('invDashFix') + fnS('invBcSscc') + fnS('invBcPalletNo') + blk + '; return { open: window.invPspOpen, scan: window.invPspScan, maybe: invPspMaybe, get: () => PSP };')(...Object.values(env3), {});
+  const settle = async () => { for (let i = 0; i < 20; i++) { const w = waits.splice(0); if (!w.length) await new Promise(r => setTimeout(r, 10)); else await Promise.all(w.map(p => p.then(r => r && r.clone ? r.clone().text() : r).catch(() => {}))); } await new Promise(r => setTimeout(r, 30)); };
+  const it = { partNum: '61-1-1=10', forPart: '61-1-1=10', dest: 'company', awdKind: 'full', location: 'C2=1-1-1', cases: '2' };
+  run.maybe(it, 2); const opened = /✅ FULL CASE — Amazon label → pallet/.test(html.m) && /1️⃣ Scan the AMAZON box label 1 of 2/.test(html.m);
+  run.maybe({ partNum: 'X', dest: 'company', awdKind: 'label' }, 1); const notForLabel = run.get().item === it;
+  run.scan('00201952611628557703'); await settle(); const wrong = html.m;
+  run.scan('00201952611628557701'); await settle(); const ok1 = html.m;
+  run.scan('00201952611628557701'); await settle(); const twice = html.m;
+  run.scan('00201952611628557702'); await settle(); const ok2 = html.m;
+  run.scan('PALLET 4'); await settle();
+  const pal = await get('/awd/box-pallet?shipment=FBAPSPT1'), on4 = (((pal.pallets || []).find(x => x.pallet === 4) || {}).boxes || []).map(b => b.seq).sort().join();
+  check('after the 2 boxes of a ✅ full case line are scanned: "Scan the AMAZON box label 1 of 2" opens (not for a 🏷 line); a label of another part # → ❌ WRONG LABEL; the same label twice → said; the right ones → ✓ Box 1-1 / 1-2, then "Scan the PALLET"',
+    opened && notForLabel && /❌ WRONG LABEL — this Amazon label is for <span[^>]*>62-2-2=5<\/span>/.test(wrong) && /✓ Right label — Box 1-1/.test(ok1) && /scanned already/.test(twice)
+      && /✓ Right label — Box 1-2[^<]*now scan the PALLET/.test(ok2) && /2️⃣ Scan the PALLET/.test(ok2), { wrong: wrong.slice(0, 300), ok2: ok2.slice(0, 300) });
+  check('…PALLET 4 → both boxes kept on PALLET 4 (like 🔍 Box check: label on → on the pallet, who / when), the Pull List line says [ON PALLET 4: 2 Amazon boxes 1-1, 1-2]; a box already on a pallet is refused next time',
+    on4 === '1-1,1-2' && /\[ON PALLET 4: 2 Amazon boxes 1-1, 1-2\]/.test(it.scanNote || '') && flashes.some(f => /2 boxes of 61-1-1=10 on PALLET 4/.test(f)) && kept.filter(k => k === 'pallet').length === 2, { on4, note: it.scanNote, pal: pal.pallets });
+  run.open(it, 1); run.scan('00201952611628557701'); await settle();
+  check('…the same label scanned again later → "⚠ Box 1-1 is already on PALLET 4"', /already on PALLET 4/.test(html.m), html.m.slice(0, 200));
+  check('page: both "all boxes scanned" paths of the Pull List grab scan call invPspMaybe (only ✅ full case Big Company lines)', (ih3.match(/invPspMaybe\(it, S\.need\);/g) || []).length === 2 && /it\.dest === 'company' && it\.awdKind === 'full'/.test(ih3), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBAPSPT1'; DELETE FROM awd_box_scan WHERE shipment = 'FBAPSPT1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
