@@ -22474,9 +22474,13 @@ function apxCheck(cur, want) {
   const bad = [], warn = [], price = want.price;
   if (!(price > 0) || price > 9999) bad.push('Type a price above $0');
   const min = want.min != null ? want.min : cur.min, biz = want.business != null ? want.business : cur.business;
-  if (cur.max != null && price > cur.max) bad.push(`Over this listing's Maximum price $${cur.max.toFixed(2)} — Amazon would make it inactive. Change the Maximum in Seller Central first if you really want more.`);
+  // ✏️ Owner (2026-11-17): "under the 'profit check' 'change prices' for the 'Max' price, I want it I am able to change that too" — a Maximum
+  // typed with the price is set too (Amazon's maximum_seller_allowed_price), and is the one every check uses.
+  const max = want.max != null ? want.max : cur.max;
+  if (want.max != null && !(want.max > 0 && want.max <= 9999)) bad.push('Type a Maximum price above $0');
+  if (max != null && price > max) bad.push(`Over this listing's Maximum price $${max.toFixed(2)} — Amazon would make it inactive. Type a higher Max with it if you really want more.`);
   if (min != null && price < min) bad.push(`Under the Minimum price $${min.toFixed(2)} — Amazon would make it inactive`);
-  if (want.min != null && cur.max != null && want.min > cur.max) bad.push(`The Minimum $${want.min.toFixed(2)} can't be above the Maximum $${cur.max.toFixed(2)}`);
+  if ((want.min != null || want.max != null) && min != null && max != null && min > max) bad.push(`The Minimum $${min.toFixed(2)} can't be above the Maximum $${max.toFixed(2)}`);
   if (biz != null && price > 0 && biz >= price) bad.push(`The Business price $${biz.toFixed(2)} must be LOWER than the price $${price.toFixed(2)} (Amazon's rule)`);
   if (want.business != null && cur.qd && cur.qd.type === 'fixed' && cur.qd.levels.some(l => l.value != null && l.value >= want.business))
     bad.push('A quantity discount tier is not lower than the new Business price — every tier must be lower; change the tiers in Seller Central');
@@ -22575,7 +22579,8 @@ async function amazonPriceSet(request, env, session) {
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
   if (rid) { const c = await claimRequestId(env, rid, 'amazon/price-set'); if (c.isDuplicate) return apxJ(c.cachedResponse || { ok: true, duplicate: true }); }
   const done = async res => { if (rid) await recordRequestResult(env, rid, res); return apxJ(res); };
-  const want = { price: apxNum(b.price), business: b.business === '' || b.business == null ? null : apxNum(b.business), min: b.min === '' || b.min == null ? null : apxNum(b.min) };
+  const want = { price: apxNum(b.price), business: b.business === '' || b.business == null ? null : apxNum(b.business), min: b.min === '' || b.min == null ? null : apxNum(b.min),
+    max: b.max === '' || b.max == null ? null : apxNum(b.max) };
   let item; try { item = await apxGetItem(env, sku); } catch (e) { return done({ ok: false, error: e.message }); }
   const cur = apxInfoOf(item, mid), chk = apxCheck(cur, want);
   if (chk.bad.length) return done({ ok: false, refused: true, error: chk.bad.join(' · '), cur });
@@ -22584,7 +22589,7 @@ async function amazonPriceSet(request, env, session) {
   const po = JSON.parse(JSON.stringify(((item.attributes || {}).purchasable_offer) || [])), set = (o, k, v) => { o[k] = [{ schedule: [{ value_with_tax: v }] }]; };
   let all = po.find(o => (!o.marketplace_id || o.marketplace_id === mid) && (!o.audience || o.audience === 'ALL'));
   if (!all) { all = { marketplace_id: mid, currency: 'USD', audience: 'ALL' }; po.push(all); }
-  set(all, 'our_price', want.price); if (want.min != null) set(all, 'minimum_seller_allowed_price', want.min);
+  set(all, 'our_price', want.price); if (want.min != null) set(all, 'minimum_seller_allowed_price', want.min); if (want.max != null) set(all, 'maximum_seller_allowed_price', want.max);
   if (want.business != null) { let b2b = po.find(o => (!o.marketplace_id || o.marketplace_id === mid) && o.audience === 'B2B');
     if (!b2b) { b2b = { marketplace_id: mid, currency: 'USD', audience: 'B2B' }; po.push(b2b); } set(b2b, 'our_price', want.business); }
   const r = await fetch(`https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}/${encodeURIComponent(sku)}?marketplaceIds=${mid}`, {
@@ -22592,12 +22597,13 @@ async function amazonPriceSet(request, env, session) {
   const d = await r.json().catch(() => ({}));
   const errs = (d.issues || []).filter(i => i.severity === 'ERROR'), ok = r.ok && d.status !== 'INVALID' && !errs.length;
   const result = ok ? 'Sent — Amazon accepted it (' + (d.status || 'ACCEPTED') + '); the price shows on Amazon in about 5–15 minutes' : 'Amazon refused: ' + (errs.map(i => i.message).join(' · ') || JSON.stringify(d.errors || d).slice(0, 300));
-  await env.DB.prepare('INSERT INTO amz_price_log (at, by_user, sku, asin, old_price, new_price, old_business, new_business, old_min, new_min, max, ok, result, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(new Date().toISOString(), who, sku, cur.asin || '', cur.price, want.price, cur.business, want.business != null ? want.business : cur.business, cur.min, want.min != null ? want.min : cur.min, cur.max,
+  await env.DB.prepare('ALTER TABLE amz_price_log ADD COLUMN new_max REAL').run().catch(() => {}); // the Maximum after (max = before)
+  await env.DB.prepare('INSERT INTO amz_price_log (at, by_user, sku, asin, old_price, new_price, old_business, new_business, old_min, new_min, max, new_max, ok, result, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(new Date().toISOString(), who, sku, cur.asin || '', cur.price, want.price, cur.business, want.business != null ? want.business : cur.business, cur.min, want.min != null ? want.min : cur.min, cur.max, want.max != null ? want.max : cur.max,
       ok ? 1 : 0, result.slice(0, 500), JSON.stringify({ warn: chk.warn, status: d.status, submissionId: d.submissionId, issues: d.issues || [] }).slice(0, 2000)).run();
   if (ok) { await env.DB.prepare('UPDATE amz_price_list SET price = ? WHERE sku = ?').bind(want.price, sku).run().catch(() => {});
-    await apxSaveInfo(env, sku, Object.assign({}, cur, { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min })).catch(() => {}); }
-  return done({ ok, result, before: { price: cur.price, business: cur.business, min: cur.min, max: cur.max }, after: { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min, max: cur.max }, warn: chk.warn });
+    await apxSaveInfo(env, sku, Object.assign({}, cur, { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min, max: want.max != null ? want.max : cur.max })).catch(() => {}); }
+  return done({ ok, result, before: { price: cur.price, business: cur.business, min: cur.min, max: cur.max }, after: { price: want.price, business: want.business != null ? want.business : cur.business, min: want.min != null ? want.min : cur.min, max: want.max != null ? want.max : cur.max }, warn: chk.warn });
 }
 async function amazonUpdatePrice(request, env) {
   try {

@@ -13350,6 +13350,20 @@ console.log('\n💲 Profit Check → 💲 Change prices (Amazon): max / min / bu
       b2.ok && ((body2 || []).find(o => o.audience === 'B2B') || {}).our_price[0].schedule[0].value_with_tax === 11.5 && ((body2 || []).find(o => o.audience === 'ALL') || {}).our_price[0].schedule[0].value_with_tax === 12, b2);
     { const p30 = await post('/amazon/price-set', { sku: 'T1', price: 12.99 });
       check('⬆ +30% exactly ($9.99 → $12.99, rounded to the cent) is not a "big jump" — sent without asking again; +35% still asks', p30.ok && !p30.needConfirm && !(p30.warn || []).length && big.needConfirm, p30); }
+    { // ✏️ Owner (2026-11-17): "under the 'profit check' 'change prices' for the 'Max' price, I want it I am able to change that too"
+      const n0 = sent.length;
+      const mx = await post('/amazon/price-set', { sku: 'T1', price: 15.5, max: 16, confirmBig: true, _requestId: 'px-max-1' });
+      const bodyM = sent[n0] && sent[n0].patches[0].value, allM = (bodyM || []).find(o => o.audience === 'ALL') || {};
+      const over = await post('/amazon/price-set', { sku: 'T1', price: 15, max: 14.5, confirmBig: true }), low = await post('/amazon/price-set', { sku: 'T1', price: 7.5, min: 7, max: 6.5, confirmBig: true });
+      const lgM = sq.prepare("SELECT max, new_max, new_price FROM amz_price_log WHERE sku = 'T1' AND ok = 1 ORDER BY id DESC LIMIT 1").get();
+      check('✏️ Max can be changed with the price: $15.50 with Max $16 (old Max $14) → sent: price $15.50 + Maximum $16, Minimum $8 kept; History: max $14 → $16; a price over the typed Max, or a Min above the Max → refused, not sent',
+        mx.ok && allM.our_price[0].schedule[0].value_with_tax === 15.5 && allM.maximum_seller_allowed_price[0].schedule[0].value_with_tax === 16 && allM.minimum_seller_allowed_price[0].schedule[0].value_with_tax === 8
+          && mx.after.max === 16 && lgM.max === 14 && lgM.new_max === 16 && lgM.new_price === 15.5
+          && over.refused && /Maximum price \$14\.50/.test(over.error) && low.refused && /can't be above the Maximum \$6\.50/.test(low.error) && sent.length === n0 + 1, { mx, over, low, lgM });
+    }
+    { const { readFileSync: rfP } = await import('node:fs'); const pf = rfP(fileURLToPath(new URL('../profit.html', import.meta.url)), 'utf8');
+      check('…the page: a "max" box next to "min" on each row, sent with the price, checked before sending (a typed Max is the one checked)',
+        /'<span class="px-lbl">max<\/span>' \+ inp\('max', e\.max\)/.test(pf) && /min: w\.min, max: w\.max, confirmBig: true/.test(pf) && /var max = want\.max != null \? want\.max : i\.max;/.test(pf), null); }
     const rf = (await post('/amazon/price-ref', { asins: ['B0TEST0001'] })).ref || {};
     check('🔎 Amazon\'s reference prices: Was price (90-day typical) $10.49 · Competitive Price Threshold $12.75 · featured offer $9.99',
       rf.B0TEST0001 && rf.B0TEST0001.was === 10.49 && rf.B0TEST0001.cpt === 12.75 && rf.B0TEST0001.featured === 9.99, rf);

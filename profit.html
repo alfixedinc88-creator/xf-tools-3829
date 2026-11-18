@@ -613,7 +613,7 @@ function pxPct() { var v = parseFloat((document.getElementById('px-pct') || {}).
 function pxSuggest(g, pct, e99) {
   var base = pxGPrice(g); if (!(base > 0)) return null;
   var v = base * (1 + pct / 100); if (e99) v = Math.floor(v) + 0.99; v = pxR2(v);
-  var mx = pxGMax(g), capped = false; if (mx != null && v > mx) { v = mx; capped = true; }
+  var ex = (PXE[g.key] || {}).max, mx = ex !== '' && ex != null && +ex > 0 ? +ex : pxGMax(g), capped = false; if (mx != null && v > mx) { v = mx; capped = true; } // a typed Max counts
   return { price: v, capped: capped, max: mx };
 }
 function pxRows() {
@@ -633,10 +633,12 @@ function pxRows() {
 function pxCheckSku(r, want, ref, bigJump) {
   var i = r.info || {}, bad = [], warn = [];
   var price = want.price != null ? want.price : r.price, min = want.min != null ? want.min : i.min, biz = want.business != null ? want.business : i.business;
+  var max = want.max != null ? want.max : i.max; // ✏️ a typed Max (owner 2026-11-17) is the one checked
   if (!(price > 0)) bad.push('Type a price above $0');
-  if (i.max != null && price > i.max) bad.push('Over the Maximum ' + pxN(i.max) + ' — Amazon would make it inactive');
+  if (want.max != null && !(want.max > 0)) bad.push('Type a Maximum above $0');
+  if (max != null && price > max) bad.push('Over the Maximum ' + pxN(max) + ' — Amazon would make it inactive' + (want.max == null ? ' (type a higher max)' : ''));
   if (min != null && price < min) bad.push('Under the Minimum ' + pxN(min) + ' — Amazon would make it inactive');
-  if (want.min != null && i.max != null && want.min > i.max) bad.push('Minimum above the Maximum');
+  if ((want.min != null || want.max != null) && min != null && max != null && min > max) bad.push('Minimum above the Maximum');
   if (biz != null && biz >= price) bad.push('Business ' + pxN(biz) + ' must be LOWER than the price ' + pxN(price));
   if (want.business != null && i.qd && i.qd.type === 'fixed' && i.qd.levels.some(function (l) { return l.value != null && l.value >= want.business; })) bad.push('A quantity-discount tier is not lower than the new business price');
   if (r.price > 0 && price > pxR2(r.price * (1 + bigJump)) + 0.005) warn.push('+' + Math.round((price / r.price - 1) * 100) + '% at once — Amazon may flag a big jump; asks once more');
@@ -647,13 +649,14 @@ function pxCheckSku(r, want, ref, bigJump) {
 // what each SKU of the ASIN gets: the new price; the business price (typed, or the new price − $0.03 for SKUs that have one); the minimum
 function pxWantFor(g, r) {
   var e = PXE[g.key] || {}, np = e.price === '' || e.price == null ? null : +e.price, nm = e.min === '' || e.min == null ? null : +e.min, nb = null;
+  var nx = e.max === '' || e.max == null ? null : +e.max; // ✏️ the Maximum typed (owner 2026-11-17)
   if (e.business !== '' && e.business != null) nb = +e.business;
   else if (np != null && r.info && r.info.business != null) nb = pxR2(np - PX_BIZ_GAP);
-  return { price: np, business: nb, min: nm };
+  return { price: np, business: nb, min: nm, max: nx };
 }
 function pxCheck(g) {
   var e = PXE[g.key] || {};
-  if ((e.price === '' || e.price == null) && (e.business === '' || e.business == null) && (e.min === '' || e.min == null)) return null;
+  if ((e.price === '' || e.price == null) && (e.business === '' || e.business == null) && (e.min === '' || e.min == null) && (e.max === '' || e.max == null)) return null;
   if (!pxGReady(g)) return { bad: ['⏳ reading business / min / max from Amazon…'], warn: [], ok: [] };
   var bad = [], warn = [], seen = {}, multi = g.rows.length > 1, add = function (L, r, x) { var t = (multi ? r.sku + ': ' : '') + x; if (!seen[t]) { seen[t] = 1; L.push(t); } }, price = null;
   g.rows.forEach(function (r) { var c = pxCheckSku(r, pxWantFor(g, r), PXREF[g.asin], (PX && PX.bigJump) || 0.3); price = c.price;
@@ -690,7 +693,7 @@ window.pxRender = function () {
       + '<td class="l">' + pxLastHtml(g) + '</td>'
       + '<td class="l px-btns" style="min-width:150px">' + (sg ? '<button type="button" class="btn px-sug" title="The price now + ' + pct + '%' + (sg.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ')">💡 ' + pxN(sg.price) + (sg.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button>' : '')
         + (st ? '<button type="button" class="btn px-step" title="The price now + ' + PX_STEP + '%' + (st.capped ? ' — stopped at the Maximum' : '') + '" onclick="pxUseSuggest(' + k + ',PX_STEP)">⬆ +' + PX_STEP + '% ' + pxN(st.price) + (st.capped ? ' <span class="px-warn">(Max)</span>' : '') + '</button>' : '') + inp('price', e.price) + '</td>'
-      + '<td class="l"><span class="px-lbl">business' + (pxGHasBiz(g) && (e.business === '' || e.business == null) ? ' (auto −$0.03)' : '') + '</span>' + inp('business', bizShown) + '<span class="px-lbl">min</span>' + inp('min', e.min) + '</td>'
+      + '<td class="l"><span class="px-lbl">business' + (pxGHasBiz(g) && (e.business === '' || e.business == null) ? ' (auto −$0.03)' : '') + '</span>' + inp('business', bizShown) + '<span class="px-lbl">min</span>' + inp('min', e.min) + '<span class="px-lbl">max</span>' + inp('max', e.max) + '</td>'
       + '<td class="msg" id="px-msg-' + id + '">' + pxCheckHtml(g) + '</td></tr>';
   }).join('');
   var need = []; P.forEach(function (g) { g.rows.forEach(function (r) { if (!r.info) need.push(r.sku); }); }); pxInfoFor(need);
@@ -789,10 +792,10 @@ window.pxApply = async function () {
   var okN = 0, badN = 0, done = 0;
   for (var i = 0; i < L.length; i++) { var g = L[i], allOk = true;
     for (var j = 0; j < g.rows.length; j++) { var r = g.rows[j], w = pxWantFor(g, r); done++; m.textContent = '💾 ' + done + ' of ' + nSku + ' — ' + r.sku;
-      var d = await wapi('/amazon/price-set', { method: 'POST', body: JSON.stringify({ sku: r.sku, price: w.price != null ? w.price : r.price, business: w.business, min: w.min, confirmBig: true, _requestId: 'pxset-' + r.sku + '-' + Date.now() }) })
+      var d = await wapi('/amazon/price-set', { method: 'POST', body: JSON.stringify({ sku: r.sku, price: w.price != null ? w.price : r.price, business: w.business, min: w.min, max: w.max, confirmBig: true, _requestId: 'pxset-' + r.sku + '-' + Date.now() }) })
         .catch(function (x) { return { ok: false, error: x.message }; });
       PXRES[r.sku] = { ok: !!d.ok, text: (g.rows.length > 1 ? r.sku + ': ' : '') + (d.ok ? '✅ ' + (d.result || 'sent') : '❌ ' + (d.error || d.result || 'failed')) };
-      if (d.ok) { okN++; r.last = { at: new Date().toISOString(), by: (USER && USER.displayName) || '', old: d.before.price, new: d.after.price }; r.price = d.after.price; if (r.info) { r.info.business = d.after.business; r.info.min = d.after.min; } } else { badN++; allOk = false; } }
+      if (d.ok) { okN++; r.last = { at: new Date().toISOString(), by: (USER && USER.displayName) || '', old: d.before.price, new: d.after.price }; r.price = d.after.price; if (r.info) { r.info.business = d.after.business; r.info.min = d.after.min; if (d.after.max !== undefined) r.info.max = d.after.max; } } else { badN++; allOk = false; } }
     if (allOk) { delete PXE[g.key]; PXTICK[g.key] = false; }
     pxRender(); }
   m.textContent = '✅ ' + okN + ' SKU listing(s) sent to Amazon' + (badN ? ' · ❌ ' + badN + ' refused (see the rows)' : '') + (bad.length ? ' · ' + bad.length + ' ASIN(s) left out (❌ in Check)' : '') + ' — Amazon shows them in about 5–15 min';
@@ -804,7 +807,7 @@ function pxLog() {
   document.getElementById('px-log').innerHTML = !L.length ? 'No price changed here yet.' : '<div style="overflow:auto;max-height:340px"><table class="mini"><tr><th class="l">When</th><th class="l">Who</th><th class="l">SKU</th><th>Price</th><th>Business</th><th>Min</th><th>Max</th><th class="l">Amazon</th></tr>'
     + L.map(function (x) { var ch = function (a, b) { return a === b ? pxN(b) : pxN(a) + ' → <b>' + pxN(b) + '</b>'; };
       return '<tr><td class="l">' + esc(new Date(x.at).toLocaleString()) + '</td><td class="l">' + esc(x.by_user) + '</td><td class="l mono">' + esc(x.sku) + '</td><td class="num">' + ch(x.old_price, x.new_price) + '</td><td class="num">' + ch(x.old_business, x.new_business) + '</td>'
-        + '<td class="num">' + ch(x.old_min, x.new_min) + '</td><td class="num">' + pxN(x.max) + '</td><td class="l" style="white-space:normal;max-width:360px">' + (x.ok ? '<span class="px-ok">✅</span> ' : '<span class="px-bad">❌</span> ') + esc(x.result) + '</td></tr>'; }).join('') + '</table></div>';
+        + '<td class="num">' + ch(x.old_min, x.new_min) + '</td><td class="num">' + (x.new_max != null ? ch(x.max, x.new_max) : pxN(x.max)) + '</td><td class="l" style="white-space:normal;max-width:360px">' + (x.ok ? '<span class="px-ok">✅</span> ' : '<span class="px-bad">❌</span> ') + esc(x.result) + '</td></tr>'; }).join('') + '</table></div>';
 }
 
 window.pfSync = async function (restart) {
