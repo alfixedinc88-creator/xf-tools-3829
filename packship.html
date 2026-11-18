@@ -6795,21 +6795,25 @@ function psPksStart(tr) {
   PKS = { tracking: tr, orderNum: '', lines: [], wrong: [], startedAt: new Date().toISOString(), done: false, loading: true, queue: [], labelAt: Date.now() };
   psPksStep('⏳ Reading the order…'); psPksMsg('', ''); if (out) out.innerHTML = '';
   var me = PKS;
-  // ⚡ the pick record and the order's items are asked for at the same time (was one after the other); only when the items are not
-  // there yet (the pick brings them in) is the order read again after the pick.
-  var pkg = function() { return fetch(PS_WORKER + '/ship/package?tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }); };
+  // ⚡ Owner (2026-11-18): "for 'picking by scan' it take long to just scan the label, please fix". The order's items show the MOMENT they
+  // come back (was: only after the pick was saved — that save can ask Veeqo and take seconds). The pick is saved at the same time, on
+  // its own; only when the order's items are not in our log yet (the pick brings them in from Veeqo) is the order read again after it.
+  // &pick=1: the server leaves out the Activity History (Label Check shows it; picking doesn't need it).
+  var pkg = function() { return fetch(PS_WORKER + '/ship/package?pick=1&tracking=' + encodeURIComponent(tr), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }); };
   var pkgP = pkg().catch(function() { return null; });
-  _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tr, initials: psInitials }).then(function(d) {
-    if (d && d.duplicate) psPksMsg('⚠ Already picked ' + _psAlEsc((d.scannedDate || '') + ' ' + (typeof psFmtTime === 'function' ? psFmtTime(d.scannedAt) : '')) + (d.initials ? ' by ' + _psAlEsc(d.initials) : '') + ' — check it is not picked twice', 'warn');
-  }).catch(function() {}).then(function() {
-    return pkgP.then(function(d) { return d && d.found && (d.items || []).length ? d : pkg(); });
-  }).then(function(d) {
+  var dupMsg = '';
+  var pickP = _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tr, initials: psInitials }).then(function(d) {
+    if (d && d.duplicate) { dupMsg = '⚠ Already picked ' + _psAlEsc((d.scannedDate || '') + ' ' + (typeof psFmtTime === 'function' ? psFmtTime(d.scannedAt) : '')) + (d.initials ? ' by ' + _psAlEsc(d.initials) : '') + ' — check it is not picked twice';
+      if (PKS === me) psPksMsg(dupMsg, 'warn'); }
+  }).catch(function() {});
+  var has = function(d) { return d && d.found && (d.items || []).length; };
+  pkgP.then(function(d) { return has(d) ? d : pickP.then(function() { return pkg(); }); }).then(function(d) {
     if (PKS !== me) return;
     if (!d || !d.found || !(d.items || []).length) { psPksStep('1️⃣ Scan the SHIPPING LABEL'); PKS = null;
       psPksMsg('No items found for ' + _psAlEsc(tr) + ' yet — pick it on 🧺 Picking (it can link the order), then scan it here again', 'bad'); return; }
     me.orderNum = (d.order && d.order.orderNum) || '';
     me.lines = psPksLines(d.items).sort(psPksCmp);
-    me.cur = 0; me.loading = false; psPksRender(); psPksStep('2️⃣ Go to the shelf — scan the shelf (column) label, then each bag');
+    me.cur = 0; me.loading = false; psPksRender(); psPksStep('2️⃣ Go to the shelf — scan the shelf (column) label, then each bag'); if (dupMsg) psPksMsg(dupMsg, 'warn');
     var q = me.queue.splice(0); q.forEach(function(v) { if (PKS === me && !me.done) psPksItem(v); }); // scans made while it was loading
   }).catch(function(e) { if (PKS === me) { PKS = null; psPksStep('1️⃣ Scan the SHIPPING LABEL'); psPksMsg('📶 Could not read the order — check WiFi and scan the label again', 'bad'); } });
 }

@@ -5343,6 +5343,23 @@ async function upcSources(env, parts) {
   (await all('SELECT part, inside_upc, outside_upc, vendor FROM reorder_vendor_catalog')).forEach(r => add(r.part, 'catalog', r.inside_upc, r.outside_upc, { vendor: r.vendor }));
   return out;
 }
+// The same lists as upcSources, read only for these part #s (🧭 Picking by scan reads a few part #s on every label scan). The old UPC
+// sheet comes from its 60-second copy (invUpcSheetCached); the database lists only their rows for these part #s.
+async function upcSourcesFor(env, parts) {
+  const U = x => String(x || '').trim().toUpperCase(), out = {}, P = [...new Set(parts.map(U))].filter(Boolean).slice(0, 90);
+  P.forEach(p => { out[p] = []; });
+  if (!P.length) return out;
+  const want = new Set(P), add = (p, from, inside, outside) => { p = U(p); if (want.has(p) && (inside || outside)) out[p].push({ from, inside: String(inside || '').trim(), outside: String(outside || '').trim() }); };
+  const ed = await upcEditMap(env); ed.byPart.forEach((e, p) => add(p, 'edit', e.inside, e.outside));
+  const sh = await invUpcSheetCached(env).catch(() => ({ values: [] })); (sh.values || []).forEach(r => add(r[1], 'sheet', r[2], r[3]));
+  const q = P.map(() => '?').join(','), all = async sql => { try { return (await env.DB.prepare(sql).bind(...P).all()).results || []; } catch (_) { return []; } };
+  const [t1, t2, t3, t4] = await Promise.all([all(`SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) IN (${q})`), all(`SELECT upc, part FROM upc_link WHERE UPPER(TRIM(part)) IN (${q})`),
+    all(`SELECT part, inside_upc, outside_upc FROM reorder_fix WHERE UPPER(TRIM(part)) IN (${q})`), all(`SELECT part, inside_upc, outside_upc FROM reorder_vendor_catalog WHERE UPPER(TRIM(part)) IN (${q})`)]);
+  t1.forEach(r => add(r.sku, 'table', r.inside_upc, r.outside_upc)); t2.forEach(r => add(r.part, 'link', '', r.upc));
+  t3.forEach(r => add(r.part, 'fix', r.inside_upc, r.outside_upc)); t4.forEach(r => add(r.part, 'catalog', r.inside_upc, r.outside_upc));
+  for (const [part, o, i] of VENDOR_UPC) if (want.has(U(part))) add(part, 'vendor', i, o);
+  return out;
+}
 // What a part # uses now: saved here → UPC sheet → UPC table → vendor list → Reorder ✏️ → vendor sheet (first that has it).
 function upcInUse(src) {
   const pick = k => { for (const f of ['edit', 'sheet', 'table', 'vendor', 'fix', 'catalog']) { const s = src.find(x => x.from === f && (f === 'edit' || x[k])); if (s) return { v: s[k] || '', from: f }; } return { v: '', from: '' }; };
@@ -24409,7 +24426,8 @@ async function shipPickFamily(env, parent) {
 async function shipPickAllCodes(env, fams) {
   const parts = [...new Set(fams.flatMap(f => f._parts || []))];
   if (!parts.length) return;
-  const src = await upcSources(env, parts), ed = await upcEditMap(env);
+  // ⚡ only these part #s' rows from each list (was: every list read in full on every label scan — slow)
+  const src = await upcSourcesFor(env, parts), ed = await upcEditMap(env);
   const z = c => String(c || '').replace(/\D/g, '').replace(/^0+/, '');
   fams.forEach(f => (f._parts || []).forEach(p => (src[p] || []).forEach(x => [x.inside, x.outside].forEach(c => {
     c = z(c); if (c.length < 8 || f.codes[c]) return;
@@ -24435,15 +24453,18 @@ async function shipPackageCheck(url, env) {
   let rows = (await env.DB.prepare('SELECT * FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY date DESC LIMIT 5').bind(t).all()).results || [];
   // A USPS barcode scanned without the "420 + ZIP" part stripped, or a label with extra digits: match the end.
   if (!rows.length && t.length >= 20) rows = (await env.DB.prepare("SELECT * FROM ship_manifest_log WHERE UPPER(tracking) LIKE ? ORDER BY date DESC LIMIT 5").bind('%' + t.slice(-20)).all()).results || [];
+  // ⚡ ?pick=1 (🧭 Picking by scan, owner 2026-11-18: "it take long to just scan the label"): no Activity History (only 🏷️ Label Check shows it).
+  const forPick = url.searchParams.get('pick') === '1';
   let history = [];
-  try { const h = await (await shipTrackingHistory(new URL('https://x/ship/tracking-history?tracking=' + encodeURIComponent(t)), env)).json(); history = (h && h.events) || []; } catch (_) {}
+  if (!forPick) try { const h = await (await shipTrackingHistory(new URL('https://x/ship/tracking-history?tracking=' + encodeURIComponent(t)), env)).json(); history = (h && h.events) || []; } catch (_) {}
   if (!rows.length) return J({ ok: true, found: false, tracking: t, carrier: detectShipCarrier(t), history });
   const r = rows[0];
   let lines = []; try { lines = JSON.parse(r.line_items || '[]') || []; } catch (_) {}
   const up = x => String(x || '').trim().toUpperCase();
   const photos = await productPhotoMap(env, lines.map(li => li.b || li.s)).catch(() => ({}));
-  const items = [], fams = [];
-  for (const li of lines) {
+  const fams = [];
+  // ⚡ every item of the order is read at the same time (was one after another)
+  const items = await Promise.all(lines.map(async li => {
     const sku = up(li.s), bin = up(li.b), qty = parseFloat(li.q) || 1;
     const exact = sku ? await d1All(env, 'SELECT part_num, name, location, cases, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) ORDER BY cases DESC', [sku, sku.replace(/-+$/, '')]).catch(() => []) : [];
     const fam = !exact.length && bin && _psIsFamilyCode(bin) ? await d1All(env, _PS_FAMILY_SQL('part_num, name, location, cases, units_per_case') + ' ORDER BY cases DESC', _psFamilyParams(bin)).catch(() => []) : [];
@@ -24461,11 +24482,11 @@ async function shipPackageCheck(url, env) {
     const pick = setP ? null : await shipPickFamily(env, parentOf(parent || sku)).catch(() => null);
     const components = setP ? await Promise.all(setP.map(async c => Object.assign({ parent: c }, await shipPickFamily(env, c).catch(() => ({ spots: [], codes: {} }))))) : null;
     fams.push(...(pick ? [pick] : []), ...(components || []));
-    items.push({ sku: li.s || '', qty, bin: li.b || '', image: li.i || photos[parentOf(parent)] || '', partNum, parent, name, pcsPerCase: pcs,
+    return { sku: li.s || '', qty, bin: li.b || '', image: li.i || photos[parentOf(parent)] || '', partNum, parent, name, pcsPerCase: pcs,
       exactMatch: !!exact.length, spots, totalCases: src.reduce((a, x) => a + (parseFloat(x.cases) || 0), 0),
       upcs: upcs.map(u => ({ inside: u.inside_upc || '', outside: u.outside_upc || '' })),
-      ...(pick ? { pickSpots: pick.spots, codes: pick.codes } : {}), ...(components ? { components } : {}) });
-  }
+      ...(pick ? { pickSpots: pick.spots, codes: pick.codes } : {}), ...(components ? { components } : {}) };
+  }));
   await shipPickAllCodes(env, fams).catch(() => {});
   fams.forEach(f => { delete f._parts; });
   return J({ ok: true, found: true, tracking: r.tracking || t, otherDates: rows.slice(1).map(x => x.date),
