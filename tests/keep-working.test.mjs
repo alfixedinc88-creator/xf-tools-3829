@@ -10333,27 +10333,49 @@ console.log('\n📦 Stock Out Big Company → Current AWD shipment (by location)
   check('🏷 each area button also says the box labels it is for (C2: for 3 box labels; BSMT: for 1 box label), and one line counts them like the AWD Planner: 🏷 5 box labels by area: PREVIOUS PACKED 1 · BSMT 1 · C2 3',
     /data-a="C2"[^]*?for 3 box labels<\/span>/.test(h) && /data-a="BSMT"[^]*?for 1 box label<\/span>/.test(h) && /🏷 5 box labels by area: <b>PREVIOUS PACKED<\/b> 1 · <b>BSMT<\/b> 1 · <b>C2<\/b> 3/.test(h),
     h.slice(Math.max(0, h.indexOf('inv-awdship-labline') - 20), h.indexOf('inv-awdship-labline') + 300));
+  // 🗂 Owner (2026-11-18): "I print C2's 16 labels (whole case, no label needed) separately … when the picker taps Put C2 on the Pull List it has to
+  // match those 16 labels" → each box label keeps the AWD Planner's group, and Stock Out Big Company counts the labels by group + area.
+  {
+    const lk = await post('/awd/label-map', { shipment: 'STAR-KIND1', labels: [
+      { sscc: '201952611628559001', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-1', units: 10, loc: 'C2=1-1-1', kind: 'full' }, { sscc: '201952611628559002', sku: '61-1-1=10-', part: '61-1-1=10', seq: '1-2', units: 10, loc: 'C2=1-1-1', kind: 'label' }] });
+    const op = await get('/awd/ship-send?open=1'), ks = (op.shipments || []).find(x => x.shipment === 'STAR-KIND1') || {};
+    check('server: every box label keeps its AWD Planner group (✅ full / 🏷 label / ✂ recount) and Stock Out Big Company gets it with the label',
+      lk.ok && (ks.lines || []).map(l => l.kind).sort().join() === 'full,label', ks.lines);
+    sq.prepare("DELETE FROM awd_label_map WHERE shipment = 'STAR-KIND1'").run();
+    // the card: labels of STAR-TEST1 given groups → each group's area button counts its own labels; ✅ full case: cases ≠ labels → ⚠ Lock it
+    const labSh = (A.data.shipments || []).find(x => x.source === 'labels'), keep = labSh ? labSh.lines.map(l => l.kind) : [];
+    if (labSh) labSh.lines.forEach(l => { if (!l.prev) l.kind = /^61-1-1/.test(l.part || l.sku) ? 'full' : 'full'; });
+    run.render(); const hk = g('inv-awdship-out').innerHTML;
+    if (labSh) { const c2 = labSh.lines.filter(l => !l.prev && /C2/.test(l.loc || '')); if (c2[0]) c2[0].kind = 'label'; }
+    run.render(); const hk2 = g('inv-awdship-out').innerHTML;
+    if (labSh) labSh.lines.forEach((l, i) => { l.kind = keep[i]; });
+    run.render();
+    check('card: ✅ C2 says "for 3 box labels" = its 3 full cases (no warning); one of those labels printed as 🏷 instead → ✅ C2 "for 2 box labels" + "⚠ 3 cases here, 2 labels printed — 🔒 Lock it in the AWD Planner", and 🏷 C2 · 1 is listed as printed with nothing to grab',
+      /data-a="C2" data-c="full"[^]*?for 3 box labels<\/span>/.test(hk) && !/inv-awdship-mis/.test(hk) && /1️⃣ ✅ FULL CASE — 2 spots · 4 cs · 4 labels/.test(hk)
+        && /data-a="C2" data-c="full"[^]*?for 2 box labels<\/span><br><span class="inv-awdship-mis"[^>]*>⚠ 3 cases here, 2 labels printed — 🔒 Lock it in the AWD Planner/.test(hk2), { hk: hk.slice(hk.indexOf('inv-awdship-cuts'), hk.indexOf('inv-awdship-cuts') + 1500) });
+  }
   // Owner (2026-10-27): "separate it in prelabel or need to label — the bag already has the label on it, like 8-8-8=10 … we don't have to use
   // =10XX or =5 to relabel it". The exact part # = ✓ Prelabel; another bag of the same parent = 🏷 Need to label (two groups, a tag per line).
   A.takes.push(Object.assign({}, A.takes.filter(t => t.area === 'C2')[0], { partNum: '61-1-1=10XX', cases: 1, how: 'same bag count, other letters — cover the label' }));
   // (owner 2026-11-18: full case / not a full case first, then location → the ✓ Prelabel spots are under 📦 FULL CASE, the 🏷 ones under ✂ NOT A FULL CASE)
-  A.area = 'C2'; A.cut = 'full'; run.render(); const hLf = g('inv-awdship-out').innerHTML; A.cut = 'part'; run.render(); const hLp = g('inv-awdship-out').innerHTML; const hL = hLf + hLp;
+  A.area = 'C2'; A.cut = 'full'; run.render(); const hLf = g('inv-awdship-out').innerHTML; A.cut = 'label'; run.render(); const hLp = g('inv-awdship-out').innerHTML; const hL = hLf + hLp;
   // 📦 / ✂ Owner (2026-11-18): "so far we separate it in location, but I want it to separate it into full case or no full case first, then location"
-  check('📦 FULL CASE / ✂ NOT A FULL CASE first, then location: C2 is in both (its full case 61-1-1=10 · 3 cs under 📦, the =10XX bag to label · 1 cs under ✂), BSMT only under 📦; tapping C2 under 📦 shows only the full case spot, under ✂ only the other one, each with its own ➕ Put',
-    hLf.indexOf('data-c="full"') >= 0 && hLf.indexOf('📦 FULL CASE — 2 spots · 4 cs') >= 0 && hLf.indexOf('✂ NOT A FULL CASE — 1 spot · 1 cs') > hLf.indexOf('📦 FULL CASE')
-      && /class="inv-awdship-areas" data-c="full"[^]*?data-a="BSMT" data-c="full"[^]*?data-a="C2" data-c="full"[^]*?class="inv-awdship-areas" data-c="part"[^]*?data-a="C2" data-c="part"/.test(hLf)
-      && !/data-a="BSMT" data-c="part"/.test(hLf) && /✓ PRELABEL[^]*?61-1-1=10</.test(hLf.slice(hLf.indexOf('inv-awdship-spot'))) && !/NEED TO LABEL/.test(hLf.slice(hLf.indexOf('inv-awdship-spot')))
+  // … and (owner 2026-11-18, later) "then label or no label, the same way as the Shipment Builder" → the AWD Planner's groups: 1️⃣ ✅ FULL CASE · 2️⃣ 🏷 NEED LABELING · 3️⃣ ✂ RECOUNT
+  check('✅ FULL CASE / 🏷 NEED LABELING / ✂ RECOUNT first (the AWD Planner\'s groups, same order), then location: C2 is in two (its full case 61-1-1=10 · 3 cs under ✅, the =10XX bag · 1 cs under 🏷), BSMT only under ✅; tapping C2 under ✅ shows only the full case spot, under 🏷 only the other one, each with its own ➕ Put',
+    hLf.indexOf('data-c="full"') >= 0 && hLf.indexOf('1️⃣ ✅ FULL CASE — 2 spots · 4 cs') >= 0 && hLf.indexOf('2️⃣ 🏷 NEED LABELING — 1 spot · 1 cs') > hLf.indexOf('1️⃣ ✅ FULL CASE') && hLf.indexOf('3️⃣ ✂ RECOUNT') < 0
+      && /class="inv-awdship-areas" data-c="full"[^]*?data-a="BSMT" data-c="full"[^]*?data-a="C2" data-c="full"[^]*?class="inv-awdship-areas" data-c="label"[^]*?data-a="C2" data-c="label"/.test(hLf)
+      && !/data-a="BSMT" data-c="label"/.test(hLf) && /✓ PRELABEL[^]*?61-1-1=10</.test(hLf.slice(hLf.indexOf('inv-awdship-spot'))) && !/NEED TO LABEL/.test(hLf.slice(hLf.indexOf('inv-awdship-spot')))
       && /🏷 NEED TO LABEL/.test(hLp.slice(hLp.indexOf('inv-awdship-spot'))) && !/✓ PRELABEL</.test(hLp.slice(hLp.indexOf('inv-awdship-spot')))
-      && /➕ Put C2 📦 full cases on my Pull List/.test(hLf) && /➕ Put C2 ✂ not full cases on my Pull List/.test(hLp) && /for 3 box labels \(all of C2\)/.test(hLf), hLf.slice(hLf.indexOf('inv-awdship-cuts'), hLf.indexOf('inv-awdship-cuts') + 1500));
+      && /➕ Put C2 ✅ full cases on my Pull List/.test(hLf) && /➕ Put C2 🏷 need labeling on my Pull List/.test(hLp) && /for 3 box labels \(all of C2\)/.test(hLf), hLf.slice(hLf.indexOf('inv-awdship-cuts'), hLf.indexOf('inv-awdship-cuts') + 1500));
   A.takes.pop(); A.area = ''; A.cut = ''; run.render();
   const grpP = hL.indexOf('✓ Prelabel — 1 spot · 3 cs'), grpL = hL.indexOf('🏷 Need to label — 1 spot · 1 cs');
   check('…✓ Prelabel / 🏷 Need to label: C2=1-1-1 61-1-1=10 for 61-1-1=10 (the right part # — the bags already have the label) under ✓ Prelabel first; a =10XX bag for =10 under 🏷 Need to label with how; the area button says "🏷 1 to label · ✓ 1 prelabel"; BSMT "✓ all prelabel"',
     grpP > 0 && grpL > grpP && /data-pre="1"[^>]*>[^]*?✓ PRELABEL[^]*?61-1-1=10<\/span>/.test(hL.slice(grpP, grpL)) && /data-pre="0"[^>]*>[^]*?🏷 NEED TO LABEL[^]*?61-1-1=10XX<\/span> <span[^>]*>for 61-1-1=10<\/span>[^]*?cover the label/.test(hL.slice(grpL))
-      && /data-a="C2" data-c="full"[^]*?✓ all prelabel/.test(hLf) && /data-a="C2" data-c="part"[^]*?🏷 1 to label</.test(hLf) && /data-a="BSMT"[^]*?✓ all prelabel/.test(h), hL.slice(Math.max(0, hL.indexOf('inv-awdship-lab') - 50), hL.indexOf('inv-awdship-lab') + 2000));
+      && /data-a="C2" data-c="full"[^]*?✓ all prelabel/.test(hLf) && /data-a="C2" data-c="label"[^]*?🏷 1 to label</.test(hLf) && /data-a="BSMT"[^]*?✓ all prelabel/.test(h), hL.slice(Math.max(0, hL.indexOf('inv-awdship-lab') - 50), hL.indexOf('inv-awdship-lab') + 2000));
   A.area = 'C2'; run.render(); const h2 = g('inv-awdship-out').innerHTML;
   run.add('C2'); run.add('C2');
   check('…tap C2 → its spots (📍 C2=1-1-1 — 3 cases of 61-1-1=10) and ➕ Put C2 on my Pull List → on the Pull List as Big Company for 61-1-1=10 (no scanning); tapping again adds nothing twice',
-    /📍 C2=1-1-1<\/b> — <b>3 cases<\/b> of/.test(h2) && /➕ Put C2 📦 full cases on my Pull List/.test(h2) && pull.length === 1 && pull[0].partNum === '61-1-1=10' && pull[0].cases === '3' && pull[0].dest === 'company' && pull[0].forPart === '61-1-1=10' && pull[0].awdShipment === 'STAR-TEST1'
+    /📍 C2=1-1-1<\/b> — <b>3 cases<\/b> of/.test(h2) && /➕ Put C2 ✅ full cases on my Pull List/.test(h2) && pull.length === 1 && pull[0].partNum === '61-1-1=10' && pull[0].cases === '3' && pull[0].dest === 'company' && pull[0].forPart === '61-1-1=10' && pull[0].awdShipment === 'STAR-TEST1'
       && flashes.some(f => /3 spots|1 spot in C2 on your Pull List/.test(f)) && flashes.some(f => /Nothing new to add in C2/.test(f)), { pull, flashes });
   // 👤 Owner (2026-10-27): "one of my guys already grabbed all of C1 — if my other scanner taps Put C1 on my Pull List, will it show
   // everything again? I want everyone to see it… or we end up with double grab". Put on a Pull List = taken for every phone at once.
@@ -10523,7 +10545,7 @@ console.log('\n📤 Shipment Builder → Send to Stock Out Big Company → 📦 
   const c1 = await loadCard(), sum = (A, a) => A.takes.filter(t => t.area === a).reduce((x, t) => x + t.cases, 0);
   check('📦 Current AWD shipment shows the send: "📤 from the Shipment Builder · 2 SKUs · 3 Amazon boxes · sent by …"; 93-7-1=10: 30 units × 10 = 300 pcs = 3 cases → C3 ×2 + BO ×1 (no more on the shelves); 94-7-4=5: 10 × 5 = 50 pcs = 1 case → PR; areas in walking order',
     /📤 from the Shipment Builder · 2 SKUs · 3 Amazon boxes · sent by /.test(c1.h) && sum(c1.A, 'C3') === 2 && sum(c1.A, 'BO') === 1 && sum(c1.A, 'PR') === 1
-      && ['full', 'part'].every(c => { const W = ['BO', 'PR', 'C3'], seq = [...c1.h.matchAll(new RegExp('data-a="(\\w+)" data-c="' + c + '"', 'g'))].map(m => m[1]).filter(a => W.includes(a)); return seq.every((a, i) => !i || W.indexOf(seq[i - 1]) < W.indexOf(a)); })
+      && ['full', 'label', 'extra'].every(c => { const W = ['BO', 'PR', 'C3'], seq = [...c1.h.matchAll(new RegExp('data-a="(\\w+)" data-c="' + c + '"', 'g'))].map(m => m[1]).filter(a => W.includes(a)); return seq.every((a, i) => !i || W.indexOf(seq[i - 1]) < W.indexOf(a)); })
       && [...c1.h.matchAll(/data-a="(\w+)" data-c="/g)].length >= 3, { takes: c1.A.takes.map(t => [t.area, t.partNum, t.cases]), h: c1.h.slice(0, 300) });
   // the Amazon box labels uploaded later (newer) win — they know which boxes are PREVIOUS PACKED
   sq.prepare("UPDATE awd_ship_send SET at = '2026-01-01T00:00:00.000Z'").run();
@@ -10990,12 +11012,12 @@ console.log('\n🏷 / ✓ / ✂ AWD shipment: need to label · prelabel full cas
   // + one 🏷 need-to-label line: another bag of the same part (97-1-1=10XX for 97-1-1=10)
   A.takes.push(Object.assign({}, tk('97-1-1=10')[0], { partNum: '97-1-1=10XX', cases: 1, how: 'same bag count, other letters — cover the label' }));
   // (owner 2026-11-18: 📦 full case / ✂ not a full case first → C1's full case spot is under 📦, the extra step + to-label spots under ✂)
-  A.area = 'C1'; A.cut = 'full'; run.render(); const hF = g('inv-awdship-out').innerHTML; A.cut = 'part'; run.render(); const hP = g('inv-awdship-out').innerHTML, h = hF + hP;
+  A.area = 'C1'; A.cut = 'full'; run.render(); const hF = g('inv-awdship-out').innerHTML; A.cut = 'extra'; run.render(); const hX = g('inv-awdship-out').innerHTML; A.cut = 'label'; run.render(); const hP = g('inv-awdship-out').innerHTML, h = hF + hX + hP;
   const iF = h.indexOf('✓ Prelabel — '), iX = h.indexOf('✂ Prelabel, extra step — '), iL = h.indexOf('🏷 Need to label — ');
-  check('card: 97-1-1=10 (our case 100 pcs = one Amazon box of 10 × 10) → ✓ Prelabel (full case — just the Amazon label outside); 97-2-2=50 (case 600 pcs, Amazon box 200) → ✂ Prelabel, extra step "open the case and split it into 3 Amazon boxes"; 97-1-1=10XX → 🏷 Need to label — 3 groups (✓ under 📦 FULL CASE, ✂ + 🏷 under ✂ NOT A FULL CASE: C1 "🏷 1 to label · ✂ 1 extra step")',
+  check('card: 97-1-1=10 (our case 100 pcs = one Amazon box of 10 × 10) → ✓ Prelabel (full case — just the Amazon label outside); 97-2-2=50 (case 600 pcs, Amazon box 200) → ✂ Prelabel, extra step "open the case and split it into 3 Amazon boxes"; 97-1-1=10XX → 🏷 Need to label — 3 groups (✓ under ✅ FULL CASE, 🏷 under 🏷 NEED LABELING, ✂ under ✂ RECOUNT — like the AWD Planner)',
     run.kind(tk('97-1-1=10')[0]) === 'full' && run.kind(tk('97-2-2=50')[0]) === 'extra' && iF > 0 && iX > iF && iL > iX
       && /✂ 600 pcs a case, 200 pcs an Amazon box — open the case and split it into 3 Amazon boxes/.test(h.slice(iX, iL)) && /data-pre="2"/.test(h.slice(iX, iL)) && /97-1-1=10XX/.test(h.slice(iL))
-      && /data-a="C1" data-c="full"[^]*?✓ all prelabel/.test(hF) && /data-a="C1" data-c="part"[^]*?🏷 1 to label · ✂ 1 extra step</.test(hF), h.slice(h.indexOf('inv-awdship-lab'), h.indexOf('inv-awdship-lab') + 400));
+      && /data-a="C1" data-c="full"[^]*?✓ all prelabel/.test(hF) && /data-a="C1" data-c="label"[^]*?🏷 1 to label</.test(hF) && /data-a="C1" data-c="extra"[^]*?✂ 1 extra step</.test(hF), h.slice(h.indexOf('inv-awdship-lab'), h.indexOf('inv-awdship-lab') + 400));
   run.add('C1');
   const byP = p => pull.find(x => x.partNum === p) || {};
   check('…➕ Put C1 on my Pull List → each line keeps its kind: 97-1-1=10 ✓ full, 97-2-2=50 ✂ extra (how: open the case and split it), 97-1-1=10XX 🏷 need to label',
