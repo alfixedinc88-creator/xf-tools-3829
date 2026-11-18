@@ -2584,6 +2584,16 @@ function awdGrabPlan(sku, unitsList) {
   return { summary, locOf, kindOf, cases: cases.length, short, grabs: grp.map(g => ({ loc: g.loc, part: g.part, n: g.n, pcs: g.pcs || 0, used: g.used, exact: g.exact, how: g.how || '', why: g.why || '' })), // 🔒 for Lock it
     others: Object.values(others).slice(0, 8) };
 }
+// 📐 Owner (2026-11-18, a label with "GRAB 2 cases (enough for our 2 boxes): C2=2-1-7: grab 1 case · C2=2-1-11: grab 1 case" in one small
+// line): "move that C2=2-1-7: grab 1 case C2=2-1-11 grab 1 case to second line, if there's something like that — the words become too small
+// if they stay in the same row". The GRAB line on the box label: "GRAB … (enough for our N boxes):" on its own line, the spots under it, 2 a line.
+function awdPlanLines(plan) {
+  const t = String(plan || ''), i = t.indexOf('): ');
+  if (!/^GRAB /.test(t) || i < 0) return [t];
+  const parts = t.slice(i + 3).split(' · '), out = [t.slice(0, i + 2)];
+  for (let k = 0; k < parts.length; k += 2) out.push(parts.slice(k, k + 2).join(' · '));
+  return out;
+}
 // 🖨 Owner (2026-10-25): "after the labels are done, I want to click a location like C1 and print just what is in C1".
 function awdPrintPages(pages, title) {
   if (!pages || !pages.length) return true;
@@ -2944,7 +2954,7 @@ async function awdLabelsDo(file) {
       const head = m.prevKey ? '✅ PREVIOUS PACKED · Box ' + m.seq + ' (on the pallet)' : 'Box ' + m.seq + ' · ' + (m.loc || '') + (need ? ' · ' + need : '');
       // 🏷 the outside box UPC, written (not one more barcode — scanning the box's own barcode in 🔍 Box check matches too)
       const ou = boxUpc[partOf(m.sku)], outUpc = 'Outside box UPC: ' + (ou || '— not on file');
-      return { tpl, outUpc, lines: [head, tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? [m.plan] : []).filter(Boolean) }; };
+      return { tpl, outUpc, lines: [head, tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? awdPlanLines(m.plan) : []).filter(Boolean) }; };
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
