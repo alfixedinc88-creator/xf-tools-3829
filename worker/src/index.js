@@ -1569,7 +1569,7 @@ async function awdLabelMap(request, url, env, session) {
     prev INTEGER DEFAULT 0, fnsku TEXT, upc TEXT, name TEXT, at TEXT, by_user TEXT)`).run();
   await env.DB.prepare('ALTER TABLE awd_label_map ADD COLUMN kind TEXT').run().catch(() => {}); // ✅ full / 🏷 label / ✂ recount — the AWD Planner's group of the label (owner 2026-11-18)
   await awdLabelAmpRepair(env);
-  const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), S18 = c => { const d = String(c || '').replace(/\D/g, ''); return d.length >= 18 ? d.slice(-18) : ''; };
+  const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 80), S18 = awdBoxKey;
   if (request.method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const shipment = t(b.shipment, 60) || 'shipment ' + new Date().toISOString().slice(0, 10), now = new Date().toISOString(), by = t((session && (session.displayName || session.username)) || '?', 40);
@@ -1606,6 +1606,13 @@ async function awdLabelMap(request, url, env, session) {
 // the last 14 days), not only the newest; a shipment's newest send / labels win; Amazon box labels made after a send for the same SKUs take
 // its place (they know the PREVIOUS PACKED boxes). + what was already grabbed for each (Stock Out notes "[AWD: name]", not Rejected), so
 // nothing is listed to grab twice. POST { done: name } / { reopen: name } → kept (who / when) in awd_ship_done.
+// 🏷 Owner (2026-11-18): "for the FBA shipment they scan the Amazon label FBA19X… then our outside box UPC". An Amazon box is kept by its
+// SSCC (AWD labels: the 18-digit barcode) — or, on an FBA label (no SSCC), by its FBA box ID: FBA19XPR747PU000041. Same key everywhere.
+function awdBoxKey(c) {
+  const s = String(c == null ? '' : c).trim().toUpperCase().replace(/\s+/g, '');
+  const m = /^(FBA[0-9A-Z]{6,14}U\d{3,6})$/.exec(s); if (m) return m[1];
+  const d = s.replace(/\D/g, ''); return d.length >= 18 ? d.slice(-18) : ''; // the SSCC, exactly as before
+}
 const AWD_TAG_NAME = n => String(n || '').replace(/[\[\]|]/g, '').trim().slice(0, 60);
 // 🏷 Owner (2026-11-05): "show those info when people scan that, like who already grab, when, or it was in the pallet, which pallet who and
 // when". GET /awd/label-info?shipment=&part= → for ONE part # of ONE shipment: every Stock Out grabbed for it (who, when, spot, cases, how,
@@ -1842,7 +1849,7 @@ async function awdBoxPallet(request, url, env, session) {
   const latest = async (where, ...b) => { const rows = ((await env.DB.prepare(`SELECT * FROM awd_box_scan WHERE ${where} ORDER BY id`).bind(...b).all()).results || []), by = {};
     rows.forEach(r => { by[r.sscc] = r; }); return { rows, by }; };
   if (request.method === 'GET') {
-    const ss = t(url.searchParams.get('sscc'), 20).replace(/\D/g, '').slice(-18);
+    const ss = awdBoxKey(t(url.searchParams.get('sscc'), 30));
     if (ss) { const x = await latest('sscc = ?', ss); return J({ ok: true, box: x.by[ss] || null, history: x.rows }); }
     let sh = t(url.searchParams.get('shipment'), 60);
     // 📜 Owner (2026-11-18): "this shipment we have already finished, how can I move that to history — not showing up here anymore, don't want the
@@ -1860,7 +1867,7 @@ async function awdBoxPallet(request, url, env, session) {
     // ?open=SSCC → in ONE answer: the label, its SKU's boxes, the barcodes that are that item (outside box / inside bag UPC) and its pieces
     // a case — the phone checks every box with no more trips to the server.
     let openBox = null;
-    const openQ = t(url.searchParams.get('open'), 24).replace(/\D/g, '').slice(-18);
+    const openQ = awdBoxKey(t(url.searchParams.get('open'), 30));
     if (openQ) {
       await awdLabelAmpRepair(env); // 🔗 a label saved with its SKU cut is put right before the Box check reads it
       openBox = await env.DB.prepare('SELECT * FROM awd_label_map WHERE sscc = ?').bind(openQ).first().catch(() => null);
@@ -1914,7 +1921,7 @@ async function awdBoxPallet(request, url, env, session) {
   const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
   if (rid) { const c = await claimRequestId(env, rid, 'awd/box-pallet'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
   // off = 📤 taken back OFF a pallet (owner 2026-10-28: "I put it on pallet 2 by mistake — it only needs half a case; take it out and reprint the label")
-  const ss = t(b.sscc, 24).replace(/\D/g, '').slice(-18), kind = ['pallet', 'split', 'rebag', 'mismatch', 'ok', 'off'].includes(b.kind) ? b.kind : ''; // ok = whole box, Amazon label on, waiting for a pallet
+  const ss = awdBoxKey(t(b.sscc, 30)), kind = ['pallet', 'split', 'rebag', 'mismatch', 'ok', 'off'].includes(b.kind) ? b.kind : ''; // ok = whole box, Amazon label on, waiting for a pallet
   if (!ss || !kind) return J({ ok: false, error: 'Which box (Amazon label) and what happened to it?' }, 400);
   const pallet = kind === 'pallet' ? parseInt(b.pallet, 10) || 0 : null;
   if (kind === 'pallet' && !(pallet > 0)) return J({ ok: false, error: 'Scan the PALLET label' }, 400);

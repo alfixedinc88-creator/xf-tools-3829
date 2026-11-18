@@ -5089,9 +5089,10 @@ function upcEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').re
 function upcPartKey(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }
 window.upcAwdBox = async function(v) {
   var out = document.getElementById('upc-awdbox-out'), inp = document.getElementById('upc-awdbox-inp');
-  var code = String(v || '').replace(/\D/g, ''); if (inp) inp.value = '';
-  if (code.length < 18) { out.innerHTML = '<div style="color:var(--red,#c52a1a);font-size:12px">That is not an Amazon box label — scan the big barcode on the Amazon label (18–20 digits).</div>'; return; }
-  code = code.slice(-18);
+  var fb = /^(FBA[0-9A-Z]{6,14}U\d{3,6})$/.exec(String(v || '').trim().toUpperCase().replace(/\s+/g, '')); // 🏷 an FBA box label's box ID (owner 2026-11-18)
+  var code = fb ? fb[1] : String(v || '').replace(/\D/g, ''); if (inp) inp.value = '';
+  if (!fb && code.length < 18) { out.innerHTML = '<div style="color:var(--red,#c52a1a);font-size:12px">That is not an Amazon box label — scan the big barcode on the Amazon label (18–20 digits).</div>'; return; }
+  if (!fb) code = code.slice(-18);
   out.innerHTML = '<div style="font-size:12px;color:var(--text3)">Looking it up…</div>';
   try {
     var d = await wFetch(UPC_W + '/awd/label-map?code=' + code).then(function(r) { return r.json(); });

@@ -14611,5 +14611,31 @@ console.log('\n📤🔒 Send to Stock Out Big Company locks what the shipment ne
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBAKINDT1'; DELETE FROM awd_ship_send WHERE shipment = 'KIND SEND 1'; DELETE FROM awd_ship_done WHERE shipment = 'FBAKINDT1'");
 }
 
+// Owner (2026-11-18): "at C2 they grab the full case, scan the Amazon label 'FBA19X…' then scan our outside box UPC — right?" + the FBA labels
+// said "🔒 Lock it: no Amazon Shipment ID was read from the labels". FBA box labels have no SSCC: the FBA box ID is the box's code.
+console.log('\n🏷 FBA box labels: the box ID (FBA19X…U000041) is the box\'s code — Box check, label look-up and 🔒 Lock it work like an AWD label');
+{
+  const { readFileSync: rfF } = await import('node:fs');
+  const ah = rfF(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), ih = rfF(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const sv = await post('/awd/label-map', { shipment: 'FBA19TESTFB', labels: [{ sscc: 'FBA19TESTFBU000001', sku: '72-1-1=10X', part: '72-1-1=10X', seq: '2-1', units: 10 }, { sscc: 'fba19testfbu000002', sku: '72-1-1=10X', part: '72-1-1=10X', seq: '2-2', units: 10 }] });
+  const g1 = await get('/awd/label-map?code=FBA19TESTFBU000002');
+  check('label file saved with the FBA box IDs (2 boxes); scanning "FBA19TESTFBU000002" finds its box: 72-1-1=10X, Box 2-2',
+    sv.ok && sv.saved === 2 && g1.box && g1.box.part === '72-1-1=10X' && g1.box.seq === '2-2' && g1.box.sscc === 'FBA19TESTFBU000002', { sv, g1 });
+  const ss = await get('/awd/label-map?code=00201952611628557386');
+  check('…an AWD label\'s SSCC is read exactly as before (18 digits, last 18 of a 20-digit scan)', ss.ok && !('error' in ss), ss);
+  const bp = await post('/awd/box-pallet', { shipment: 'FBA19TESTFB', sscc: 'FBA19TESTFBU000001', kind: 'pallet', pallet: 1 });
+  const bx = await get('/awd/box-pallet?sscc=FBA19TESTFBU000001');
+  check('…Box check keeps the FBA box on its PALLET by that ID (who / when) and finds it again', bp.ok && bx.box && bx.box.sscc === 'FBA19TESTFBU000001' && bx.box.pallet === 1, { bp, bx: bx.box });
+  const S = new Function((ih.match(/function invBcSscc\(code\) \{[^\n]*/) || [''])[0] + '; return invBcSscc;')();
+  check('…the phone reads "FBA19XPR747PU000041" as an Amazon box label (as the SSCC was) → that SKU\'s boxes, then our outside box UPC → ✅ / ❌; a UPC is still not a label',
+    S('FBA19XPR747PU000041') === 'FBA19XPR747PU000041' && S(' fba19xpr747pu000041 ') === 'FBA19XPR747PU000041' && S('00201952611628557386') === '201952611628557386' && S('850031110001') === '' && S('FBA19XPR747P') === '', null);
+  const L = new Function(ah.slice(ah.indexOf('function awdLabelSscc('), ah.indexOf('// The FNSKU printed on the label') ) + '; return awdLabelSscc;')();
+  check('…the label reader: an FBA label (no SSCC) keeps its box ID; an AWD label keeps its SSCC',
+    L([{ text: 'FBA19XPR747PU000041', y: 100 }, { text: 'SKU 72-1-1=10X', y: 120 }], 120) === 'FBA19XPR747PU000041' && L([{ text: 'SSCC: 00 2019 5261 1628 5573 86', y: 50 }, { text: 'FBA19XPR747PU000041', y: 120 }], 120) === '201952611628557386', null);
+  check('…🔒 Lock it on FBA labels: no "Shipment ID" line → the shipment in the box ID (FBA19XPR747PU000041 → FBA19XPR747P), so the button shows',
+    /if \(!shipId && typeof awdBoxShip === 'function'\) shipId = awdBoxShip\(metaTexts\) \|\| '';/.test(ah), null);
+  sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBA19TESTFB'; DELETE FROM awd_box_scan WHERE shipment = 'FBA19TESTFB'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

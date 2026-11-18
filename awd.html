@@ -2278,6 +2278,10 @@ function awdPrevInfo(sku, units, amz) {
 function awdLabelSscc(lines, y) {
   let best = null;
   (lines || []).forEach(l => { const m = /SSCC\s*:?\s*(\d[\d ]{17,24})/i.exec(l.text || ''); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, code: m[1].replace(/\D/g, '').slice(-18) }; });
+  if (best) return best.code;
+  // 🏷 Owner (2026-11-18): an FBA box label has no SSCC — its box ID (FBA19XPR747PU000041, the label's barcode) is the box's code instead,
+  // so the phones' Box check reads FBA labels the same way: scan the label, then our outside box UPC → ✅ / ❌.
+  (lines || []).forEach(l => { const m = /\b(FBA[0-9A-Z]{6,14}U\d{3,6})\b/i.exec(String(l.text || '').replace(/\s+/g, ' ')); if (m && (!best || Math.abs(l.y - y) < Math.abs(best.y - y))) best = { y: l.y, code: m[1].toUpperCase() }; });
   return best ? best.code : '';
 }
 // The FNSKU printed on the label nearest the SKU line (several labels can share a page).
@@ -2931,7 +2935,10 @@ async function awdLabelsDo(file) {
     // 🗂 the ✅ Already packed list is for ONE shipment (owner 2026-11-18). Which shipment: "Shipment ID" on the label, else the box ID's
     // shipment (FBA19XPR747PU000041 → FBA19XPR747P), else the file's name.
     let prevNote = '';
-    const shipKey = shipId || (typeof awdBoxShip === 'function' && awdBoxShip(metaTexts)) || ('file ' + ((typeof file !== 'undefined' && file && file.name) || ''));
+    // 🔒 Owner (2026-11-18, "🔒 Lock it: no Amazon Shipment ID was read from the labels" on FBA labels): no "Shipment ID" line → the shipment
+    // in the box ID (FBA19XPR747PU000041 → FBA19XPR747P) — so FBA labels get 🔒 Lock it and their boxes are kept for Box check too.
+    if (!shipId && typeof awdBoxShip === 'function') shipId = awdBoxShip(metaTexts) || '';
+    const shipKey = shipId || ('file ' + ((typeof file !== 'undefined' && file && file.name) || ''));
     if (Object.keys(prev).length && shipKey) {
       const was = awdPrevShip();
       const forThis = was ? was === shipKey : typeof confirm !== 'function' ? true : confirm('The ✅ Already packed list has ' + Object.keys(prev).length + ' item(s) typed before.\n\nAre they already packed for THIS shipment (' + shipKey + ')?\n\nOK = yes, use them (their labels say PREVIOUS PACKED)\nCancel = no, they were for an earlier shipment → move them to 🗂 History');
