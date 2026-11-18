@@ -8438,6 +8438,15 @@ window.invCredLogin = async function() {
     }
   };
   window.invPullScanClose = function() { PSG = null; invModalClose('inv-psg-modal'); };
+  window.invPsgLink = function(code) {
+    var S = PSG; if (!S) return; var it = S.item;
+    if (!confirm('Link barcode ' + code + ' to ' + it.partNum + '?\n\nOnly if the box LABEL says ' + it.partNum + '. Every box with this barcode will then scan as ' + it.partNum + ' (kept with your name).')) return;
+    wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: code, part: it.partNum }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not linked: ' + ((d && d.error) || 'failed'), 'error'); return; }
+        invFlash('🔗 ' + code + ' → ' + it.partNum + ' linked', 'success'); S.wrong = Math.max(0, S.wrong - 1); window.invPullScanBox(code); // counts this box now
+      }).catch(function() { invFlash('Not linked — no WiFi?', 'error'); });
+  };
   window.invPullScanBox = function(code) {
     code = String(code || '').trim(); if (!code || !PSG) return;
     var S = PSG, it = S.item, want = invPsgNorm(it.partNum), res = g('inv-psg-res');
@@ -8468,7 +8477,11 @@ window.invCredLogin = async function() {
       S.wrong++;
       if (typeof invBeep === 'function') try { invBeep('error'); } catch (e) {}
       if (res) res.innerHTML = '<div style="padding:10px;border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800;font-size:15px">❌ WRONG BOX — don\'t grab it!'
-        + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'This box is <b style="font-family:var(--mono)">' + invEsc(got) + '</b>' + (sameItem ? ' (same item, <b>wrong bag size</b>)' : '') : 'This barcode is not a part # we know') + ' — you need <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> at ' + invEsc(it.location) + '. Put it back, check the label and scan the right box.</div></div>';
+        + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'This box is <b style="font-family:var(--mono)">' + invEsc(got) + '</b>' + (sameItem ? ' (same item, <b>wrong bag size</b>)' : '') : 'This barcode <b style="font-family:var(--mono)">' + invEsc(code) + '</b> is not linked to any part # yet') + ' — you need <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> at ' + invEsc(it.location) + '. Put it back, check the label and scan the right box.</div></div>'
+        // 🔗 Owner (2026-11-18, C2 Big Company: "it always showing up wrong box even it was right spot and right box, try 4 different boxes"):
+        // a box barcode not linked to any part # yet (e.g. the vendor's carton code) — if the label says it IS this part #, link it here once
+        // (kept with who / when, like Stock In); every box with that barcode then scans right, and this one counts.
+        + (!got && /^\d{11,14}$/.test(code.replace(/\D/g, '')) && code.replace(/\D/g, '') === code ? '<button type="button" class="btn" style="margin-top:8px;width:100%;font-weight:800" onclick="invPsgLink(' + invEsc(JSON.stringify(code)) + ')">🔗 The label says ' + invEsc(it.partNum) + ' — link this barcode to it</button>' : '');
     });
   };
   // 🏷➡📦 Owner (2026-11-18): "for full case we grab at Stock Out Big Company, when we scan our box at the Pull List and it confirms the right

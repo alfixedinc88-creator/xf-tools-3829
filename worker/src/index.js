@@ -5397,13 +5397,19 @@ function vendorUpcMap() {
 // UPC → part #, from every place D1 keeps UPCs. Leading zeros are ignored
 // (a scanner may read 012345678905 or 12345678905 for the same label).
 async function upcToPart(env, code) {
-  const z = String(code || '').replace(/\D/g, '').replace(/^0+/, '');
+  const d0 = String(code || '').replace(/\D/g, ''), z = d0.replace(/^0+/, '');
   if (!z) return null;
   const hit = await upcToPartOne(env, z);
-  if (hit || z.length !== 11) return hit;
+  if (hit) return hit;
+  // 📦 Owner (2026-11-18, Stock Out Big Company C2: "it always showing up wrong box even it was right spot and right box"): a vendor carton's
+  // GTIN-14 case code = 1 indicator digit + the item's UPC without its check digit + a new check digit. Not linked itself → the UPC inside it.
+  // GTIN-14 = indicator + the 12 digits of the item's GTIN-13 (a UPC-A is "0" + its 11 digits) + a check digit → that GTIN-13 / UPC-A.
+  if (d0.length === 14) { const in12 = d0.slice(1, 13), g13 = gs1CheckAdd(in12); const h2 = g13 ? await upcToPartOne(env, g13.replace(/^0+/, '')) : null; if (h2) return h2; }
+  if (z.length !== 11) return null;
   const full = upcAddFirstDigit(z); // R20H scanner: 810097207059 sent as 10097207059
   return full ? upcToPartOne(env, full) : null;
 }
+function gs1CheckAdd(d) { if (!/^\d{7,17}$/.test(d)) return null; let t = 0; for (let i = 0; i < d.length; i++) t += (+d[d.length - 1 - i]) * (i % 2 ? 1 : 3); return d + ((10 - t % 10) % 10); } // GS1 check digit (UPC / EAN / GTIN)
 // 11 digits whose UPC-A check digit only works with a first digit 1–9 → that
 // full 12-digit UPC (exactly one digit fits). null when a leading 0 fits.
 function upcAddFirstDigit(z) {
