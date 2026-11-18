@@ -704,6 +704,7 @@ window.invCredLogin = async function() {
     <div id="inv-bc-day" style="margin-top:6px;font-size:12px;color:var(--text2)"></div>
     <!-- 📦 Owner (2026-10-27): every Amazon box checked → which pallet it is on (PALLET 1, 2, 3…), how many boxes a pallet has, by who / when -->
     <div id="inv-bc-pallets" style="margin-top:8px;font-size:12px"></div>
+    <button type="button" id="inv-bc-done" class="inv-bc-done" onclick="invBcShipDone()" style="margin-top:6px;margin-right:6px;padding:6px 10px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer;font-size:12px">✅ This shipment is finished — move it to History (Admin)</button>
     <button type="button" id="inv-bc-plabels" onclick="invPalletLabels()" style="margin-top:6px;padding:6px 10px;border-radius:8px;border:1.5px solid #7c3aed;background:var(--bg);color:#7c3aed;font-weight:700;cursor:pointer;font-size:12px">🖨 Print PALLET labels (PALLET 1, 2, 3…)</button>
     </details>
   </div>
@@ -2656,9 +2657,18 @@ window.invCredLogin = async function() {
   // the shipment's tally: boxes checked, each PALLET (how many boxes, tap for the list), set aside, not a match, not checked yet
   // 📷 Owner (2026-10-27): "keep a record of what is in which pallet — in photos like the boxes, easy to see". Each PALLET is a panel: every
   // part # on it as a box with its photo, how many Amazon boxes (Box N-k), who put them there and when; the boxes set aside the same way.
+  // 📜 Owner (2026-11-18): Box check still showed a shipment already finished → "✅ Finished — move to History" (Admin) on the Box check card:
+  // the same ✅ Done as the shipments list (who / when kept, ↩ put back from 🕘 Shipment history), then Box check moves to the next open one.
+  window.invBcShipDone = function() {
+    var sh = BXC.ship; if (!sh) return;
+    window.invAwdShipDone(sh, false, function() { BXC.ship = ''; invBcPallets(); });
+  };
   function invBcPallets() {
     var el = g('inv-bc-pallets'), sh = BXC.ship; if (!el) return;
     wFetch(W + '/awd/box-pallet?' + (sh ? 'shipment=' + encodeURIComponent(sh) : 'latest=1')).then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.ok && !d.shipment) { // 📜 every shipment with box scans is ✅ Done → nothing on the front page (they are in 🕘 Shipment history)
+        BXC.ship = ''; BXC.palData = null; el.innerHTML = '<div style="color:var(--text3)">No open shipment — the finished ones are in 🕘 Shipment history.</div>';
+        var sm0 = g('inv-bc-sum'); if (sm0) sm0.textContent = 'No open shipment'; return; }
       if (!d || !d.ok || !d.shipment) return; BXC.ship = d.shipment; BXC.palData = d;
       var ph = d.photos || {}, T = function(v) { return v ? ckE(xfrFmtT(v)) : ''; }; BXC.readyList = d.ready || [];
       // 🟫 Owner (2026-10-27, "pallet 1 has 14 cases, the record shows 7"): Amazon boxes AND our cases (an Amazon box can be 2 of our cases);
@@ -3287,12 +3297,12 @@ window.invCredLogin = async function() {
       return '<div style="padding:3px 0">✅ <b>' + ckE(x.shipment) + '</b> · ' + ckE(x.by || '?') + ' ' + ckE(xfrFmtT(x.at)) + (invAwdIsAdmin() ? ' <a href="#" onclick="invAwdShipDone(this.dataset.s, true);return false" data-s="' + ckE(x.shipment) + '">↩ put back on the list</a>' : '') + '</div>'; }).join('') + '</details>';
   }
   // ✅ Done (or ↩ put back) — kept on the server: who / when
-  window.invAwdShipDone = function(name, reopen) {
+  window.invAwdShipDone = function(name, reopen, after) {
     if (!invAwdIsAdmin()) { invFlash('🔒 Only an admin can mark a shipment ✅ Done', 'error'); return; }
     if (!reopen && !confirm('✅ "' + name + '" is done — everything grabbed?\n\nIt comes off this list (kept in History: who / when; ↩ put back any time).')) return;
     invPost(W + '/awd/ship-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reopen ? { reopen: name } : { done: name }) })
       .then(function(r) { return r.json(); }).then(function(d) { if (!d || !d.ok) throw new Error((d && d.error) || 'not saved');
-        invFlash(reopen ? '↩ ' + name + ' is back on the list' : '✅ ' + name + ' done', 'success'); window.invAwdShipLoad(); })
+        invFlash(reopen ? '↩ ' + name + ' is back on the list' : '✅ ' + name + ' done', 'success'); window.invAwdShipLoad(); if (typeof after === 'function') after(); })
       .catch(function(e) { invFlash('Not saved: ' + e.message, 'error'); });
   };
   // 🏷 Owner (2026-10-27): "separate it in prelabel or need to label — the bag already has the label on it, like 8-8-8=10: if we have that

@@ -111,6 +111,7 @@ document.addEventListener('input', function (e) {
       { key: 'stockoutco', label: '🏢 Stock Out Big Company', sel: '#inv-tab-stockoutco', parts: [
         { key: 'awdship', label: '📦 AWD shipments ready — what to grab, by location', sel: '#inv-awdship-card' },
         { key: 'awdshipdone', label: '…✅ Done button (takes a shipment off the list)', sel: '.inv-awdship-done' },
+        { key: 'bcshipdone', label: '…🔍 Box check: ✅ This shipment is finished — move it to History', sel: '.inv-bc-done' },
         { key: 'awdshiphist', label: '…🕘 Shipment history (Admin only)', sel: '#inv-awdship-hist' },
         { key: 'awdclaims', label: '…👤 Being grabbed now (who has which spots, ↩ Give back)', sel: '.inv-awd-claims' },
         { key: 'amlscan', label: '🏷 Scan a Big Company label → Pull List (labels not grabbed yet / extra labels)', sel: '#inv-amlscan-card' },

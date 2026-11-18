@@ -14375,5 +14375,30 @@ console.log('\n🚚 AWD Planner export: a builder that ships to FBA direct uses 
     A[6].includes('Palletized?') && A[6].length === 12 && A[7][0] === '30-3-4=10X' && A[7][1] === '30' && A[7][4] === '3', A.slice(5, 9));
 }
 
+// Owner (2026-11-18, photo: Stock Out Big Company → 🔍 Box check still on STAR-SYX5QCCWDTKS): "this shipment we have already finished, how can I
+// move that to history — not showing up here anymore, don't want the front page showing too much info".
+console.log('\n📜 Box check: a ✅ Done shipment moves to History — the card shows the newest OPEN one (or none)');
+{
+  const now = Date.now(), iso = ms => new Date(now - ms).toISOString();
+  sq.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run();
+  const before = (await get('/awd/box-pallet?latest=1')).shipment;
+  const box = (sh, ss, ago) => sq.prepare("INSERT INTO awd_box_scan (sscc, shipment, kind, pallet, by_user, at) VALUES (?,?,?,?,?,?)").run(ss, sh, 'pallet', 1, 'MG', iso(ago));
+  box('STAR-OLDDONE', '000000000000990001', 3600000); box('STAR-NEWFIN', '000000000000990002', 60000);
+  check('Box check opens on the newest shipment with box scans (STAR-NEWFIN)', (await get('/awd/box-pallet?latest=1')).shipment === 'STAR-NEWFIN', before);
+  const d1 = await post('/awd/ship-send', { done: 'STAR-NEWFIN' });
+  check('…✅ Done (Admin) → Box check moves on to the next one not done (STAR-OLDDONE); the done one still opens by name', d1.ok && (await get('/awd/box-pallet?latest=1')).shipment === 'STAR-OLDDONE' && (await get('/awd/box-pallet?shipment=STAR-NEWFIN')).shipment === 'STAR-NEWFIN', d1);
+  sq.exec("DELETE FROM awd_box_scan WHERE shipment NOT IN ('STAR-OLDDONE','STAR-NEWFIN')"); // only these two left for the "all done" case
+  await post('/awd/ship-send', { done: 'STAR-OLDDONE' });
+  const none = await get('/awd/box-pallet?latest=1');
+  check('…every one ✅ Done → no shipment on the card (finished ones listed for History)', none.ok && none.shipment === null && (none.finished || []).some(f => f.shipment === 'STAR-NEWFIN'), none);
+  box('STAR-NEWFIN', '000000000000990003', -5000); // scanned after the ✅ Done
+  check('…a new box scanned for a done shipment after it was ✅ Done → it is open again (never hidden while work goes on)', (await get('/awd/box-pallet?latest=1')).shipment === 'STAR-NEWFIN', null);
+  const { readFileSync: rfD } = await import('node:fs');
+  const ih = rfD(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the card: "✅ This shipment is finished — move it to History (Admin)" (the same ✅ Done, who / when kept) and "No open shipment" when none',
+    /onclick="invBcShipDone\(\)"[^>]*>✅ This shipment is finished — move it to History \(Admin\)/.test(ih) && /window\.invAwdShipDone\(sh, false, function\(\) \{ BXC\.ship = ''; invBcPallets\(\); \}\);/.test(ih) && /No open shipment — the finished ones are in 🕘 Shipment history/.test(ih), null);
+  sq.exec("DELETE FROM awd_box_scan WHERE shipment IN ('STAR-OLDDONE','STAR-NEWFIN'); DELETE FROM awd_ship_done WHERE shipment IN ('STAR-OLDDONE','STAR-NEWFIN')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
