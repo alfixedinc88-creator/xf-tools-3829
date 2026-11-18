@@ -3277,16 +3277,16 @@ window.invCredLogin = async function() {
   // the Amazon box labels of the shipments on the list, by area of the spot on each label (PREVIOUS PACKED apart) — the AWD Planner's count
   function invAwdLabelsByArea() {
     // ✓ packed (owner 2026-10-31: "21 box labels · 15 already packed · 6 to go"): the labels already checked in Box check, by area
-    var by = {}, pk = AWDS.labPacked = {}; ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels') return;
-      (sh.lines || []).forEach(function(b) { var a = b.prev ? 'PREVIOUS PACKED' : /not on our shelves/i.test(b.loc || '') ? '⚠ not on our shelves' : invAwdArea(b.loc); by[a] = (by[a] || 0) + 1; if (b.packed) pk[a] = (pk[a] || 0) + 1; }); });
+    var by = {}, pk = AWDS.labPacked = {}; ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels' && !(sh.labels || []).length) return;
+      (sh.source === 'labels' ? sh.lines || [] : sh.labels).forEach(function(b) { /* 🏷 a send: the box labels made for it (owner 2026-11-18) */ var a = b.prev ? 'PREVIOUS PACKED' : /not on our shelves/i.test(b.loc || '') ? '⚠ not on our shelves' : invAwdArea(b.loc); by[a] = (by[a] || 0) + 1; if (b.packed) pk[a] = (pk[a] || 0) + 1; }); });
     return by;
   }
   // 🗂 the box labels by the AWD Planner's group (✅ full / 🏷 label / ✂ recount → extra) and area — { has, full: {C2: 16}, label: {}, extra: {}, pk: {…} }.
   // has = false when the labels were made before the group was saved with them (then the area totals are used, as before).
   function invAwdLabelsByKind() {
     var K = { full: 'full', label: 'label', recount: 'extra' }, out = { has: false, full: {}, label: {}, extra: {}, pk: { full: {}, label: {}, extra: {} } };
-    ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels') return;
-      (sh.lines || []).forEach(function(b) { var k = K[b.kind]; if (!k || b.prev) return; out.has = true; var a = invAwdArea(b.loc); out[k][a] = (out[k][a] || 0) + 1; if (b.packed) out.pk[k][a] = (out.pk[k][a] || 0) + 1; }); });
+    ((AWDS.data && AWDS.data.shipments) || []).forEach(function(sh) { if (sh.source !== 'labels' && !(sh.labels || []).length) return;
+      (sh.source === 'labels' ? sh.lines || [] : sh.labels).forEach(function(b) { var k = K[b.kind]; if (!k || b.prev) return; out.has = true; var a = invAwdArea(b.loc); out[k][a] = (out[k][a] || 0) + 1; if (b.packed) out.pk[k][a] = (out.pk[k][a] || 0) + 1; }); });
     return out;
   }
   function invAwdLabelsLine(by) {
@@ -3361,6 +3361,7 @@ window.invCredLogin = async function() {
         var nSku = (sh.lines || []).filter(function(x) { return !x.prev; }).length, pct = sh.need > 0 ? Math.min(100, Math.round((sh.grabbed || 0) / sh.need * 100)) : 0, pctL = sh.need > 0 ? Math.round((sh.onList || 0) / sh.need * 100) : 0;
         return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border)"><div><b>' + ckE(sh.shipment || 'Shipment') + '</b> · '
           + (sh.source === 'send' ? '📤 from the Shipment Builder · ' + nSku + ' SKU' + (nSku === 1 ? '' : 's') + (sh.boxes ? ' · ' + sh.boxes + ' Amazon boxes' : '') : (sh.lines || []).length + ' Amazon boxes')
+          + ((sh.labels || []).length ? ' · <span class="inv-awdship-labsof" style="color:#1D4ED8">🏷 ' + sh.labels.filter(function(b) { return !b.prev; }).length + ' box labels (' + ckE(sh.labelsFrom || '') + ')</span>' : '')
           + (sh.prevN ? ' (' + sh.prevN + ' PREVIOUS PACKED, on the pallet — not listed)' : '') + ' · ' + (sh.source === 'send' ? 'sent' : 'labels') + ' by ' + ckE(sh.by || '?') + (sh.at ? ' ' + ckE(xfrFmtT(sh.at)) : '')
           + (sh.replaces ? ' <span style="color:var(--text3)">(the labels of ' + ckE(sh.replaces.join(', ')) + ')</span>' : '')
           + ((AWDS.locks || {})[sh.shipment] ? ' · <b class="inv-awdship-locked" style="color:#7C3AED">🔒 locked by ' + ckE(AWDS.locks[sh.shipment].by || '?') + ' — grab exactly these spots</b>' : '')

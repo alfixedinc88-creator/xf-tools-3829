@@ -1777,6 +1777,16 @@ async function awdShipOpen(env, url) {
     const d = last[x.shipment]; // ✅ Done stays done unless the shipment is sent / labelled again afterwards
     if (d && d.action === 'done' && String(d.at) >= String(x.at)) done.push({ shipment: x.shipment, at: d.at, by: d.by_user }); else open.push(x);
   });
+  // 🏷 Owner (2026-11-18, Stock Out Big Company with no label counts): "I want it to show how many labels it's going to have under Stock Out Big
+  // Company too, so they know if the labels they hold match what they grab". A Shipment Builder send shown here gets the box labels made for it
+  // (Amazon's own Shipment ID: the label set sharing at least half of its SKUs, the most shared first) — counted by group + area on the card.
+  // A label set shown on its own is never attached too (never counted twice).
+  const openNames = new Set(open.map(x => x.shipment));
+  open.forEach(x => { if (x.source !== 'send') return;
+    const xs = new Set(x.lines.map(l => U(l.sku))); let best = null, bestHit = 0;
+    Object.values(labs).forEach(l => { if (openNames.has(l.shipment)) return; const ls = new Set(l.lines.map(b => U(b.sku)));
+      const hit = [...ls].filter(k => xs.has(k)).length; if (ls.size && hit * 2 >= ls.size && (hit > bestHit || (hit === bestHit && best && String(l.at) > String(best.at)))) { best = l; bestHit = hit; } });
+    if (best) { x.labels = best.lines; x.labelsFrom = best.shipment; } });
   const grabbed = [], fixTo = {}; // 🔤 shipment tag | cut part # → the part # its labels were put right to (awd_label_fix_log)
   ((await env.DB.prepare("SELECT shipment, old_part, new_part FROM awd_label_fix_log WHERE COALESCE(new_part, '') != '' AND COALESCE(old_part, '') != ''").all().catch(() => ({ results: [] }))).results || [])
     .forEach(x => { fixTo[AWD_TAG_NAME(x.shipment) + '|' + U(x.old_part)] = U(x.new_part); });
