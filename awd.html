@@ -998,7 +998,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="bld-layout">
           <div>
             <div class="fbar">
-              <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKUs…" oninput="renderBuilder()"></div>
+              <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKU / ASIN…" oninput="renderBuilder()"></div>
               <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
               <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="bldShowManualAdd()">&#65291; Add SKU</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
             </div>
@@ -1026,7 +1026,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
               <div class="tw"><table><thead><tr>
-                <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th>Product</th>
+                <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th class="bld-asin-h">ASIN</th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
                 <th class="r">Case Pack / Export Qty</th><th>Label</th>
                 <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="bldToggleSort('time')" title="When this SKU was put in the shipment — tap to sort">🕒 Added <span id="bld-sort-time" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th>
@@ -2007,6 +2007,8 @@ function awdStockRow(r, cols) {
   if (!AWDSS.loaded) setTimeout(awdStockEnsure, 0);
   return '<tr class="awd-stock-tr"><td></td><td colspan="' + (cols - 1) + '" style="padding-top:0;border-top:none">' + awdStockLine(r) + '</td></tr>';
 }
+// a SKU's ASIN: from its row, else from the loaded Amazon reports (a manually added SKU / an older saved shipment has none on the row)
+function bldAsin(sku,item){ const a=item&&item.row&&item.row.asin; if(a) return String(a); const j=(S.joined||[]).find(r=>String(r.sku).toUpperCase()===String(sku).toUpperCase()); return j&&j.asin?String(j.asin):''; }
 function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -2014,7 +2016,8 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
-  let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  // 🔎 Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also" — ASIN column + filter by ASIN too
+  let filt=items.filter(([sku,item])=>!q||sku.toLowerCase().includes(q)||bldAsin(sku,item).toLowerCase().includes(q));
   if(_bldSortDir!==0) filt=filt.slice().sort(_bldSortKey==='time'
     ? ([a,x],[b,y])=>_bldSortDir*(String(x.addedAt||'').localeCompare(String(y.addedAt||''))||a.localeCompare(b)) // no time (put in before 10-24) = oldest
     : ([a],[b])=>_bldSortDir*a.localeCompare(b));
@@ -2078,6 +2081,7 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
 
     return`<tr>
       <td class="sku">${sku}${stockWarning ? `<div style="font-size:10px;color:#C2410C;font-weight:600;margin-top:2px">${stockWarning}</div>` : ''}</td>
+      <td class="bld-asin" style="font-family:monospace;font-size:12px;white-space:nowrap">${bldAsin(sku,item)?`<a href="https://www.amazon.com/dp/${encodeURIComponent(bldAsin(sku,item))}" target="_blank" rel="noopener" style="color:var(--blue,#2563eb)" title="Open on Amazon">${bldAsin(sku,item).replace(/[<>&"]/g,'')}</a>`:'<span style="color:var(--gray-400)">—</span>'}</td>
       <td style="font-size:12px;color:var(--gray-600);min-width:170px;max-width:280px" title="${r.name||''}">${awdNameCell(r)}</td>
       <td class="r">${db(r.netDays)}</td>
       <td class="r">${fn(r.recSend)}</td>
@@ -2090,7 +2094,7 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
       <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>${awdStockRow(r, 9)}`;
+    </tr>${awdStockRow(r, 10)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
