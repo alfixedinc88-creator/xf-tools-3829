@@ -1833,7 +1833,17 @@ async function awdBoxPallet(request, url, env, session) {
     const ss = t(url.searchParams.get('sscc'), 20).replace(/\D/g, '').slice(-18);
     if (ss) { const x = await latest('sscc = ?', ss); return J({ ok: true, box: x.by[ss] || null, history: x.rows }); }
     let sh = t(url.searchParams.get('shipment'), 60);
-    if (!sh && url.searchParams.get('latest')) { const l = await env.DB.prepare('SELECT shipment FROM awd_box_scan ORDER BY id DESC LIMIT 1').first().catch(() => null); sh = l ? l.shipment : ''; if (!sh) return J({ ok: true, shipment: null }); }
+    // 📜 Owner (2026-11-18): "this shipment we have already finished, how can I move that to history — not showing up here anymore, don't want the
+    // front page showing too much". ?latest=1 = the newest shipment with box scans that is NOT ✅ Done (done after its last box scan); a ✅ Done
+    // one stays in 🕘 Shipment history (and ?shipment= still opens it).
+    if (!sh && url.searchParams.get('latest')) {
+      const cand = ((await env.DB.prepare('SELECT shipment, MAX(id) AS last_id, MAX(at) AS last_at FROM awd_box_scan GROUP BY shipment ORDER BY last_id DESC LIMIT 20').all().catch(() => ({ results: [] }))).results || []);
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS awd_ship_done (id INTEGER PRIMARY KEY AUTOINCREMENT, shipment TEXT, action TEXT, at TEXT, by_user TEXT)').run().catch(() => {});
+      const done = {}; ((await env.DB.prepare('SELECT shipment, action, at, by_user FROM awd_ship_done ORDER BY id').all().catch(() => ({ results: [] }))).results || []).forEach(r => { done[r.shipment] = r; });
+      const open = cand.find(c => { const d = done[c.shipment]; return !(d && d.action === 'done' && String(d.at) >= String(c.last_at || '')); });
+      sh = open ? open.shipment : '';
+      if (!sh) return J({ ok: true, shipment: null, finished: cand.filter(c => done[c.shipment] && done[c.shipment].action === 'done').slice(0, 5).map(c => ({ shipment: c.shipment, at: done[c.shipment].at, by: done[c.shipment].by_user })) });
+    }
     // ⚡ Owner (2026-10-28): "after we scan the Amazon label, then the outside box UPC, it takes a while … with many boxes we wait for each one".
     // ?open=SSCC → in ONE answer: the label, its SKU's boxes, the barcodes that are that item (outside box / inside bag UPC) and its pieces
     // a case — the phone checks every box with no more trips to the server.
