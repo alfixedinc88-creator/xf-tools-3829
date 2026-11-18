@@ -988,6 +988,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     </div>
 
     <div class="page" id="page-builder">
+      <!-- 📦 Owner (2026-11-18): two builders — e.g. one shipment to AWD and one straight to FBA, at the same time -->
+      <div id="awd-bld-tabs" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>
       <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here, or add one manually.</p><br><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button><button class="btn btn-secondary" onclick="bldShowManualAdd()">&#65291; Add SKU Manually</button></div></div>
       <div id="bld-body" style="display:none">
         <div class="bld-layout">
@@ -1037,7 +1039,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
               </div>
             </div>
             <div class="card"><div class="card-body">
-              <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01"></div>
+              <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01" oninput="awdBldName(this.value)"></div>
               <button class="btn btn-success" style="width:100%;justify-content:center;margin-bottom:6px" onclick="exportShipment('txt')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .txt
               </button>
@@ -1275,6 +1277,11 @@ function saveSettings(){
 
 // ── STATE ──
 const S={fba:[],live:[],awd:[],res:[],inb:[],inbCount:{},joined:[],cpackMap:{},cpackDate:null,cpackCount:0,shipment:{},loaded:false};
+// 📦 Owner (2026-11-18): "my AWD shipment builder already has 109 items, I don't want to delete all — I need one more tab, builder 2, so I can do
+// a second shipment at the same time: one to ship directly to FBA and one to AWD". Two builders, each with its own items, name and where it
+// ships to (AWD / FBA direct). S.shipment is always the builder on screen (every screen keeps working the same); both are saved together.
+const AWD_BUILDERS = 2;
+S.builders = { 1: S.shipment, 2: {} }; S.bMeta = { 1: { name: '', dest: 'AWD' }, 2: { name: '', dest: 'FBA' } }; S.bActive = 1;
 
 // ── FILE UPLOAD ──
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
@@ -1613,6 +1620,7 @@ function visRecs(){
 
 // 🕘 Owner (2026-10-27): every thing done in the Shipment Builder is kept (who = this sign-in, when = now) → 🕘 History (Admin only).
 function awdAct(action, detail) {
+  if (/^builder_|^make_template/.test(action) && detail && typeof detail === 'object' && S && S.bActive) detail = Object.assign({ builder: S.bActive }, detail); // 📦 which builder
   try { wFetch(W + '/awd/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, detail: detail || {}, _requestId: 'awdact-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })
     .then(r => r.json()).then(d => { if (action === 'label_print' && d && d.ok) awdPrintMarks(); }).catch(() => {}); } catch (e) {}
 }
@@ -1645,7 +1653,7 @@ function findRow(sku){
 function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0,addedAt:new Date().toISOString()};if(!S._quiet&&typeof awdAct==='function')awdAct('builder_add',{sku:row.sku,qty:row.recSend||0});saveShipmentToSheet();} // 🕒 when it was put in (owner 2026-10-24)
 
 function removeSku(sku){if(S.shipment[sku]&&typeof awdAct==='function')awdAct('builder_remove',{sku,qty:S.shipment[sku].qty});delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
-function clearBuilder(){if(!Object.keys(S.shipment).length)return;if(typeof awdAct==='function')awdAct('builder_clear',{n:Object.keys(S.shipment).length,skus:Object.keys(S.shipment).slice(0,60)});S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
+function clearBuilder(){if(!Object.keys(S.shipment).length)return;if(typeof awdAct==='function')awdAct('builder_clear',{n:Object.keys(S.shipment).length,skus:Object.keys(S.shipment).slice(0,60)});S.shipment={};S.builders[S.bActive]=S.shipment;updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();awd_planner_toast('Cleared');}
 function updQty(sku,v){if(!S.shipment[sku])return;const q0=S.shipment[sku].qty;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);if(typeof awdActQty==='function')awdActQty(sku,q0,S.shipment[sku].qty);updateSummary();saveShipmentToSheet();var fw=ge('bld-fam-warn');if(fw)fw.innerHTML=awdFamWarnHtml();}
 
 // ── MANUAL ADD TO BUILDER ──
@@ -1878,9 +1886,11 @@ function awdPlanNote(r) {
 // Builder: per part, the pieces this shipment takes (every size: qty × the pack after "=") vs what we have / can spare.
 function awdFamUse() {
   var c = awdPlanCfg(), use = {};
-  Object.keys(S.shipment || {}).forEach(function(sku) { var it = S.shipment[sku], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
+  // 📦 both builders come off the same shelves → the other builder's pieces count too (marked "B2" / "B1"), never as free stock twice
+  var all = Object.keys(S.shipment || {}).map(function(k) { return [k, S.shipment[k], 0]; }).concat(typeof awdOtherBuilders === 'function' ? awdOtherBuilders() : []);
+  all.forEach(function(x) { var sku = x[0], it = x[1], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
     var cp = S.cpackMap[String(sku).toUpperCase()], q = cp && cp.unitsPerBox > 0 ? Math.ceil(it.qty / cp.unitsPerBox) * cp.unitsPerBox : it.qty, pk = o.pack || awdPackOf(sku);
-    var u = use[o.fam] = use[o.fam] || { fam: o.fam, pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push(sku.split('=').slice(1).join('=') + ' ' + q + (pk > 1 ? '×' + pk : '')); });
+    var u = use[o.fam] = use[o.fam] || { fam: o.fam, pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push((x[2] ? 'B' + x[2] + ': ' : '') + sku.split('=').slice(1).join('=') + ' ' + q + (pk > 1 ? '×' + pk : '')); });
   return Object.keys(use).map(function(f) { var F = AWDSS.fams[f] || {}, u = use[f], reserve = Math.ceil((F.otherDailyPcs || 0) * c.keepDays);
     return { fam: f, pcs: u.pcs, parts: u.parts, shelf: F.shelfPcs || 0, reserve: reserve, spare: Math.max(0, (F.shelfPcs || 0) - reserve), keepDays: c.keepDays }; });
 }
@@ -1890,9 +1900,10 @@ function awdFamUse() {
 // (each size's qty, rounded up to whole boxes when it has a case pack — the same as the builder's export), with which sizes.
 function awdFamInBuilder() {
   var by = {};
-  Object.keys(S.shipment || {}).forEach(function(sku) { var it = S.shipment[sku], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
+  var all = Object.keys(S.shipment || {}).map(function(k) { return [k, S.shipment[k], 0]; }).concat(typeof awdOtherBuilders === 'function' ? awdOtherBuilders() : []); // 📦 both builders
+  all.forEach(function(x) { var sku = x[0], it = x[1], o = AWDSS.rows[String(sku).toUpperCase()]; if (!o || !o.fam || !(it.qty > 0)) return;
     var cp = S.cpackMap[String(sku).toUpperCase()], q = cp && cp.unitsPerBox > 0 ? Math.ceil(it.qty / cp.unitsPerBox) * cp.unitsPerBox : it.qty, pk = o.pack || awdPackOf(sku);
-    var u = by[o.fam] = by[o.fam] || { pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push({ sku: sku, qty: q, pk: pk }); });
+    var u = by[o.fam] = by[o.fam] || { pcs: 0, parts: [] }; u.pcs += q * pk; u.parts.push(x[2] ? { sku: sku, qty: q, pk: pk, builder: x[2] } : { sku: sku, qty: q, pk: pk }); });
   return by;
 }
 // Under Net Days: FBA only (no AWD) and Amazon's own days of supply; under Daily Sales: which pace is used (30 days vs 90 days).
@@ -1919,7 +1930,7 @@ function awdRecStockCells(r) {
   var u = b[o.fam], over = u && u.pcs > all;
   var stock = '<td class="r awd-rec-stock"><b>' + fn(all) + '</b> pcs<div style="font-size:10px;color:var(--gray-500)">' + awdH(o.fam) + (all !== (o.shelfPcs || 0) ? ' · this size ' + fn(o.shelfPcs || 0) : '') + '</div></td>';
   var inB = '<td class="r awd-rec-inb"' + (over ? ' style="background:#FEF2F2"' : '') + '>' + (u ? '<b style="color:' + (over ? 'var(--red)' : '#1A56DB') + '">' + fn(u.pcs) + '</b> pcs'
-    + '<div style="font-size:10px;color:var(--gray-500);white-space:normal">' + u.parts.map(function(x) { var sz = x.sku.split('=').slice(1).join('=') || x.sku; return awdH((x.sku === r.sku ? '▶ ' : '') + '=' + sz + ' ' + fn(x.qty) + (x.pk > 1 ? '×' + x.pk : '')); }).join(' · ') + '</div>'
+    + '<div style="font-size:10px;color:var(--gray-500);white-space:normal">' + u.parts.map(function(x) { var sz = x.sku.split('=').slice(1).join('=') || x.sku; return awdH((x.builder ? 'B' + x.builder + ' ' : '') + (x.sku === r.sku ? '▶ ' : '') + '=' + sz + ' ' + fn(x.qty) + (x.pk > 1 ? '×' + x.pk : '')); }).join(' · ') + '</div>'
     + (over ? '<div style="font-size:10px;color:var(--red);font-weight:700">more than in stock</div>' : '') : '<span style="color:var(--gray-400)">0</span>') + '</td>';
   return stock + inB;
 }
@@ -1928,7 +1939,7 @@ function awdFamWarnHtml() {
   var bad = awdFamUse().filter(function(u) { return u.pcs > u.spare; });
   if (!bad.length) return '';
   return '<div class="awd-fam-warn" style="border:1.5px solid var(--red);background:#FEF2F2;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#7F1D1D">'
-    + bad.map(function(u) { return '⚠ <b>' + awdH(u.fam) + '</b>: this shipment takes <b>' + fn(u.pcs) + ' pcs</b> (' + u.parts.map(awdH).join(' · ') + ') but ' + (u.pcs > u.shelf ? 'we only have <b>' + fn(u.shelf) + ' pcs</b> on the shelf'
+    + bad.map(function(u) { return '⚠ <b>' + awdH(u.fam) + '</b>: ' + (u.parts.some(function(p) { return /^B\d/.test(p); }) ? 'the 2 builders together take' : 'this shipment takes') + ' <b>' + fn(u.pcs) + ' pcs</b> (' + u.parts.map(awdH).join(' · ') + ') but ' + (u.pcs > u.shelf ? 'we only have <b>' + fn(u.shelf) + ' pcs</b> on the shelf'
         : 'we only have <b>' + fn(u.shelf) + ' pcs</b> and keep ' + fn(u.reserve) + ' for our other channels (' + u.keepDays + ' days) → <b>' + fn(u.spare) + ' pcs</b> to send') + ' — lower it'; }).join('<br>') + '</div>';
 }
 function awdPackOf(sku) { var m = String(sku || '').split('=').pop().trim().match(/^(\d+)/); return m ? parseInt(m[1], 10) || 1 : 1; }
@@ -1967,7 +1978,7 @@ function awdStockRow(r, cols) {
   if (!AWDSS.loaded) setTimeout(awdStockEnsure, 0);
   return '<tr class="awd-stock-tr"><td></td><td colspan="' + (cols - 1) + '" style="padding-top:0;border-top:none">' + awdStockLine(r) + '</td></tr>';
 }
-function renderBuilder(){
+function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
   ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
@@ -3652,6 +3663,7 @@ function renderRecs() {
         ${inB
           ? `<button class="btn btn-sm btn-secondary" onclick="removeSku('${esc(r.sku)}')">Remove</button>`
           : `<button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button>`}
+        ${awdOtherBuilders().filter(x => x[0] === r.sku).map(x => '<div class="awd-in-other" style="font-size:10px;color:#7C3AED;font-weight:700">📦 in Builder ' + x[2] + ' (' + fn(x[1].qty) + ')</div>').join('')}
         &nbsp;${discBtn}
       </td>
     </tr>${awdStockRow(r, 15)}`;
@@ -3844,6 +3856,35 @@ function renderDiscontinuedPanel() {
 }
 
 
+// ── 📦 BUILDER 1 / BUILDER 2 (owner 2026-11-18) ──
+function awdBldDefaultName(b) { b = b || S.bActive; const m = S.bMeta[b] || {}; return m.name || (b === 1 ? 'AWD shipment' : (m.dest === 'FBA' ? 'FBA shipment' : 'AWD shipment') + ' ' + b); }
+function awdBldTabs() {
+  const box = ge('awd-bld-tabs'); if (!box || typeof box.appendChild !== 'function' && box.innerHTML === undefined) return;
+  const h = v => String(v == null ? '' : v).replace(/[<&"]/g, ''); let html = '';
+  for (let b = 1; b <= AWD_BUILDERS; b++) {
+    const n = Object.keys(S.builders[b] || {}).length, on = b === S.bActive, m = S.bMeta[b] || {};
+    html += '<button type="button" class="btn btn-sm ' + (on ? 'btn-primary' : 'btn-secondary') + ' awd-bld-tab" onclick="awdBldSwitch(' + b + ')" style="font-weight:700">📦 Builder ' + b
+      + ' · ' + (m.dest === 'FBA' ? '🚚 FBA direct' : '🏭 AWD') + (m.name ? ' · ' + h(m.name) : '') + ' <span style="opacity:.8">(' + n + ' SKU' + (n === 1 ? '' : 's') + ')</span></button>';
+  }
+  const m = S.bMeta[S.bActive] || {};
+  html += '<span style="font-size:12px;color:var(--gray-500)">Builder ' + S.bActive + ' ships to:</span><select class="cfg-inp awd-bld-dest" style="width:auto;padding:4px 8px" onchange="awdBldDest(this.value)">'
+    + '<option value="AWD"' + (m.dest !== 'FBA' ? ' selected' : '') + '>🏭 AWD</option><option value="FBA"' + (m.dest === 'FBA' ? ' selected' : '') + '>🚚 FBA direct</option></select>'
+    + '<span style="font-size:11px;color:var(--gray-500)">Recommendations "+ Add" goes into the builder on screen. Each builder exports / sends on its own — give each its own Shipment Name.</span>';
+  box.innerHTML = html;
+}
+function awdBldSwitch(b) {
+  if (b === S.bActive || b < 1 || b > AWD_BUILDERS) return;
+  S.builders[S.bActive] = S.shipment; S.bActive = b; S.shipment = S.builders[b] = S.builders[b] || {};
+  const nm = ge('ship-name'); if (nm) nm.value = (S.bMeta[b] || {}).name || '';
+  const so = ge('awd-send-so-out'); if (so) so.innerHTML = '';
+  awdBldTabs(); updateBadges(); renderRecs(); renderBuilder();
+  awd_planner_toast('📦 Builder ' + b + ' (' + ((S.bMeta[b] || {}).dest === 'FBA' ? 'FBA direct' : 'AWD') + ')');
+}
+function awdBldName(v) { S.bMeta[S.bActive] = Object.assign({}, S.bMeta[S.bActive], { name: String(v || '').trim().slice(0, 60) }); awdBldTabs(); saveShipmentToSheet(); }
+function awdBldDest(v) { S.bMeta[S.bActive] = Object.assign({}, S.bMeta[S.bActive], { dest: v === 'FBA' ? 'FBA' : 'AWD' }); if (typeof awdAct === 'function') awdAct('builder_dest', { builder: S.bActive, dest: v }); awdBldTabs(); saveShipmentToSheet(); }
+// Pieces of the same part already in the OTHER builder (both shipments come off the same shelves — never counted as free twice)
+function awdOtherBuilders() { const o = []; for (let b = 1; b <= AWD_BUILDERS; b++) if (b !== S.bActive) Object.keys(S.builders[b] || {}).forEach(k => o.push([k, S.builders[b][k], b])); return o; }
+
 // ── SHIPMENT BUILDER PERSISTENCE ──
 var _shipmentSaveTimer = null;
 function saveShipmentToSheet() {
@@ -3851,21 +3892,19 @@ function saveShipmentToSheet() {
   clearTimeout(_shipmentSaveTimer);
   _shipmentSaveTimer = setTimeout(async function() {
     try {
-      const items = Object.entries(S.shipment);
-      if (!items.length) {
-        // Clear the sheet
-        await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
-          method: 'PUT', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({values: [['sku','qty','added']]})
-        });
-        return;
-      }
-      const values = [['sku','qty','added'], ...items.map(([sku,i]) => [sku, i.qty, i.addedAt || ''])];
+      // 📦 both builders in one list: builder 1's rows as before (sku, qty, added); builder 2's rows carry "2" in the 4th column;
+      // each builder's name / ships-to on a "#B" row (skipped as a SKU when read).
+      S.builders[S.bActive] = S.shipment;
+      const items = [];
+      for (let b = 1; b <= AWD_BUILDERS; b++) Object.entries(S.builders[b] || {}).forEach(([sku, i]) => items.push([sku, i, b]));
+      const meta = [];
+      for (let b = 1; b <= AWD_BUILDERS; b++) { const m = S.bMeta[b] || {}; if (b > 1 || m.name || m.dest !== 'AWD') meta.push(['#B' + b, '', m.name || '', String(b), m.dest || '']); }
+      const values = [['sku','qty','added','builder'], ...items.map(([sku,i,b]) => b === 1 ? [sku, i.qty, i.addedAt || ''] : [sku, i.qty, i.addedAt || '', String(b)]), ...meta];
       await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
       });
-      console.log('[XFITTING] Shipment saved:', items.length, 'SKUs');
+      console.log('[XFITTING] Shipments saved:', items.length, 'SKUs in', AWD_BUILDERS, 'builders');
     } catch(e) { console.error('[XFITTING] saveShipmentToSheet:', e); }
   }, 1000);
 }
@@ -3881,12 +3920,17 @@ async function loadShipmentFromSheet() {
       const sku = String(row[0]||'').trim();
       const qty = parseInt(row[1]) || 0;
       if (!sku || sku === 'sku') return;
+      const b = Math.min(AWD_BUILDERS, Math.max(1, parseInt(row[3]) || 1));
+      if (/^#B\d+$/.test(sku)) { const mb = parseInt(sku.slice(2)); if (mb >= 1 && mb <= AWD_BUILDERS) S.bMeta[mb] = { name: String(row[2] || '').trim(), dest: String(row[4] || '').trim() || (mb === 1 ? 'AWD' : 'FBA') }; return; }
       const r = findRow(sku);
       if (r) {
-        S.shipment[sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
+        S.builders[b][sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
         loaded++;
       }
     });
+    S.shipment = S.builders[S.bActive];
+    const nm = ge('ship-name'); if (nm && !nm.value) nm.value = (S.bMeta[S.bActive] || {}).name || '';
+    awdBldTabs();
     if (loaded > 0) {
       updateBadges(); renderBuilder();
       console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
@@ -4082,7 +4126,7 @@ function awdSendLines() {
 async function awdSendToStockOut() {
   const out = ge('awd-send-so-out'), lines = awdSendLines(), h = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   if (!lines.length) { awd_planner_toast('No units staged', 'error'); return; }
-  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD shipment';
+  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || awdBldDefaultName();
   const units = lines.reduce((a, x) => a + x.units, 0), boxes = lines.reduce((a, x) => a + x.boxes, 0), noBox = lines.filter(x => !x.boxes).length;
   if (!confirm('📤 Send "' + name + '" to Stock Out Big Company?\n\n' + lines.length + ' SKUs · ' + units + ' units' + (boxes ? ' · ' + boxes + ' boxes' : '') + (noBox ? '\n(' + noBox + ' SKU with no case pack — counted in units only)' : '')
     + '\n\nThe floor sees what to grab, by location (Stock Out Big Company → 📦 AWD shipments ready), together with the other shipments sent and not ✅ Done yet. Sending the same name again replaces that one.')) return;
@@ -4229,7 +4273,7 @@ function exportShipment(format) {
             hasCP?cp.weightLb:'', '','',''];
   });
 
-  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD_Shipment';
+  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || awdBldDefaultName().replace(/ /g, '_');
   const allRows = [...headerRows, ...dataRows];
   const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
   awdHistSave(name, format, items); // 🕘 kept in History (when, who, what)
