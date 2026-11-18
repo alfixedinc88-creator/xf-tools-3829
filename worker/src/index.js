@@ -11236,6 +11236,8 @@ const _app = {
     // 📭 What happened to an item Amazon never received: { key, decision: 'not-shipped' | 'shipped' | null } — who / when kept, for everyone.
     // 🚚 Owner (2026-11-18): "I want we able to click confirm to sent it from our AWD to our FBA right on our app, select and sent"
     if (url.pathname === '/awd/replenish' && method === 'POST') return await awdReplenish(request, env, session);
+    if (url.pathname === '/awd/shipment-snap' && method === 'POST') return await awdShipSnap(request, env, session);
+    if (url.pathname === '/awd/shipment-snaps' && method === 'GET') return await awdShipSnaps(url, env, session);
     if (url.pathname === '/awd/replenish-list' && method === 'GET') return await awdReplenishList(url, env, session);
     if (url.pathname === '/awd/not-received' && method === 'POST') {
       const b = await request.json().catch(() => ({})), key = String(b.key || '').trim().slice(0, 120);
@@ -16769,6 +16771,32 @@ async function awdFbaLowRecord(env, st, fbaNow, inv, now) {
 // checked against what AWD has available NOW (Amazon's own number) — never asks for more. Every order is kept (awd_repl: who, when, what was
 // asked, Amazon's order #, status, what was eligible / shipped, why not) and its status is read again from Amazon when the list is opened.
 // Management only (Admin / Owner / Mgmt). Blocked in test mode. A repeated click / replayed request (_requestId) is sent once.
+// 🕘 Every save of the Shipment Builder (both builders) is kept (owner 2026-11-18: "builder 2 not save it down … i have 57 items there
+// already, now all gone") — who, when, how many SKUs in each builder, the whole list. The last 500 are kept; any one can be brought back.
+const AWD_SNAP_TABLE = 'CREATE TABLE IF NOT EXISTS awd_ship_snap (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, b1 INTEGER, b2 INTEGER, vals TEXT)';
+async function awdShipSnap(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session) return J({ ok: false, error: 'Sign in' }, 401);
+  const b = await request.json().catch(() => ({})); if (!Array.isArray(b.values)) return J({ ok: false, error: 'values needed' }, 400);
+  const vals = JSON.stringify(b.values.slice(0, 2000)); if (vals.length > 400000) return J({ ok: false, error: 'too big' }, 400);
+  await env.DB.prepare(AWD_SNAP_TABLE).run();
+  const last = await env.DB.prepare('SELECT vals FROM awd_ship_snap ORDER BY id DESC LIMIT 1').first();
+  const strip = v => { try { return JSON.stringify(JSON.parse(v).filter(r => r[0] !== '#V')); } catch (_) { return v; } };
+  if (last && strip(last.vals) === strip(vals)) return J({ ok: true, same: true }); // nothing changed since the last one
+  await env.DB.prepare('INSERT INTO awd_ship_snap (at, by_user, b1, b2, vals) VALUES (?,?,?,?,?)').bind(new Date().toISOString(), String(session.displayName || session.username || '?').slice(0, 40), +b.b1 || 0, +b.b2 || 0, vals).run();
+  await env.DB.prepare('DELETE FROM awd_ship_snap WHERE id NOT IN (SELECT id FROM awd_ship_snap ORDER BY id DESC LIMIT 500)').run();
+  return J({ ok: true });
+}
+async function awdShipSnaps(url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session) return J({ ok: false, error: 'Sign in' }, 401);
+  await env.DB.prepare(AWD_SNAP_TABLE).run();
+  const id = parseInt(url.searchParams.get('id'), 10);
+  if (id) { const r = await env.DB.prepare('SELECT * FROM awd_ship_snap WHERE id = ?').bind(id).first(); if (!r) return J({ ok: false, error: 'Not found' }, 404);
+    let values = []; try { values = JSON.parse(r.vals); } catch (_) {} return J({ ok: true, id: r.id, at: r.at, by: r.by_user, values }); }
+  const list = ((await env.DB.prepare('SELECT id, at, by_user AS by, b1, b2 FROM awd_ship_snap ORDER BY id DESC LIMIT 200').all()).results) || [];
+  return J({ ok: true, list });
+}
 const AWD_REPL_TABLE = 'CREATE TABLE IF NOT EXISTS awd_repl (id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT UNIQUE, order_id TEXT, by_user TEXT, at TEXT, items TEXT, status TEXT, detail TEXT, checked_at TEXT, error TEXT)';
 const AWD_REPL_FINAL = new Set(['SUCCESS', 'FAILURE', 'INELIGIBLE', 'CANCELLED', 'ERROR']);
 async function awdReplenish(request, env, session) {
