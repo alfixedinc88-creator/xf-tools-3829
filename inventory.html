@@ -8434,6 +8434,7 @@ window.invCredLogin = async function() {
     if (S.ok.length >= S.need) { // enough scanned already
       var it = S.item; it.scanVerified = true; it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED ' + S.ok.length + '/' + S.need + ' boxes ✓]';
       invPullScanClose(); invFlash('✓ All ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' scanned — ' + it.partNum + ' grabbed', 'success'); invTogglePullCheck(invPullList.indexOf(it));
+      invPspMaybe(it, S.need);
     }
   };
   window.invPullScanClose = function() { PSG = null; invModalClose('inv-psg-modal'); };
@@ -8460,6 +8461,7 @@ window.invCredLogin = async function() {
           it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[SCANNED ' + S.ok.length + '/' + S.need + ' boxes ✓' + (S.wrong ? ', ' + S.wrong + ' wrong scan' + (S.wrong === 1 ? '' : 's') + ' put back' : '') + ']';
           invPullScanClose(); invFlash('✓ All ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' scanned — ' + it.partNum + ' grabbed', 'success');
           invTogglePullCheck(invPullList.indexOf(it));
+          invPspMaybe(it, S.need);
         }
         return;
       }
@@ -8468,6 +8470,66 @@ window.invCredLogin = async function() {
       if (res) res.innerHTML = '<div style="padding:10px;border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800;font-size:15px">❌ WRONG BOX — don\'t grab it!'
         + '<div style="font-size:13px;font-weight:600;margin-top:4px">' + (got ? 'This box is <b style="font-family:var(--mono)">' + invEsc(got) + '</b>' + (sameItem ? ' (same item, <b>wrong bag size</b>)' : '') : 'This barcode is not a part # we know') + ' — you need <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> at ' + invEsc(it.location) + '. Put it back, check the label and scan the right box.</div></div>';
     });
+  };
+  // 🏷➡📦 Owner (2026-11-18): "for full case we grab at Stock Out Big Company, when we scan our box at the Pull List and it confirms the right
+  // box — for the full case we don't have to do anything (no relabel, no repack), all we do is put the Amazon label outside the box. Show an
+  // option to scan the Amazon label to make sure it's the right label, so they can put it directly on the pallet, like the Box check, and scan
+  // the pallet too, so we know which one we put on which pallet". After the boxes of a ✅ FULL CASE Big Company line are scanned: scan each box's
+  // AMAZON label (must be for this part #, not on a pallet yet) → scan the PALLET. Kept like 🔍 Box check (/awd/box-pallet: label on → on PALLET n,
+  // who / when), so the Box check tally, the pallet list and Stock Out's "already packed" all know. "⏸ Later" leaves it for 🔍 Box check.
+  var PSP = null; // { item, need, labels: [{ sscc, shipment, seq, part }], step: 'label' | 'pallet' }
+  function invPspMaybe(it, need) { if (it && it.dest === 'company' && it.awdKind === 'full') setTimeout(function() { window.invPspOpen(it, need); }, 250); }
+  function invPspRender(msg) {
+    var S = PSP; if (!S) return; var it = S.item, n = S.labels.length;
+    invModal('inv-psp-modal', '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:16px;color:var(--green)">✅ FULL CASE — Amazon label → pallet</b>'
+      + '<button type="button" onclick="invPspClose()" style="border:none;background:none;font-size:20px;cursor:pointer">✕</button></div>'
+      + '<div style="font-size:13px;margin-bottom:6px"><b style="font-family:var(--mono)">' + invEsc(it.forPart || it.partNum) + '</b> · ' + S.need + ' box' + (S.need === 1 ? '' : 'es') + ' — nothing to relabel or repack: put the Amazon label on the outside of each box.</div>'
+      + '<div id="inv-psp-step" style="font-size:15px;font-weight:800;margin:6px 0">' + (S.step === 'pallet' ? '2️⃣ Scan the PALLET (PALLET 1, 2, 3…) these ' + n + ' box' + (n === 1 ? '' : 'es') + ' go on'
+        : '1️⃣ Scan the AMAZON box label ' + (n + 1) + ' of ' + S.need) + '</div>'
+      + '<input id="inv-psp-inp" autocomplete="off" placeholder="' + (S.step === 'pallet' ? 'scan the PALLET label' : 'scan the Amazon box label') + '" style="width:100%;padding:10px;font-size:16px;border:2px solid var(--accent);border-radius:9px;box-sizing:border-box" onkeydown="if(event.key===\'Enter\'){event.preventDefault();invPspScan(this.value);this.value=\'\';}">'
+      + '<div id="inv-psp-res" style="margin-top:8px;min-height:20px">' + (msg || '') + '</div>'
+      + (S.labels.length ? '<div class="inv-psp-list" style="font-size:12px;color:var(--text2);margin-top:6px">🏷 ' + S.labels.map(function(l) { return 'Box ' + invEsc(l.seq || '?'); }).join(' · ') + '</div>' : '')
+      + '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'
+      + (S.step === 'label' && n ? '<button type="button" onclick="PSP.step=\'pallet\';invPspRender()" style="flex:1;padding:10px;border-radius:9px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:800;cursor:pointer">➡ Scan the PALLET now (' + n + ')</button>' : '')
+      + '<button type="button" onclick="invPspClose()" style="flex:1;padding:10px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);cursor:pointer">⏸ Later (🔍 Box check)</button></div>');
+    var i = g('inv-psp-inp'); if (i && i.focus) i.focus();
+  }
+  window.invPspOpen = function(it, need) { PSP = { item: it, need: Math.max(1, Math.round(need || parseFloat(it.cases) || 1)), labels: [], step: 'label' }; invPspRender(); };
+  window.invPspClose = function() {
+    var S = PSP; if (S && S.step === 'pallet' && S.labels.length && !confirm('⚠ ' + S.labels.length + ' box' + (S.labels.length === 1 ? ' has' : 'es have') + ' the Amazon label on but NO PALLET scanned.\n\nOK = close (they stay "labeled, waiting for a pallet" in 🔍 Box check)\nCancel = scan the PALLET now')) return;
+    PSP = null; invModalClose('inv-psp-modal');
+  };
+  window.invPspScan = function(v) {
+    var S = PSP; v = String(v || '').trim(); if (!S || !v) return;
+    var it = S.item, bad = function(h) { if (typeof invBeep === 'function') try { invBeep('error'); } catch (e) {} if (navigator.vibrate) navigator.vibrate([200, 80, 200]); invPspRender('<div style="padding:10px;border-radius:10px;background:var(--red-bg,#fdf0ee);color:var(--red);font-weight:800">' + h + '</div>'); };
+    var pal = invBcPalletNo(v);
+    if (S.step === 'pallet' || (pal && S.labels.length)) {
+      if (!pal) { bad('That is not a PALLET label — scan PALLET 1, 2, 3…'); return; }
+      var L = S.labels.slice();
+      L.reduce(function(pr, b) { return pr.then(function() { return invBcKeep(b.sscc, b, 'pallet', { pallet: pal, productPart: b.part, note: 'Pull List full case ' + (it.location || '') }); }); }, Promise.resolve()).then(function() {
+        it.scanNote = (it.scanNote ? it.scanNote + ' ' : '') + '[ON PALLET ' + pal + ': ' + L.length + ' Amazon box' + (L.length === 1 ? '' : 'es') + ' ' + L.map(function(b) { return b.seq; }).join(', ') + ']';
+        invSavePullList(); invRenderPullList();
+        PSP = null; invModalClose('inv-psp-modal');
+        invFlash('✅ ' + L.length + ' box' + (L.length === 1 ? '' : 'es') + ' of ' + (it.forPart || it.partNum) + ' on PALLET ' + pal, 'success');
+      });
+      return;
+    }
+    if (pal) { bad('Scan the AMAZON box label first, then the PALLET'); return; }
+    invPspRender('<span style="color:var(--text3)">⏳ checking the label…</span>');
+    wFetch(W + '/awd/box-pallet?open=' + encodeURIComponent(invBcSscc(v))).then(function(r) { return r.json(); }).then(function(d) {
+      if (PSP !== S) return;
+      var b = d && d.box; if (!b) { bad('⚠ This is not an Amazon box label the office saved — scan the Amazon label (the big box label)'); return; }
+      var want = invDashFix(it.forPart || it.partNum), got = invDashFix(b.part || b.sku);
+      if (got !== want) { bad('❌ WRONG LABEL — this Amazon label is for <span style="font-family:var(--mono)">' + invEsc(b.part || b.sku) + '</span>, not ' + invEsc(want) + '. Don\'t put it on this box.'); return; }
+      if (S.labels.some(function(x) { return x.sscc === b.sscc; })) { bad('This label is scanned already (Box ' + invEsc(b.seq || '') + ') — scan the next one'); return; }
+      var st = (d.boxes || []).find(function(x) { return x.sscc === b.sscc; }) || {};
+      if (st.kind === 'pallet') { bad('⚠ Box ' + invEsc(b.seq || '') + ' is already on PALLET ' + invEsc(st.pallet) + ' — take another label of ' + invEsc(want)); return; }
+      var box = { sscc: b.sscc, shipment: b.shipment || '', seq: b.seq || '', part: String(b.part || want).toUpperCase() };
+      S.labels.push(box);
+      invBcKeep(box.sscc, box, 'ok', { productPart: box.part, note: 'Pull List full case ' + (it.location || '') + ' — Amazon label on' });
+      if (S.labels.length >= S.need) S.step = 'pallet';
+      invPspRender('<div style="color:var(--green);font-weight:800">✓ Right label — Box ' + invEsc(box.seq) + ' · put it on the outside of the box' + (S.step === 'pallet' ? ' · now scan the PALLET' : '') + '</div>');
+    }).catch(function() { if (PSP === S) bad('📶 Could not check the label — check the WiFi and scan it again'); });
   };
   window.invPullScanSkip = function() {
     var S = PSG; if (!S || !invAwdIsAdmin()) return;
