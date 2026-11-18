@@ -14704,5 +14704,31 @@ console.log('\n🏷 FBA box labels: the box ID (FBA19X…U000041) is the box\'s 
   sq.exec("DELETE FROM awd_label_map WHERE shipment = 'FBAPSPT1'; DELETE FROM awd_box_scan WHERE shipment = 'FBAPSPT1'");
 }
 
+// Owner (2026-11-18, photo: FBA low — AWD has stock, 87 SKUs ticked → "❌ Not sent: At most 50 SKUs in one send"): "try to see why and fix".
+console.log('\n🚚 FBA low — AWD has stock: more than 50 SKUs ticked → sent as several Amazon orders of up to 50');
+{
+  const { readFileSync: rfL } = await import('node:fs');
+  const ah = rfL(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const src = ah.slice(ah.indexOf('var FL_SEND_MAX = 50;'), ah.indexOf('var FL_ST = {'));
+  const run = async (n, failAt) => {
+    const P = Array.from({ length: n }, (_, i) => ({ x: { r: { sku: 'S' + i }, awdLeft: 100 }, qty: 2, on: true }));
+    const els = {}, ge = id => els[id] || (els[id] = { textContent: '', disabled: false }), calls = [], FLSEL = {}; P.forEach(p => { FLSEL[p.x.r.sku] = { on: true, qty: 2 }; });
+    let alerted = '';
+    const w = {};
+    const f = new Function('window', 'flPicked', 'ge', 'navigator', 'confirm', 'alert', 'FLSEL', 'flReplLoad', 'renderFbaLow', 'updateBadges', 'wFetch', src + '; return window.flSend;')(w, () => P, ge, { onLine: true }, () => true, m => { alerted = m; }, FLSEL, async () => {}, () => {}, () => {},
+        async (u, o) => { const b = JSON.parse(o.body); calls.push(b); const k = calls.length; return { json: async () => k === failAt ? { ok: false, error: 'Amazon said no' } : { ok: true, orderId: 'ORD' + k } }; });
+    return { f, calls, els, FLSEL, alerted: () => alerted, ge };
+  };
+  const a = await run(87); await a.f({ disabled: false });
+  check('87 SKUs ticked → 2 Amazon orders: 50 + 37 SKUs, each with its own request # (never sent twice); every SKU sent once; all untick',
+    a.calls.length === 2 && a.calls[0].items.length === 50 && a.calls[1].items.length === 37 && a.calls[0]._requestId !== a.calls[1]._requestId
+      && new Set(a.calls.flatMap(c => c.items.map(i => i.sku))).size === 87 && !Object.keys(a.FLSEL).length && /order ORD1 \(50 SKUs[\s\S]*order ORD2 \(37 SKUs/.test(a.ge('fl-msg').textContent), a.calls.map(c => c.items.length));
+  const b = await run(87, 2); await b.f({ disabled: false });
+  check('…the 2nd order refused → the 1st is kept as sent, the 37 not sent stay ticked and are named ("press Send again")',
+    b.calls.length === 2 && Object.keys(b.FLSEL).length === 37 && /❌ 37 SKUs NOT sent: Amazon said no/.test(b.ge('fl-msg').textContent) && /order ORD1/.test(b.ge('fl-msg').textContent), b.ge('fl-msg').textContent);
+  const c = await run(30); await c.f({ disabled: false });
+  check('…30 SKUs → one order, as before', c.calls.length === 1 && c.calls[0].items.length === 30, c.calls.length);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
