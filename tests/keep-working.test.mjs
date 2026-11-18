@@ -8917,6 +8917,17 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// ✔ Owner (2026-11-18): "before I start to export as .txt I want I am able to click check box quantities, make sure our case pack unit per box is work with our send qty quantities"
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const src = ah.slice(ah.indexOf('function bldCheckRows() {'), ah.indexOf('window.bldCheckQty = function'));
+  const S = { shipment: { 'A=24': { qty: 50 }, 'B=10': { qty: 30 }, 'C=6': { qty: 12 }, 'D': { qty: 5 }, 'E=12': { qty: 0 } },
+    cpackMap: { 'A=24': { unitsPerBox: 24, lengthIn: 12, widthIn: 10, heightIn: 8, weightLb: 20 }, 'B=10': { unitsPerBox: 10, lengthIn: 30, widthIn: 10, heightIn: 8, weightLb: 55 }, 'C=6': { unitsPerBox: 6, lengthIn: 10, widthIn: 8, heightIn: 6 }, 'E=12': { unitsPerBox: 12, lengthIn: 9, widthIn: 9, heightIn: 9, weightLb: 9 } } };
+  const R = new Function('S', src + '; return bldCheckRows();')(S), g = k => R.find(x => x.sku === k);
+  check('✔ Shipment Builder → Check quantities (before Export): 50 with 24 a box → ⚠ not full boxes, the file would say 72 — fix ↓ 48 / ↑ 72; 30 with 10 a box fits; no template → ❌; qty 0 → ❌; missing weight, 55 lb, 30 in side → ⚠',
+    g('A=24').down === 48 && g('A=24').up === 72 && /would say 72 \(3 boxes\)/.test(g('A=24').issues[0].t) && g('B=10').up === null && g('B=10').issues.some(i => /over 50 lb/.test(i.t)) && g('B=10').issues.some(i => /over 25 in/.test(i.t))
+      && g('C=6').issues.length === 1 && /missing weight/.test(g('C=6').issues[0].t) && g('D').issues[0].bad && /No case pack template/.test(g('D').issues[0].t) && g('E=12').issues[0].bad && /qty is 0/.test(g('E=12').issues[0].t)
+      && /id="bld-check-btn"[^>]*onclick="bldCheckQty\(\)"/.test(ah) && ah.indexOf('id="bld-check-btn"') < ah.indexOf('onclick="exportShipment(\'txt\')"') && /window\.bldCheckFix = function \(sku, qty\) \{ if \(!S\.shipment\[sku\]\) return; updQty\(sku, qty\);/.test(ah), R);
+}
 // 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone"
 console.log('\n🛟 Shipment Builder: a save never wipes another screen\'s items; every save kept; ♻ bring back from the record');
 { const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
