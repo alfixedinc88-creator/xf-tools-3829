@@ -14404,6 +14404,37 @@ console.log('\n📜 Box check: a ✅ Done shipment moves to History — the card
   sq.exec("DELETE FROM awd_box_scan WHERE shipment IN ('STAR-OLDDONE','STAR-NEWFIN'); DELETE FROM awd_ship_done WHERE shipment IN ('STAR-OLDDONE','STAR-NEWFIN')");
 }
 
+console.log('\n🗂 AWD box labels: the ✅ Already packed list belongs to ONE shipment — another shipment moves it to History');
+{
+  // Owner (2026-11-18, a new shipment's label said "✅ PREVIOUS PACKED · Box 1-1"): "need to move the previous shipment to the history, it still have previous shipment record, there's no more 'previous packed'".
+  const { readFileSync: rfH } = await import('node:fs'); const ah = rfH(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const fns = ah.slice(ah.indexOf("const AWD_PREV_KEY = 'awd_prev_packed';"), ah.indexOf('function awdPrevParse(text)')) + ah.slice(ah.indexOf('function awdPrevParse(text)'), ah.indexOf('\n}\n', ah.indexOf('function awdPrevParse(text)')) + 3);
+  const block = ah.slice(ah.indexOf('    // 🗂 the ✅ Already packed list is for ONE shipment'), ah.indexOf("    out.innerHTML = '⏳ Reading our Amazon listings (Rule #1)…'"));
+  const run = (text, ship, labelShip, answer) => {
+    const store = { awd_prev_packed: text }; if (ship) store.awd_prev_packed_ship = ship;
+    const ls = { getItem: k => store[k] == null ? null : store[k], setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+    const ta = { value: text }, acts = [], asked = [];
+    const metas = [{ sku: '25-1-5=25X-', prevKey: '25-1-5=25X' }, { sku: '30-3-4=10X', prevKey: '' }];
+    const r = new Function('localStorage', 'ge', 'awdAct', 'awd_planner_toast', 'awdH', 'confirm', 'metas', 'shipId', 'metaTexts',
+      fns + '\nconst prev = awdPrevParse(ge("awd-prev-list").value);\n' + block + '\nreturn { prevNote };')(ls, id => id === 'awd-prev-list' ? ta : null, (a, d) => acts.push([a, d]), () => {}, v => String(v),
+      q => { asked.push(q); return answer; }, metas, labelShip.startsWith('box:') ? '' : labelShip, labelShip.startsWith('box:') ? ['FBA ' + labelShip.slice(4) + ' Single SKU'] : []);
+    r.store = store; return { r, ta, acts, asked, metas, hist: JSON.parse(store.awd_prev_hist || '[]') };
+  };
+  const other = run('25-1-5=25X\n', 'FBA19OLD0001', 'FBA19XPR747P');
+  check('labels of ANOTHER shipment (FBA19XPR747P; the list was for FBA19OLD0001) → no label says PREVIOUS PACKED, the list is emptied and kept in 🗂 History (when, which shipment, the list), said on the page',
+    other.metas.every(m => !m.prevKey) && other.ta.value === '' && other.hist.length === 1 && other.hist[0].shipment === 'FBA19OLD0001' && /25-1-5=25X/.test(other.hist[0].text) && /moved to History/.test(other.r.prevNote) && !other.asked.length
+      && other.acts.some(a => a[0] === 'prev_to_history'), { metas: other.metas, hist: other.hist, note: other.r.prevNote });
+  const same = run('25-1-5=25X\n', 'FBA19XPR747P', 'FBA19XPR747P');
+  check('…labels of the SAME shipment → the list is used (PREVIOUS PACKED stays), nothing asked', same.metas[0].prevKey === '25-1-5=25X' && same.ta.value !== '' && !same.hist.length && !same.asked.length, same.metas);
+  const oldNo = run('25-1-5=25X\n', '', 'FBA19XPR747P', false), oldYes = run('25-1-5=25X\n', '', 'FBA19XPR747P', true);
+  check('…a list typed before (no shipment on it) → asked once: Cancel = earlier shipment → moved to History, not used; OK = this shipment → used and remembered for it',
+    oldNo.asked.length === 1 && oldNo.metas.every(m => !m.prevKey) && oldNo.hist.length === 1 && oldYes.metas[0].prevKey === '25-1-5=25X' && oldYes.r.store.awd_prev_packed_ship === 'FBA19XPR747P', { no: oldNo.metas, yes: oldYes.r.store });
+  const boxOnly = run('25-1-5=25X\n', 'FBA19OLD0001', 'box:FBA19XPR747PU000041');
+  check('…a label with no "Shipment ID" line (only the box ID FBA19XPR747PU000041, like the owner\'s photo) → its shipment FBA19XPR747P is used: another shipment → moved to History, not used',
+    boxOnly.metas.every(m => !m.prevKey) && boxOnly.hist.length === 1 && /FBA19XPR747P\b/.test(boxOnly.r.prevNote), { note: boxOnly.r.prevNote });
+  check('…and a button "🗂 Done with this shipment — move the list to History", with the 🗂 History list under it', /onclick="awdPrevMoveNow\(\)">🗂 Done with this shipment — move the list to History/.test(ah) && /id="awd-prev-hist"/.test(ah), null);
+}
+
 // 🗄 Owner (2026-11-18): "we moved almost everything from our Google Sheet to our database — make sure everything is working fine,
 // not lost any data and not making any error". End to end, with Google counted: Stock In 50 + Stock Out 20 of a part with 2 spots
 // (and another pack size untouched) → SKU Mgr / History are in our database only, the numbers add up exactly, and not ONE
