@@ -14349,5 +14349,26 @@ console.log('\n📦 AWD Shipment Builder: Builder 1 + Builder 2 (e.g. AWD + FBA 
       && /\|\| awdBldDefaultName\(\);/.test(ah) && /id="awd-bld-tabs"/.test(ah) && /S\.shipment=\{\};S\.builders\[S\.bActive\]=S\.shipment;/.test(ah), run.tabs());
 }
 
+// Owner (2026-11-18): Builder 2 (FBA direct) "export as .xlsx" → Amazon's error report "J8 to K8 : 'Boxes per pallet' value missing …" on every row,
+// and Amazon's FBA template (ManifestFileUpload_Template_IncludeCasePack_IncludeExpirationDate_IncludeMLC_MPL.xlsx) attached.
+console.log('\n🚚 AWD Planner export: a builder that ships to FBA direct uses Amazon\'s FBA layout; AWD keeps the AWD layout');
+{
+  const { readFileSync: rfX } = await import('node:fs');
+  const ah = rfX(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const src = ah.slice(ah.indexOf('function exportShipment(format) {'), ah.indexOf('function doExportXLSX('));
+  const exp = dest => { let out = '';
+    const S = { shipment: { '30-3-4=10X': { qty: 25 }, '31-1-1=5': { qty: 7 } }, cpackMap: { '30-3-4=10X': { unitsPerBox: 10, lengthIn: 12, widthIn: 10, heightIn: 8, weightLb: 15 } }, bActive: 2, bMeta: { 2: { dest } } };
+    new Function('S', 'ge', 'awd_planner_toast', 'awdHistSave', 'awdUpcSync', 'awdBldDefaultName', 'fn', 'Blob', 'URL', 'document', src + '; exportShipment("txt");')(
+      S, () => ({ value: 'T' }), () => {}, () => {}, () => {}, () => 'X', x => String(x), function(parts) { out = parts.join(''); }, { createObjectURL: () => 'u', revokeObjectURL() {} }, { createElement: () => ({ click() {} }) });
+    return out.split('\r\n').map(l => l.split('\t')); };
+  const F = exp('FBA'), A = exp('AWD');
+  check('FBA direct: Amazon\'s FBA template exactly — header on row 8 (Merchant SKU · Quantity · Expiration date · Manufacturing lot code · Units per box · Number of boxes · L · W · H · weight), 10 columns, no pallet columns; items from row 9',
+    F[2][0] === 'Default prep owner' && F[3][0] === 'Default labeling owner' && F[6][4] === 'Optional: Use only for case-packed SKUs'
+      && F[7].join('|') === 'Merchant SKU|Quantity|Expiration date (MM/DD/YYYY)|Manufacturing lot code |Units per box |Number of boxes|Box length (in)|Box width (in)|Box height (in)|Box weight (lb)'
+      && F[8].join('|') === '30-3-4=10X|30|||10|3|12|10|8|15' && F[9].join('|') === '31-1-1=5|7||||||||' && F.every(r => r.length === 10) && !F.some(r => r.includes('Palletized?')), F);
+  check('…an AWD builder: the AWD layout as before (header row 7 with Palletized? / Boxes Per Pallet / Number of pallets, 12 columns; 25 → 3 boxes of 10 = 30)',
+    A[6].includes('Palletized?') && A[6].length === 12 && A[7][0] === '30-3-4=10X' && A[7][1] === '30' && A[7][4] === '3', A.slice(5, 9));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
