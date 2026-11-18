@@ -1007,6 +1007,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="fbar">
               <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKU / ASIN…" oninput="renderBuilder()"></div>
               <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
+              <button type="button" id="bld-amzbc-all" class="btn btn-sm btn-secondary" style="font-size:11px;padding:3px 8px" onclick="bldAmzSaveAll()" title="Save the 🏷 Amazon label choice of every listing here as shown (✓ = saved) — every screen follows it">💾 Save 🏷 Amazon label as shown</button>
               <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="bldShowManualAdd()">&#65291; Add SKU</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
             </div>
             <!-- ── MANUAL ADD PANEL ── -->
@@ -1035,7 +1036,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
               <div class="tw"><table><thead><tr>
                 <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th class="bld-asin-h">ASIN</th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
-                <th class="r">Case Pack / Export Qty</th><th>Label</th>
+                <th class="r">Case Pack / Export Qty</th><th>Label</th><th class="bld-amzbc-h" style="white-space:nowrap" title="✅ = the bags carry AMAZON's barcode (FNSKU) · ☐ = our own UPC. Ticking saves it for every screen (box labels, Stock Out, Reorder Planner)">🏷 Amazon label</th>
                 <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="bldToggleSort('time')" title="When this SKU was put in the shipment — tap to sort">🕒 Added <span id="bld-sort-time" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th>
                 <th></th>
               </tr></thead><tbody id="bld-tbody"></tbody></table></div>
@@ -2025,6 +2026,52 @@ function awdStockRow(r, cols) {
 }
 // a SKU's ASIN: from its row, else from the loaded Amazon reports (a manually added SKU / an older saved shipment has none on the row)
 function bldAsin(sku,item){ const a=item&&item.row&&item.row.asin; if(a) return String(a); const j=(S.joined||[]).find(r=>String(r.sku).toUpperCase()===String(sku).toUpperCase()); return j&&j.asin?String(j.asin):''; }
+// 🏷 Owner (2026-11-18): "I see the system make mistakes using the Amazon label or not — after I'm done adding the items to the builder, show
+// if that listing uses the Amazon label, we can check or uncheck it, and it auto saves so all of our systems know, even the Reorder Planner".
+// ✅ = the bags carry Amazon's barcode (FNSKU) · ☐ = our UPC. Saved per listing on the server (/inventory/amazon-barcode/choice): box labels,
+// Stock Out Big Company, UPC and the Reorder Planner all read it. Not saved yet = what the box labels would do now, in grey with "?".
+let AWD_AMZ_MAP = null, _awdAmzMapBusy = false;
+function bldAmzRec(sku) {
+  if (!AWD_AMZ_MAP) { if (!_awdAmzMapBusy) { _awdAmzMapBusy = true; Promise.all([awdAmzList(), awdAmzBcSet()]).then(([l, bcs]) => { AWD_AMZ_MAP = { list: l || [], bc: bcs }; _awdAmzMapBusy = false; renderBuilder(); }).catch(() => { _awdAmzMapBusy = false; }); } return null; }
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  return AWD_AMZ_MAP.list.find(x => n(x.sku) === n(sku)) || AWD_AMZ_MAP.list.find(x => n(x.part) === n(sku)) || { sku: n(sku) };
+}
+function bldAmzOn(sku, item) { // → { on, saved, by, at, guess }
+  const rec = bldAmzRec(sku); if (!rec) return null;
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, ''), asin = n(rec.asin || bldAsin(sku, item));
+  if (rec.choice) return { on: rec.barcode === 'amazon', saved: rec.choice.src === 'saved', by: rec.choice.by, at: rec.choice.at, list: rec.choice.src === 'list' };
+  const bc = AWD_AMZ_MAP.bc, on = bc ? (bc.has(n(sku)) || (asin && bc.has(asin)) || (rec.part && bc.has(n(rec.part)))) : rec.barcode === 'amazon';
+  return { on: !!on, saved: false, guessX0: /^X0/.test(rec.fnsku || '') };
+}
+function bldAmzCell(sku, item) {
+  const v = bldAmzOn(sku, item), e = x => String(x == null ? '' : x).replace(/[<&"']/g, '');
+  if (!v) return '<span style="color:var(--gray-400);font-size:11px">…</span>';
+  const tip = v.saved ? 'Saved by ' + e(v.by) + (v.at ? ' ' + e(new Date(v.at).toLocaleString()) : '') : v.list ? 'On the box-label list (' + e(v.by) + ')' : 'Not saved yet — this is what the box labels would do now' + (v.guessX0 ? ' (Amazon lists an X0… FNSKU for it — tick if the bags carry Amazon\'s barcode)' : '');
+  return '<label class="bld-amzbc-lbl" title="' + tip + '" style="font-size:11px;white-space:nowrap;cursor:pointer;color:' + (v.on ? '#B45309' : 'var(--gray-600)') + '"><input type="checkbox" class="bld-amzbc-cb" data-sku="' + e(sku) + '"' + (v.on ? ' checked' : '')
+    + ' onchange="bldAmzSet(this.dataset.sku,this.checked)"> ' + (v.on ? 'Amazon' : 'Our UPC') + (v.saved ? ' <span style="color:var(--green,#15803D)">✓</span>' : ' <span style="color:var(--gray-400)">?</span>') + '</label>';
+}
+async function bldAmzSave(items) {
+  const r = await wFetch(W + '/inventory/amazon-barcode/choice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items, _requestId: 'amzbc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }) }).then(x => x.json()).catch(() => null);
+  if (!r || !r.ok) { awd_planner_toast((r && r.error) || 'Not saved — check WiFi', 'error'); return false; }
+  const n = x => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/-+$/, '');
+  items.forEach(it => { let rec = AWD_AMZ_MAP && AWD_AMZ_MAP.list.find(x => n(x.sku) === n(it.sku)); if (!rec && AWD_AMZ_MAP) AWD_AMZ_MAP.list.push(rec = { sku: n(it.sku), asin: it.asin });
+    if (rec) { rec.barcode = it.amazon ? 'amazon' : 'maker'; rec.choice = { amazon: it.amazon, by: r.by, at: r.at, src: 'saved' }; } });
+  _awdAmzP = null; // box labels read the new choice
+  return true;
+}
+async function bldAmzSet(sku, on) {
+  const item = S.shipment[sku];
+  if (await bldAmzSave([{ sku, asin: bldAsin(sku, item), amazon: !!on }])) awd_planner_toast('🏷 ' + sku + ': ' + (on ? 'Amazon\'s barcode' : 'our UPC') + ' — saved for every screen');
+  renderBuilder();
+}
+async function bldAmzSaveAll() {
+  const rows = Object.entries(S.shipment).map(([sku, item]) => { const v = bldAmzOn(sku, item); return v && !v.saved ? { sku, asin: bldAsin(sku, item), amazon: v.on } : null; }).filter(Boolean);
+  if (!rows.length) { awd_planner_toast('Every listing here is saved already'); return; }
+  const na = rows.filter(x => x.amazon).length;
+  if (!confirm('💾 Save the 🏷 Amazon label choice of ' + rows.length + ' listing' + (rows.length === 1 ? '' : 's') + ' as shown?\n\n' + na + ' with Amazon\'s barcode · ' + (rows.length - na) + ' with our UPC\n\nEvery screen follows it (box labels, Stock Out Big Company, Reorder Planner).')) return;
+  if (await bldAmzSave(rows)) awd_planner_toast('💾 Saved ' + rows.length + ' listings');
+  renderBuilder();
+}
 function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -2108,9 +2155,10 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
       <td>${lPrefix
         ? `<button class="btn btn-sm btn-secondary" title="2/1 need label = 2 boxes already labeled, 1 box needs labels (made from another part # / bag size)" style="font-size:11px${lPrefix && lPrefix.includes('need label') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button> <button class="btn btn-sm btn-secondary awd-tpl-edit" title="See / edit this SKU's template" style="font-size:11px;padding:2px 6px${(AWD_DB.tpl || {})[normalizeAmazonSKU(sku).toUpperCase()] ? ';color:#7C3AED;border-color:#C4B5FD' : ''}" onclick="awdTplEdit('${esc(sku)}','${esc(lPrefix)}')">✏️</button>`
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
+      <td class="bld-amzbc">${bldAmzCell(sku,item)}</td>
       <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>${awdStockRow(r, 10)}`;
+    </tr>${awdStockRow(r, 11)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
@@ -2191,9 +2239,10 @@ function awdScanCode(sku, lines, amz, labelFn, amzBc) {
   // 🏷 Owner (2026-11-18): "we only have B07BCPX6Z5 and B07BN1HWTD using Amazon barcode, rest all using our own" — Amazon prints X0… on
   // its box labels for listings we pack with our own UPC too, so OUR list (ASIN or SKU, ✏️ on the label card) decides: on it → Amazon's
   // FNSKU (the one on the label, else the one on record); not on it → our UPC.
-  if (amzBc) {
-    const rec = (amz || []).find(x => n(x.sku) === n(sku) || n(x.part) === n(sku)) || {};
-    const on = amzBc.has(n(sku)) || (rec.asin && amzBc.has(n(rec.asin))) || (rec.part && amzBc.has(n(rec.part)));
+  const rec0 = (amz || []).find(x => n(x.sku) === n(sku)) || (amz || []).find(x => n(x.part) === n(sku)) || {};
+  if (amzBc || rec0.choice) { // ✅ / ☐ Amazon label saved for this listing (Shipment Builder) wins, then the owner's list
+    const rec = rec0;
+    const on = rec.choice ? rec.barcode === 'amazon' : (amzBc.has(n(sku)) || (rec.asin && amzBc.has(n(rec.asin))) || (rec.part && amzBc.has(n(rec.part))));
     if (on) { const fn = /^X0/i.test(labelFn || '') ? String(labelFn).toUpperCase() : rec.fnsku || (labelFn ? String(labelFn).toUpperCase() : ''); return fn ? { code: fn, kind: 'FNSKU' } : null; }
     const u0 = (lines || []).map(l => String(l).trim()).find(l => /^\d{8,14}$/.test(l));
     return u0 ? { code: u0, kind: 'UPC' } : null;
@@ -7268,6 +7317,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261118f"></script>
+<script src="xf-access.js?v=20261118g"></script>
 </body>
 </html>
