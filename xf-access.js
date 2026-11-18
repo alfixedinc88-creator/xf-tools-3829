@@ -49,6 +49,11 @@ document.addEventListener('input', function (e) {
         { key: 'clear', label: 'Clear Saved Data', sel: '#page-upload button[onclick="clearReportData()"]' } ] },
       { key: 'asin', label: '🔎 ASIN Lookup', sel: '#tab-asin' },
       { key: 'notrecv', label: '📭 Not Received', sel: '#tab-notrecv' },
+      { key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow', parts: [
+        { key: 'flcopy', label: '📋 Copy SKU + units to send', sel: '#fl-copy' },
+        { key: 'flsend', label: '🚚 Send ticked from AWD to FBA', sel: '#fl-send' },
+        { key: 'flsent', label: '🚚 Sent from AWD to FBA (list)', sel: '#fl-sent-card' },
+        { key: 'flrec', label: '📜 Record (sold out in FBA while AWD had stock)', sel: '#fl-rec' } ] },
       { key: 'history', label: '🕘 History (shipments exported)', sel: '#tab-history' },
       { key: 'dashboard', label: 'Dashboard', sel: '#tab-dashboard', parts: [
         { key: 'stats', label: 'Stats', sel: '#stats-grid' },
@@ -61,6 +66,8 @@ document.addEventListener('input', function (e) {
       { key: 'builder', label: 'Shipment Builder', sel: '#tab-builder', parts: [
         { key: 'bldtabs', label: '📦 Builder 1 / Builder 2 tabs (a 2nd shipment, e.g. FBA direct)', sel: '#awd-bld-tabs' },
         { key: 'addsku', label: '＋ Add SKU (manual)', sel: '#page-builder button[onclick="bldShowManualAdd()"], #bld-manual-panel' },
+        { key: 'bldrebuild', label: '♻ Bring back from the record', sel: '#awd-bld-rebuild' },
+        { key: 'bldsnaps', label: '🕘 Saved versions', sel: '#awd-bld-snaps-btn, #awd-bld-snaps' },
         { key: 'clearall', label: 'Clear All', sel: '#page-builder button[onclick="clearBuilder()"]' },
         { key: 'sendso', label: '📤 Send this shipment to Stock Out Big Company', sel: '#awd-send-so' },
         { key: 'boxlabels', label: '🏷 Add our template to Amazon box labels', sel: '#awd-lbl-card' },

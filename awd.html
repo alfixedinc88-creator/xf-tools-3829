@@ -801,6 +801,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Not Received
       <span class="tbadge" id="nr-badge" style="display:none;background:var(--red)">0</span>
     </div>
+    <div class="tab" onclick="awd_switchTab('fbalow')" id="tab-fbalow">🚨 FBA low — AWD has stock
+      <span class="tbadge" id="fl-badge" style="display:none;background:var(--red)">0</span>
+    </div>
     <div class="tab" onclick="awd_switchTab('asin')" id="tab-asin">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>ASIN Lookup
     </div>
@@ -990,12 +993,19 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="page" id="page-builder">
       <!-- 📦 Owner (2026-11-18): two builders — e.g. one shipment to AWD and one straight to FBA, at the same time -->
       <div id="awd-bld-tabs" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"></div>
+      <!-- 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone" -->
+      <div id="awd-bld-safe" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:12px">
+        <span id="awd-bld-savestate" style="color:var(--gray-500)"></span>
+        <button type="button" class="btn btn-sm btn-secondary" id="awd-bld-rebuild" onclick="awdBldRebuild()" title="Builds this builder again from the record of every add / remove / qty change (Admin / Owner)">♻ Bring back from the record</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="awd-bld-snaps-btn" onclick="awdBldSnaps()" title="Every save of the Shipment Builder is kept — bring one back">🕘 Saved versions</button>
+      </div>
+      <div id="awd-bld-snaps" style="display:none;margin-bottom:10px"></div>
       <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here, or add one manually.</p><br><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button><button class="btn btn-secondary" onclick="bldShowManualAdd()">&#65291; Add SKU Manually</button></div></div>
       <div id="bld-body" style="display:none">
         <div class="bld-layout">
           <div>
             <div class="fbar">
-              <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKUs…" oninput="renderBuilder()"></div>
+              <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKU / ASIN…" oninput="renderBuilder()"></div>
               <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
               <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="bldShowManualAdd()">&#65291; Add SKU</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
             </div>
@@ -1023,7 +1033,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
               <div class="tw"><table><thead><tr>
-                <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th>Product</th>
+                <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th class="bld-asin-h">ASIN</th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
                 <th class="r">Case Pack / Export Qty</th><th>Label</th>
                 <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="bldToggleSort('time')" title="When this SKU was put in the shipment — tap to sort">🕒 Added <span id="bld-sort-time" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th>
@@ -1112,6 +1122,30 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Items we shipped to FBA or AWD where everything else in the shipment was received (or Amazon closed it) but this item is still short <b>10+ days</b> later.
           They are <b>no longer counted</b> as stock in FBA / AWD, so the recommendations ask you to ship more. Tap what happened.</p>
         <div id="nr-out"></div>
+      </div>
+    </div>
+
+    <!-- 🚨 Owner (2026-11-18): "a lot of the listing we already sold out of in FBA, but we still have some in our AWD, it just never get auto ship
+         it to our FBA — design something for it, so we can keep eyes on it and make it not to run out in FBA" -->
+    <div class="page" id="page-fbalow">
+      <div style="max-width:1200px">
+        <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">🚨 FBA low — AWD has stock</h2>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:10px">Every FBA listing that is <b>sold out</b> or <b>running out</b> in FBA while <b>AWD has units it could send now</b> —
+          sold out first. <b>Send from AWD</b> = enough for the days below (minus what FBA has and what AWD is already sending), never more than AWD has.
+          <b>To send:</b> tick the rows (change the units if you like) → <b>🚚 Send ticked from AWD to FBA</b> → confirm. Amazon checks it and ships it from AWD to FBA; each send is kept below with its Amazon status.
+          (Or Seller Central → Inventory → AWD → Replenish to FBA with 📋 Copy, and turn on <b>auto-replenishment</b> for SKUs that keep showing up.)</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
+          <label>Warn when FBA has less than <input type="number" id="fl-days" class="cfg-inp" style="width:64px" value="14" min="1" onchange="flSave();renderFbaLow()"> days</label>
+          <label>Send enough for <input type="number" id="fl-cover" class="cfg-inp" style="width:64px" value="30" min="1" onchange="flSave();renderFbaLow()"> days in FBA</label>
+          <select id="fl-f" class="cfg-inp" onchange="renderFbaLow()"><option value="">All</option><option value="out">🔴 Sold out only</option><option value="low">🟠 Running out only</option><option value="send">Need a send (not covered yet)</option></select>
+          <input id="fl-q" class="cfg-inp" placeholder="Search SKU / ASIN / name" oninput="renderFbaLow()" style="width:220px">
+          <button class="btn" id="fl-copy" onclick="flCopy()">📋 Copy SKU + units to send</button>
+          <button class="btn btn-primary" id="fl-send" onclick="flSend(this)" style="background:var(--blue,#2563eb);color:#fff;font-weight:700">🚚 Send ticked from AWD to FBA</button>
+          <span id="fl-msg" style="color:var(--gray-500)"></span>
+        </div>
+        <div id="fl-out"></div>
+        <div id="fl-sent-card" style="margin-top:14px"><div style="display:flex;gap:8px;align-items:center"><b style="font-size:13px">🚚 Sent from AWD to FBA (from this app)</b><button class="btn" onclick="flReplLoad(true)" style="padding:2px 10px">↻</button><span id="fl-sent-msg" style="font-size:12px;color:var(--gray-500)"></span></div><div id="fl-sent" style="margin-top:6px"></div></div>
+        <details id="fl-rec" style="margin-top:14px"><summary style="cursor:pointer;font-weight:700;font-size:13px">📜 Record — sold out in FBA while AWD had stock (checked every morning)</summary><div id="fl-log" style="margin-top:8px"></div></details>
       </div>
     </div>
 
@@ -1281,7 +1315,7 @@ const S={fba:[],live:[],awd:[],res:[],inb:[],inbCount:{},joined:[],cpackMap:{},c
 // a second shipment at the same time: one to ship directly to FBA and one to AWD". Two builders, each with its own items, name and where it
 // ships to (AWD / FBA direct). S.shipment is always the builder on screen (every screen keeps working the same); both are saved together.
 const AWD_BUILDERS = 2;
-S.builders = { 1: S.shipment, 2: {} }; S.bMeta = { 1: { name: '', dest: 'AWD' }, 2: { name: '', dest: 'FBA' } }; S.bActive = 1;
+S.builders = { 1: S.shipment, 2: {} }; S.shipLoaded = false; S.shipVer = ''; S.bMeta = { 1: { name: '', dest: 'AWD' }, 2: { name: '', dest: 'FBA' } }; S.bActive = 1;
 
 // ── FILE UPLOAD ──
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
@@ -1426,6 +1460,7 @@ async function processData(skipSave){
       const sku=(gf(r,'SKU')||'').trim().toUpperCase();if(!sku)return;
       awdMap[sku]={
         avail:pn(gf(r,'Available in AWD (units)'))+Math.max(0,pn(gf(r,'Inbound to AWD (units)'))-(awdNR[sku]||0)),
+        now:pn(gf(r,'Available in AWD (units)')), // 🚨 can go to FBA now (not counting what is still on its way into AWD)
         reserved:pn(gf(r,'Reserved in AWD (units)')),
         outbound:pn(gf(r,'Outbound to FBA (units)'))
       };
@@ -1460,7 +1495,7 @@ async function processData(skipSave){
       .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap));
     S.loaded=true;
     if (AWDSS.loaded) { awdApplyOwnSales(); awdApplyPlan(); }
-    renderDashboard();renderInv();renderRecs();updateBadges();
+    renderDashboard();renderInv();renderRecs();updateBadges();if(typeof renderFbaLow==='function')renderFbaLow();
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
@@ -1505,7 +1540,8 @@ function buildRow(r,invMap,awdMap,resMap,fcTransMap,inbMap){
   const recSend=Math.max(0,target-totalNetwork);
   const netDays=dailySales>0?totalNetwork/dailySales:999;
   const fbaDays=dailySales>0?(fbaFul+fcProc+fcTrans+fbaInb)/dailySales:999; // FBA side only (no AWD) — what Amazon's days of supply counts
-  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,fbaInb,sold90,sold30,daily90,daily30,dailySales,target,totalNetwork,recSend,netDays,fbaDays,amzDos};
+  const awdNow=awd.now||0;
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdNow,awdReserved,awdOutbound,fbaInb,sold90,sold30,daily90,daily30,dailySales,target,totalNetwork,recSend,netDays,fbaDays,amzDos};
 }
 function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
 
@@ -1630,7 +1666,7 @@ function awdActQty(sku, from, to) { // typing 1, 12, 120 → one record: 0 → 1
   _awdQtyLog[k].t = setTimeout(() => { const x = _awdQtyLog[k]; delete _awdQtyLog[k]; if (x.from !== x.to) awdAct('builder_qty', { sku: k, from: x.from, to: x.to }); }, 1500);
 }
 function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
-function toggleAllVis(c){const L=visRecs().filter(r=>c?!S.shipment[r.sku]:!!S.shipment[r.sku]).map(r=>r.sku);S._quiet=true;try{visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});}finally{S._quiet=false;}if(L.length&&typeof awdAct==='function')awdAct(c?'builder_add_all':'builder_remove_all',{n:L.length,skus:L.slice(0,60)});updateBadges();renderRecs();renderBuilder();}
+function toggleAllVis(c){const L=visRecs().filter(r=>c?!S.shipment[r.sku]:!!S.shipment[r.sku]).map(r=>r.sku);S._quiet=true;try{visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});}finally{S._quiet=false;}if(L.length&&typeof awdAct==='function')awdAct(c?'builder_add_all':'builder_remove_all',{n:L.length,skus:L.slice(0,60)});updateBadges();renderRecs();renderBuilder();if(!c&&L.length)saveShipmentToSheet();}
 function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
 
 // ── BUILDER ──
@@ -1978,6 +2014,8 @@ function awdStockRow(r, cols) {
   if (!AWDSS.loaded) setTimeout(awdStockEnsure, 0);
   return '<tr class="awd-stock-tr"><td></td><td colspan="' + (cols - 1) + '" style="padding-top:0;border-top:none">' + awdStockLine(r) + '</td></tr>';
 }
+// a SKU's ASIN: from its row, else from the loaded Amazon reports (a manually added SKU / an older saved shipment has none on the row)
+function bldAsin(sku,item){ const a=item&&item.row&&item.row.asin; if(a) return String(a); const j=(S.joined||[]).find(r=>String(r.sku).toUpperCase()===String(sku).toUpperCase()); return j&&j.asin?String(j.asin):''; }
 function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -1985,7 +2023,8 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
   ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
-  let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  // 🔎 Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also" — ASIN column + filter by ASIN too
+  let filt=items.filter(([sku,item])=>!q||sku.toLowerCase().includes(q)||bldAsin(sku,item).toLowerCase().includes(q));
   if(_bldSortDir!==0) filt=filt.slice().sort(_bldSortKey==='time'
     ? ([a,x],[b,y])=>_bldSortDir*(String(x.addedAt||'').localeCompare(String(y.addedAt||''))||a.localeCompare(b)) // no time (put in before 10-24) = oldest
     : ([a],[b])=>_bldSortDir*a.localeCompare(b));
@@ -2049,6 +2088,7 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
 
     return`<tr>
       <td class="sku">${sku}${stockWarning ? `<div style="font-size:10px;color:#C2410C;font-weight:600;margin-top:2px">${stockWarning}</div>` : ''}</td>
+      <td class="bld-asin" style="font-family:monospace;font-size:12px;white-space:nowrap">${bldAsin(sku,item)?`<a href="https://www.amazon.com/dp/${encodeURIComponent(bldAsin(sku,item))}" target="_blank" rel="noopener" style="color:var(--blue,#2563eb)" title="Open on Amazon">${bldAsin(sku,item).replace(/[<>&"]/g,'')}</a>`:'<span style="color:var(--gray-400)">—</span>'}</td>
       <td style="font-size:12px;color:var(--gray-600);min-width:170px;max-width:280px" title="${r.name||''}">${awdNameCell(r)}</td>
       <td class="r">${db(r.netDays)}</td>
       <td class="r">${fn(r.recSend)}</td>
@@ -2061,7 +2101,7 @@ function renderBuilder(){if(typeof awdBldTabs==='function')awdBldTabs();
         : `<label class="awd-force-tpl" style="font-size:11px;color:var(--gray-500);cursor:pointer;white-space:nowrap" title="Not enough stock worked out a label for this one — tick to make the template anyway (every box needs a label)"><input type="checkbox" onchange="awdForceTpl('${esc(sku)}', this.checked)"> Make template</label>`}${S.forceTpl[sku] && lPrefix ? ` <label style="font-size:10px;color:var(--gray-500);cursor:pointer" title="Untick to go back"><input type="checkbox" checked onchange="awdForceTpl('${esc(sku)}', this.checked)"> made</label>` : ''}</td>
       <td class="bld-added" style="font-size:11px;color:var(--gray-600);white-space:nowrap">${bldAddedTxt(item.addedAt) || '<span style="color:var(--gray-400)" title="Put in before times were kept (10-24-2026)">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
-    </tr>${awdStockRow(r, 9)}`;
+    </tr>${awdStockRow(r, 10)}`;
   }).join('');
   updateSummary();
   awdStockEnsure();
@@ -3237,6 +3277,7 @@ function awd_switchTab(n) {
   // Render discontinued panel only when opening settings
   if (n === 'asin' && ge('awdq-months') && !ge('awdq-months').innerHTML) ge('awdq-months').innerHTML = awdqMonthsHtml();
   if (n === 'history') awdHistLoad();
+  if (n === 'fbalow') { renderFbaLow(); flReplLoad(true).then(function(){ renderFbaLow(); }); }
   if (n === 'recommendations' && typeof renderRecs === 'function') renderRecs(); // 📦 In Builder (same parent) up to date after builder changes
   if (n === 'builder' && ge('awd-lbl-one')) { try { ge('awd-lbl-one').checked = localStorage.getItem('awd_lbl_one') !== '0'; } catch (e) {} } // on unless turned off (owner 2026-10-24)
   if (n === 'builder' && ge('awd-prev-list') && !ge('awd-prev-list').value) { try { ge('awd-prev-list').value = localStorage.getItem(AWD_PREV_KEY) || ''; } catch (e) {} }
@@ -3601,6 +3642,117 @@ function addSku(sku) {
   renderBuilder();
 }
 
+// 🚨 FBA low — AWD has stock (owner 2026-11-18). FBA now = available + FC processing + FC transfer + on the way from our warehouse.
+// Days left = FBA now ÷ the faster of the 30-day / 90-day sales a day (the same pace as Recommendations). Listed when AWD has units it can
+// send NOW and FBA is sold out (0 available) or has less than "Warn when" days. Send = enough for "Send enough for" days − FBA now − what
+// AWD is already sending to FBA, at most what AWD has now. A SKU that sold nothing in 90 days is listed (sold out) but not given a number.
+function flSave(){ try { localStorage.setItem('awd_fl_cfg', JSON.stringify({ days: +ge('fl-days').value || 14, cover: +ge('fl-cover').value || 30 })); } catch (e) {} }
+function flCfg(){ var c = { days: 14, cover: 30 }; try { var o = JSON.parse(localStorage.getItem('awd_fl_cfg') || '{}'); if (o.days > 0) c.days = o.days; if (o.cover > 0) c.cover = o.cover; } catch (e) {}
+  if (ge('fl-days') && +ge('fl-days').value > 0) c.days = +ge('fl-days').value; if (ge('fl-cover') && +ge('fl-cover').value > 0) c.cover = +ge('fl-cover').value; return c; }
+// units of a SKU in app sends made AFTER the last AWD sync and not finished / refused — Amazon's AWD numbers don't show them yet
+function flAsked(sku){ var k = String(sku).toUpperCase(), since = S.awdSyncAt ? Date.parse(S.awdSyncAt) : 0, n = 0;
+  (S.repl || []).forEach(function(o){ if (o.error || o.status === 'INELIGIBLE' || o.status === 'FAILURE' || o.status === 'CANCELLED' || !(Date.parse(o.at) > since)) return;
+    (o.items || []).forEach(function(x){ if (String(x.sku).toUpperCase() === k) n += +x.qty || 0; }); }); return n; }
+var FLSEL = {}; // sku → { on, qty } (what's ticked / typed on this screen)
+function flSel(x){ var k = x.r.sku, o = FLSEL[k]; if (!o) o = FLSEL[k] = { on: x.send > 0, qty: x.send > 0 ? x.send : '' }; return o; }
+function flH(x){ return String(x == null ? '' : x).replace(/[&<>"']/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function flRows(){
+  if (!S.loaded) return [];
+  var c = flCfg();
+  return S.joined.map(function(r){
+    if (!(r.awdNow > 0) || DISC.skus.has(String(r.sku).toUpperCase())) return null;
+    var fbaNow = (r.fbaFul||0) + (r.fcProc||0) + (r.fcTrans||0) + (r.fbaInb||0), d = r.dailySales || 0, left = d > 0 ? fbaNow / d : null;
+    var out = !(r.fbaFul > 0);
+    if (!out && !(left != null && left < c.days)) return null;
+    var asked = flAsked(r.sku), awdLeft = Math.max(0, r.awdNow - asked); // 🚚 sent from the app after the last AWD sync — not in Amazon's numbers yet
+    var need = d > 0 ? Math.max(0, Math.ceil(d * c.cover) - fbaNow - (r.awdOutbound||0) - asked) : null, send = need == null ? null : Math.min(awdLeft, need);
+    var seen = (S.fbaLowSeen || {})[String(r.sku).toUpperCase()] || null;
+    return { r: r, fbaNow: fbaNow, left: left, out: out, send: send, need: need, covered: need === 0, seen: seen, asked: asked, awdLeft: awdLeft };
+  }).filter(Boolean).sort(function(a, b){ // sold out first (best sellers first — they lose the most), then the fewest days left
+    return (b.out - a.out) || (a.out ? ((b.r.dailySales||0) - (a.r.dailySales||0)) : (a.left - b.left)) || String(a.r.sku).localeCompare(String(b.r.sku)); });
+}
+window.renderFbaLow = function(){
+  var el = ge('fl-out'); if (!el) return;
+  try { var o = JSON.parse(localStorage.getItem('awd_fl_cfg') || '{}'); if (o.days > 0 && document.activeElement !== ge('fl-days')) ge('fl-days').value = o.days; if (o.cover > 0 && document.activeElement !== ge('fl-cover')) ge('fl-cover').value = o.cover; } catch (e) {}
+  if (!S.loaded) { el.innerHTML = '<div style="color:var(--gray-500);font-size:13px">Load the reports first (⚡ Sync from Amazon or Import Reports).</div>'; flLog(); return; }
+  var L = flRows(), f = ge('fl-f').value, q = (ge('fl-q').value || '').trim().toLowerCase(), c = flCfg();
+  var V = L.filter(function(x){ if (f === 'out' && !x.out) return false; if (f === 'low' && x.out) return false; if (f === 'send' && !(x.send > 0)) return false;
+    return !q || (x.r.sku + ' ' + x.r.asin + ' ' + x.r.name).toLowerCase().indexOf(q) >= 0; });
+  var nOut = L.filter(function(x){ return x.out; }).length, nLow = L.length - nOut, units = V.reduce(function(a, x){ return a + (x.send || 0); }, 0);
+  var th = 'style="padding:6px 8px;text-align:right;font-size:11px;color:var(--gray-500);border-bottom:2px solid var(--gray-200);white-space:nowrap"', td = 'style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--gray-100);white-space:nowrap"';
+  el.innerHTML = '<div style="font-size:13px;margin-bottom:8px"><b style="color:var(--red)">🔴 ' + nOut + ' sold out in FBA</b> · <b style="color:#c2410c">🟠 ' + nLow + ' under ' + c.days + ' days</b> — AWD has stock for all of them'
+    + (V.length ? ' · showing ' + V.length + ', <b>' + units.toLocaleString() + ' units</b> to send from AWD' : '') + '</div>'
+    + (!V.length ? '<div style="color:var(--green);font-size:13px">✅ Nothing here — every FBA listing with AWD stock has more than ' + c.days + ' days.</div>'
+    : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><th ' + th.replace('right', 'center') + '><input type="checkbox" id="fl-all" title="Tick / untick all shown" onclick="flTickAll(this.checked)"></th><th ' + th.replace('right', 'left') + '>Status</th><th ' + th.replace('right', 'left') + '>SKU · ASIN · name</th><th ' + th + '>Sells a day<br>(30 d · 90 d)</th><th ' + th + '>FBA now<br>(avail + processing + on the way)</th><th ' + th + '>FBA days left</th><th ' + th + '>AWD can send now<br>(+ inbound to AWD)</th><th ' + th + '>AWD already<br>sending to FBA</th><th ' + th + '>Send from AWD</th></tr>'
+    + V.map(function(x){ var r = x.r, st = x.out ? '<b style="color:var(--red)">🔴 Sold out in FBA</b>' + (x.seen ? '<div style="font-size:11px;color:var(--gray-500)">since ' + flH(new Date(x.seen.first).toLocaleDateString()) + ' (' + x.seen.days + ' d)</div>' : '') : '<b style="color:#c2410c">🟠 Running out</b>';
+      if (x.covered && r.awdOutbound > 0) st += '<div style="font-size:11px;color:var(--green)">🚚 AWD is already sending enough</div>';
+      var sel = flSel(x), kk = flH(JSON.stringify(r.sku));
+      if (x.asked > 0) st += '<div style="font-size:11px;color:var(--blue,#2563eb)">🚚 ' + x.asked + ' sent from the app — waiting for Amazon</div>';
+      return '<tr class="fl-row"><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100);text-align:center"><input type="checkbox" class="fl-ck" ' + (sel.on ? 'checked ' : '') + 'onclick="FLSEL[' + kk + '].on=this.checked;flSum()"></td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)">' + st + '</td><td style="padding:6px 8px;border-bottom:1px solid var(--gray-100)"><b style="font-family:monospace">' + flH(r.sku) + '</b> <span style="color:var(--gray-500);font-family:monospace">' + flH(r.asin) + '</span><div style="font-size:11.5px;color:var(--gray-500)">' + flH(String(r.name || '').slice(0, 80)) + '</div></td>'
+        + '<td ' + td + '>' + (r.dailySales > 0 ? '<b>' + r.dailySales.toFixed(1) + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.daily30||0).toFixed(1) + ' · ' + (r.daily90||0).toFixed(1) + '</div>' : '<span style="color:var(--gray-500)">no sales in 90 d</span>') + '</td>'
+        + '<td ' + td + '><b>' + x.fbaNow + '</b><div style="font-size:11px;color:var(--gray-500)">' + (r.fbaFul||0) + ' + ' + ((r.fcProc||0) + (r.fcTrans||0)) + ' + ' + (r.fbaInb||0) + '</div></td>'
+        + '<td ' + td + '>' + (x.out ? '<b style="color:var(--red)">0</b>' : x.left == null ? '—' : '<b>' + Math.floor(x.left) + '</b>') + '</td>'
+        + '<td ' + td + '><b>' + r.awdNow + '</b>' + (r.awdAvail > r.awdNow ? '<div style="font-size:11px;color:var(--gray-500)">+ ' + (r.awdAvail - r.awdNow) + ' inbound</div>' : '') + '</td>'
+        + '<td ' + td + '>' + (r.awdOutbound > 0 ? '<b>' + r.awdOutbound + '</b>' : '0') + '</td>'
+        + '<td ' + td + '>' + (x.send == null ? '<div style="font-size:11px;color:var(--gray-500)" title="No sales in 90 days — no pace to work it out">your call</div>' : x.send > 0 ? '<div style="font-size:11px;color:var(--gray-500)">suggested <b>' + x.send + '</b></div>' + (x.need > x.send ? '<div style="font-size:11px;color:#c2410c">AWD has only ' + x.awdLeft + ' (needs ' + x.need + ')</div>' : '') : x.need > 0 ? '<div style="font-size:11px;color:#c2410c">AWD has none left to send (needs ' + x.need + ')</div>' : '<div style="font-size:11px;color:var(--green)">0 — covered</div>')
+        + '<input type="number" class="fl-qty" min="0" max="' + x.awdLeft + '" step="1" value="' + flH(sel.qty) + '" style="width:76px;text-align:right;font-weight:700;padding:3px 5px;border:1px solid var(--gray-300,#ccc);border-radius:6px" oninput="FLSEL[' + kk + '].qty=this.value;if(+this.value>0){FLSEL[' + kk + '].on=true;this.closest(\'tr\').querySelector(\'.fl-ck\').checked=true;}flSum()"></td></tr>'; }).join('') + '</table></div>');
+  S.flShown = V; flSum();
+  flLog();
+};
+function flLog(){
+  var el = ge('fl-log'); if (!el) return; var L = S.fbaLowLog || [];
+  el.innerHTML = !L.length ? '<div style="font-size:12px;color:var(--gray-500)">Nothing yet — kept from 11-18-2026 on, each morning\'s Amazon sync (and ⚡ Sync).</div>'
+    : '<div style="overflow:auto;max-height:320px"><table style="border-collapse:collapse;font-size:12px;width:100%"><tr><th style="text-align:left;padding:4px 6px">SKU</th><th style="text-align:left;padding:4px 6px">Sold out in FBA (first seen)</th><th style="text-align:left;padding:4px 6px">Ended</th><th style="padding:4px 6px">Days</th><th style="text-align:right;padding:4px 6px">AWD had</th><th style="text-align:left;padding:4px 6px">Why it ended</th></tr>'
+    + L.map(function(x){ return '<tr><td style="padding:4px 6px;font-family:monospace">' + flH(x.sku) + '</td><td style="padding:4px 6px">' + flH(new Date(x.first).toLocaleString()) + '</td><td style="padding:4px 6px">' + flH(new Date(x.ended).toLocaleString()) + '</td><td style="padding:4px 6px;text-align:center"><b>' + x.days + '</b></td><td style="padding:4px 6px;text-align:right">' + (x.awd || 0) + '</td><td style="padding:4px 6px">' + flH(x.why) + '</td></tr>'; }).join('') + '</table></div>';
+}
+window.flTickAll = function(on){ (S.flShown || []).forEach(function(x){ var o = flSel(x); o.on = on && +o.qty > 0; }); renderFbaLow(); };
+function flPicked(){ return (S.flShown || []).map(function(x){ var o = flSel(x); return { x: x, qty: Math.floor(+o.qty || 0), on: o.on }; }).filter(function(p){ return p.on && p.qty > 0; }); }
+function flSum(){ var b = ge('fl-send'); if (!b) return; var P = flPicked(), u = P.reduce(function(a, p){ return a + p.qty; }, 0);
+  b.textContent = '🚚 Send ticked from AWD to FBA' + (P.length ? ' (' + P.length + ' SKU' + (P.length === 1 ? '' : 's') + ', ' + u.toLocaleString() + ' units)' : ''); b.disabled = !P.length; }
+// 🚚 owner 2026-11-18: "click confirm to sent it from our AWD to our FBA right on our app, select and sent"
+window.flSend = async function(btn){
+  var P = flPicked(); if (!P.length) { ge('fl-msg').textContent = 'Tick the rows to send first.'; return; }
+  var bad = P.filter(function(p){ return p.qty > p.x.awdLeft; });
+  if (bad.length) { alert('More than AWD has now:\n' + bad.map(function(p){ return p.x.r.sku + ': ' + p.qty + ' (AWD has ' + p.x.awdLeft + ')'; }).join('\n')); return; }
+  if (!navigator.onLine) { alert('📴 No internet — sending from AWD needs Amazon. Try again when the WiFi is back.'); return; }
+  var u = P.reduce(function(a, p){ return a + p.qty; }, 0);
+  if (!confirm('Send from AWD to FBA now?\n\n' + P.slice(0, 25).map(function(p){ return p.x.r.sku + ' — ' + p.qty + ' units'; }).join('\n') + (P.length > 25 ? '\n… and ' + (P.length - 25) + ' more' : '')
+    + '\n\n' + P.length + ' SKU(s), ' + u.toLocaleString() + ' units. Amazon checks it, then ships it from AWD to FBA (it can\'t be undone here).')) return;
+  btn.disabled = true; ge('fl-msg').textContent = '🚚 Sending to Amazon…';
+  try {
+    var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: P.map(function(p){ return { sku: p.x.r.sku, qty: p.qty }; }), _requestId: 'awdrepl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }) })).json();
+    if (!d.ok) { ge('fl-msg').textContent = '❌ ' + (d.error || 'failed'); alert('❌ Not sent:\n' + (d.error || 'failed')); }
+    else { ge('fl-msg').textContent = '✅ Sent to Amazon — order ' + d.orderId + ' (' + P.length + ' SKUs, ' + u + ' units). Amazon checks it, then ships it; status below.'; P.forEach(function(p){ delete FLSEL[p.x.r.sku]; }); }
+  } catch (e) { ge('fl-msg').textContent = '❌ ' + e.message; }
+  btn.disabled = false; await flReplLoad(true); renderFbaLow(); updateBadges();
+};
+var FL_ST = { CREATED: '🕐 Created', VALIDATING: '🔎 Amazon checking', ELIGIBLE: '✅ OK — confirming', CONFIRMED: '✅ Confirmed', EXECUTING: '⚙ Amazon working on it', INVENTORY_OUTBOUND: '🚚 On its way to FBA', SUCCESS: '✅ Received in FBA', INELIGIBLE: '❌ Amazon said no', FAILURE: '❌ Failed', CANCELLED: '✖ Cancelled', ERROR: '❌ Not sent' };
+window.flReplLoad = async function(force){
+  var el = ge('fl-sent'); if (!el) return;
+  if (!force && S.repl) { flReplDraw(); return; }
+  ge('fl-sent-msg').textContent = 'loading…';
+  try { var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish-list')).json(); if (d.ok) S.repl = d.orders || []; ge('fl-sent-msg').textContent = d.ok ? '' : '⚠ ' + (d.error || ''); }
+  catch (e) { ge('fl-sent-msg').textContent = '⚠ ' + e.message; }
+  flReplDraw();
+};
+function flReplDraw(){
+  var el = ge('fl-sent'); if (!el) return; var L = S.repl || [];
+  el.innerHTML = !L.length ? '<div style="font-size:12px;color:var(--gray-500)">Nothing sent from the app yet.</div>' : '<div style="overflow:auto;max-height:360px"><table style="border-collapse:collapse;font-size:12px;width:100%"><tr><th style="text-align:left;padding:4px 6px">When</th><th style="text-align:left;padding:4px 6px">Who</th><th style="text-align:left;padding:4px 6px">Amazon order #</th><th style="text-align:left;padding:4px 6px">Status</th><th style="text-align:left;padding:4px 6px">SKU — units asked (eligible · shipped)</th><th style="text-align:left;padding:4px 6px">Why not / note</th></tr>'
+    + L.map(function(o){ var dt = o.detail || {}, f = function(arr, sku){ var t = 0; (arr || []).forEach(function(p){ if (String(p.sku).toUpperCase() === String(sku).toUpperCase()) t += +p.quantity || 0; }); return t; };
+      var why = (dt.why || []).map(function(w){ return (w.sku ? w.sku + ': ' : '') + w.code + (w.reasons && w.reasons.length ? ' — ' + w.reasons.join('; ') : ''); }).join(' · ');
+      return '<tr style="border-top:1px solid var(--gray-100)"><td style="padding:4px 6px;white-space:nowrap">' + flH(new Date(o.at).toLocaleString()) + '</td><td style="padding:4px 6px">' + flH(o.by) + '</td><td style="padding:4px 6px;font-family:monospace">' + flH(o.orderId || '—') + '</td>'
+        + '<td style="padding:4px 6px;white-space:nowrap"><b>' + flH(FL_ST[o.status] || o.status) + '</b>' + ((dt.shipments || []).length ? '<div style="font-size:11px;color:var(--gray-500)">' + dt.shipments.map(function(sh){ return flH(sh.id + ' ' + sh.status); }).join('<br>') + '</div>' : '') + '</td>'
+        + '<td style="padding:4px 6px">' + (o.items || []).map(function(x){ var e = f(dt.eligible, x.sku), sp = f(dt.shipped, x.sku); return '<span style="font-family:monospace">' + flH(x.sku) + '</span> — <b>' + x.qty + '</b>' + (dt.eligible ? ' <span style="color:var(--gray-500)">(' + e + ' · ' + sp + ')</span>' : ''); }).join('<br>') + '</td>'
+        + '<td style="padding:4px 6px;color:#b91c1c">' + flH(o.error || why || '') + (o.checkError ? '<div style="color:var(--gray-500)">couldn\'t re-check: ' + flH(o.checkError) + '</div>' : '') + '</td></tr>'; }).join('') + '</table></div>';
+}
+window.flCopy = function(){
+  var L = flRows().filter(function(x){ return x.send > 0; });
+  if (!L.length) { ge('fl-msg').textContent = 'Nothing to send.'; return; }
+  var txt = 'SKU\tUnits\n' + L.map(function(x){ return x.r.sku + '\t' + x.send; }).join('\n');
+  var done = function(){ ge('fl-msg').textContent = '📋 Copied ' + L.length + ' SKU(s), ' + L.reduce(function(a, x){ return a + x.send; }, 0) + ' units — paste in Seller Central → AWD → Replenish to FBA'; };
+  try { navigator.clipboard.writeText(txt).then(done, function(){ prompt('Copy this list:', txt); }); } catch (e) { prompt('Copy this list:', txt); }
+};
 function updateBadges() {
   const n = Object.keys(S.shipment).length;
   const bb = ge('bld-badge');
@@ -3608,6 +3760,8 @@ function updateBadges() {
   const rt = S.joined.filter(r => r.recSend > 0 && !DISC.skus.has(r.sku.toUpperCase())).length;
   const rb = ge('rec-badge');
   if (rb) { rb.textContent = rt; rb.style.display = rt ? '' : 'none'; }
+  const fl = typeof flRows === 'function' ? flRows().filter(x => (x.out && !x.covered) || x.send > 0).length : 0, fb = ge('fl-badge'); // 🚨 sold out or running out, and AWD isn't already sending enough
+  if (fb) { fb.textContent = fl; fb.style.display = fl ? '' : 'none'; }
 }
 
 function renderRecs() {
@@ -3784,7 +3938,8 @@ async function loadReportsFromSheet() {
     // 🚚 open FBA inbound shipments (straight from our warehouse) + which ones count — never blocks the rest
     try { const [ri, rs] = await Promise.all([wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inbound').then(r=>r.json()), wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/auto-reports').then(r=>r.json())]);
       S.inb = valuesToRows(ri.values||[]); S.inbCount = (rs && rs.inboundCount) || {};
-      S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {}; } catch (e) { S.inb = []; }
+      S.notRecv = ((rs && rs.notRecv) || {}).items || []; S.notRecvAt = ((rs && rs.notRecv) || {}).at || null; S.notRecvDecide = (rs && rs.notRecvDecide) || {};
+      S.fbaLowSeen = (rs && rs.fbaLow) || {}; S.fbaLowLog = (rs && rs.fbaLowLog) || []; S.awdSyncAt = (rs && rs.awd && !rs.awd.error && rs.awd.at) || null; } catch (e) { S.inb = []; }
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
     if (!fbaData.length) {
@@ -3886,57 +4041,135 @@ function awdBldDest(v) { S.bMeta[S.bActive] = Object.assign({}, S.bMeta[S.bActiv
 // Pieces of the same part already in the OTHER builder (both shipments come off the same shelves — never counted as free twice)
 function awdOtherBuilders() { const o = []; for (let b = 1; b <= AWD_BUILDERS; b++) if (b !== S.bActive) Object.keys(S.builders[b] || {}).forEach(k => o.push([k, S.builders[b][k], b])); return o; }
 
+// ♻ Build the builder on screen again from the record (every add / remove / qty change / clear, with which builder). SKUs already in it
+// stay; only the missing ones come back, with their last qty. Admin / Owner (the record is theirs to read).
+async function awdBldRebuild() {
+  const b = S.bActive, days = parseInt(prompt('Bring back Builder ' + b + ' from the record of the last how many days?', '2'), 10); if (!(days > 0)) return;
+  let d; try { d = await wFetch(W + '/awd/activity?tab=builder&days=' + Math.min(30, days)).then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok) { alert('Could not read the record: ' + ((d && d.error) || '')); return; }
+  const st = {}; (d.list || []).slice().reverse().forEach(r => { const x = r.detail || {}; if ((parseInt(x.builder, 10) || 1) !== b) return;
+    if (r.action === 'builder_add' && x.sku) st[x.sku] = { qty: parseInt(x.qty, 10) || 0, at: r.at };
+    else if (r.action === 'builder_add_all') (x.skus || []).forEach(k => { const row = findRow(k); st[k] = { qty: row ? (row.recSend || 0) : 0, at: r.at }; });
+    else if (r.action === 'builder_remove' && x.sku) delete st[x.sku];
+    else if (r.action === 'builder_remove_all') (x.skus || []).forEach(k => delete st[k]);
+    else if (r.action === 'builder_qty' && x.sku && st[x.sku]) st[x.sku].qty = parseInt(x.to, 10) || 0;
+    else if (r.action === 'builder_clear') Object.keys(st).forEach(k => delete st[k]); });
+  const miss = Object.keys(st).filter(k => !S.shipment[k]), units = miss.reduce((a, k) => a + st[k].qty, 0);
+  if (!miss.length) { alert('The record has ' + Object.keys(st).length + ' SKU(s) for Builder ' + b + ' in the last ' + days + ' day(s) — all already in it. Nothing to bring back.'); return; }
+  if (!confirm('The record shows ' + miss.length + ' SKU(s) (' + units + ' units) in Builder ' + b + ' that are not on screen:\n\n' + miss.slice(0, 30).map(k => k + ' — ' + st[k].qty).join('\n') + (miss.length > 30 ? '\n… and ' + (miss.length - 30) + ' more' : '') + '\n\nBring them back into Builder ' + b + '? (What is there now stays.)')) return;
+  S._quiet = true; try { miss.forEach(k => { S.shipment[k] = { row: findRow(k) || awdBldStubRow(k), qty: st[k].qty, addedAt: st[k].at }; }); } finally { S._quiet = false; }
+  S.builders[b] = S.shipment; awdAct('builder_add_all', { n: miss.length, skus: miss.slice(0, 60), restored: 'from the record' });
+  updateBadges(); renderRecs(); renderBuilder(); saveShipmentToSheet(); awd_planner_toast('♻ ' + miss.length + ' SKUs brought back into Builder ' + b);
+}
+async function awdBldSnaps() {
+  const box = ge('awd-bld-snaps'); if (!box) return; if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  box.style.display = 'block'; box.innerHTML = '⏳ Loading…';
+  let d; try { d = await wFetch(W + '/awd/shipment-snaps').then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok) { box.innerHTML = '<span style="color:#DC2626">' + String((d && d.error) || 'Could not load').replace(/</g, '&lt;') + '</span>'; return; }
+  const h = v => String(v == null ? '' : v).replace(/[<&"]/g, '');
+  box.innerHTML = '<div class="card" style="padding:8px 12px;font-size:12px"><b>🕘 Saved versions of the Shipment Builder</b> (newest first — every save is kept)'
+    + (!d.list.length ? '<div style="color:var(--gray-500)">None yet — kept from 11-18-2026 on.</div>' : '<table style="border-collapse:collapse;width:100%;margin-top:6px"><tr><th style="text-align:left;padding:3px 6px">When</th><th style="text-align:left;padding:3px 6px">Who</th><th style="text-align:right;padding:3px 6px">Builder 1</th><th style="text-align:right;padding:3px 6px">Builder 2</th><th></th></tr>'
+    + d.list.map(x => '<tr style="border-top:1px solid var(--gray-100)"><td style="padding:3px 6px">' + h(new Date(x.at).toLocaleString()) + '</td><td style="padding:3px 6px">' + h(x.by) + '</td><td style="padding:3px 6px;text-align:right">' + x.b1 + ' SKUs</td><td style="padding:3px 6px;text-align:right">' + x.b2 + ' SKUs</td>'
+      + '<td style="padding:3px 6px"><button type="button" class="btn btn-sm btn-secondary" onclick="awdBldSnapUse(' + x.id + ')">↩ Bring this back</button></td></tr>').join('') + '</table>') + '</div>';
+}
+async function awdBldSnapUse(id) {
+  let d; try { d = await wFetch(W + '/awd/shipment-snaps?id=' + id).then(r => r.json()); } catch (e) { d = { ok: false, error: 'no WiFi?' }; }
+  if (!d || !d.ok || !d.values) { alert('Could not load it: ' + ((d && d.error) || '')); return; }
+  const P = awdShipParse(d.values), n = b => Object.keys(P.items[b] || {}).length;
+  if (!confirm('Bring back this saved version?\n\nBuilder 1: ' + n(1) + ' SKUs · Builder 2: ' + n(2) + ' SKUs\n\nIt REPLACES what both builders have now (what is there now is kept in 🕘 Saved versions too).')) return;
+  for (let b = 1; b <= AWD_BUILDERS; b++) { const keep = {}; Object.keys(P.items[b]).forEach(k => { keep[k] = { row: findRow(k) || awdBldStubRow(k), qty: P.items[b][k].qty, addedAt: P.items[b][k].addedAt }; }); S.builders[b] = keep; if (P.meta[b]) S.bMeta[b] = P.meta[b]; }
+  S.shipment = S.builders[S.bActive];
+  const cur = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment').then(r => r.json()).catch(() => null); if (cur && Array.isArray(cur.values)) S.shipVer = awdShipParse(cur.values).ver; // a deliberate bring-back: on top of the newest
+  awdAct('builder_add_all', { n: n(1) + n(2), skus: Object.keys(P.items[S.bActive]).slice(0, 60), restored: 'saved version #' + id });
+  awdBldTabs(); updateBadges(); renderRecs(); renderBuilder(); saveShipmentToSheet(); ge('awd-bld-snaps').style.display = 'none'; awd_planner_toast('↩ Saved version brought back');
+}
+
 // ── SHIPMENT BUILDER PERSISTENCE ──
 var _shipmentSaveTimer = null;
 function saveShipmentToSheet() {
-  // Debounce — wait 1s after last change before saving
+  // Debounce — wait 1s after last change before saving; one save at a time, in order
   clearTimeout(_shipmentSaveTimer);
-  _shipmentSaveTimer = setTimeout(async function() {
+  _shipmentSaveTimer = setTimeout(function() { _shipSaveChain = _shipSaveChain.then(_shipSaveNow, _shipSaveNow); }, 1000);
+}
+var _shipSaveChain = Promise.resolve();
+async function _shipSaveNow() {
     try {
       // 📦 both builders in one list: builder 1's rows as before (sku, qty, added); builder 2's rows carry "2" in the 4th column;
       // each builder's name / ships-to on a "#B" row (skipped as a SKU when read).
+      _shipmentSaveTimer = null;
       S.builders[S.bActive] = S.shipment;
+      if (!S.shipLoaded) { awdBldSaveState('⚠ Not saved — the saved Shipment Builder was not loaded yet. Refresh the page.', true); return; }
+      // someone else saved since this screen loaded it? → never overwrite their list
+      const cur = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment').then(r => r.json());
+      if (!cur || cur.error || !Array.isArray(cur.values)) { awdBldSaveState('⚠ Not saved — could not check the saved list (' + ((cur && cur.error) || 'no WiFi?') + '). Try again.', true); return; }
+      const curVer = awdShipParse(cur.values).ver;
+      if ((curVer || '') !== (S.shipVer || '')) {
+        awdBldSaveState('⚠ The Shipment Builder was changed on another screen — loaded the newest list; redo your last change if it is missing.', true);
+        awd_planner_toast('⚠ Changed on another screen — the newest Shipment Builder is loaded (your last change was NOT saved over it)', 'error');
+        S.shipLoaded = false; await loadShipmentFromSheet();
+        awdBldSaveState('⚠ The Shipment Builder was changed on another screen — the newest list is loaded here; redo your last change if it is missing.', true); return;
+      }
+      const newVer = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
       const items = [];
       for (let b = 1; b <= AWD_BUILDERS; b++) Object.entries(S.builders[b] || {}).forEach(([sku, i]) => items.push([sku, i, b]));
       const meta = [];
       for (let b = 1; b <= AWD_BUILDERS; b++) { const m = S.bMeta[b] || {}; if (b > 1 || m.name || m.dest !== 'AWD') meta.push(['#B' + b, '', m.name || '', String(b), m.dest || '']); }
-      const values = [['sku','qty','added','builder'], ...items.map(([sku,i,b]) => b === 1 ? [sku, i.qty, i.addedAt || ''] : [sku, i.qty, i.addedAt || '', String(b)]), ...meta];
-      await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
+      const values = [['sku','qty','added','builder'], ...items.map(([sku,i,b]) => b === 1 ? [sku, i.qty, i.addedAt || ''] : [sku, i.qty, i.addedAt || '', String(b)]), ...meta, ['#V', '', newVer]];
+      const pr = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
-      });
+      }).then(r => r.json()).catch(e => ({ error: e.message }));
+      if (!pr || pr.error) { awdBldSaveState('⚠ Not saved — ' + ((pr && pr.error) || 'no WiFi?') + '. Your list is still on this screen; change anything to try again.', true); return; }
+      S.shipVer = newVer;
+      const cnt = {}; items.forEach(([sku, i, b]) => { cnt[b] = (cnt[b] || 0) + 1; });
+      awdBldSaveState('✅ Saved ' + new Date().toLocaleTimeString() + ' — ' + Object.keys(cnt).map(b => 'Builder ' + b + ': ' + cnt[b]).join(' · '));
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/shipment-snap', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ values, b1: cnt[1] || 0, b2: cnt[2] || 0 }) }).catch(() => {});
       console.log('[XFITTING] Shipments saved:', items.length, 'SKUs in', AWD_BUILDERS, 'builders');
-    } catch(e) { console.error('[XFITTING] saveShipmentToSheet:', e); }
-  }, 1000);
+    } catch(e) { console.error('[XFITTING] saveShipmentToSheet:', e); awdBldSaveState('⚠ Not saved — ' + e.message, true); }
 }
 
+// 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone".
+// The Shipment Builder is saved as ONE list (both builders) and each save replaced the whole list with what THAT screen had — so a second
+// screen / computer (or an older copy of the page) that was opened before the 57 were added wiped them with its own older list, and a SKU
+// not found in the loaded reports was silently dropped on loading. Now:
+//   • every save carries a version (#V row); before saving, the list is read again — if someone else saved since, nothing is overwritten:
+//     the newest list is loaded and the screen says so (redo the last change);
+//   • nothing is saved until the list was loaded (a failed load never saves an empty list over it);
+//   • a SKU not in the reports is kept (with its own name), never dropped;
+//   • every save is kept on the server (🕘 Saved versions → bring one back), and ♻ rebuilds a builder from the record of every add / remove /
+//     qty change (the record is kept since 10-23-2026).
+function awdBldStubRow(sku) { return { sku, asin: '', name: sku, fbaFul: 0, fcProc: 0, fcTrans: 0, awdAvail: 0, awdNow: 0, awdReserved: 0, awdOutbound: 0, sold90: 0, dailySales: 0, target: 0, totalNetwork: 0, recSend: 0, netDays: 999, _manual: true }; }
+function awdShipParse(values) { // sheet rows → { items: { b: { sku: {qty, addedAt} } }, meta, ver }
+  const out = { items: {}, meta: {}, ver: '' }; for (let b = 1; b <= AWD_BUILDERS; b++) out.items[b] = {};
+  (values || []).slice(1).forEach(function(row) {
+    const sku = String(row[0] || '').trim(); if (!sku || sku === 'sku') return;
+    if (sku === '#V') { out.ver = String(row[2] || '').trim(); return; }
+    if (/^#B\d+$/.test(sku)) { const mb = parseInt(sku.slice(2)); if (mb >= 1 && mb <= AWD_BUILDERS) out.meta[mb] = { name: String(row[2] || '').trim(), dest: String(row[4] || '').trim() || (mb === 1 ? 'AWD' : 'FBA') }; return; }
+    const b = Math.min(AWD_BUILDERS, Math.max(1, parseInt(row[3]) || 1));
+    out.items[b][sku] = { qty: parseInt(row[1]) || 0, addedAt: String(row[2] || '').trim() };
+  });
+  return out;
+}
+function awdBldSaveState(t, bad) { const el = ge('awd-bld-savestate'); if (el) { el.textContent = t; if (el.style) el.style.color = bad ? '#DC2626' : 'var(--gray-500)'; } }
 async function loadShipmentFromSheet() {
   try {
+    if (_shipmentSaveTimer) return; // a change of this screen is still waiting to be saved — never load over it
     const res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment');
     const data = await res.json();
-    if (!data.values || data.values.length < 2) return;
-    const rows = data.values.slice(1); // skip header
+    if (!data || data.error || !Array.isArray(data.values)) throw new Error((data && data.error) || 'could not read the Shipment Builder');
+    const P = awdShipParse(data.values);
     let loaded = 0;
-    rows.forEach(function(row) {
-      const sku = String(row[0]||'').trim();
-      const qty = parseInt(row[1]) || 0;
-      if (!sku || sku === 'sku') return;
-      const b = Math.min(AWD_BUILDERS, Math.max(1, parseInt(row[3]) || 1));
-      if (/^#B\d+$/.test(sku)) { const mb = parseInt(sku.slice(2)); if (mb >= 1 && mb <= AWD_BUILDERS) S.bMeta[mb] = { name: String(row[2] || '').trim(), dest: String(row[4] || '').trim() || (mb === 1 ? 'AWD' : 'FBA') }; return; }
-      const r = findRow(sku);
-      if (r) {
-        S.builders[b][sku] = {row: r, qty: qty, addedAt: String(row[2] || '').trim()};
-        loaded++;
-      }
-    });
+    for (let b = 1; b <= AWD_BUILDERS; b++) {
+      const keep = {}; Object.keys(P.items[b]).forEach(function(sku) { const it = P.items[b][sku]; keep[sku] = { row: findRow(sku) || awdBldStubRow(sku), qty: it.qty, addedAt: it.addedAt }; loaded++; });
+      S.builders[b] = keep; if (P.meta[b]) S.bMeta[b] = P.meta[b];
+    }
+    S.shipVer = P.ver; S.shipLoaded = true; awdBldSaveState('✅ Saved list loaded (' + loaded + ' SKUs in ' + AWD_BUILDERS + ' builders)');
     S.shipment = S.builders[S.bActive];
     const nm = ge('ship-name'); if (nm && !nm.value) nm.value = (S.bMeta[S.bActive] || {}).name || '';
     awdBldTabs();
-    if (loaded > 0) {
-      updateBadges(); renderBuilder();
-      console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
-    }
-  } catch(e) { console.error('[XFITTING] loadShipmentFromSheet:', e); }
+    updateBadges(); renderBuilder(); if (typeof renderRecs === 'function') renderRecs();
+    console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
+  } catch(e) { console.error('[XFITTING] loadShipmentFromSheet:', e); if (!S.shipLoaded) awdBldSaveState('⚠ The saved Shipment Builder could not be loaded (' + e.message + ') — changes are NOT saved until it loads. Refresh the page.', true); }
 }
 
 
@@ -6889,6 +7122,6 @@ window.saveNewTemplate = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261113a"></script>
+<script src="xf-access.js?v=20261118c"></script>
 </body>
 </html>

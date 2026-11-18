@@ -8796,7 +8796,7 @@ console.log('\n📦 AWD Recommendations / Builder: a stock line under each row (
   check('the line: "🏬 Our shelf 300 pcs (30 sets) … other sizes 100 pcs · 🏭 still making 400 pcs · 🚢 on the water 200 pcs (+200 other sizes)" and "Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 (AWD→FBA 8 · ours→FBA 7 · between FCs 1) = 44 sets (440 pcs)"',
     /🏬 <b>Our shelf 300 pcs<\/b> \(30 sets\)/.test(h) && /1 boxes no Ea\/Case/.test(h) && /other sizes 100 pcs/.test(h) && /🏭 still making 400 pcs/.test(h) && /🚢 on the water 200 pcs \(\+200 other sizes\)/.test(h)
       && /Amazon: ✅ FBA 22 · 🏭 AWD 6 · 🔁 moving 16 <span[^>]*>\(AWD→FBA 8 · ours→FBA 7 · between FCs 1\)<\/span> = <b>44 sets \(440 pcs\)<\/b>/.test(h), h);
-  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 9\)\}`;/.test(ah), null); // the Builder table has 9 columns since 🕒 Added (2026-10-24)
+  check('…shown under every Recommendations row and every Shipment Builder row', /<\/tr>\$\{awdStockRow\(r, 15\)\}`;/.test(ah) && /<\/tr>\$\{awdStockRow\(r, 10\)\}`;/.test(ah), null); // the Builder table has 10 columns: 🕒 Added (2026-10-24) + ASIN (owner 2026-11-18)
   // Owner (2026-10-22): "Recommendations / Shipment Builder: I want to see the name also"
   check('🏷 name: our SKU Mgr name comes with the stock ("tee"); both tables show the whole Amazon title (3 lines, not cut at 120 px) with our name under it',
     o.name === 'tee' && (ah.match(/\$\{awdNameCell\(r\)\}<\/td>/g) || []).length === 2 && !/max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap[^"]*" title="\$\{r\.name/.test(ah)
@@ -8875,6 +8875,96 @@ console.log('\n👪 AWD: per part (all sizes) — Builder warns past our stock; 
     mk(S4, AW).awdFamWarnHtml() === '' && /keep 60 for our other channels \(60 days\) → <b>40 pcs<\/b> to send/.test(mk({ joined: [], shipment: { '31-1-5=25': { qty: 3 } }, cpackMap: {} }, AW).awdFamWarnHtml()), null);
   check('page: the settings line on Recommendations ("Save for everyone"), the warning on top of the Builder, and the note under each row', /id="awd-plan-cfg"/.test(ah) && /Save for everyone/.test(ah) && /fw\.innerHTML = awdFamWarnHtml\(\)/.test(ah) && /\+ awdPlanNote\(r\);/.test(ah), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '31-1-5'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '31-1-5%'; DELETE FROM reorder_incoming WHERE title = 'CT-31 10/9'; DELETE FROM reorder_title WHERE title = 'CT-31 10/9'; DELETE FROM inventory_log WHERE part_num LIKE '31-1-5%'; DELETE FROM awd_auto");
+}
+
+// 🚨 Owner (2026-11-18): "a lot of the listing we already sold out of in FBA, but we still have some in our AWD, it just never get auto ship it
+// to our FBA — design something for it, so we can keep eyes on it and make it not to run out in FBA"
+console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA while AWD has units → listed + kept on record (first seen → ended)');
+{
+  const realFetch = globalThis.fetch; let fbaA = 0;
+  const ago = n => new Date(Date.now() - n * 864e5).toISOString();
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/fba/inventory/v1/summaries')) return J({ payload: { inventorySummaries: [
+      { sellerSku: '41-1-1=10', asin: 'B0L1', totalQuantity: fbaA, inventoryDetails: { fulfillableQuantity: fbaA, reservedQuantity: {} } },   // sold out (then 12)
+      { sellerSku: '41-1-2=5', asin: 'B0L2', totalQuantity: 5, inventoryDetails: { fulfillableQuantity: 5, reservedQuantity: {} } },         // has FBA stock
+      { sellerSku: '41-1-3=2', asin: 'B0L3', totalQuantity: 0, inventoryDetails: { fulfillableQuantity: 0, reservedQuantity: {} } }] }, pagination: {} }); // sold out, AWD none
+    if (u.includes('/awd/2024-05-09/inventory')) return J({ inventory: [
+      { sku: '41-1-1=10', totalOnhandQuantity: 40, inventoryDetails: { availableDistributableQuantity: 40, reservedDistributableQuantity: 0 } },
+      { sku: '41-1-2=5', totalOnhandQuantity: 30, inventoryDetails: { availableDistributableQuantity: 30, reservedDistributableQuantity: 0 } },
+      { sku: '41-1-3=2', totalOnhandQuantity: 0, totalInboundQuantity: 8, inventoryDetails: { availableDistributableQuantity: 0, reservedDistributableQuantity: 0 } }] });
+    if (u.includes('/fba/inbound/v0/shipments')) return J({ payload: { ShipmentData: [] } });
+    if (u.includes('/awd/2024-05-09/inboundShipments')) return J({ shipments: [] });
+    if (u.endsWith('/reports/2021-06-30/reports') && m === 'POST') return J({ reportId: 'RL' }, 202);
+    if (u.includes('sheets.googleapis.com')) return J({});
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  sq.exec('CREATE TABLE IF NOT EXISTS awd_auto (k TEXT PRIMARY KEY, v TEXT)');
+  sq.prepare("DELETE FROM awd_auto WHERE k IN ('fbaLow','fbaLowLog')").run();
+  sq.prepare("INSERT INTO awd_auto (k, v) VALUES ('fbaLow', ?)").run(JSON.stringify({ '41-1-1=10': { first: ago(3), awd: 40 } })); // first seen 3 days ago
+  await call('/awd/auto-reports', { method: 'POST', headers: H });
+  const s1 = await get('/awd/auto-reports'), L1 = s1.fbaLow || {};
+  check('sold out in FBA + AWD has 40 → 41-1-1=10 listed, still "since 3 days ago" (first seen kept); 41-1-2=5 (FBA has 5) and 41-1-3=2 (AWD only inbound) not listed',
+    Object.keys(L1).join() === '41-1-1=10' && L1['41-1-1=10'].awd === 40 && L1['41-1-1=10'].days === 3, L1);
+  fbaA = 12; await call('/awd/auto-reports', { method: 'POST', headers: H });
+  const s2 = await get('/awd/auto-reports'), g2 = (s2.fbaLowLog || [])[0] || {};
+  check('…FBA gets 12 → off the list and on the 📜 record: 41-1-1=10, first seen → ended, 3 days, AWD had 40, "FBA has stock again (12)"',
+    !Object.keys(s2.fbaLow || {}).length && g2.sku === '41-1-1=10' && g2.days === 3 && g2.awd === 40 && /FBA has stock again \(12\)/.test(g2.why), s2.fbaLowLog);
+  const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('page: 🚨 tab (badge) + list sold out first, Send from AWD = days × sales − FBA now − AWD already sending, never more than AWD has now; 📋 Copy; 📜 Record; in 🧩 Pages & Tabs',
+    /id="tab-fbalow"/.test(ah) && /id="fl-badge"/.test(ah) && /var need = d > 0 \? Math\.max\(0, Math\.ceil\(d \* c\.cover\) - fbaNow - \(r\.awdOutbound\|\|0\) - asked\) : null, send = need == null \? null : Math\.min\(awdLeft, need\);/.test(ah)
+      && /now:pn\(gf\(r,'Available in AWD \(units\)'\)\)/.test(ah) && /id="fl-copy"/.test(ah) && /id="fl-rec"/.test(ah)
+      && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
+  globalThis.fetch = realFetch;
+}
+// 🛟 Owner (2026-11-18): "why builder 2 not save it down? after I refresh it delete all my items, i have 57 items there already, now all gone"
+console.log('\n🛟 Shipment Builder: a save never wipes another screen\'s items; every save kept; ♻ bring back from the record');
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('page: a save first reads the saved list — if another screen saved since (version #V differs), NOTHING is overwritten, the newest list is loaded and the screen says so; nothing saved before the list loaded; one save at a time',
+    /if \(\(curVer \|\| ''\) !== \(S\.shipVer \|\| ''\)\) \{/.test(ah) && /\['#V', '', newVer\]\]/.test(ah) && /if \(!S\.shipLoaded\) \{ awdBldSaveState\('⚠ Not saved/.test(ah) && /_shipSaveChain = _shipSaveChain\.then\(_shipSaveNow, _shipSaveNow\)/.test(ah), null);
+  check('page: a SKU not in the loaded reports is KEPT on loading (never silently dropped); ♻ Bring back from the record (adds / removes / qty / clear of THAT builder); 🕘 Saved versions → bring one back',
+    /row: findRow\(sku\) \|\| awdBldStubRow\(sku\)/.test(ah) && /async function awdBldRebuild\(\)/.test(ah) && /if \(\(parseInt\(x\.builder, 10\) \|\| 1\) !== b\) return;/.test(ah) && /async function awdBldSnapUse\(id\)/.test(ah) && /id="awd-bld-rebuild"/.test(ah) && /id="awd-bld-snaps-btn"/.test(ah), null);
+  const v1 = [['sku','qty','added','builder'], ['A-1', 10, ''], ['B-2', 5, '', '2'], ['#V', '', 'v1']];
+  const s1 = await post('/awd/shipment-snap', { values: v1, b1: 1, b2: 1 }), s2 = await post('/awd/shipment-snap', { values: v1.slice(0, 3).concat([['#V', '', 'v2']]), b1: 1, b2: 1 });
+  const s3 = await post('/awd/shipment-snap', { values: v1.slice(0, 2).concat([['#V', '', 'v3']]), b1: 1, b2: 0 });
+  const L = await get('/awd/shipment-snaps'), one = await get('/awd/shipment-snaps?id=' + L.list[1].id);
+  check('🕘 every save is kept on the server (who, when, SKUs in each builder, the whole list) — the same list again is not kept twice; an older one can be read back whole',
+    s1.ok && s2.same && s3.ok && L.list.length >= 2 && L.list[0].b2 === 0 && L.list[1].b2 === 1 && one.values.some(r => r[0] === 'B-2' && r[3] === '2'), { L: L.list.slice(0, 3), one });
+}
+// Owner (2026-11-18): "for the shipment builder, I need it to have ASIN there also"
+{ const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  check('🚚 Shipment Builder: an ASIN column next to SKU (from the row, else the loaded Amazon reports; links to Amazon), the filter finds an ASIN too; the stock row spans the extra column',
+    /<th class="bld-asin-h">ASIN<\/th><th>Product<\/th>/.test(ah) && /function bldAsin\(sku,item\)/.test(ah) && /<td class="bld-asin"/.test(ah) && /bldAsin\(sku,item\)\.toLowerCase\(\)\.includes\(q\)/.test(ah) && /awdStockRow\(r, 10\)/.test(ah), null); }
+// 🚚 Owner (2026-11-18): "I want it we able to click confirm to sent it from our AWD to our FBA right on our app, select and sent"
+console.log('\n🚚 AWD planner → send from AWD to FBA (Amazon replenishment order) from the app: checked against AWD stock, kept with its status');
+{
+  const realFetch = globalThis.fetch, created = []; let gets = 0;
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/awd/2024-05-09/inventory?')) { const sku = new URL(u).searchParams.get('sku'), av = { '42-1-1=10': 40, '42-1-2=5': 500 }[sku] || 0;
+      return J({ inventory: [{ sku, totalOnhandQuantity: av, inventoryDetails: { availableDistributableQuantity: av, reservedDistributableQuantity: 0 } }] }); }
+    if (u.endsWith('/awd/2024-05-09/replenishmentOrders') && m === 'POST') { created.push(JSON.parse(o.body)); return J({ orderId: 'RO-' + created.length }, 201); }
+    if (u.includes('/awd/2024-05-09/replenishmentOrders/RO-1')) { gets++; return J({ orderId: 'RO-1', status: 'INVENTORY_OUTBOUND', eligibleProducts: [{ sku: '42-1-1=10', quantity: 40 }, { sku: '42-1-2=5', quantity: 50 }],
+      shippedProducts: [{ sku: '42-1-1=10', quantity: 40 }], outboundShipments: [{ orderId: 'RO-1', shipmentId: 'SHX', shipmentStatus: 'IN_TRANSIT' }] }); }
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  const over = await post('/awd/replenish', { items: [{ sku: '42-1-1=10', qty: 41 }], _requestId: 'rp-over' });
+  check('asking for more than AWD has now (41 of 40) is refused — nothing sent to Amazon', !over.ok && /AWD has 40/.test(over.error) && created.length === 0, over);
+  const ok1 = await post('/awd/replenish', { items: [{ sku: '42-1-1=10', qty: 40 }, { sku: '42-1-2=5', qty: 50 }], _requestId: 'rp-1' });
+  const again = await post('/awd/replenish', { items: [{ sku: '42-1-1=10', qty: 40 }, { sku: '42-1-2=5', qty: 50 }], _requestId: 'rp-1' });
+  check('send 40 + 50 → ONE Amazon replenishment order (confirmation AUTO) with both SKUs; the same click again (same _requestId) is not sent twice',
+    ok1.ok && ok1.orderId === 'RO-1' && created.length === 1 && created[0].preferences.confirmation === 'AUTO' && JSON.stringify(created[0].products) === '[{"sku":"42-1-1=10","quantity":40},{"sku":"42-1-2=5","quantity":50}]'
+      && again.duplicate && again.orderId === 'RO-1', { ok1, again, created });
+  const pkR = await call('/awd/replenish', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: '{"items":[{"sku":"42-1-1=10","qty":1}]}' });
+  check('only management can send: a picker is refused (403), nothing sent', pkR.status === 403 && created.length === 1, pkR.status);
+  sq.prepare("UPDATE awd_repl SET checked_at = '2000-01-01T00:00:00Z' WHERE order_id = 'RO-1'").run();
+  const L = await get('/awd/replenish-list'), o1 = (L.orders || []).find(x => x.orderId === 'RO-1') || {};
+  check('📜 the send is kept: who, when, 40 + 50 asked; its status read again from Amazon → "INVENTORY_OUTBOUND", eligible 40 + 50, shipped 40, shipment SHX in transit',
+    o1.by && o1.items.length === 2 && o1.status === 'INVENTORY_OUTBOUND' && o1.detail.eligible.length === 2 && o1.detail.shipped[0].quantity === 40 && o1.detail.shipments[0].id === 'SHX' && gets === 1, o1);
+  const ah = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), wk = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('page: tick + units on each row → 🚚 Send ticked (confirm first, never more than AWD has, needs internet); units sent after the last AWD sync count as "sent — waiting for Amazon" so they are not suggested twice; blocked in test mode',
+    /window\.flSend = async function/.test(ah) && /if \(!confirm\('Send from AWD to FBA now\?/.test(ah) && /function flAsked\(sku\)/.test(ah) && /'\/amazon\/price-set', '\/awd\/replenish',/.test(wk), null);
+  globalThis.fetch = realFetch;
 }
 
 // Owner (2026-10-22): "one more tab: items we shipped from our warehouse to FBA or AWD — if everything else got received but after 10 days
@@ -9765,7 +9855,7 @@ console.log('\n🕒 AWD Shipment Builder: when each SKU was put in, kept, shown 
   const it = S0.shipment['30-3-4=10X'] || {};
   check('a SKU put in the shipment gets the time it was put in (and is saved)', it.qty === 24 && !isNaN(Date.parse(it.addedAt)) && Date.now() - Date.parse(it.addedAt) < 60000 && saved === 1, it);
   check('…kept with the shipment (sheet column "added") and read back after a reload; also kept in 🕘 History',
-    /const values = \[\['sku','qty','added','builder'\], \.\.\.items\.map\(\(\[sku,i,b\]\) => b === 1 \? \[sku, i\.qty, i\.addedAt \|\| ''\] : \[sku, i\.qty, i\.addedAt \|\| '', String\(b\)\]\)/.test(ah) && /S\.builders\[b\]\[sku\] = \{row: r, qty: qty, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\)\};/.test(ah) && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
+    /const values = \[\['sku','qty','added','builder'\], \.\.\.items\.map\(\(\[sku,i,b\]\) => b === 1 \? \[sku, i\.qty, i\.addedAt \|\| ''\] : \[sku, i\.qty, i\.addedAt \|\| '', String\(b\)\]\)/.test(ah) && /out\.items\[b\]\[sku\] = \{ qty: parseInt\(row\[1\]\) \|\| 0, addedAt: String\(row\[2\] \|\| ''\)\.trim\(\) \};/.test(ah) && /keep\[sku\] = \{ row: findRow\(sku\) \|\| awdBldStubRow\(sku\), qty: it\.qty, addedAt: it\.addedAt \};/.test(ah) /* loader rewritten 2026-11-18 (Builder 2 lost items) — "added" still read back */ && /label: \(S\.tplPrefix \|\| \{\}\)\[sku\.toUpperCase\(\)\] \|\| '', addedAt: i\.addedAt \|\| '' \}/.test(ah), null);
   check('…"🕒 Added" column (New York time), tap to sort oldest → newest / newest → oldest; SKUs put in before 10-24 show — and sort as oldest',
     /onclick="bldToggleSort\('time'\)"[^>]*>🕒 Added/.test(ah) && /class="bld-added"/.test(ah) && /_bldSortKey==='time'\s*\n\s*\? \(\[a,x\],\[b,y\]\)=>_bldSortDir\*\(String\(x\.addedAt\|\|''\)\.localeCompare\(String\(y\.addedAt\|\|''\)\)/.test(ah), null);
 }
@@ -14222,11 +14312,11 @@ console.log('\n📦 AWD Shipment Builder: Builder 1 + Builder 2 (e.g. AWD + FBA 
   const els = { 'ship-name': { value: '' }, 'awd-bld-tabs': { innerHTML: '' }, 'awd-send-so-out': { innerHTML: '' } };
   const realT = globalThis.setTimeout; let pend = null;
   const run = new Function('ge', 'wFetch', 'findRow', 'updateBadges', 'renderBuilder', 'renderRecs', 'awd_planner_toast', 'awdAct', 'setTimeout', 'clearTimeout',
-    src + '; return { S, save: saveShipmentToSheet, load: loadShipmentFromSheet, sw: awdBldSwitch, dest: awdBldDest, name: awdBldName, def: awdBldDefaultName, other: awdOtherBuilders, tabs: () => ge("awd-bld-tabs").innerHTML };')(
+    src + '; return { S, save: saveShipmentToSheet, load: loadShipmentFromSheet, sw: awdBldSwitch, dest: awdBldDest, name: awdBldName, def: awdBldDefaultName, other: awdOtherBuilders, tabs: () => ge("awd-bld-tabs").innerHTML, chain: () => _shipSaveChain };')(
     id => els[id] || { innerHTML: '', value: '' },
-    async (u, o) => { if (o && o.method === 'PUT') { sheet = JSON.parse(o.body).values; return { ok: true }; } return { json: async () => ({ values: sheet }) }; },
+    async (u, o) => { if (o && o.method === 'PUT') { sheet = JSON.parse(o.body).values; return { ok: true, json: async () => ({ ok: true }) }; } return { json: async () => ({ values: sheet }) }; }, // a Response-like answer (2026-11-18: the save now reads the answer)
     sku => ({ sku }), () => {}, () => {}, () => {}, () => {}, () => {}, f => { pend = f; return 1; }, () => {});
-  const flush = async () => { const f = pend; pend = null; if (f) await f(); };
+  const flush = async () => { const f = pend; pend = null; if (f) await f(); await run.chain(); }; // the save runs on a chain (one at a time) since 2026-11-18
   await run.load();
   const S = run.S;
   check('today\'s saved shipment (3 columns) loads into Builder 1 unchanged: 2 SKUs, qty + added kept; Builder 2 empty, ships to FBA direct',
