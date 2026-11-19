@@ -8917,6 +8917,15 @@ console.log('\n🚨 AWD planner → FBA low — AWD has stock: sold out in FBA w
       && /key: 'fbalow', label: '🚨 FBA low — AWD has stock', sel: '#tab-fbalow'/.test((await import('node:fs')).readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   globalThis.fetch = realFetch;
 }
+// 📦 Owner (2026-11-19): "the 'picking by scan' not working for the UPS, when we scan the UPS label nothing show up"
+{ const ph = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const a = ph.indexOf('function _psUspsRouting'), us = ph.slice(a, ph.indexOf('\n}\n', a) + 3), src = ph.slice(ph.indexOf('window.psNormalizeTracking = function'), ph.indexOf('window.psDetectCarrier'));
+  const nt = new Function('window', us + ';' + src + '; return window.psNormalizeTracking;')({});
+  const maxi = '[)>\x1e01\x1d961Z00004951\x1dUPSN\x1d06X610\x1d159\x1d1234567\x1d1/1\x1d\x1dY\x1d634 ALPHA DR\x1dPITTSBURGH\x1dPA\x1e\x04';
+  check('UPS label: the long barcode 1Z… is the tracking #; the square code with a whole 1Z field gives it too; a square code without one (fields never glued into a fake 1Z) gives none; USPS unchanged',
+    nt('1Z999AA10123456784') === '1Z999AA10123456784' && nt('[)>\x1e01\x1d96\x1d1Z999AA10123456784\x1dUPSN\x1d') === '1Z999AA10123456784' && nt(maxi) === null && nt('9400111899223197428490') === '9400111899223197428490', null);
+  check('🧭 Picking by scan: the label\'s square code with no order open says "scan the LONG barcode under UPS TRACKING #" (was: nothing at all)',
+    /if \(psPksLabelEcho\(v\)\) \{[\s\S]{0,300}if \(!PKS \|\| PKS\.done\) \{ psPksBuzz\(\); psPksMsg\('⚠ That was the label\\'s square code — scan the LONG barcode under <b>UPS TRACKING #<\/b>/.test(ph), null); }
 // 📦 Owner (2026-11-18, Stock Out Big Company C2): "when we scan the click on the box it always showing up 'wrong box' even it was right spot and right box, try 4 different boxes"
 { const row = sq.prepare("SELECT part_num FROM master_list WHERE TRIM(COALESCE(part_num,'')) != '' AND part_num NOT GLOB '[0-9]*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]' ORDER BY id LIMIT 1").get();
   const ck = d => { let t = 0; for (let i = 0; i < d.length; i++) t += (+d[d.length - 1 - i]) * (i % 2 ? 1 : 3); return (10 - t % 10) % 10; }; // GS1 check digit (UPC-A / GTIN-14)
