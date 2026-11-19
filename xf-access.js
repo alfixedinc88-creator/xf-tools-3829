@@ -278,6 +278,8 @@ document.addEventListener('input', function (e) {
       { key: 'valerts', label: '🚨 Alerts', sel: '#ps-tab-valerts', needs: 'Mgmt', parts: [
         { key: 'stats', label: 'Alert counts', sel: '#ps-va-stat-bar' },
         { key: 'export', label: '⬇ Export CSV', sel: '#ps-valerts-content button[onclick="psVaExport()"]' } ] },
+      { key: 'notprinted', label: '🖨 Not printed? (labels never scanned → print again)', sel: '#ps-tab-notprinted', parts: [
+        { key: 'npprint', label: '🖨 Print selected', sel: '#ps-np-print' } ] },
       { key: 'printlog', label: '🖨️ Print Log', sel: '#ps-tab-printlog', parts: [
         { key: 'operator', label: 'Printing-as name', sel: '#ps-panel-printlog > .ps-card:has(#ps-pl-operator-display)' },
         { key: 'stats', label: 'Printed Today / UPS / USPS', sel: '#ps-panel-printlog > div:has(#ps-pl-count)' },

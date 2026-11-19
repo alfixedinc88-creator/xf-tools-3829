@@ -4363,10 +4363,12 @@ console.log('\n🛑 Print watch: labels printed but not read by the Print Log sc
   const st = n => ((w.missing || []).find(l => l.order_number === n) ? 'missing' : '?');
   check('a label the Print Log scanner read (420+ZIP barcode) is picked up; 3 others printed 12–15 min ago and never read are "not picked up"',
     w.ok && w.picked === 1 && w.missing.length === 3 && st('W-2') === 'missing' && st('W-4') === 'missing' && !w.missing.some(l => l.order_number === 'W-1'), w);
-  check('3 in a row not picked up (setting: hold after 3) → printing ON HOLD, saved in the Auto Label log with which labels',
-    w.hold.on && w.inRow === 3 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold' AND detail LIKE '%W-4%'").get().n === 1, { hold: w.hold, inRow: w.inRow });
+  // Owner (2026-11-19): "the scanner not pick up the label all the times … I like print station just keep auto printing … our scanner not picking up
+  // the label costing the whole system to stop printing" — was: 3 in a row (setting 3) → ON HOLD. Now printing never holds; the labels stay listed.
+  check('3 in a row not picked up (even with the setting at 3) → printing KEEPS GOING (never on hold, owner 2026-11-19); the 3 stay listed for 🖨 Not printed?',
+    !w.hold.on && w.inRow === 3 && w.missing.length === 3 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold'").get().n === 0, { hold: w.hold, inRow: w.inRow });
   w = await get('/veeqo/autolabel/print-watch');
-  check('…asking again does not log the hold twice', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold'").get().n === 1, null);
+  check('…asking again: still no hold logged', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold'").get().n === 0, null);
   w = await post('/veeqo/autolabel/print-watch', { action: 'release' });
   check('✅ Printer fixed → hold off (who / when saved); the 3 not picked up stay on the list, and they do not put it back on hold',
     w.ok && !w.hold.on && w.hold.releasedBy === 'TS' && w.missing.length === 3 && w.inRow === 0 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold_released'").get().n === 1, w.hold);
@@ -4377,7 +4379,7 @@ console.log('\n🛑 Print watch: labels printed but not read by the Print Log sc
   w = await get('/veeqo/autolabel/print-watch');
   check('…a label printed 1 min ago is still being checked (not "not picked up"); 2 in a row < 3 → still printing', !w.hold.on && w.waiting === 1 && w.inRow === 2 && !w.missing.some(l => l.order_number === 'W-7'), { inRow: w.inRow, waiting: w.waiting });
   w = await post('/veeqo/autolabel/print-watch', { action: 'settings', n: 2 });
-  check('hold after 2 in a row (setting saved) → ON HOLD now', w.settings.n === 2 && w.hold.on, { s: w.settings, hold: w.hold });
+  check('setting "hold after 2" saved, 2 in a row → still printing (never on hold, owner 2026-11-19)', w.settings.n === 2 && !w.hold.on, { s: w.settings, hold: w.hold });
   await post('/veeqo/autolabel/print-watch', { action: 'release' });
   w = await post('/veeqo/autolabel/print-watch', { action: 'checked', ids: [b], note: 'found it under the printer' });
   check('✓ Checked takes a label off the list (who / note in the Auto Label log)', !w.missing.some(l => l.order_number === 'W-2')
@@ -4392,6 +4394,16 @@ console.log('\n🛑 Print watch: labels printed but not read by the Print Log sc
   check('…🖨 Print new labels now by hand while on hold asks "printer fixed?" first; every manager sees the red / orange bar (checked every 2 min)',
     /if \(!silent && await _psAlWatchHeld\(false\)\) \{\s*if \(!confirm\(/.test(ph) && /psRole === 'mgmt' && typeof psAlWatchPollStart === 'function'\) psAlWatchPollStart\(\)/.test(ph)
     && /id="ps-al-watch-card"/.test(ph) && /onclick="psAlWatchRelease\(\)">✅ Printer fixed — print again/.test(ph), null);
+  // a hold that was ON before the change is released once (on record), and printing goes on
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('label_print_hold', ?)").run(JSON.stringify({ on: true, at: ago(30), why: 'old hold' }));
+  sq.prepare("DELETE FROM app_config WHERE key = 'label_watch_no_hold_20261119'").run();
+  w = await get('/veeqo/autolabel/print-watch');
+  check('an old ON HOLD (from before 2026-11-19) is released once by itself and said in the Auto Label log',
+    !w.hold.on && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold_released' AND reason LIKE '%no longer stops printing%'").get().n === 1, w.hold);
+  check('🖨 Not printed? tab: the labels never scanned (Print Log / Picking / Packing), printed N+ min ago, tick / ☑ all → 🖨 Print selected (the same reprint as 🛑 Print watch); in 🧩 Pages & Tabs',
+    /id="ps-tab-notprinted" onclick="psSwitchTab\('notprinted'\)">🖨 Not printed\?/.test(ph) && /id="ps-panel-notprinted"/.test(ph) && /if \(name === 'notprinted'\) psNpLoad\(\);/.test(ph)
+      && /var r = await _psAlWatchReprintIds\(ids\);/.test(ph) && /window\.psNpAll = function\(on\)/.test(ph)
+      && /key: 'notprinted', label: '🖨 Not printed\? \(labels never scanned → print again\)', sel: '#ps-tab-notprinted'/.test(readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8')), null);
   sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run(); sq.prepare('DELETE FROM ship_print_log').run();
   sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
 }
