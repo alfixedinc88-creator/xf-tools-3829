@@ -2221,14 +2221,27 @@ function awdBlankRect(data, W, x0, y0, w, h, cell, minW, minH) {
   }
   return best;
 }
+// 🔠 Owner (2026-11-19, photo of an FBA box label: "need to make sure our label words is big, this is way too small, you can't see nothing"):
+// the whole block used to shrink until its LONGEST line ("2FL=2-2-13: grab 2 cases of 26-4-1=25XX — rebag — put 4 bags of =25 into one =100
+// bag") fit on one row — every line came out tiny. Now a long line WRAPS onto more rows (at spaces) and the text takes the biggest size
+// that fits the free space, up to the label's own print size. A word too long for a row still shrinks only that size check.
+function awdWrapRows(ctx, lines, W) {
+  const rows = [];
+  lines.forEach(l => { const words = String(l).split(' '); let cur = '';
+    words.forEach(w => { const t = cur ? cur + ' ' + w : w; if (!cur || ctx.measureText(t).width <= W) cur = t; else { rows.push(cur); cur = w; } });
+    rows.push(cur); });
+  return rows;
+}
 function awdDrawTemplate(ctx, rect, lines, maxFs) {
   const pad = Math.max(4, rect.w * 0.04), W = rect.w - 2 * pad, H = rect.h - 2 * pad;
-  let fs = Math.floor(H / (lines.length * 1.18));
   ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
-  for (; fs > 6; fs--) { ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; if (Math.max(...lines.map(l => ctx.measureText(l).width)) <= W) break; }
-  fs = Math.min(fs, Math.floor(rect.h * 0.22), maxFs || Infinity); // never bigger than normal label print
+  let fs = Math.max(7, Math.floor(Math.min(H, rect.h * 0.22, maxFs || Infinity))), rows = lines; // never bigger than normal label print
+  for (; fs > 6; fs--) {
+    ctx.font = 'bold ' + fs + 'px Arial, sans-serif'; rows = awdWrapRows(ctx, lines, W);
+    if (rows.length * fs * 1.18 <= H && Math.max(...rows.map(r => ctx.measureText(r).width)) <= W) break;
+  }
   ctx.font = 'bold ' + fs + 'px Arial, sans-serif';
-  lines.forEach((l, i) => ctx.fillText(l, rect.x + pad, rect.y + pad + i * fs * 1.18));
+  rows.forEach((l, i) => ctx.fillText(l, rect.x + pad, rect.y + pad + i * fs * 1.18));
 }
 // 📷 + ▌▌ Owner (2026-10-23): "add the product photo to the label, and the part #'s UPC barcode — or, if it uses Amazon's own barcode,
 // that barcode — so the packer scans the label, then the product, and knows they didn't grab the wrong one (main point: never ship
@@ -2983,7 +2996,7 @@ async function awdLabelsDo(file) {
         const big = awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.45, band * 0.2);
         const rect = big || awdBlankRect(img, cv.width, 0, top, cv.width, band, cell, cv.width * 0.4, band * 0.13);
         if (!rect) { own.push({ m, I, bc, photo, box: n > 1 ? '' : boxTxt }); done++; continue; }
-        const r = awdDrawBlock(ctx, rect, I.lines.concat([I.outUpc]), bc, big ? photo : null, Math.round(band * 0.032));
+        const r = awdDrawBlock(ctx, rect, I.lines.concat([I.outUpc]), bc, big ? photo : null, Math.round(band * 0.042)); // 🔠 up to ~18 pt (was ~13 pt, and then shrunk to fit the longest line)
         done++; if (r.barcode) withBc++; if (r.photo) withPhoto++;
       }
       if (one && own.length) { // Amazon's label at 85%; photo + barcode (on its side) in the right column; big lines under it — one label
