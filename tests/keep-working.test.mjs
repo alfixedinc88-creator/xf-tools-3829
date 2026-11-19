@@ -14752,5 +14752,22 @@ console.log('\n🚚 Send from AWD: AWD\'s live numbers read from the WHOLE list;
       && /A: asked 76, AWD has 0/.test(asked) && FLSEL.A && !FLSEL.B && !FLSEL.C && /order ORDX \(2 SKUs, 94 units\)/.test(ge('fl-msg').textContent), { calls, msg: ge('fl-msg').textContent });
 }
 
+// Owner (2026-11-19): "check 'picking by scan', make sure everything works, it was super slow".
+console.log('\n⚡ Picking by scan: the SKU Mgr look-ups of a label scan use indexes (no whole-list read); the same rows as before');
+{
+  await get('/ship/package?pick=1&tracking=NONE0'); // makes the Pack & Ship tables + the indexes
+  const idx = sq.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'master_list'").all().map(r => r.name);
+  check('indexes on UPPER(TRIM(part_num / sku / base_sku)) are made once with the Pack & Ship tables', ['idx_ml_ut_part_num', 'idx_ml_ut_sku', 'idx_ml_ut_base_sku'].every(n => idx.includes(n)), idx);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('81-1-1','fam','81-1-1=10','C1=8-1-1',2,100), ('81-1-1','fam','81-1-1=5XX','C2=8-1-2',1,500), ('81-1-1','fam','81-1-1=10FIRST','BSMT=8-1-3',1,100), ('81-1-10','other','81-1-10=10','C1=8-1-4',4,100)").run();
+  const NEW = "SELECT part_num FROM master_list WHERE UPPER(TRIM(part_num))=? OR (UPPER(TRIM(part_num)) >= ? AND UPPER(TRIM(part_num)) < ?) OR (UPPER(TRIM(sku)) >= ? AND UPPER(TRIM(sku)) < ?) OR UPPER(TRIM(base_sku))=?";
+  const P6 = ['81-1-1', '81-1-1=', '81-1-1>', '81-1-1=', '81-1-1>', '81-1-1'];
+  const plan = sq.prepare('EXPLAIN QUERY PLAN ' + NEW).all(...P6).map(r => r.detail).join(' | ');
+  const fam = sq.prepare(NEW + ' ORDER BY part_num').all(...P6).map(r => r.part_num);
+  const old = sq.prepare("SELECT part_num FROM master_list WHERE UPPER(TRIM(part_num))=? OR UPPER(TRIM(part_num)) LIKE ? OR UPPER(TRIM(sku)) LIKE ? OR UPPER(TRIM(base_sku))=? ORDER BY part_num").all('81-1-1', '81-1-1=%', '81-1-1=%', '81-1-1').map(r => r.part_num);
+  check('…the family look-up (81-1-1) jumps to its rows with the index (no whole-list scan) and finds exactly the same rows as the old one: =10, =10FIRST, =5XX — not 81-1-10',
+    /USING INDEX idx_ml_ut_part_num/.test(plan) && !/SCAN master_list/.test(plan) && JSON.stringify(fam) === JSON.stringify(old) && JSON.stringify(fam) === JSON.stringify(['81-1-1=10', '81-1-1=10FIRST', '81-1-1=5XX']), { plan, fam, old });
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('81-1-1','81-1-10')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
