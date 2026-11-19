@@ -3897,6 +3897,16 @@ window.flSend = async function(btn){
     try {
       var d = await (await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/replenish', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: part.map(function(p){ return { sku: p.x.r.sku, qty: p.qty }; }), _requestId: rid0 + '-' + (k + 1) }) })).json();
+      // 🔢 AWD has less than asked for some SKUs now (owner 2026-11-19) → offer to lower them to what AWD has (0 = left out) and send this order again
+      if (!d.ok && Array.isArray(d.overItems) && d.overItems.length && !part._lowered) {
+        var oi = d.overItems, keepN = part.length - oi.filter(function(o){ return !(o.avail > 0); }).length;
+        if (keepN > 0 && confirm('AWD has less than asked for ' + oi.length + ' SKU(s) right now (Amazon\'s live numbers):\n\n' + oi.slice(0, 20).map(function(o){ return o.sku + ': asked ' + o.asked + ', AWD has ' + o.avail; }).join('\n') + (oi.length > 20 ? '\n… and ' + (oi.length - 20) + ' more' : '')
+          + '\n\nOK = lower them to what AWD has (the 0s are left out, still ticked) and send ' + keepN + ' SKU(s) · Cancel = send nothing from this order')) {
+          var lo = {}; oi.forEach(function(o){ lo[String(o.sku).toUpperCase()] = o.avail; });
+          var np = []; part.forEach(function(p){ var a = lo[String(p.x.r.sku).toUpperCase()]; if (a === undefined) np.push(p); else if (a > 0) np.push({ x: p.x, qty: a, on: true }); });
+          np._lowered = true; B[k] = np; k--; continue;
+        }
+      }
       if (!d.ok) failed = { k: k, error: d.error || 'failed' };
       else { sent.push({ orderId: d.orderId, n: part.length, u: pu }); part.forEach(function(p){ delete FLSEL[p.x.r.sku]; }); }
     } catch (e) { failed = { k: k, error: e.message || 'no answer' }; }
