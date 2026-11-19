@@ -8986,8 +8986,10 @@ console.log('\n🚚 AWD planner → send from AWD to FBA (Amazon replenishment o
   const realFetch = globalThis.fetch, created = []; let gets = 0;
   globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
     if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
-    if (u.includes('/awd/2024-05-09/inventory?')) { const sku = new URL(u).searchParams.get('sku'), av = { '42-1-1=10': 40, '42-1-2=5': 500 }[sku] || 0;
-      return J({ inventory: [{ sku, totalOnhandQuantity: av, inventoryDetails: { availableDistributableQuantity: av, reservedDistributableQuantity: 0 } }] }); }
+    // 2026-11-19: the whole AWD list, page by page (as Amazon answers the morning sync) — a ?sku= filter is NOT honoured (Amazon gave the
+    // first page of every SKU back, so most SKUs read as 0); the page 2 here holds 42-1-2=5, so the send must read every page
+    if (u.includes('/awd/2024-05-09/inventory?')) { const q = new URL(u).searchParams, inv = (k, av) => ({ sku: k, totalOnhandQuantity: av, inventoryDetails: { availableDistributableQuantity: av, reservedDistributableQuantity: 0 } });
+      return q.get('nextToken') === 'AWDP2' ? J({ inventory: [inv('42-1-2=5', 500)] }) : J({ inventory: [inv('ZZ-FILLER', 9), inv('42-1-1=10', 40)], nextToken: 'AWDP2' }); }
     if (u.endsWith('/awd/2024-05-09/replenishmentOrders') && m === 'POST') { created.push(JSON.parse(o.body)); return J({ orderId: 'RO-' + created.length }, 201); }
     if (u.includes('/awd/2024-05-09/replenishmentOrders/RO-1')) { gets++; return J({ orderId: 'RO-1', status: 'INVENTORY_OUTBOUND', eligibleProducts: [{ sku: '42-1-1=10', quantity: 40 }, { sku: '42-1-2=5', quantity: 50 }],
       shippedProducts: [{ sku: '42-1-1=10', quantity: 40 }], outboundShipments: [{ orderId: 'RO-1', shipmentId: 'SHX', shipmentStatus: 'IN_TRANSIT' }] }); }
@@ -14728,6 +14730,26 @@ console.log('\n🚚 FBA low — AWD has stock: more than 50 SKUs ticked → sent
     b.calls.length === 2 && Object.keys(b.FLSEL).length === 37 && /❌ 37 SKUs NOT sent: Amazon said no/.test(b.ge('fl-msg').textContent) && /order ORD1/.test(b.ge('fl-msg').textContent), b.ge('fl-msg').textContent);
   const c = await run(30); await c.f({ disabled: false });
   check('…30 SKUs → one order, as before', c.calls.length === 1 && c.calls[0].items.length === 30, c.calls.length);
+}
+
+// Owner (2026-11-19, photo: 87 SKUs → "❌ Not sent: More than AWD has now — 24-2-4=2-X: asked 76, AWD has 0 · …" while the page showed 150).
+console.log('\n🚚 Send from AWD: AWD\'s live numbers read from the WHOLE list; less than asked → lower to what AWD has (0s left out), not refuse all');
+{
+  const { readFileSync: rfO } = await import('node:fs');
+  const wk = rfO(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'), ah = rfO(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const rep = wk.slice(wk.indexOf('async function awdReplenish('), wk.indexOf('async function awdReplenishList('));
+  check('the send reads AWD the same way as the morning sync (every page, maxResults 200) — never one SKU at a time with ?sku=; a SKU over says asked / AWD has (overItems)',
+    /new URLSearchParams\(\{ details: 'SHOW', maxResults: '200' \}\)/.test(rep) && /nextToken/.test(rep) && !/sku: x\.sku, details/.test(rep) && /overItems\.push\(\{ sku: x\.sku, asked: x\.qty, avail \}\)/.test(rep), null);
+  const src = ah.slice(ah.indexOf('var FL_SEND_MAX = 50;'), ah.indexOf('var FL_ST = {'));
+  const P = [{ x: { r: { sku: 'A' }, awdLeft: 150 }, qty: 76, on: true }, { x: { r: { sku: 'B' }, awdLeft: 150 }, qty: 74, on: true }, { x: { r: { sku: 'C' }, awdLeft: 100 }, qty: 39, on: true }];
+  const FLSEL = { A: { on: true }, B: { on: true }, C: { on: true } }, calls = [], els = {}, ge = id => els[id] || (els[id] = { textContent: '' }); let asked = '';
+  const w = {};
+  new Function('window', 'flPicked', 'ge', 'navigator', 'confirm', 'alert', 'FLSEL', 'flReplLoad', 'renderFbaLow', 'updateBadges', 'wFetch', src + '; return window.flSend;')(w, () => P, ge, { onLine: true }, m => { asked = m; return true; }, () => {}, FLSEL, async () => {}, () => {}, () => {},
+    async (u, o) => { const b = JSON.parse(o.body); calls.push(b); return { json: async () => calls.length === 1 ? { ok: false, error: 'More than AWD has now', overItems: [{ sku: 'A', asked: 76, avail: 0 }, { sku: 'C', asked: 39, avail: 20 }] } : { ok: true, orderId: 'ORDX' } }; });
+  await w.flSend({ disabled: false });
+  check('…AWD has less (A 0, C 20 of 39) → asks, then sends B 74 + C 20 (A left out, still ticked); same request # (the refused one was never kept)',
+    calls.length === 2 && JSON.stringify(calls[1].items) === JSON.stringify([{ sku: 'B', qty: 74 }, { sku: 'C', qty: 20 }]) && calls[0]._requestId === calls[1]._requestId
+      && /A: asked 76, AWD has 0/.test(asked) && FLSEL.A && !FLSEL.B && !FLSEL.C && /order ORDX \(2 SKUs, 94 units\)/.test(ge('fl-msg').textContent), { calls, msg: ge('fl-msg').textContent });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

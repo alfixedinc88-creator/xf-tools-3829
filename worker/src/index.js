@@ -16978,17 +16978,27 @@ async function awdReplenish(request, env, session) {
   if (items.length > 50) return J({ ok: false, error: 'At most 50 SKUs in one send' }, 400);
   if (items.some(x => x.qty > 100000)) return J({ ok: false, error: 'Too many units for one SKU' }, 400);
   const token = await getAmazonToken(env), by = String(session.displayName || session.username || '?').slice(0, 40), now = new Date().toISOString();
-  // what AWD has available now, from Amazon (never ask for more than that)
-  const over = [];
+  // what AWD has available now, from Amazon (never ask for more than that).
+  // 🔎 Owner (2026-11-19, photo: 87 SKUs → "More than AWD has now — 24-2-4=2-X: asked 76, AWD has 0 …" while the page showed 150): it asked
+  // Amazon one SKU at a time with ?sku=, which does not reliably give back that SKU — most came back as 0. Now the WHOLE AWD list is read,
+  // page by page, exactly as the morning sync reads it (the same numbers the page shows), and each SKU is looked up in it.
+  const availOf = {};
+  try {
+    let next = null, pages = 0;
+    do {
+      const p = new URLSearchParams({ details: 'SHOW', maxResults: '200' }); if (next) p.set('nextToken', next);
+      const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inventory?${p}`);
+      (d.inventory || []).forEach(i => { const k = String(i.sku || '').trim().toUpperCase(), dt = i.inventoryDetails || {}, res = dt.reservedDistributableQuantity || 0, onh = i.totalOnhandQuantity || 0;
+        if (k) availOf[k] = (availOf[k] || 0) + (dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res)); });
+      next = d.nextToken || null;
+    } while (next && ++pages < AWD_MAX_PAGES);
+  } catch (e) { return J({ ok: false, error: 'Could not read AWD stock from Amazon — nothing sent. ' + String(e.message || e).slice(0, 200) }, 502); }
+  const over = [], overItems = [];
   for (const x of items) {
-    let avail = 0;
-    try { const d = await awdSpGet(env, token, `https://sellingpartnerapi-na.amazon.com/awd/2024-05-09/inventory?${new URLSearchParams({ sku: x.sku, details: 'SHOW' })}`);
-      (d.inventory || []).filter(i => String(i.sku || '').trim().toUpperCase() === x.sku.toUpperCase()).forEach(i => { const dt = i.inventoryDetails || {}, res = dt.reservedDistributableQuantity || 0, onh = i.totalOnhandQuantity || 0;
-        avail += dt.availableDistributableQuantity != null ? dt.availableDistributableQuantity : Math.max(0, onh - res); }); }
-    catch (e) { return J({ ok: false, error: 'Could not read AWD stock of ' + x.sku + ' from Amazon — nothing sent. ' + String(e.message || e).slice(0, 200) }, 502); }
-    x.awdAvail = avail; if (x.qty > avail) over.push(x.sku + ': asked ' + x.qty + ', AWD has ' + avail);
+    const avail = availOf[x.sku.toUpperCase()] || 0;
+    x.awdAvail = avail; if (x.qty > avail) { over.push(x.sku + ': asked ' + x.qty + ', AWD has ' + avail); overItems.push({ sku: x.sku, asked: x.qty, avail }); }
   }
-  if (over.length) return J({ ok: false, error: 'More than AWD has now — nothing sent: ' + over.join(' · '), over }, 400);
+  if (over.length) return J({ ok: false, error: 'More than AWD has now — nothing sent: ' + over.join(' · '), over, overItems }, 400);
   let orderId = '', err = '';
   try {
     orderId = (await spApiRetry(async () => {
