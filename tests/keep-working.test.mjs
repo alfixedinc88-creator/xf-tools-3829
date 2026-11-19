@@ -14769,5 +14769,23 @@ console.log('\n⚡ Picking by scan: the SKU Mgr look-ups of a label scan use ind
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('81-1-1','81-1-10')");
 }
 
+// Owner (2026-11-19, photo of an FBA box label): "need to make sure our label words is big, this is way too small, you can't see nothing here".
+console.log('\n🔠 Amazon box labels: our words wrap onto more rows instead of shrinking to fit the longest line');
+{
+  const { readFileSync: rfT } = await import('node:fs');
+  const ah = rfT(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8');
+  const src = ah.slice(ah.indexOf('function awdWrapRows('), ah.indexOf('// 📷 + ▌▌ Owner (2026-10-23)'));
+  const drawn = []; let font = 0;
+  const ctx = { set font(f) { font = parseInt(/(\d+)px/.exec(f)[1], 10); }, get font() { return font + 'px'; }, measureText: t => ({ width: String(t).length * font * 0.6 }), fillText: (t, x, y) => drawn.push({ t, fs: font }), textBaseline: '', fillStyle: '' };
+  const draw = new Function(src + '; return awdDrawTemplate;')();
+  const lines = ['Box 2-1 · 2FL=2-2-13 · 2 need label', '100=3/8 JCLAMP', '10 bags × 100 pcs = 1000 pcs', 'GRAB 2 cases (enough for our 2 boxes):', '2FL=2-2-13: grab 2 cases of 26-4-1=25XX — rebag — put 4 bags of =25 into one =100 bag', 'Outside box UPC: 810097208902'];
+  draw(ctx, { x: 0, y: 0, w: 720, h: 480 }, lines, 45);
+  const fs = drawn.length ? drawn[0].fs : 0, all = drawn.map(d => d.t).join(' ');
+  // the old way: the longest line (82 chars) on ONE row → 82 × 0.6 × fs ≤ 720 − 2×28.8 → fs ≈ 13
+  check('720×480 free space: 36 px words (the old way: ≈ 13 px — the longest line had to fit on one row); the long GRAB line wraps onto more rows; nothing cut off or past the edge',
+    fs >= 30 && drawn.length > lines.length && all.replace(/\s+/g, ' ') === lines.join(' ').replace(/\s+/g, ' ') && drawn.every(d => d.t.length * d.fs * 0.6 <= 720 - 2 * 28.8 + 0.5) && drawn.length * fs * 1.18 <= 480 - 2 * 28.8, { fs, rows: drawn.length });
+  check('…the label\'s own size limit is a bit bigger (band × 0.042, was 0.032)', /Math\.round\(band \* 0\.042\)\)/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
