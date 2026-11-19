@@ -3342,7 +3342,10 @@ window.psNormalizeTracking = function(raw) {
   // Reject anything too long (DataMatrix garbage) or too short
   var isUPS  = /^1Z[A-Z0-9]{16}$/.test(t);
   var isUSPS = /^(94|93|92|95|9[0-9])\d{18,20}$/.test(t) || /^\d{20,22}$/.test(t) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(t);
-  if (!isUPS && !isUSPS) return null; // reject non-tracking barcodes including DataMatrix garbage
+  // 📦 Owner (2026-11-19, 🧭 Picking by scan: "not working for the UPS, when we scan the UPS label nothing show up"): the scanner read the
+  // label's square 2D code (MaxiCode / PDF417) instead of the long barcode. When that code carries the whole UPS tracking # (1Z + 16), use it.
+  // Only a field that IS a whole 1Z number (the code's fields are split by control characters — never glued together into a fake one).
+  if (!isUPS && !isUSPS) { var f1z = String(raw || '').toUpperCase().split(/[\x00-\x1F\x7F\s]+/).filter(function(f) { return /^1Z[A-Z0-9]{16}$/.test(f); })[0]; return f1z || null; } // reject non-tracking barcodes including DataMatrix garbage
 
   return t;
 };
@@ -6783,7 +6786,11 @@ window.psPksScan = function(v) {
     if (PKS && !PKS.done) psPksSave(false, 'left for another label');
     return psPksStart(tr);
   }
-  if (psPksLabelEcho(v)) return; // the label's other barcode — not an item
+  if (psPksLabelEcho(v)) { // the label's other barcode — not an item
+    // …but with no order open it was the label scanned the wrong way: say so (was: nothing at all — owner 2026-11-19, UPS labels)
+    if (!PKS || PKS.done) { psPksBuzz(); psPksMsg('⚠ That was the label\'s square code — scan the LONG barcode under <b>UPS TRACKING #</b> (or USPS TRACKING #)', 'warn'); }
+    return;
+  }
   if (!PKS || PKS.done) { psPksMsg('1️⃣ Scan the SHIPPING LABEL first', 'warn'); return; }
   if (PKS.loading) { PKS.queue.push(v); psPksMsg('⏳ Still reading the order — your scan is kept', 'warn'); return; }
   psPksItem(v);
