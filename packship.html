@@ -1157,6 +1157,7 @@ body {
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
   <div class="ps-tabitem"        id="ps-tab-autolabel" onclick="psSwitchTab('autolabel')">🤖 Auto Label</div>
   <div class="ps-tabitem"        id="ps-tab-valerts"  onclick="psSwitchTab('valerts')">🚨 Alerts <span class="ps-tab-badge" id="ps-valerts-badge" style="display:none">0</span></div>
+  <div class="ps-tabitem"        id="ps-tab-notprinted" onclick="psSwitchTab('notprinted')">🖨 Not printed? <span class="ps-tab-badge" id="ps-np-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-printlog" onclick="psSwitchTab('printlog')">🖨️ Print Log <span class="ps-tab-badge" id="ps-printlog-badge" style="display:none">0</span></div>
 </div>
 
@@ -1926,7 +1927,7 @@ body {
           Every label that prints should be read by the fixed Print Log scanner within a few minutes. When
           <select id="ps-al-watch-n" class="ps-field-input" style="width:auto;margin:0;padding:2px 6px;font-size:12px" onchange="psAlWatchSettings()"><option value="3">3</option><option value="5">5</option><option value="8">8</option><option value="10">10</option><option value="15">15</option><option value="20">20</option></select>
           labels in a row are not read (paper jam, out of labels, printer off — or the Print Log box is not open on that computer), the
-          <b>🖨 Printer station stops printing</b>: new labels keep being bought and wait here until someone taps <b>✅ Printer fixed — print again</b>.
+          <span style="text-decoration:line-through;color:var(--text3)">🖨 Printer station stops printing</span> — <b>not any more (owner 2026-11-19): printing never stops by itself</b>; the labels never scanned anywhere are in <b>🖨 Not printed?</b> (its own tab) to tick and print again.
           A label the Print Log scanner missed is fine once it is scanned at <b>Picking or Packing on its ship day</b> (printed before the cut-off — 5:30 PM, Saturday 1:40 PM — ships that day; after it, the next business day).
           Ship day over and never picked or packed → <b style="color:var(--red)">❗ Problem</b>: find out what happened to that label.
           <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-left:6px"><input type="checkbox" id="ps-al-watch-on" onchange="psAlWatchSettings()"> On</label>
@@ -2473,6 +2474,30 @@ body {
   </div>
 
   <!-- ── Print Log Panel ── -->
+  <!-- 🖨 Owner (2026-11-19): "the scanner not pick up the label all the times … I like print station just keep auto printing, we will
+       manually check … after all the printed labels got scanned / picked we will know which one is not printed, then we can select all
+       whatever is not printed, just select it to print … added one more tab for that". -->
+  <div class="ps-panel" id="ps-panel-notprinted">
+    <div class="ps-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="font-size:16px;font-weight:800">🖨 Not printed? — labels printed but never scanned</div>
+        <button class="ps-btn-sm" onclick="psNpLoad()">↻ Refresh</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--text3);margin:6px 0 10px;line-height:1.5">
+        Printing never stops by itself any more. Every label the 🖨 Printer station (or anyone) printed that was <b>never scanned</b> — not at the Print Log, not at <b>Picking</b>, not at <b>Packing</b> — is listed here.
+        When the pickers have finished everything that came out, what is left here most likely did <b>not</b> print (paper jam, out of labels, printer off):
+        tick them (or ☑ all) → <b>🖨 Print selected</b>. A label comes off the list as soon as it is scanned anywhere. Last 7 days.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <label style="font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" id="ps-np-all" onchange="psNpAll(this.checked)"> ☑ Select all</label>
+        <select id="ps-np-age" class="ps-field-input" style="width:auto;margin:0;padding:4px 8px" onchange="psNpRender()">
+          <option value="10">printed 10+ min ago</option><option value="30" selected>printed 30+ min ago</option><option value="60">printed 1+ hour ago</option><option value="0">all</option></select>
+        <button class="ps-btn-primary" id="ps-np-print" style="width:auto;padding:8px 18px" onclick="psNpPrint(this)">🖨 Print selected</button>
+        <span id="ps-np-msg" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+      <div id="ps-np-list" style="font-size:12.5px">Loading…</div>
+    </div>
+  </div>
   <div class="ps-panel" id="ps-panel-printlog">
     <!-- Printing-as name — shared across every open Pack & Ship tab/device
          (not just this browser), so whoever sets it here shows up everywhere
@@ -6522,6 +6547,7 @@ window.psSwitchTab = function(name) {
       psLoadCancelOrders();
     }, 20000);
   }
+  if (name === 'notprinted') psNpLoad();
   if (name === 'printlog') {
     window._psPlRefreshInterval = setInterval(function () { if (!document.hidden) psPlLoadToday(); }, 30000);
     // "Printing as" needs to feel live — someone at the station changes it
@@ -12339,6 +12365,46 @@ window.psAlWatchReprint = async function(id, btn) {
   _psToast(r.done ? '🔁 Reprinted — it comes off the list once the Print Log scanner reads it' : '✗ ' + r.bad.join('; '), r.done ? '' : 'err');
   setTimeout(psAlLoadWatch, 1500);
 };
+// 🖨 Not printed? tab (owner 2026-11-19): the Print watch's labels never scanned at the Print Log, Picking or Packing (missing + problem)
+var PSNP = { sel: {} };
+window.psNpLoad = async function() {
+  var box = document.getElementById('ps-np-list'); if (!box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch').catch(function(e) { return { ok: false, error: e.message }; });
+  if (!d || d.ok === false) { box.innerHTML = '<span style="color:var(--red)">✗ ' + _psAlEsc((d && d.error) || 'failed') + '</span>'; return; }
+  _psAlWatchApply(d); PSNP.at = Date.now(); psNpRender();
+};
+function psNpRows() { var age = parseInt((document.getElementById('ps-np-age') || {}).value, 10) || 0, now = Date.now();
+  return ((window._psAlWatch && window._psAlWatch.missing) || []).filter(function(l) { return !age || now - Date.parse(l.printedAt) >= age * 60000; }); }
+window.psNpRender = function() {
+  var box = document.getElementById('ps-np-list'), e = _psAlEsc; if (!box) return;
+  var all = (window._psAlWatch && window._psAlWatch.missing) || [], L = psNpRows(), b = document.getElementById('ps-np-badge');
+  if (b) { b.textContent = all.length; b.style.display = all.length ? '' : 'none'; }
+  var t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
+  if (!L.length) { box.innerHTML = '<div style="color:var(--green);font-weight:700">✅ Nothing here — every label printed ' + (all.length ? 'that long ago ' : '') + 'was scanned.' + (all.length ? ' <span style="color:var(--text3);font-weight:400">(' + all.length + ' newer ones — change "printed … ago")</span>' : '') + '</div>'; psNpCount(); return; }
+  box.innerHTML = L.map(function(l) { var on = !!PSNP.sel[l.id];
+    return '<label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer' + (l.problem ? ';background:#FEF2F2' : '') + '">'
+      + '<input type="checkbox" class="ps-np-ck" ' + (on ? 'checked ' : '') + 'onchange="PSNP.sel[' + l.id + ']=this.checked;psNpCount()">'
+      + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span>' + e(l.channel || '') + '</span><span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span>'
+      + '<span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+      + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + (l.source ? ' · ' + e(l.source) : '') + (l.printedBy ? ' · ' + e(l.printedBy) : '') + '</span>'
+      + (l.problem ? '<span style="color:var(--red);font-weight:700">❗ ship day over</span>' : '') + '</label>'; }).join('');
+  psNpCount();
+};
+function psNpCount() { var ids = psNpRows().filter(function(l) { return PSNP.sel[l.id]; }), btn = document.getElementById('ps-np-print'), all = document.getElementById('ps-np-all');
+  if (btn) { btn.textContent = '🖨 Print selected' + (ids.length ? ' (' + ids.length + ')' : ''); btn.disabled = !ids.length; }
+  if (all) all.checked = ids.length > 0 && ids.length === psNpRows().length; }
+window.psNpAll = function(on) { psNpRows().forEach(function(l) { PSNP.sel[l.id] = on; }); psNpRender(); };
+window.psNpPrint = async function(btn) {
+  var ids = psNpRows().filter(function(l) { return PSNP.sel[l.id]; }).map(function(l) { return l.id; });
+  if (!ids.length) return;
+  if (!confirm('🖨 Print ' + ids.length + ' label' + (ids.length === 1 ? '' : 's') + ' again on this computer\'s printer, in one print?')) return;
+  if (btn) btn.disabled = true; var m = document.getElementById('ps-np-msg'); if (m) m.textContent = '🖨 Printing…';
+  var r = await _psAlWatchReprintIds(ids);
+  ids.forEach(function(id) { delete PSNP.sel[id]; });
+  if (m) m.textContent = '🖨 Printed ' + r.done + (r.bad.length ? ' · ✗ ' + r.bad.length + ' failed: ' + r.bad.join('; ') : '') + ' — each comes off the list once it is scanned';
+  _psToast('🖨 Printed ' + r.done + (r.bad.length ? ' · ✗ ' + r.bad.length + ' failed' : ''), r.bad.length ? 'err' : '');
+  setTimeout(psNpLoad, 1500);
+};
 window.psAlWatchReprintAll = async function(btn) {
   var ids = ((window._psAlWatch && window._psAlWatch.missing) || []).map(function(x) { return x.id; });
   if (!ids.length || !confirm('🔁 Reprint all ' + ids.length + ' labels not picked up, in one print?')) return;
@@ -12390,5 +12456,5 @@ window.psAlSlipAdd = async function() {
 };
 </script>
 <script src="shelf-map.js?v=20261107a"></script>
-<script src="xf-access.js?v=20261118g"></script>
+<script src="xf-access.js?v=20261119a"></script>
 </html>

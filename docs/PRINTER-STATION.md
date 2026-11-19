@@ -49,6 +49,15 @@ open** (the "🖨 Printer station"). It checks for new ones every minute.
    the station computer is asleep, closed, or signed out.
 5. A label shows "✗ Not printed": tap Print on it to see what Veeqo said.
 
+## 🖨 Printing never stops by itself (since 2026-11-19)
+Owner: the Print Log scanner doesn't read every label, so the Print watch **no longer puts printing ON HOLD**. The station keeps
+printing. To find labels that really didn't print (paper jam, out of labels, printer off):
+1. Let the pickers finish everything that came out.
+2. Pack & Ship → **🖨 Not printed?** lists every label printed but **never scanned** — not at the Print Log, Picking or Packing
+   (printed 30+ min ago by default; change it at the top).
+3. Tick them, or **☑ Select all**, → **🖨 Print selected**. Each one comes off the list once it is scanned anywhere.
+The section below is how it worked before (kept for the record; the "3 in a row → ON HOLD" part no longer happens).
+
 ## 🛑 Print watch: labels not picked up (since 2026-10-08)
 Every label that prints should be read by the fixed **Print Log** scanner
 within a few minutes. Auto Label → **🛑 Print watch** checks this:

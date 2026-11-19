@@ -32020,9 +32020,22 @@ async function labelPrintWait(env) {
     lastPrintedAt: lp.t || null, stationTick: await j('label_station_tick'), stationSeen: await j('label_station_seen') };
 }
 // Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
+// 🖨 Owner (2026-11-19): "the scanner not pick up the label all the times … I like print station just keep auto printing, we will manually
+// check … after all the printed labels got scanned / picked we will know which one is not printed, then select all whatever is not printed
+// and print it … our scanner not picking up the label costing the whole system to stop printing". Printing is NEVER put on hold by the
+// Print watch any more; a hold that is on now is released once (on record). Labels printed but never scanned (Print Log, Picking, Packing)
+// are listed in Pack & Ship → 🖨 Not printed? to tick and print again.
+const LABEL_WATCH_NO_HOLD_KEY = 'label_watch_no_hold_20261119';
 async function labelWatchRun(env, nowMs) {
   const w = await labelWatchCheck(env, nowMs);
-  if (w.settings.on && !w.hold.on && w.inRow >= w.settings.n) {
+  if (w.hold.on && !(await autolabelGetKey(env, LABEL_WATCH_NO_HOLD_KEY))) {
+    const now = new Date(nowMs || Date.now()).toISOString();
+    await autolabelSetKey(env, LABEL_WATCH_HOLD_KEY, JSON.stringify({ on: false, releasedAt: now, releasedBy: 'owner request — printing never holds', lastHold: { at: w.hold.at, why: w.hold.why } }));
+    await autolabelLog(env, { action: 'print_hold_released', reason: '✅ Printing again — the Print watch no longer stops printing (owner 2026-11-19); labels not scanned are in 🖨 Not printed?' + ` · on hold since ${w.hold.at}` });
+    w.hold = { on: false, releasedAt: now, releasedBy: 'owner request' };
+  }
+  if (!(await autolabelGetKey(env, LABEL_WATCH_NO_HOLD_KEY))) await autolabelSetKey(env, LABEL_WATCH_NO_HOLD_KEY, new Date().toISOString());
+  if (false && w.settings.on && !w.hold.on && w.inRow >= w.settings.n) { // (was: N in a row not picked up → hold) — never, owner 2026-11-19
     const top = w.missing.slice(0, w.inRow);
     const why = `${w.inRow} labels in a row printed but not read by the Print Log scanner (paper jam / out of labels / printer off, or the Print Log box is not open on that computer)`;
     const hold = { on: true, at: new Date(nowMs || Date.now()).toISOString(), why, labels: top.map(l => ({ id: l.id, order: l.order_number, tracking: l.tracking })),
