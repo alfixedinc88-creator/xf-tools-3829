@@ -24616,6 +24616,22 @@ async function shipPackageCheck(url, env) {
   if (!rows.length) return J({ ok: true, found: false, tracking: t, carrier: detectShipCarrier(t), history });
   const r = rows[0];
   let lines = []; try { lines = JSON.parse(r.line_items || '[]') || []; } catch (_) {}
+  // 📦 Owner (2026-11-19, order 05-15395-46104 shipped as two labels): "when one order is separated into two labels, scanning one label shows ALL
+  // the items of the order, but that label is only for a few". The order's record holds every item of the order; the label Auto Label bought
+  // kept the items of ITS box (Veeqo's allocation). When the order has more than one label, the items of this label's box are used.
+  let split = null;
+  try {
+    const q = await d1First(env, 'SELECT order_number, items FROM label_print_queue WHERE UPPER(tracking) = ? ORDER BY id DESC LIMIT 1', [t]);
+    let qi = []; try { qi = JSON.parse((q && q.items) || '[]') || []; } catch (_) {}
+    if (q && q.order_number && qi.length) {
+      const other = await d1First(env, "SELECT COUNT(DISTINCT UPPER(tracking)) AS n FROM label_print_queue WHERE order_number = ? AND COALESCE(tracking, '') != '' AND UPPER(tracking) != ?", [q.order_number, t]);
+      if (other && Number(other.n) > 0) {
+        const imgOf = {}; lines.forEach(li => { if (li && li.s) imgOf[String(li.s).toUpperCase()] = li.i || ''; });
+        lines = qi.filter(x => x && x.sku && (parseInt(x.qty) || 0) > 0).map(x => ({ s: x.sku, q: parseInt(x.qty) || 0, b: x.bin || '', i: x.img || imgOf[String(x.sku).toUpperCase()] || '' }));
+        split = { labels: Number(other.n) + 1 };
+      }
+    }
+  } catch (_) {}
   const up = x => String(x || '').trim().toUpperCase();
   const photos = await productPhotoMap(env, lines.map(li => li.b || li.s)).catch(() => ({}));
   const fams = [];
@@ -24648,7 +24664,7 @@ async function shipPackageCheck(url, env) {
   return J({ ok: true, found: true, tracking: r.tracking || t, otherDates: rows.slice(1).map(x => x.date),
     order: { date: r.date || '', orderNum: r.order_num || '', channel: r.channel || '', carrier: r.carrier || detectShipCarrier(t), service: r.service || '',
       customerName: r.customer_name || '', city: r.city || '', state: r.ship_to_state || '', zip: r.zip || '', status: r.reconcile_status || '', weightLb: r.weight_lb != null ? r.weight_lb : null },
-    items, totalQty: items.reduce((a, x) => a + x.qty, 0), history });
+    items, totalQty: items.reduce((a, x) => a + x.qty, 0), history, ...(split ? { split } : {}) });
 }
 
 // Small display-only date/time formatter used inside a couple of the
@@ -24924,8 +24940,10 @@ async function _ensureShipD1TablesRun(env) {
   for (const c of ['part_num', 'sku', 'base_sku'])
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_ml_ut_${c} ON master_list(UPPER(TRIM(${c})))`).run().catch(() => {});
   // …and the barcode lists every label scan reads for the order's part #s (a list not made yet is skipped — made later, it is small)
-  for (const [t, c] of [['upc', 'sku'], ['upc_link', 'part'], ['reorder_fix', 'part'], ['reorder_vendor_catalog', 'part']])
+  for (const [t, c] of [['upc', 'sku'], ['upc_link', 'part'], ['reorder_fix', 'part'], ['reorder_vendor_catalog', 'part'], ['label_print_queue', 'tracking']])
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_${t}_ut_${c} ON ${t}(UPPER(TRIM(${c})))`).run().catch(() => {});
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_lpq_tracking_u ON label_print_queue(UPPER(tracking))').run().catch(() => {}); // 📦 a split order's label → its own box items
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_lpq_order_number ON label_print_queue(order_number)').run().catch(() => {});
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS ship_scan_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

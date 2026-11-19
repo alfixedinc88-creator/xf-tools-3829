@@ -14787,5 +14787,25 @@ console.log('\n🔠 Amazon box labels: our words wrap onto more rows instead of 
   check('…the label\'s own size limit is a bit bigger (band × 0.042, was 0.032)', /Math\.round\(band \* 0\.042\)\)/.test(ah), null);
 }
 
+// Owner (2026-11-19, packing slip of order 05-15395-46104, 5 items, shipped as two labels): "when one order is separated into two labels and we
+// scan one label it shows ALL the items in that order, but that label is only for a few — fix that".
+console.log('\n📦 Picking by scan / Label Check: an order split into 2 labels → each label shows only the items of ITS box');
+{
+  const all = [{ s: '10=3/4F19 F', q: 4, b: '29-2-7' }, { s: '500=3/4F19 RING', q: 1, b: '201-2-13' }, { s: '10=1/2F19 DROP', q: 2, b: '201-1-1' }, { s: '10=3/8F19 S', q: 2, b: '201-3-2' }, { s: '100=3/4F19 PO EL', q: 1, b: '201-6-3' }];
+  const d = new Date().toISOString().slice(0, 10);
+  for (const tr of ['1ZSPLITBOXA000001', '1ZSPLITBOXB000002']) sq.prepare('INSERT INTO ship_manifest_log (date, tracking, order_num, line_items) VALUES (?,?,?,?)').run(d, tr, '05-15395-46104', JSON.stringify(all));
+  const qi = (tr, items) => sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, items) VALUES (?,?,?,?,?,?)").run('05-15395-46104', 'eBay', tr, 'UPS', new Date().toISOString(),
+    JSON.stringify(items.map(x => ({ sku: x.s, qty: x.q, bin: x.b, pieces: 0, img: '' }))));
+  qi('1ZSPLITBOXA000001', all.slice(0, 2)); qi('1ZSPLITBOXB000002', all.slice(2));
+  sq.prepare('INSERT INTO ship_manifest_log (date, tracking, order_num, line_items) VALUES (?,?,?,?)').run(d, '1ZONEBOX00000003', '05-99999-00001', JSON.stringify(all.slice(0, 3)));
+  qi.call(null, '1ZONEBOX00000003', all.slice(0, 1)); sq.prepare("UPDATE label_print_queue SET order_number = '05-99999-00001' WHERE tracking = '1ZONEBOX00000003'").run();
+  const A = await get('/ship/package?pick=1&tracking=1ZSPLITBOXA000001'), B = await get('/ship/package?pick=1&tracking=1ZSPLITBOXB000002'), O = await get('/ship/package?pick=1&tracking=1ZONEBOX00000003');
+  const sk = x => (x.items || []).map(i => i.sku + '×' + i.qty).join(', ');
+  check('label 1 of the split order → only its box: 10=3/4F19 F ×4, 500=3/4F19 RING ×1 (not all 5 items)', A.found && sk(A) === '10=3/4F19 F×4, 500=3/4F19 RING×1' && A.split && A.split.labels === 2, sk(A));
+  check('…label 2 → 10=1/2F19 DROP ×2, 10=3/8F19 S ×2, 100=3/4F19 PO EL ×1; together the 5 items, each once', sk(B) === '10=1/2F19 DROP×2, 10=3/8F19 S×2, 100=3/4F19 PO EL×1', sk(B));
+  check('…an order with ONE label shows its order items as before (not changed)', sk(O) === '10=3/4F19 F×4, 500=3/4F19 RING×1, 10=1/2F19 DROP×2' && !O.split, sk(O));
+  sq.exec("DELETE FROM ship_manifest_log WHERE tracking IN ('1ZSPLITBOXA000001','1ZSPLITBOXB000002','1ZONEBOX00000003'); DELETE FROM label_print_queue WHERE order_number IN ('05-15395-46104','05-99999-00001')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
