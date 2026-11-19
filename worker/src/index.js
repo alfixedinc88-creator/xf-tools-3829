@@ -24919,6 +24919,13 @@ async function ensureShipD1Tables(env) {
   await env.DB.prepare(`INSERT INTO app_config (key, value) VALUES ('ship_d1_schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(key).run().catch(() => {});
 }
 async function _ensureShipD1TablesRun(env) {
+  // ⚡ SKU Mgr look-ups by part # / sku / base sku (Picking by scan, Label Check, every scan look-up): indexes on the same UPPER(TRIM(…))
+  // the queries use, so a look-up jumps to its rows instead of reading every row (owner 2026-11-19: "picking by scan was super slow").
+  for (const c of ['part_num', 'sku', 'base_sku'])
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_ml_ut_${c} ON master_list(UPPER(TRIM(${c})))`).run().catch(() => {});
+  // …and the barcode lists every label scan reads for the order's part #s (a list not made yet is skipped — made later, it is small)
+  for (const [t, c] of [['upc', 'sku'], ['upc_link', 'part'], ['reorder_fix', 'part'], ['reorder_vendor_catalog', 'part']])
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_${t}_ut_${c} ON ${t}(UPPER(TRIM(${c})))`).run().catch(() => {});
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS ship_scan_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26191,10 +26198,14 @@ function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+(&[A-Z0-9]+)?$/.tes
 // Every master_list row in a bin code's part-number family — same match
 // Inventory's search uses (inventoryLookup): part_num / sku equal to the
 // code or starting with "<code>=", or base_sku equal to it.
+// ⚡ Owner (2026-11-19): "check 'picking by scan', it was super slow". Every label scan asks this for each item of the order, several times —
+// and "LIKE 'B=%'" on UPPER(TRIM(…)) read the WHOLE SKU Mgr list (~11,000 rows) every time. Now the same rows as a range: every part #
+// that starts with "B=" is ≥ "B=" and < "B>" ('>' comes right after '='), which the indexes on UPPER(TRIM(…)) (made once with the
+// Pack & Ship tables) jump straight to. Exactly the same rows as before.
 function _PS_FAMILY_SQL(cols) {
-  return `SELECT ${cols} FROM master_list WHERE UPPER(TRIM(part_num))=? OR UPPER(TRIM(part_num)) LIKE ? OR UPPER(TRIM(sku)) LIKE ? OR UPPER(TRIM(base_sku))=?`;
+  return `SELECT ${cols} FROM master_list WHERE UPPER(TRIM(part_num))=? OR (UPPER(TRIM(part_num)) >= ? AND UPPER(TRIM(part_num)) < ?) OR (UPPER(TRIM(sku)) >= ? AND UPPER(TRIM(sku)) < ?) OR UPPER(TRIM(base_sku))=?`;
 }
-function _psFamilyParams(b) { return [b, b + '=%', b + '=%', b]; }
+function _psFamilyParams(b) { return [b, b + '=', b + '>', b + '=', b + '>', b]; }
 
 // Same two tiers _psCheckStockLevel checks a bin against (location column,
 // then the sku column — this account's master_list sometimes keys sku on a
