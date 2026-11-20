@@ -5788,6 +5788,12 @@ async function inventoryLookup(url, env) {
   // bring hot and cold". So a search for 24-2-1 (hot) or 24-2-2 (cold) brings only that part; a search for the SET 24-2-1&2 brings its
   // own boxes (24-2-1&2=OLD …) AND the hot and the cold boxes (24-2-1, 24-2-2), each marked with which part of the set it is (setPart).
   const withSets = url.searchParams.get('sets') === '1';
+  // 🔗 Owner (2026-11-19, Stock Out Big Company): "this shipment needs 1/2 pex ball valve hot 24-2-1 only, we have no more 24-2-1, but we do have
+  // hot and cold mixed cases 24-2-1&2 — when 24-2-1 is sold out, the LAST step tell them to grab the mixed cases; a case of 24-2-1 is 100 pcs,
+  // a mixed case is 100 too but 50 hot + 50 cold, so grab 2 cases, open them, use the 100 hot (red), the blue goes back to the shelf".
+  // ?holdsets=1 (Big Company): a search for a hot / cold part also brings the mixed set boxes that hold it, marked inSet (the set) and
+  // setShare (1/2: half of each case is this part). Shelving (?sets=1) is unchanged.
+  const holdSets = url.searchParams.get('holdsets') === '1';
   if (env.DB) {
     try {
       // Only this item's rows come back (was: every SKU Mgr row on every scan) — the same order and the same row
@@ -5795,6 +5801,7 @@ async function inventoryLookup(url, env) {
       const B0 = parentOf(sku || partNum || ''), likeB = B0.replace(/[\\%_]/g, '\\$&') + '%';
       const comps = withSets ? (setPartsOf(B0) || []) : []; // 🔗 the SET searched → its hot and cold parts too
       const likeC = comps.map(c => c.replace(/[\\%_]/g, '\\$&') + '%');
+      const holdLike = holdSets && !setPartsOf(B0) ? setLikeFor(B0) : null; if (holdLike) likeC.push(holdLike); // 🔗 24-2-1 → the 24-2-%&% set rows
       const [d1Rows, pMap] = await Promise.all([
         d1All(env, `SELECT * FROM (SELECT id,sku,name,part_num,location,cases,units_per_case, ROW_NUMBER() OVER () AS rn FROM master_list)
           WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${likeC.map(() => " OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'").join('')}`, [String(partNum).toUpperCase(), likeB, likeB, ...likeC]),
@@ -5844,7 +5851,8 @@ async function inventoryLookup(url, env) {
 
     const setComps      = withSets ? (setPartsOf(baseSku) || []) : [];
     const matchSet      = setComps.length > 0 && !matchExact && !matchBase && !matchPartBase && setComps.includes(rowPartBase); // a hot / cold box for the set searched
-    if (!matchExact && !matchBase && !matchPartBase && !matchSet) continue;
+    const holdParts     = holdSets && !matchExact && !matchBase && !matchPartBase && !matchSet && setHolds(rowPartBase, baseSku) ? setPartsOf(rowPartBase) : null; // 🔗 a mixed set box that holds the part searched
+    if (!matchExact && !matchBase && !matchPartBase && !matchSet && !holdParts) continue;
 
     if (!name && r[4]) name = String(r[4]).trim();
     if (rowPart) partNums.add(rowPart);
@@ -5862,7 +5870,8 @@ async function inventoryLookup(url, env) {
         rowIndex:      i + 1,
         masterId:      r[15] || null, // real D1 master_list id, when sourced from D1
         isPlaceholder: /will be here/i.test(loc),
-        ...(matchSet ? { setOf: baseSku, setPart: rowPartBase } : {})
+        ...(matchSet ? { setOf: baseSku, setPart: rowPartBase } : {}),
+        ...(holdParts ? { inSet: rowPartBase, setShare: Math.round(1 / holdParts.length * 10000) / 10000, setOther: holdParts.filter(x => x !== baseSku) } : {})
       });
     }
   }
