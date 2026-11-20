@@ -13971,7 +13971,11 @@ console.log('\n🔗 Hot & cold sets (24-2-1&2): Stock Out Shelving uses the set 
       && ranked.some(l => /🔗 96-6-1 for the hot & cold set 96-6-1&2/.test(l._pick.why)) && ph3.takes.map(t => t.partNum + ' ' + t.cases).join() === '96-6-1=10 3',
     { p3: plan.takes.map(t => t.partNum + ' ' + t.cases), p9: plan9.takes.map(t => t.partNum + ' ' + t.cases), s9: [plan9.short, plan9.shortOf], h: ph3.takes.map(t => t.partNum + ' ' + t.cases) });
   check('…the Stock Out page asks for the set boxes only on Stock Out Shelving (search, the other-code retry, None Found next spot) — not Big Company / Stock In',
-    /_invFetchLookupRaw\(code, invMode === 'out' && invStockOutDest === 'shelving'\)/.test(ih) && /var sets = invMode === 'out' && invStockOutDest === 'shelving';/.test(ih) && /_invFetchLookupRaw\(invParent\(it\.partNum\), it\.dest !== 'company'\)/.test(ih), null);
+    // 2026-11-19 (owner): Big Company now asks for the MIXED set boxes that hold a hot / cold part ('hold' → ?holdsets=1, used last) — Shelving
+    // still gets ?sets=1 only, Stock In nothing.
+    /_invFetchLookupRaw\(code, invMode === 'out' && invStockOutDest === 'shelving' \? true : invMode === 'out' && invStockOutDest === 'company' \? 'hold' : false\)/.test(ih)
+      && /var sets = invMode === 'out' && invStockOutDest === 'shelving' \? true : invMode === 'out' && invStockOutDest === 'company' \? 'hold' : false;/.test(ih)
+      && /_invFetchLookupRaw\(invParent\(it\.partNum\), it\.dest !== 'company' \? true : 'hold'\)/.test(ih) && /\(sets === 'hold' \? '&holdsets=1' : sets \? '&sets=1' : ''\)/.test(ih), null);
   // Picking by scan: an order of 2 sets 96-6-1&2=2 + the server's package read
   const cols = sq.prepare('PRAGMA table_info(ship_manifest_log)').all().map(c => c.name);
   const rw = { date: '2026-11-14', tracking: '1Z999AA1SETPICK001', order_num: 'SET-1', line_items: JSON.stringify([{ s: '96-6-1&2=2', q: 2, b: '96-6-1&2' }]) };
@@ -14826,6 +14830,37 @@ console.log('\n📦 Picking by scan / Label Check: an order split into 2 labels 
   check('…label 2 → 10=1/2F19 DROP ×2, 10=3/8F19 S ×2, 100=3/4F19 PO EL ×1; together the 5 items, each once', sk(B) === '10=1/2F19 DROP×2, 10=3/8F19 S×2, 100=3/4F19 PO EL×1', sk(B));
   check('…an order with ONE label shows its order items as before (not changed)', sk(O) === '10=3/4F19 F×4, 500=3/4F19 RING×1, 10=1/2F19 DROP×2' && !O.split, sk(O));
   sq.exec("DELETE FROM ship_manifest_log WHERE tracking IN ('1ZSPLITBOXA000001','1ZSPLITBOXB000002','1ZONEBOX00000003'); DELETE FROM label_print_queue WHERE order_number IN ('05-15395-46104','05-99999-00001')");
+}
+
+// Owner (2026-11-19): "Stock Out Big Company: the shipment needs 1/2 pex ball valve hot 24-2-1 only; we have no more 24-2-1, but we have hot and
+// cold mixed cases 24-2-1&2 — the LAST step tell them to grab the mixed cases; a case of 24-2-1 is 100 pcs, a mixed case is 100 too but 50 hot +
+// 50 cold, so grab 2 cases, open them, use the 100 in red, the blue goes back on the shelf" + "you don't need to do anything on the extra one".
+console.log('\n🔗 Stock Out Big Company: hot (24-2-1) gone → the mixed hot & cold cases (24-2-1&2) as the LAST step, 2 mixed cases for 1 hot case');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES ('91-2-1&2','91-2-1&2','mix','91-2-1&2=10','C1=9-2-1',5,100), ('91-2-1','91-2-1','hot','91-2-1=10','C2=9-2-2',1,100), ('91-2-2','91-2-2','cold','91-2-2=10','C2=9-2-3',4,100)").run();
+  const L1 = await get('/inventory/lookup?code=91-2-1%3D10&holdsets=1'), L0 = await get('/inventory/lookup?code=91-2-1%3D10'), LS = await get('/inventory/lookup?code=91-2-1%3D10&sets=1');
+  const mixRow = (L1.locations || []).find(l => l.inSet);
+  check('Big Company look-up of the hot 91-2-1=10 also brings the mixed case 91-2-1&2=10 (half of each case is hot, the other half 91-2-2); never the cold 91-2-2 itself',
+    mixRow && mixRow.partNum === '91-2-1&2=10' && mixRow.inSet === '91-2-1&2' && mixRow.setShare === 0.5 && JSON.stringify(mixRow.setOther) === '["91-2-2"]' && !(L1.locations || []).some(l => /^91-2-2=/.test(l.partNum)), L1.locations);
+  check('…without ?holdsets (every other screen) and on Shelving (?sets=1, owner 2026-11-17: hot only hot) nothing changes — no mixed case',
+    !(L0.locations || []).some(l => l.inSet || /&/.test(l.partNum)) && !(LS.locations || []).some(l => l.inSet || /&/.test(l.partNum)), { L0: L0.locations, LS: LS.locations });
+  const { readFileSync: rfM } = await import('node:fs');
+  const ih = rfM(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fnSrc = name => { const i = ih.indexOf('  function ' + name + '('); const j = ih.indexOf('\n  }\n', i); return i < 0 || j < 0 ? '' : ih.slice(i, j + 4); };
+  const mk = part => new Function('ctx', 'var invPart = ctx.part, invPullList = [], INV_FBA_LOW_CASES = 2; function invOnPallet() { return false; } function invFifoBoxSize() { return 0; }\n'
+    + fnSrc('invRankForCompany') + fnSrc('invPlanCompanyPull') + '; return invPlanCompanyPull;')({ part });
+  const part = { partNum: '91-2-1=10', locations: L1.locations.map(l => Object.assign({}, l)), fbaParts: [] };
+  const sh = p => p.takes.map(t => t.partNum + '@' + t.loc.location + '×' + t.cases + (t.mix ? ' mix' : '')).join(', ');
+  const p1 = mk(part)('91-2-1=10', 1);
+  check('need 1 case of hot (100 pcs) and the hot spot has 1 → the hot case only, no mixed case', sh(p1) === '91-2-1=10@C2=9-2-2×1' && p1.short === 0, sh(p1));
+  const part2 = { partNum: '91-2-1=10', locations: L1.locations.filter(l => !/^91-2-1=/.test(l.partNum)).map(l => Object.assign({}, l)), fbaParts: [] };
+  const p2 = mk(part2)('91-2-1=10', 1), t2 = p2.takes[0] || {};
+  check('…hot sold out → the LAST step: 2 mixed cases 91-2-1&2=10 (50 hot each = 100 hot), told to open them, use the 91-2-1 and put the 91-2-2 back; nothing short',
+    sh(p2) === '91-2-1&2=10@C1=9-2-1×2 mix' && t2.pieces === 100 && p2.short === 0 && /use the 91-2-1, put the 91-2-2 back/.test(t2.how || ''), { plan: sh(p2), how: t2.how, pieces: t2.pieces });
+  const p3 = mk({ partNum: '91-2-1=10', locations: L1.locations.map(l => Object.assign({}, l)), fbaParts: [] })('91-2-1=10', 2);
+  check('…need 2 cases with 1 hot case left → the hot case first, then 2 mixed cases for the other 100 (3 cases taken, 200 hot)',
+    sh(p3) === '91-2-1=10@C2=9-2-2×1, 91-2-1&2=10@C1=9-2-1×2 mix' && p3.short === 0 && p3.takes.reduce((a, t) => a + t.pieces, 0) === 200, sh(p3));
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('91-2-1&2','91-2-1','91-2-2')");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

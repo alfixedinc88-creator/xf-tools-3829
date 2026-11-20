@@ -3017,7 +3017,7 @@ window.invCredLogin = async function() {
   }
   function invAwdPlanPartCalc(o, ships, got) {
     var r = { takes: [], short: [], noSize: [], allGot: false, need: {}, left: {}, grabbed: {}, onList: {} }, sname = function(si) { return ships[si].shipment; };
-    return _invFetchLookupRaw(o.part).then(function(L) {
+    return _invFetchLookupRaw(o.part, 'hold').then(function(L) {
       if (!L || !L.partNum) { r.short.push(o.part + ' (not found)'); return r; }
       var keep = invPart; invPart = L;
       try {
@@ -4143,7 +4143,7 @@ window.invCredLogin = async function() {
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
-    _invFetchLookupRaw(code, invMode === 'out' && invStockOutDest === 'shelving')
+    _invFetchLookupRaw(code, invMode === 'out' && invStockOutDest === 'shelving' ? true : invMode === 'out' && invStockOutDest === 'company' ? 'hold' : false)
       .then(function(d) { if (byName && invNameFallback(code, d)) { invScanNameSearch(code); return; } _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
@@ -4414,12 +4414,19 @@ window.invCredLogin = async function() {
         : tier === 1 ? 'same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA'
         : '';
       var pal = invOnPallet(l), gp = /GRANDPA/i.test(String(l.location || '')) /* 🏚 Grandpa Basement — see invOnPallet */;
+      if (l.inSet) { // 🔗 a MIXED hot & cold set box (owner 2026-11-19): the last step, only when the part itself is gone
+        var tb = String(T).split('=')[0];
+        l._pick = { tier: 9, score: 0, how: 'open the mixed case — use the ' + tb + ', put the ' + (l.setOther || []).join(' / ') + ' back on the shelf', pallet: pal, nf: !!l.noneFound, gp: gp, mix: true,
+          why: '🔗 mixed hot & cold case (' + l.inSet + ') — only ' + Math.round((l.setShare || 0.5) * 100) + '% of each case is ' + tb + ', used last' + (pal ? ' · 🚢 still on a pallet' : '') };
+        return;
+      }
       l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal, nf: !!l.noneFound, gp: gp,
         why: (gp ? '🏚 Grandpa Basement — used last, only when the spots here don\'t have enough · ' : '') + (l.noneFound ? '⚠ None Found here by ' + (l.noneFound.by || '?') + ' — used last until 🔍 Audit counts it · ' : '') + (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
           + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b), A = a._pick, B = b._pick;
+      if (!!A.mix !== !!B.mix) return A.mix ? 1 : -1; // 🔗 mixed hot & cold set boxes: the very last step (owner 2026-11-19)
       if (A.nf !== B.nf) return A.nf ? 1 : -1; // ⚠ reported None Found, not counted since → last of all (owner 2026-10-29)
       if (A.gp !== B.gp) return A.gp ? 1 : -1; // 🏚 Grandpa Basement after every spot here (owner 2026-11-17)
       if (A.pallet !== B.pallet) return A.pallet ? 1 : -1; // shelves before pallets
@@ -4456,9 +4463,12 @@ window.invCredLogin = async function() {
     // What one case of a spot is worth, in pieces (or cases when sizes unknown).
     var noSize = {};
     var unitOf = function(l) { var pn = pnOf(l);
+      // 🔗 a mixed set case: only its share is the part (a case of 100 = 50 hot + 50 cold → 50 pcs; cases unknown → half a case)
+      if (l.inSet) { var sh = l.setShare || 0.5, ue = parseFloat(l.eachQty) || 0; return byPieces ? (ue || upcT) * sh : sh; }
       if (!byPieces) return packOf(pn) === P ? 1 : 0;
       var u = upc[pn] || (packOf(pn) === P ? upcT : 0); if (!u) noSize[pn] = 1; return u; };
-    var rankedAll = invRankForCompany(locs, T).filter(function(l) { return unitOf(l) > 0; });
+    var ranked0 = invRankForCompany(locs, T), mixLocs = ranked0.filter(function(l) { return l._pick && l._pick.mix; });
+    var rankedAll = ranked0.filter(function(l) { return !(l._pick && l._pick.mix) && unitOf(l) > 0; });
     var left = byPieces ? need * upcT : need, takes = [];
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; var u = unitOf(l); l._left = Math.round((l._left - n) * 100) / 100; left = Math.round((left - n * u) * 100) / 100;
       var ex = takes.filter(function(t) { return t.loc === l; })[0];
@@ -4501,6 +4511,12 @@ window.invCredLogin = async function() {
       }
     }
     });
+    // 🔗 the LAST step (owner 2026-11-19): the part itself is gone → MIXED hot & cold set cases, each giving only its share
+    // (1 case of 24-2-1 = 100 pcs → 2 mixed 24-2-1&2 cases of 50 hot + 50 cold). Shelves before pallets, the fullest spot first.
+    if (left > 0.001 && mixLocs.length) {
+      mixLocs.slice().sort(function(a, b) { return (a._pick.nf - b._pick.nf) || (a._pick.gp - b._pick.gp) || (a._pick.pallet - b._pick.pallet) || (b._left - a._left); })
+        .forEach(function(l) { if (left > 0.001 && unitOf(l) > 0) { take(l, Math.min(l._left, Math.ceil(left / unitOf(l) - 1e-9))); var tk = takes[takes.length - 1]; if (tk && tk.loc === l) { tk.mix = true; tk.setOf = l.inSet; } } });
+    }
     return { takes: takes, short: Math.max(0, left), byPieces: byPieces, needPieces: byPieces ? need * upcT : null, noSize: Object.keys(noSize) };
   }
 
@@ -4509,8 +4525,10 @@ window.invCredLogin = async function() {
   // show, without a "not found" flash firing for the attempt that doesn't
   // pan out. window.invLookup (above) is just this call plus rendering.
   // sets = true (Stock Out Shelving): a search for 24-2-1 also brings the hot & cold set boxes that hold it (24-2-1&2=OLD) — owner 2026-11-14.
+  // sets = 'hold' (Stock Out Big Company): a search for a hot / cold part also brings the MIXED set boxes that hold it (24-2-1&2) — used last,
+  // half of each case is the part (owner 2026-11-19).
   function _invFetchLookupRaw(code, sets) {
-    return wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code) + (sets ? '&sets=1' : ''))
+    return wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code) + (sets === 'hold' ? '&holdsets=1' : sets ? '&sets=1' : ''))
       .then(function(r) { return r.json(); });
   }
 
@@ -6412,7 +6430,7 @@ window.invCredLogin = async function() {
   // it to auto-pick the spot).
   function _invLookupWithFallback(primaryCode, fallbackCode, searchInp, onDone) {
     var show = function(code, d) { _invRenderLookupResult(code, d); if (onDone) onDone(d); };
-    var sets = invMode === 'out' && invStockOutDest === 'shelving';
+    var sets = invMode === 'out' && invStockOutDest === 'shelving' ? true : invMode === 'out' && invStockOutDest === 'company' ? 'hold' : false;
     _invFetchLookupRaw(primaryCode, sets).then(function(d1) {
       if (_invHasRealStock(d1) || !fallbackCode) { show(primaryCode, d1); return; }
       _invFetchLookupRaw(fallbackCode, sets).then(function(d2) {
@@ -8334,7 +8352,7 @@ window.invCredLogin = async function() {
     var U = function(v) { return String(v || '').trim().toUpperCase(); };
     var avail = function(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); };
     invFlash('✗ None Found — finding another spot…', 'success');
-    _invFetchLookupRaw(invParent(it.partNum), it.dest !== 'company').then(function(d) {
+    _invFetchLookupRaw(invParent(it.partNum), it.dest !== 'company' ? true : 'hold').then(function(d) {
       var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[U(x.partNum) + '|' + U(x.location)] = (onList[U(x.partNum) + '|' + U(x.location)] || 0) + (parseFloat(x.cases) || 0); });
       var tried = {}; invPullList.forEach(function(x) { if (x.noneFound) tried[U(x.partNum) + '|' + U(x.location)] = 1; });
       var locs = ((d && d.locations) || []).filter(function(l) {
