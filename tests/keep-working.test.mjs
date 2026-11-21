@@ -14879,5 +14879,30 @@ console.log('\n🔢 Listing SKU typed with "-" (25-1PO PLUG) = 25 pcs like "25="
   check('…Picking by scan: 25-1PO PLUG ×1 → 25 pcs to pick (was 1); ×2 → 50', L[0].need === 25 && L[1].need === 50, L.map(l => l.need));
 }
 
+// Owner (2026-11-21, FBA label FBA19XPR747PU000005 · 23-1-4=10-- · X0055L6QW1 printed, grouped "✅ FULL CASE … on the pallet"): "we see this
+// suppose to using Amazon label, why system not catch it … all the Amazon label must catch and match with Amazon labels"
+console.log('\n🅰 Amazon-barcode (FNSKU) listings are never ✅ FULL CASE — 🏷 NEED LABELING on the labels and NEED TO LABEL in Stock Out Big Company');
+{
+  const { readFileSync: rfA } = await import('node:fs');
+  const ah = rfA(fileURLToPath(new URL('../awd.html', import.meta.url)), 'utf8'), ih = rfA(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const a = ah.indexOf('function awdScanCode('), sc = new Function(ah.slice(a, ah.indexOf('\n}\n', a) + 3) + '; return awdScanCode;')();
+  const fn = (sku, amz, lfn, bc) => { const r = sc(sku, [], amz, lfn, bc); return !!(r && r.kind === 'FNSKU'); };
+  const amz = [{ sku: '23-1-4=10--', part: '23-1-4=10', asin: 'B0AMZ00001', fnsku: 'X0055L6QW1' }, { sku: '30-3-4=10X', part: '30-3-4=10X', asin: 'B0OWN00001', fnsku: 'X00OWN0001' },
+    { sku: '40-1-1=5', part: '40-1-1=5', asin: 'B0SAVED001', fnsku: 'X00SAV0001', choice: { src: 'saved' }, barcode: 'amazon' }];
+  const list = new Set(['B0AMZ00001']);
+  check('on the Amazon-barcode list (by ASIN) → Amazon label; not on it → our UPC; ✅ saved in the Shipment Builder → Amazon label; list not read → the X0… on the label',
+    fn('23-1-4=10--', amz, 'X0055L6QW1', list) && !fn('30-3-4=10X', amz, 'X00OWN0001', list) && fn('40-1-1=5', amz, '', list) && fn('23-1-4=10--', amz, 'X0055L6QW1', null),
+    [fn('23-1-4=10--', amz, 'X0055L6QW1', list), fn('30-3-4=10X', amz, 'X00OWN0001', list), fn('40-1-1=5', amz, '', list), fn('23-1-4=10--', amz, 'X0055L6QW1', null)]);
+  const blk = ah.slice(ah.indexOf("pick.forEach((m, k) => { m.loc = plan.locOf[k];"), ah.indexOf('const partOf = sku =>'));
+  check('…label build: the same rule (awdScanCode with the label\'s FNSKU) turns ✅ FULL CASE into 🏷 NEED LABELING, ✂ RECOUNT stays; the label says AMAZON BARCODE ON EVERY BAG',
+    /awdScanCode\(m\.sku, \[\], amz, m\.fnsku, amzBc\)/.test(blk) && /if \(m\.kind === 'full'\) m\.kind = 'label';/.test(blk) && /m\.amzLbl && !m\.prevKey \? '🅰 AMAZON BARCODE \(FNSKU\) ON EVERY BAG/.test(ah));
+  check('…🔒 Lock it carries it (amzLabel) → Stock Out Big Company takes', /amzLabel: !!x\.plan\.amzLbl/.test(ah) && /left: g\.n \|\| 0, amz: !!x\.amzLabel/.test(ih) && /labels: g\.labels \|\| 0, amzLabel: !!y\.amz \}/.test(ih));
+  const k0 = ih.indexOf('  function invAwdPre('), kind = new Function(ih.slice(k0, ih.indexOf('  function invAwdExtraHow(')) + '; return invAwdKind;')();
+  const t = { partNum: '23-1-4=10', target: '23-1-4=10', loc: { eachQty: 100 }, boxPcs: 100, cases: 1 };
+  check('…Stock Out Big Company: the same whole case = FULL CASE (→ pallet) for our-UPC listings, NEED TO LABEL when the bags carry Amazon\'s barcode (whole-case part # too)',
+    kind(t) === 'full' && kind(Object.assign({}, t, { amzLabel: true })) === 'label' && kind({ caseOf: '23-1-4=10', amzLabel: true }) === 'label' && kind({ caseOf: '23-1-4=10' }) === 'full',
+    [kind(t), kind(Object.assign({}, t, { amzLabel: true }))]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

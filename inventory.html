@@ -2982,7 +2982,7 @@ window.invCredLogin = async function() {
     sis.forEach(function(si) { uS += o.per[si].units || 0; bS += o.per[si].boxes || 0; });
     var boxPcs = bS > 0 ? Math.round(uS / bS * pack * 1000) / 1000 : 0;
     sis.forEach(function(si) { var sh = ships[si].shipment, tag = invAwdTag(sh), lines = ((LK[sh] || {}).lines || []).filter(function(x) { return String(x.forPart || '').toUpperCase().replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }) === o.part; }); // =10-X = =10X
-      var G = []; lines.forEach(function(x) { (x.grabs || []).forEach(function(g) { G.push({ g: g, left: g.n || 0 }); }); });
+      var G = []; lines.forEach(function(x) { (x.grabs || []).forEach(function(g) { G.push({ g: g, left: g.n || 0, amz: !!x.amzLabel }); }); });
       var need = G.reduce(function(a, x) { return a + x.left; }, 0); r.need[sh] = need;
       if (!G.length) { r.short.push(o.part + ' (🔒 locked plan has no spot for it)'); return; }
       // grabbed / on a Pull List / taken by another phone for THIS shipment → off its locked spots (the same part # first)
@@ -3000,7 +3000,7 @@ window.invCredLogin = async function() {
         r.takes.push({ target: o.part, name: o.name || row.name || '', pcs: g.pcs ? y.left * g.pcs : 0, partNum: part, cases: Math.round(y.left * 1000) / 1000, how: '🔒 ' + (how || 'locked plan'), area: invAwdArea(g.loc),
           loc: { location: row.location || g.loc, masterId: row.masterId || null, rowIndex: 0, cases: row.cases != null ? row.cases : y.left, adjustedCases: row.cases != null ? row.cases : y.left, eachQty: row.eachQty || g.pcs || 0 },
           L: { partNum: part, sku: row.sku || part, name: row.name || o.name || '', caseOf: g.caseOf ? (function() { var m = {}; m[o.part] = g.caseOf; return m; })() : {} },
-          ships: [tag], boxPcs: boxPcs, caseOf: g.caseOf || '', locked: true, labels: g.labels || 0 });
+          ships: [tag], boxPcs: boxPcs, caseOf: g.caseOf || '', locked: true, labels: g.labels || 0, amzLabel: !!y.amz });
         if (!row.masterId) r.short.push(part + ' @ ' + g.loc + ' (🔒 locked spot not in SKU Mgr now)'); });
       r.left[sh] = left; });
     r.allGot = !r.takes.length && !r.short.length;
@@ -3323,6 +3323,8 @@ window.invCredLogin = async function() {
   //   label = another bag of the same part (cover the label / rebag) · full = the right part #, ONE of our cases = ONE Amazon box (same pieces),
   //   or a part # sold as a whole case (Reorder 📦) · extra = the right part # but the case is not one Amazon box (open / split / count).
   function invAwdKind(t) {
+    // 🅰 Owner (2026-11-21): a listing whose bags carry AMAZON's barcode (FNSKU) is never a plain full case → NEED TO LABEL (never straight to the pallet)
+    if (t.amzLabel) return 'label';
     if (t.caseOf) return 'full';
     if (!invAwdPre(t)) return 'label';
     var c = parseFloat(t.loc && t.loc.eachQty) || 0, b = parseFloat(t.boxPcs) || 0;
