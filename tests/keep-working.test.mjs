@@ -7586,7 +7586,7 @@ console.log('\n🧩 Pages & Tabs: every tab and card has a check mark (new ones 
   ]);
   const TABS = { 'inventory.html': /id="(inv-tab-[a-z0-9]+)"/g, 'packship.html': /id="(ps-tab-[a-z0-9]+)"/g, 'reorder.html': /id="(ro-tab-[a-z0-9]+)"/g,
     'repricer.html': /id="(tab-[a-z0-9-]+)"/g, 'awd.html': /id="(tab-[a-z0-9]+)"/g, 'sales.html': /id="(db-tab-[a-z0-9]+)"/g, 'ldash.html': /id="(ldash-ih-btn-[a-z]+)"/g,
-    'imagemaker.html': /id="(imx-tab-[a-z]+)"/g, 'warehouse.html': /class="tabitem[^"]*"[^>]*onclick="switchTab\('([a-z]+)'\)"/g };
+    'imagemaker.html': /id="(imx-tab-[a-z]+)"/g, 'upc.html': /id="(upc-tab-[a-z]+)"/g, 'warehouse.html': /class="tabitem[^"]*"[^>]*onclick="switchTab\('([a-z]+)'\)"/g };
   const CARDS = { 'inventory.html': /<(?:div|details)[^>]*class="icard(?: [^"]*)?"[^>]*id="([\w-]+)"|<(?:div|details)[^>]*id="([\w-]+)"[^>]*class="icard(?: [^"]*)?"/g,
     'packship.html': /<div[^>]*class="ps-card(?: [^"]*)?"[^>]*id="([\w-]+)"|<div[^>]*id="([\w-]+)"[^>]*class="ps-card(?: [^"]*)?"/g };
   const noMark = [], stale = [];
@@ -12466,6 +12466,8 @@ console.log('\n📦 UPC Barcodes: scan an AWD box\'s Amazon label → print its 
     { sscc: '301952611628559201', sku: '97-1-1=10-', part: '97-1-1=10', seq: '2-1', units: 5, loc: 'C1=1-1-1', fnsku: 'X00TEST9711', name: '1/2 pex elbow 10 pack' },
     { sscc: '301952611628559202', sku: '97-2-2=5-', part: '97-2-2=5', seq: '3-1', units: 2, loc: 'C1=1-1-2', fnsku: 'B0TESTASIN', name: 'tee 5 pack' }] });
   sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('97-1-1=10','97-1-1','840097110105','10840097110102')").run();
+  // 🅰 owner 2026-11-21: an X0… alone doesn't mean Amazon's barcode — 97-1-1=10- is ✅ Amazon label in the Shipment Builder (saved choice)
+  await get('/inventory/amazon-barcode'); sq.prepare("INSERT OR REPLACE INTO amazon_barcode_choice (sku, asin, amazon, by_user, at) VALUES ('97-1-1=10','',1,'test','2026-11-21T00:00:00Z')").run();
   const { readFileSync: rfU2 } = await import('node:fs');
   const uh = rfU2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
   const code = uh.slice(uh.indexOf('// ── 📦 AWD box → its bag UPC'), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
@@ -12507,10 +12509,12 @@ console.log('\n🅰 UPC Barcodes shipment list: part #s with spaces / dashes fou
   sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('923-2-1=20-X', 'X00AMZ2321', 'B0AMZ02321', 'not-our-brand valve 20 pack', 'Yes', now);
   sq.prepare("INSERT OR REPLACE INTO amazon_fba_inventory (sku, fnsku, asin, product_name, afn_listing_exists, updated_at) VALUES (?,?,?,?,?,?)").run('905-2-2=10XX', 'X00AMZ0522', 'B0AMZ00522', 'brass tee 10 pack', 'Yes', now);
   sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('925-4-2=5','925-4-2','840925420051','10840925420058')").run();
+  // 🅰 owner 2026-11-21: both listings are ✅ Amazon label (saved in the Shipment Builder) — an X0… alone no longer counts
+  sq.prepare("INSERT OR REPLACE INTO amazon_barcode_choice (sku, asin, amazon, by_user, at) VALUES ('923-2-1=20-X','B0AMZ02321',1,'test',?), ('905-2-2=10XX','B0AMZ00522',1,'test',?)").run(now, now);
   const { readFileSync: rfS2 } = await import('node:fs');
   const uh = rfS2(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
   const fnU = n => { const a = uh.indexOf('function ' + n + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
-  const code = uh.slice(uh.indexOf('function upcRenderFromSkuList('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
+  const code = uh.slice(uh.indexOf('function upcMatchesFor('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
     + uh.slice(uh.indexOf('var UPC_W = '), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
   const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {}, textContent: '' });
   const printed = { n: 0, html: '' }, made = [];
@@ -12532,7 +12536,7 @@ console.log('\n🅰 UPC Barcodes shipment list: part #s with spaces / dashes fou
   const rec = sq.prepare("SELECT metadata FROM user_activity_log WHERE action_type = 'awd_bag_print' ORDER BY id DESC LIMIT 1").get() || {};
   check('…🅰 Print Amazon label with 3 → 3 labels (Code 128 X00AMZ2321 + FNSKU + name + New), one print; kept (who / when / part # / 3)',
     printed.n === 1 && (printed.html.match(/X00AMZ2321<\/text>/g) || []).length === 3 && made.filter(m => m[0] === 'X00AMZ2321' && m[1] === 'CODE128').length === 3 && /"qty":3/.test(rec.metadata || '') && /923-2-1=20-X/.test(rec.metadata || ''), { n: printed.n, rec });
-  sq.exec("DELETE FROM amazon_fba_inventory WHERE sku IN ('923-2-1=20-X','905-2-2=10XX'); DELETE FROM upc WHERE base_sku = '925-4-2'");
+  sq.exec("DELETE FROM amazon_fba_inventory WHERE sku IN ('923-2-1=20-X','905-2-2=10XX'); DELETE FROM upc WHERE base_sku = '925-4-2'; DELETE FROM amazon_barcode_choice WHERE sku IN ('923-2-1=20-X','905-2-2=10XX','97-1-1=10')");
 }
 
 // Owner (2026-10-31, photo): "under the Stock Out Big Company it keeps saying updating" — one part # whose look-up never answered (or
@@ -12949,17 +12953,21 @@ console.log('\n📦 UPC Barcodes: AWD shipments ready, live from the AWD Planner
 {
   const uh = require0('node:fs').readFileSync(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
   const code = uh.slice(uh.indexOf('async function upcLoadAwdOpen()'), uh.indexOf('async function upcAutoLoadSavedShipment()'));
-  const els = { 'upc-awdopen-card': { style: {} }, 'upc-awdopen-list': { innerHTML: '' } }, rendered = [];
+  const els = { 'upc-awdopen-card': { style: {} }, 'upc-awdopen-list': { innerHTML: '' }, 'upc-awd-results': { innerHTML: '' }, 'upc-awd-find-wrap': { style: {} } }, rendered = [], tabs = [];
   const g = { window: {}, document: { getElementById: id => els[id] || null }, console,
     wFetch: async u => ({ json: async () => /\/awd\/ship-send\?open=1$/.test(u) ? { ok: true, shipments: [
       { shipment: 'OLD-1', source: 'send', at: '2026-10-29T15:00:00Z', by: 'MG', lines: [{ sku: '30-3-4=10X', part: '30-3-4=10X' }] },
       { shipment: 'NEW-2', source: 'labels', at: '2026-10-31T16:00:00Z', by: 'TS', lines: [{ sku: '27-3-1=5XX' }, { sku: '27-3-1=5XX' }, { sku: '925-4-2 =5' }, { part: '61-1-1=10' }] } ] } : {} }),
-    upcRenderFromSkuList: (skus, name, mode) => rendered.push({ skus, name, mode }) };
+    upcRenderFromSkuList: (skus, name, mode) => rendered.push({ skus, name, mode }),
+    // 📦 owner 2026-11-21: Load Barcodes now shows the list in the 📦 AWD Shipment tab (its own results + search), the same SKUs
+    upcTab: t => tabs.push(t), upcMatchesFor: skus => { rendered.push({ skus: skus.slice(), name: 'AWD ' + 'NEW-2', mode: 'sheet' }); return skus.map(k => ({ partNum: k, upc: '1', shipSkus: [k] })); },
+    upcEnrichMatches: () => Promise.resolve(), upcPartKey: p => String(p || '').toUpperCase().replace(/\s+/g, ''), upcEsc: v => String(v), loadJsBarcode: cb => cb(), upcRenderSheet: M => 'ROWS:' + M.length, upcDrawBarcodes() {}, upcAwdFind() {} };
   const api = new Function(...Object.keys(g), code + '; return { upcLoadAwdOpen };')(...Object.values(g));
   await api.upcLoadAwdOpen();
   const h = els['upc-awdopen-list'].innerHTML;
-  g.window.upcLoadAwdOpenShip(0);
-  check('the card shows (newest first: NEW-2 "newest", 🏷 labels made, 3 SKUs, then OLD-1); Load Barcodes on NEW-2 → its SKUs once each, named "AWD NEW-2"',
+  g.window.upcLoadAwdOpenShip(0); await new Promise(r => setTimeout(r, 20));
+  check('the card shows (newest first: NEW-2 "newest", 🏷 labels made, 3 SKUs, then OLD-1); Load Barcodes on NEW-2 → its SKUs once each, named "AWD NEW-2" — shown in the 📦 AWD Shipment tab',
+    tabs[0] === 'awd' && /AWD NEW-2/.test(els['upc-awd-results'].innerHTML) && /ROWS:3/.test(els['upc-awd-results'].innerHTML) && els['upc-awd-find-wrap'].style.display === 'flex' &&
     els['upc-awdopen-card'].style.display === 'block' && h.indexOf('NEW-2') < h.indexOf('OLD-1') && /NEW-2<\/b> <span[^>]*>newest/.test(h) && /3 SKUs · 🏷 Amazon box labels made/.test(h)
       && rendered.length === 1 && rendered[0].name === 'AWD NEW-2' && rendered[0].skus.join() === '27-3-1=5XX,925-4-2 =5,61-1-1=10', { h: h.slice(0, 400), rendered });
   check('…loaded when the page opens (next to Saved Shipment, which stays as it was) and has a 🧩 Pages & Tabs check mark',
@@ -12978,11 +12986,12 @@ console.log('\n🅰 UPC Barcodes: Amazon\'s label decided by the shipment\'s own
   ins.run('2-3-4=2XX', 'B07OURUPC1', 'B07OURUPC1', 'tee 2 pack', 'Yes', now);            // this shipment's listing: our UPC (FNSKU = ASIN)
   ins.run('2-3-4=2XX-OLD', 'X00OLD0234', 'B0OLD00234', 'tee 2 pack old', 'Yes', now);      // an old listing of the same part #: Amazon's barcode
   ins.run('62-1-1=10', 'X00DLFVPB3', 'B07DLFVPB3', 'valve 10 pack', 'Yes', now);           // needs Amazon's barcode
+  sq.prepare("INSERT OR REPLACE INTO amazon_barcode_choice (sku, asin, amazon, by_user, at) VALUES ('62-1-1=10','B07DLFVPB3',1,'test',?), ('2-3-4=2XX-OLD','B0OLD00234',1,'test',?)").run(now, now); // ✅ chosen (owner 2026-11-21: an X0… alone doesn't count)
   sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('2-3-4=2XX-OLD', '2-3-4=2XX')").run();
   sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('2-3-4=2XX','2-3-4','840428912024','10840428912021')").run();
   const uh = require0('node:fs').readFileSync(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
   const fnU = n => { const a = uh.indexOf('function ' + n + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
-  const code = uh.slice(uh.indexOf('function upcRenderFromSkuList('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
+  const code = uh.slice(uh.indexOf('function upcMatchesFor('), uh.indexOf('// Build barcode card HTML')) + fnU('upcRenderSheet')
     + uh.slice(uh.indexOf('var UPC_W = '), uh.indexOf('// Restores the manual "type a UPC and print it" feature'));
   const els = {}, el = id => els[id] || (els[id] = { innerHTML: '', value: '', style: {}, textContent: '' });
   const doc = { getElementById: id => el(id), createElementNS: () => ({ setAttribute() {}, getAttribute() {} }), createElement: () => ({ style: {} }), body: { appendChild() {} } };
@@ -14902,6 +14911,47 @@ console.log('\n🅰 Amazon-barcode (FNSKU) listings are never ✅ FULL CASE — 
   check('…Stock Out Big Company: the same whole case = FULL CASE (→ pallet) for our-UPC listings, NEED TO LABEL when the bags carry Amazon\'s barcode (whole-case part # too)',
     kind(t) === 'full' && kind(Object.assign({}, t, { amzLabel: true })) === 'label' && kind({ caseOf: '23-1-4=10', amzLabel: true }) === 'label' && kind({ caseOf: '23-1-4=10' }) === 'full',
     [kind(t), kind(Object.assign({}, t, { amzLabel: true }))]);
+}
+
+// Owner (2026-11-21, UPC Barcodes → AWD shipments ready → Load Barcodes: 56 SKUs, a 3rd "↳ 🅰 also Amazon's label" X004T64YD1 when the
+// shipment has only 2): "check how that got in … make a Tab and move this AWD shipment ready to the new tab … scan the Amazon big label to
+// get the UPC or Amazon barcode to print … including the name … search for the name to see if that item is under that shipment"
+console.log('\n🏷 UPC page: Amazon label only when WE chose it (not every X0…) · 📦 AWD Shipment tab with names + search');
+{
+  const { readFileSync: rfU } = await import('node:fs');
+  const uh = rfU(fileURLToPath(new URL('../upc.html', import.meta.url)), 'utf8');
+  const fnOf = name => { const a = uh.indexOf('function ' + name + '('); return uh.slice(a, uh.indexOf('\n}\n', a) + 3); };
+  const am = { list: [
+    { sku: '23-1-4=10--', part: '23-1-4=10', asin: 'B0A', fnsku: 'X0055L6QW1', name: 'Plug A', barcode: 'amazon', choice: { src: 'list' } },
+    { sku: '30-3-4=10X', part: '30-3-4=10X', asin: 'B0B', fnsku: 'X004T64YD1', name: 'Tee B', barcode: 'amazon' },            // X0… from Amazon, NOT chosen
+    { sku: '40-1-1=5', part: '40-1-1=5', asin: 'B0C', fnsku: 'X00SAV0001', name: 'Cap C', barcode: 'amazon', choice: { src: 'saved' } },
+    { sku: '50-1-1=5', part: '50-1-1=5', asin: 'B0D', fnsku: 'X00UNT0001', name: 'Elbow D', barcode: 'maker', choice: { src: 'saved' } } ] };
+  const wFetch = url => Promise.resolve({ json: () => Promise.resolve(/amazon-barcode/.test(url) ? am : { results: [] }) });
+  const line1 = name => { const a = uh.indexOf('function ' + name + '('); return uh.slice(a, uh.indexOf('\n', a) + 1); }; // one-line functions
+  const enrich = new Function('wFetch', 'UPC_W', line1('upcPartKey') + line1('upcAmzOn') + 'var _upcAmzP = null;' + fnOf('upcEnrichMatches') + '; return upcEnrichMatches;')(wFetch, 'W');
+  const M = ['23-1-4=10--', '30-3-4=10X', '40-1-1=5', '50-1-1=5'].map(k => ({ partNum: k.replace(/-+$/, ''), upc: '012345678905', shipSkus: [k] }));
+  await enrich(M);
+  const got = M.map(m => m.partNum + ':' + (m.fnsku || '-'));
+  check('Load Barcodes: 🅰 Amazon\'s label only for a listing on the Amazon-barcode list / ✅ in the Shipment Builder — an X0… Amazon gave a listing we pack with OUR UPC (30-3-4=10X X004T64YD1) and a ☐ saved one get none',
+    got.join(' ') === '23-1-4=10:X0055L6QW1 30-3-4=10X:- 40-1-1=5:X00SAV0001 50-1-1=5:-', got);
+  check('…the box-scan card (scan the Amazon box label) uses the same rule (upcAmzOn), the label\'s X0… only when the list can\'t be read',
+    /var amzOn = am \? upcAmzOn\(hit\) : \/\^X0\/\.test\(fn\);/.test(uh) && /fnsku: fn, amz: amzOn && \/\^X0\/\.test\(fn\) \}/.test(uh) && /var amz = x\.amz != null \? !!x\.amz/.test(uh));
+  const awdP = uh.slice(uh.indexOf('<div id="upc-panel-awd"'), uh.indexOf('<!-- /upc-panel-awd -->')), mainP = uh.slice(uh.indexOf('<div id="upc-panel-main">'), uh.indexOf('<!-- /upc-panel-main -->'));
+  check('…tabs 🏷️ UPC Barcodes / 📦 AWD Shipment: AWD shipments ready + scan the Amazon box label + 🔎 search in the AWD tab; Type & Print, Search, Upload, Saved, Scan & Verify, AWD Label Match stay in UPC Barcodes',
+    /id="upc-tab-main"[^>]*onclick="upcTab\('main'\)"/.test(uh) && /id="upc-tab-awd"[^>]*onclick="upcTab\('awd'\)"/.test(uh)
+      && ['upc-awdopen-card', 'upc-awdbox-card', 'upc-awd-find', 'upc-awd-results'].every(id => awdP.includes('id="' + id + '"'))
+      && ['upc-manual-inp', 'upc-search-inp', 'upc-drop-zone', 'upc-saved-banner', 'upc-shipment-banner', 'upc-scan-bar', 'upc-results', 'awd-match-status'].every(id => mainP.includes('id="' + id + '"') && !awdP.includes('id="' + id + '"')));
+  // the search: rows carry name / part # / SKU / UPC / FNSKU
+  const rows = [{ f: 'tee b 30-3-4=10x' }, { f: 'plug a 23-1-4=10 x0055l6qw1' }].map(r => ({ a: { 'data-find': r.f }, style: {}, getAttribute(k) { return this.a[k]; } }));
+  const none = { style: {}, textContent: '' }, win = {};
+  const doc = { querySelectorAll: () => rows, getElementById: id => id === 'upc-awd-find-none' ? none : null };
+  const fsrc = uh.slice(uh.indexOf('window.upcAwdFind = function'), uh.indexOf('// 🗂 the two tabs of the UPC page'));
+  new Function('window', 'document', fsrc)(win, doc);
+  win.upcAwdFind('Plug'); const r1 = rows.map(r => r.style.display);
+  win.upcAwdFind('elbow'); const r2 = rows.map(r => r.style.display), msg = none.textContent;
+  check('…🔎 search the shipment by name: "Plug" shows only Plug A; "elbow" hides all and says it is not in this shipment',
+    r1.join(',') === 'none,' && r2.join(',') === 'none,none' && /not in this shipment/.test(msg), { r1, r2, msg });
+  check('…the rows show the item name in the AWD tab (shipment line name, else Amazon\'s); the UPC Barcodes tab rows stay as they were', /var t = m\.name \|\| ''/.test(uh) && /if \(!m\.name && m\.amzName\) m\.name = m\.amzName;/.test(uh) && /m\.partNum \+ nm\(m\) \+ upcAsinHtml\(m\)/.test(uh));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

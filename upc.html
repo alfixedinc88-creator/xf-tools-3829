@@ -271,6 +271,19 @@ body {
 
   <div style="max-width:960px;margin:0 auto;padding:24px 20px;width:100%">
 
+    <!-- 🗂 Owner (2026-11-21): "make a Tab like other pages and move this AWD shipment ready to the new tab" -->
+    <style>
+      #upc-tabbar{display:flex;gap:6px;border-bottom:1.5px solid var(--border);margin-bottom:16px;overflow-x:auto}
+      #upc-tabbar button{padding:9px 16px;font-size:13px;font-weight:700;border:none;border-bottom:3px solid transparent;background:none;color:var(--text3);cursor:pointer;white-space:nowrap;font-family:var(--sans)}
+      #upc-tabbar button.on{color:var(--accent);border-bottom-color:var(--accent)}
+    </style>
+    <div id="upc-tabbar">
+      <button type="button" id="upc-tab-main" class="on" onclick="upcTab('main')">🏷️ UPC Barcodes</button>
+      <button type="button" id="upc-tab-awd" onclick="upcTab('awd')">📦 AWD Shipment</button>
+    </div>
+
+    <div id="upc-panel-awd" style="display:none">
+
     <!-- 📦 Owner (2026-10-31): "for the AWD we're working on, if we need to print the UPC bag barcode for some reason, just scan the
          Amazon label and start printing it — the same for the Amazon barcode too". Scan the Amazon box label → that box's part #,
          bags, and its bag UPC + Amazon barcode (FNSKU) ready to print (as many as the box has bags). -->
@@ -284,6 +297,24 @@ body {
       </div>
       <div id="upc-awdbox-out" style="margin-top:10px"></div>
     </div>
+
+    <!-- 📦 Owner (2026-10-31): "the Saved Shipment still shows the old shipment" — every AWD shipment ready (not ✅ Done), live from
+         the AWD Planner (the same list as Stock Out Big Company → AWD shipments ready), newest first: tap Load Barcodes on the one you
+         are working on. No export / upload step needed. -->
+    <div id="upc-awdopen-card" style="background:#EFF6FF;border:1.5px solid #93C5FD;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:none;">
+      <div style="font-size:13px;font-weight:700;color:#1E3A8A">📦 AWD shipments ready <span style="font-weight:400;opacity:.8">— live from the AWD Planner, newest first</span></div>
+      <div id="upc-awdopen-list" style="margin-top:6px"></div>
+    </div>
+
+    <!-- 🔎 Owner (2026-11-21): "search for the name to see if that item is under that shipment" -->
+    <div id="upc-awd-find-wrap" style="display:none;gap:8px;margin-bottom:10px">
+      <input id="upc-awd-find" type="search" autocomplete="off" placeholder="🔎 Search this shipment — name, part #, Amazon SKU, UPC or FNSKU"
+        style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;outline:none" oninput="upcAwdFind(this.value)">
+    </div>
+    <div id="upc-awd-results"><div style="font-size:12px;color:var(--text3);padding:10px 0">Tap <b>Load Barcodes</b> on a shipment above to see its items (with names), or scan an Amazon box label.</div></div>
+    </div><!-- /upc-panel-awd -->
+
+    <div id="upc-panel-main">
 
     <!-- Type a UPC directly and print a barcode for it — reuses the
          existing upcPrint() function (already used elsewhere for
@@ -344,14 +375,6 @@ body {
         </div>
         <button class="btn btn-success" style="font-size:12px" onclick="upcLoadSaved()">Load Barcodes</button>
       </div>
-    </div>
-
-    <!-- 📦 Owner (2026-10-31): "the Saved Shipment still shows the old shipment" — every AWD shipment ready (not ✅ Done), live from
-         the AWD Planner (the same list as Stock Out Big Company → AWD shipments ready), newest first: tap Load Barcodes on the one you
-         are working on. No export / upload step needed. -->
-    <div id="upc-awdopen-card" style="background:#EFF6FF;border:1.5px solid #93C5FD;border-radius:12px;padding:12px 16px;margin-bottom:12px;display:none;">
-      <div style="font-size:13px;font-weight:700;color:#1E3A8A">📦 AWD shipments ready <span style="font-weight:400;opacity:.8">— live from the AWD Planner, newest first</span></div>
-      <div id="upc-awdopen-list" style="margin-top:6px"></div>
     </div>
 
     <!-- Live shipment banner (only if SKUs are in current builder) -->
@@ -475,6 +498,8 @@ body {
         </div>
       </div>
     </div>
+
+  </div><!-- /upc-panel-main -->
 
   </div>
 
@@ -4138,7 +4163,7 @@ function awdHandleScan(raw) {
 
 </div>
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261119a"></script>
+<script src="xf-access.js?v=20261121a"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
@@ -4324,6 +4349,7 @@ function upcOnLaunch() {
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
   upcLoadAwdOpen();
+  try { if (localStorage.getItem('upc_tab') === 'awd' && window.upcTab) upcTab('awd'); } catch (e) {} // 🗂 the tab you were on
   // Ensure FNSKU map is loaded for AWD Label Match feature
   if (!AWD_DB.loaded) loadAWDPlannerDB();
 }
@@ -4356,10 +4382,44 @@ function upcAwdOpenSkus(sh) {
   ((sh && sh.lines) || []).forEach(function(x) { var k = String(x.sku || x.part || '').trim(); if (k && !seen[k.toUpperCase()]) { seen[k.toUpperCase()] = 1; out.push(k); } });
   return out;
 }
+// 📦 Owner (2026-11-21): "make a tab and move this AWD shipment ready to the new tab … including the name … search for the name to see
+// if that item is under that shipment". Load Barcodes shows the shipment's list (with names) in the 📦 AWD Shipment tab, with a search.
 window.upcLoadAwdOpenShip = function(i) {
   var sh = (window._upcAwdOpen || [])[i]; if (!sh) return;
   var skus = upcAwdOpenSkus(sh); if (!skus.length) return;
-  upcRenderFromSkuList(skus, 'AWD ' + sh.shipment, 'sheet');
+  upcTab('awd');
+  var out = document.getElementById('upc-awd-results'), find = document.getElementById('upc-awd-find-wrap'); if (!out) return;
+  var nameOf = {}; ((sh && sh.lines) || []).forEach(function(x) { if (x.name) { nameOf[upcPartKey(x.sku)] = x.name; if (x.part && !nameOf[upcPartKey(x.part)]) nameOf[upcPartKey(x.part)] = x.name; } });
+  var M = upcMatchesFor(skus);
+  M.forEach(function(m) { var k = (m.shipSkus || []).map(function(s) { return nameOf[upcPartKey(s)]; }).filter(Boolean)[0] || nameOf[upcPartKey(m.partNum)]; if (k) m.name = k; });
+  out.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">⏳ Checking our UPC list and Amazon labels…</div>';
+  upcEnrichMatches(M).then(function() {
+    M.forEach(function(m) { if (!m.name && m.amzName) m.name = m.amzName; });
+    var f2 = M.filter(function(m) { return m.upc; }).length, amz = M.filter(function(m) { return m.fnsku; }).length, none = M.filter(function(m) { return !m.upc && !m.fnsku; }).length;
+    var head = '<div style="background:#F9FAFB;border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:12px;color:var(--text3)">'
+      + '<strong style="color:var(--text)">AWD ' + upcEsc(sh.shipment) + '</strong> &nbsp;·&nbsp; ' + skus.length + ' SKUs &nbsp;·&nbsp; ' + f2 + ' barcode' + (f2 !== 1 ? 's' : '') + ' ready to print'
+      + (amz ? ' &nbsp;·&nbsp; <span style="color:#b45309">🅰 ' + amz + ' use Amazon\'s label</span>' : '')
+      + (none ? ' &nbsp;·&nbsp; <span style="color:#C52A1A">' + none + ' with no barcode on file</span>' : '') + '</div>';
+    loadJsBarcode(function() {
+      out.innerHTML = head + upcRenderSheet(M) + '<div id="upc-awd-find-none" style="display:none;padding:14px;text-align:center;font-size:13px;color:#C52A1A;font-weight:700"></div>';
+      if (find) find.style.display = 'flex';
+      upcDrawBarcodes(); upcAwdFind((document.getElementById('upc-awd-find') || {}).value || '');
+    });
+  });
+};
+// 🔎 search the loaded shipment by name / part # / Amazon SKU / UPC / FNSKU — a row not in it is hidden; nothing = "not in this shipment"
+window.upcAwdFind = function(q) {
+  q = String(q || '').trim().toLowerCase(); var rows = document.querySelectorAll('#upc-awd-results .upc-sh-row'), hit = 0, words = q.split(/\s+/).filter(Boolean);
+  rows.forEach(function(r) { var t = r.getAttribute('data-find') || '', ok = words.every(function(w) { return t.indexOf(w) >= 0; }); r.style.display = ok ? '' : 'none'; if (ok) hit++; });
+  var none = document.getElementById('upc-awd-find-none'); if (none) { none.style.display = q && !hit ? 'block' : 'none'; none.textContent = q && !hit ? '✗ "' + q + '" is not in this shipment' : ''; }
+};
+// 🗂 the two tabs of the UPC page (owner 2026-11-21): 🏷️ UPC Barcodes (everything as before) · 📦 AWD Shipment
+window.upcTab = function(t) {
+  t = t === 'awd' ? 'awd' : 'main';
+  ['main', 'awd'].forEach(function(k) { var p = document.getElementById('upc-panel-' + k), b = document.getElementById('upc-tab-' + k);
+    if (p) p.style.display = k === t ? '' : 'none'; if (b) b.classList.toggle('on', k === t); });
+  try { localStorage.setItem('upc_tab', t); } catch (e) {}
+  if (t === 'awd') { var i = document.getElementById('upc-awdbox-inp'); if (i && !/Mobi|Android/i.test(navigator.userAgent)) setTimeout(function() { i.focus(); }, 50); }
 };
 
 async function upcAutoLoadSavedShipment() {
@@ -4830,8 +4890,7 @@ function upcReadXlsx(file, status) {
 
 // Given a list of SKUs, look up UPCs and render barcodes
 // mode: 'sheet' = compact table view, 'card' = large card stack
-function upcRenderFromSkuList(skus, sourceName, mode) {
-  document.getElementById('upc-empty').style.display = 'none';
+function upcMatchesFor(skus) {
   var allMatches = [];
   var seen = new Set();
   skus.forEach(function(sku) {
@@ -4849,6 +4908,11 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
       if (!seen.has(key)) { seen.add(key); allMatches.push({ partNum: sku, upc: null, shipSkus: [sku] }); }
     }
   });
+  return allMatches;
+}
+function upcRenderFromSkuList(skus, sourceName, mode) {
+  document.getElementById('upc-empty').style.display = 'none';
+  var allMatches = upcMatchesFor(skus);
 
   if (!allMatches.length) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
@@ -4900,7 +4964,10 @@ function upcEnrichMatches(list) {
     // OWN Amazon SKU decides (X0… = Amazon's barcode, ASIN = our UPC); only a SKU Amazon's data doesn't have falls back to the part #,
     // and then only when every listing of that part # needs Amazon's barcode. Every row shows its ASIN.
     var bySku = {}, byPart = {};
-    ((am && am.list) || []).forEach(function(x) { var f = String(x.fnsku || '').toUpperCase(), e = { fnsku: f, asin: String(x.asin || '').toUpperCase(), name: x.name || '', amz: /^X0/.test(f) };
+    // 🅰 Owner (2026-11-21, a 3rd "also Amazon's label" in a shipment that has only 2): Amazon gives X0… FNSKUs to listings we pack with
+    // OUR UPC too, so an X0… alone doesn't decide. The same rule as the AWD box labels: ✅ / ☐ saved in the Shipment Builder, else the
+    // Amazon-barcode list (✏️ on the AWD label card) — upcAmzOn().
+    ((am && am.list) || []).forEach(function(x) { var f = String(x.fnsku || '').toUpperCase(), e = { fnsku: f, asin: String(x.asin || '').toUpperCase(), name: x.name || '', amz: upcAmzOn(x) && /^X0/.test(f) };
       var ks = upcPartKey(x.sku), kp = upcPartKey(x.part); if (ks && !bySku[ks]) bySku[ks] = e; if (kp) (byPart[kp] = byPart[kp] || []).push(e); });
     return Promise.all(list.map(function(m) {
       var k = upcPartKey(m.partNum), own = (m.shipSkus || [m.partNum]).map(function(s) { return bySku[upcPartKey(s)]; }).filter(Boolean);
@@ -5086,6 +5153,9 @@ function upcPrint(bcId, partNum, upc) {
 var UPC_W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var _upcAwd = null;
 function upcEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+// 🅰 does this Amazon listing's bags carry AMAZON's barcode? The server's /inventory/amazon-barcode row says it: a ✅ / ☐ saved in the
+// Shipment Builder (choice.src 'saved'), or on the owner's Amazon-barcode list (choice.src 'list'). No choice = our UPC (owner 2026-11-18).
+function upcAmzOn(x) { return !!(x && x.choice && x.barcode === 'amazon'); }
 function upcPartKey(p) { return String(p || '').trim().toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, function(m, t) { return '=' + t.replace(/-+/g, ''); }); }
 window.upcAwdBox = async function(v) {
   var out = document.getElementById('upc-awdbox-out'), inp = document.getElementById('upc-awdbox-inp');
@@ -5101,17 +5171,18 @@ window.upcAwdBox = async function(v) {
     var up = await wFetch(UPC_W + '/inventory/upc-d1-lookup?q=' + encodeURIComponent(part)).then(function(r) { return r.json(); }).catch(function() { return {}; });
     var row = ((up && up.results) || []).filter(function(r) { return upcPartKey(r.sku) === part && r.insideUpc; })[0];
     var fn = String(b.fnsku || '').trim().toUpperCase(), name = b.name || '';
-    if (!fn) { // not on the label → Amazon's own data (FNSKU X00… = Amazon's barcode on every unit)
-      var am = await wFetch(UPC_W + '/inventory/amazon-barcode').then(function(r) { return r.json(); }).catch(function() { return {}; });
-      var hit = ((am && am.list) || []).filter(function(x) { return upcPartKey(x.part) === part || upcPartKey(x.sku) === upcPartKey(b.sku); })[0];
-      if (hit) { fn = String(hit.fnsku || '').toUpperCase(); name = name || hit.name || ''; }
-    }
-    _upcAwd = { sscc: code, shipment: b.shipment, seq: b.seq, part: part, sku: b.sku, units: Math.max(1, Math.round(parseFloat(b.units) || 1)), name: name, upc: row ? String(row.insideUpc).replace(/\D/g, '') : '', fnsku: fn };
+    // 🅰 Owner (2026-11-21): the X0… on Amazon's label alone doesn't mean Amazon's barcode — OUR choice does (upcAmzOn: ✅ in the Shipment
+    // Builder, else the Amazon-barcode list), the same rule as the AWD box labels. The listing's own Amazon SKU first, then the part #.
+    var am = await wFetch(UPC_W + '/inventory/amazon-barcode').then(function(r) { return r.json(); }).catch(function() { return null; });
+    var AL = (am && am.list) || [], hit = AL.filter(function(x) { return upcPartKey(x.sku) === upcPartKey(b.sku); })[0] || AL.filter(function(x) { return upcPartKey(x.part) === part; })[0];
+    if (hit) { if (!/^X0/.test(fn) && /^X0/i.test(hit.fnsku || '')) fn = String(hit.fnsku).toUpperCase(); name = name || hit.name || ''; }
+    var amzOn = am ? upcAmzOn(hit) : /^X0/.test(fn); // list not read (no WiFi) → the label's X0… as before
+    _upcAwd = { sscc: code, shipment: b.shipment, seq: b.seq, part: part, sku: b.sku, units: Math.max(1, Math.round(parseFloat(b.units) || 1)), name: name, upc: row ? String(row.insideUpc).replace(/\D/g, '') : '', fnsku: fn, amz: amzOn && /^X0/.test(fn) };
     out.innerHTML = upcAwdBoxHtml(_upcAwd);
   } catch (e) { out.innerHTML = '<div style="color:var(--red,#c52a1a);font-size:12px">Could not look it up — ' + upcEsc(e.message || 'check WiFi') + '</div>'; }
 };
 function upcAwdBoxHtml(x) {
-  var amz = /^X0/.test(x.fnsku), qty = function(id) { return '<input id="' + id + '" type="number" min="1" max="500" value="' + x.units + '" style="width:70px;padding:7px;border:1.5px solid var(--border);border-radius:8px;font-size:15px;font-weight:700;text-align:center;font-family:var(--mono)">'; };
+  var amz = x.amz != null ? !!x.amz : /^X0/.test(x.fnsku), qty = function(id) { return '<input id="' + id + '" type="number" min="1" max="500" value="' + x.units + '" style="width:70px;padding:7px;border:1.5px solid var(--border);border-radius:8px;font-size:15px;font-weight:700;text-align:center;font-family:var(--mono)">'; };
   var row = function(icon, title, body) { return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--border)"><div style="flex:1;min-width:200px"><div style="font-size:13px;font-weight:700">' + icon + ' ' + title + '</div>' + body + '</div></div>'; };
   return '<div style="font-size:15px;font-weight:800;font-family:var(--mono)">' + upcEsc(x.part) + '</div>'
     + '<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Box ' + upcEsc(x.seq) + ' · ' + upcEsc(x.shipment) + (x.name ? ' · ' + upcEsc(x.name) : '') + ' · <b>' + x.units + ' bag' + (x.units === 1 ? '' : 's') + '</b> in this box</div>'
@@ -5120,7 +5191,7 @@ function upcAwdBoxHtml(x) {
       : '<div style="font-size:12px;color:var(--red,#c52a1a)">No inside (bag) UPC on file for ' + upcEsc(x.part) + ' — add it in Reorder → 🏷 Barcode / vendor for a part #.</div>')
     + row('🅰', 'Amazon barcode (FNSKU)', amz
       ? '<div style="font-size:12px;font-family:var(--mono);color:var(--text3)">' + upcEsc(x.fnsku) + ' — Amazon\'s label goes on every unit</div><div style="display:flex;gap:8px;align-items:center;margin-top:6px">' + qty('upc-awdbox-qa') + '<button class="btn btn-primary" style="font-size:12px" onclick="upcAwdPrint(\'fnsku\')">🖨️ Print Amazon barcode</button></div>'
-      : '<div style="font-size:12px;color:var(--text3)">' + (x.fnsku ? 'This listing ships with our UPC (FNSKU ' + upcEsc(x.fnsku) + ' is its ASIN) — no Amazon barcode needed.' : 'No Amazon barcode on file for this listing — it ships with our UPC.') + '</div>')
+      : '<div style="font-size:12px;color:var(--text3)">' + (x.fnsku ? 'This listing ships with our UPC (' + upcEsc(x.fnsku) + (/^X0/.test(x.fnsku) ? ' is Amazon\'s code, but it is not ✅ Amazon label in the Shipment Builder / not on the Amazon-barcode list' : ' is its ASIN') + ') — no Amazon barcode needed.' : 'No Amazon barcode on file for this listing — it ships with our UPC.') + '</div>')
     + '<div style="font-size:11px;color:var(--text3);margin-top:6px">2×1 label stock. Each print is kept in the record (who / when / which box).</div>';
 }
 window.upcAwdPrint = function(kind) {
@@ -5239,27 +5310,30 @@ function upcRenderSheet(matches) {
   out += '<th style="padding:10px 8px;text-align:center;font-size:11px;font-weight:700;color:var(--text3);width:80px">PRINT</th>';
   out += '</tr></thead><tbody>';
 
+  // 🔎 each row carries its part #, Amazon SKU, name, UPC and FNSKU so the 📦 AWD Shipment tab can search it (owner 2026-11-21)
+  var fd = function(m) { return ' data-find="' + upcEsc([m.partNum, m.name || '', m.amzName || '', (m.shipSkus || []).join(' '), m.upc || '', m.fnsku || ''].join(' ').toLowerCase()) + '"'; };
+  var nm = function(m) { var t = m.name || ''; /* only the 📦 AWD Shipment tab sets a name */ return t ? '<div style="font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text);margin-top:2px">' + upcEsc(t) + '</div>' : ''; };
   withUPC.forEach(function(m, i) {
     var bcId = 'bc-sh-' + i + '-' + Math.random().toString(36).slice(2,5);
-    out += '<tr style="border-bottom:1px solid #F3F4F6">';
-    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + m.partNum + upcAsinHtml(m) + '</td>';
+    out += '<tr class="upc-sh-row" style="border-bottom:1px solid #F3F4F6"' + fd(m) + '>';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + m.partNum + nm(m) + upcAsinHtml(m) + '</td>';
     out += '<td style="padding:4px 16px;text-align:center"><svg id="' + bcId + '" data-upc="' + m.upc + '" style="height:40px;width:auto;max-width:180px"></svg></td>';
     out += '<td style="padding:8px 16px;font-size:11px;font-family:var(--mono);color:var(--text3)">' + m.upc + '</td>';
     out += '<td style="padding:8px;text-align:center"><button class="btn btn-sm btn-primary" data-bcid="' + bcId + '" data-upc="' + m.upc + '" data-pn="' + m.partNum + '" onclick="upcPrintFromBtn(this)">&#128424;</button></td>';
     out += '</tr>';
-    if (m.fnsku) out += '<tr class="upc-amz-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb"><td style="padding:4px 16px;font-size:11px;color:#b45309">↳ 🅰 also Amazon\'s label</td><td colspan="2" style="padding:4px 16px;font-size:11px;font-family:var(--mono);color:#b45309">' + upcEsc(m.fnsku) + '</td><td style="padding:4px 8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
+    if (m.fnsku) out += '<tr class="upc-amz-row upc-sh-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb"' + fd(m) + '><td style="padding:4px 16px;font-size:11px;color:#b45309">↳ 🅰 also Amazon\'s label</td><td colspan="2" style="padding:4px 16px;font-size:11px;font-family:var(--mono);color:#b45309">' + upcEsc(m.fnsku) + '</td><td style="padding:4px 8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
   });
   amzOnly.forEach(function(m) {
-    out += '<tr class="upc-amz-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb">';
-    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + upcEsc(m.partNum) + upcAsinHtml(m) + '</td>';
+    out += '<tr class="upc-amz-row upc-sh-row" style="border-bottom:1px solid #F3F4F6;background:#fffbeb"' + fd(m) + '>';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + upcEsc(m.partNum) + nm(m) + upcAsinHtml(m) + '</td>';
     out += '<td colspan="2" style="padding:8px 16px;font-size:11px;color:#b45309">🅰 Uses Amazon\'s label (no our UPC) — FNSKU <b style="font-family:var(--mono)">' + upcEsc(m.fnsku) + '</b></td>';
     out += '<td style="padding:8px;text-align:center">' + upcAmzBtnHtml(m) + '</td></tr>';
   });
 
   if (noUPC.length) {
     noUPC.forEach(function(m) {
-      out += '<tr style="border-bottom:1px solid #F3F4F6;opacity:.5">';
-      out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--text)">' + m.partNum + upcAsinHtml(m) + '</td>';
+      out += '<tr class="upc-sh-row" style="border-bottom:1px solid #F3F4F6;opacity:.5"' + fd(m) + '>';
+      out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--text)">' + m.partNum + nm(m) + upcAsinHtml(m) + '</td>';
       out += '<td style="padding:8px 16px;text-align:center;font-size:11px;color:var(--text3)" colspan="3">No UPC-A on file</td>';
       out += '</tr>';
     });
