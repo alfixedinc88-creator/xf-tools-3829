@@ -25653,8 +25653,10 @@ async function shipGetScans(url, env) {
 // number before "=" is how many physical pieces one line item/qty=1 stands
 // for. This mirrors _psSkuMultiplier in packship.html exactly; keep the two
 // in sync if this convention ever changes.
+// 🔢 "N=" pieces of a listing SKU — and "N-" when it was typed with a dash (25-1PO PLUG = 25 pcs, owner 2026-11-21), unless a part # follows
+// (23-6-4…: digits-digits → 1). The same rule as the Pack & Ship page (_psSkuMultiplier).
 function _psWeightSkuMultiplier(sku) {
-  const m = String(sku || '').match(/^\s*(\d+)\s*=/);
+  const m = String(sku || '').match(/^\s*(\d+)\s*(?:=|-(?!\s*\d+\s*[-=]))/);
   return m ? (parseInt(m[1], 10) || 1) : 1;
 }
 
