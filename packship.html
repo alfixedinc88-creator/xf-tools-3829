@@ -3091,8 +3091,10 @@ function _psProcessScan(raw) {
 // SKU codes are stored as "<multiplier>=<name>" (e.g. "1=3/8X DUAL S").
 // The number before "=" is how many units are in that single line item;
 // multiplied by the ordered qty gives the real total quantity purchased.
+// 🔢 Owner (2026-11-21, a label "25-1PO PLUG ×1"): some listing SKUs were typed with "-" instead of "=" (25-1PO PLUG = 25 pcs of the 1" PO
+// plug) — they were counted as 1 piece. "N-" counts as "N=" too, unless what follows looks like a part # (23-6-4…, 30-4=10: digits then "-" or "="), which stays 1.
 function _psSkuMultiplier(sku) {
-  var m = String(sku || '').match(/^\s*(\d+)\s*=/);
+  var m = String(sku || '').match(/^\s*(\d+)\s*(?:=|-(?!\s*\d+\s*[-=]))/);
   return m ? (parseInt(m[1], 10) || 1) : 1;
 }
 

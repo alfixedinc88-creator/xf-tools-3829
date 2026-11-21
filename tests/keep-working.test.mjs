@@ -14863,5 +14863,21 @@ console.log('\n🔗 Stock Out Big Company: hot (24-2-1) gone → the mixed hot &
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('91-2-1&2','91-2-1','91-2-2')");
 }
 
+// Owner (2026-11-21, photo of a label "23-6-4, 25-1PO PLUG ×1"): "some of our labels say 25- instead of 25=, and with 25- our system picks it
+// up as 1 piece, not 25, for picking and packing — can the system pick it up as 25?"
+console.log('\n🔢 Listing SKU typed with "-" (25-1PO PLUG) = 25 pcs like "25=" — a part # (23-6-4, 30-4=10) still 1');
+{
+  const { readFileSync: rfN } = await import('node:fs');
+  const ph = rfN(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfN(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  const mult = new Function(ph.slice(ph.indexOf('function _psSkuMultiplier('), ph.indexOf('// ⚠ Wrong photo')) + '; return _psSkuMultiplier;')();
+  const wmul = new Function(wk.slice(wk.indexOf('function _psWeightSkuMultiplier('), wk.indexOf('\n}\n', wk.indexOf('function _psWeightSkuMultiplier(')) + 3) + '; return _psWeightSkuMultiplier;')();
+  const cases = [['25-1PO PLUG', 25], ['25=1PO PLUG', 25], ['10-3/8XA', 10], ['10=3/8XA', 10], ['100-1/2 PEX', 100], ['23-6-4', 1], ['23-6-4=10', 1], ['28-2-1&2=2', 1], ['30-4=10', 1], ['1PO PLUG', 1], ['XF-TEE', 1]];
+  const bad = cases.filter(([k, n]) => mult(k) !== n || wmul(k) !== n).map(([k, n]) => k + ': page ' + mult(k) + ' / server ' + wmul(k) + ' (want ' + n + ')');
+  check('"25-1PO PLUG" = 25 pcs, "10-3/8XA" = 10, "100-1/2 PEX" = 100 (as "N="); part #s 23-6-4 / 23-6-4=10 / 28-2-1&2=2 / 30-4=10 and plain names stay 1 — page and server the same', !bad.length, bad);
+  const src = ph.slice(ph.indexOf('// ── 🧭 Picking by scan'), ph.indexOf('// ── Picking product card'));
+  const L = new Function('window', '_psSkuMultiplier', src + '; return psPksLines;')({}, mult)([{ sku: '25-1PO PLUG', qty: 1, partNum: '', parent: '23-6-4', bin: '23-6-4', spots: [], codes: {} }, { sku: '25-1PO PLUG', qty: 2, partNum: '', parent: '23-6-4', bin: '23-6-4', spots: [], codes: {} }]);
+  check('…Picking by scan: 25-1PO PLUG ×1 → 25 pcs to pick (was 1); ×2 → 50', L[0].need === 25 && L[1].need === 50, L.map(l => l.need));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
