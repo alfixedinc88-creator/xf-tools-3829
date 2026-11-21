@@ -14937,8 +14937,8 @@ console.log('\n🏷 UPC page: Amazon label only when WE chose it (not every X0�
   check('…the box-scan card (scan the Amazon box label) uses the same rule (upcAmzOn), the label\'s X0… only when the list can\'t be read',
     /var amzOn = am \? upcAmzOn\(hit\) : \/\^X0\/\.test\(fn\);/.test(uh) && /fnsku: fn, amz: amzOn && \/\^X0\/\.test\(fn\) \}/.test(uh) && /var amz = x\.amz != null \? !!x\.amz/.test(uh));
   const awdP = uh.slice(uh.indexOf('<div id="upc-panel-awd"'), uh.indexOf('<!-- /upc-panel-awd -->')), mainP = uh.slice(uh.indexOf('<div id="upc-panel-main">'), uh.indexOf('<!-- /upc-panel-main -->'));
-  check('…tabs 🏷️ UPC Barcodes / 📦 AWD Shipment: AWD shipments ready + scan the Amazon box label + 🔎 search in the AWD tab; Type & Print, Search, Upload, Saved, Scan & Verify, AWD Label Match stay in UPC Barcodes',
-    /id="upc-tab-main"[^>]*onclick="upcTab\('main'\)"/.test(uh) && /id="upc-tab-awd"[^>]*onclick="upcTab\('awd'\)"/.test(uh)
+  check('…tabs 🏷️ UPC Barcodes / 📦 Big Company Shipment: AWD shipments ready + scan the Amazon box label + 🔎 search in the AWD tab; Type & Print, Search, Upload, Saved, Scan & Verify, AWD Label Match stay in UPC Barcodes',
+    /id="upc-tab-main"[^>]*onclick="upcTab\('main'\)"/.test(uh) && /id="upc-tab-awd"[^>]*onclick="upcTab\('awd'\)">📦 Big Company Shipment</.test(uh) // owner 2026-11-21: named Big Company Shipment
       && ['upc-awdopen-card', 'upc-awdbox-card', 'upc-awd-find', 'upc-awd-results'].every(id => awdP.includes('id="' + id + '"'))
       && ['upc-manual-inp', 'upc-search-inp', 'upc-drop-zone', 'upc-saved-banner', 'upc-shipment-banner', 'upc-scan-bar', 'upc-results', 'awd-match-status'].every(id => mainP.includes('id="' + id + '"') && !awdP.includes('id="' + id + '"')));
   // the search: rows carry name / part # / SKU / UPC / FNSKU
