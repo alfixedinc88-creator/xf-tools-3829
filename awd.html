@@ -2964,7 +2964,12 @@ async function awdLabelsDo(file) {
     Object.keys(bySku).forEach(K => { const l = bySku[K]; l.forEach((m, k) => { m.seq = l.length + '-' + (k + 1); });
       const pick = l.filter(m => !m.prevKey), plan = pick.length ? awdGrabPlan(l[0].sku, pick.map(m => m.units)) : null;
       if (plan) plans[K] = { plan, pick, sku: l[0].sku };
-      pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.kind = (plan.kindOf || [])[k] || ''; m.plan = k === 0 ? plan.summary : ''; }); });
+      pick.forEach((m, k) => { m.loc = plan.locOf[k]; m.kind = (plan.kindOf || [])[k] || ''; m.plan = k === 0 ? plan.summary : '';
+        // 🅰 Owner (2026-11-21, 23-1-4=10-- X0055L6QW1 was "✅ FULL CASE … on the pallet"): "all the Amazon label must catch and match with
+        // Amazon labels". A listing whose bags carry AMAZON's barcode (FNSKU — the same rule as the scan barcode on the label) is never a
+        // plain full case: every bag needs the Amazon label first → 🏷 NEED LABELING (and Stock Out Big Company says NEED TO LABEL too).
+        const sc = awdScanCode(m.sku, [], amz, m.fnsku, amzBc); m.amzLbl = !!(sc && sc.kind === 'FNSKU');
+        if (m.amzLbl) { if (m.kind === 'full') m.kind = 'label'; if (plan) plan.amzLbl = true; } }); });
     const partOf = sku => String(typeof normalizeAmazonSKU === 'function' ? normalizeAmazonSKU(sku) : sku).toUpperCase().replace(/\s+/g, '').replace(/-+$/, '').replace(/=([^=]*)$/, (m, t) => '=' + t.replace(/-+/g, '')); // =10-X = =10X
     const boxUpc = await awdBoxUpcs([...new Set(metas.map(m => partOf(m.sku)))]);
     const metaAt = (p, i) => metas.find(m => m.p === p && m.i === i);
@@ -2974,7 +2979,7 @@ async function awdLabelsDo(file) {
       const head = m.prevKey ? '✅ PREVIOUS PACKED · Box ' + m.seq + ' (on the pallet)' : 'Box ' + m.seq + ' · ' + (m.loc || '') + (need ? ' · ' + need : '');
       // 🏷 the outside box UPC, written (not one more barcode — scanning the box's own barcode in 🔍 Box check matches too)
       const ou = boxUpc[partOf(m.sku)], outUpc = 'Outside box UPC: ' + (ou || '— not on file');
-      return { tpl, outUpc, lines: [head, tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? awdPlanLines(m.plan) : []).filter(Boolean) }; };
+      return { tpl, outUpc, lines: [head, m.amzLbl && !m.prevKey ? '🅰 AMAZON BARCODE (FNSKU) ON EVERY BAG — not a full case' : '', tpl.label || pi.name || m.sku, pi.qty].concat(m.plan ? awdPlanLines(m.plan) : []).filter(Boolean) }; };
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p), vp1 = page.getViewport({ scale: 1 }), scale = 2.5, vp = page.getViewport({ scale });
       const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
@@ -3039,7 +3044,7 @@ async function awdLabelsDo(file) {
     // 🔒 Owner (2026-10-27): "after the labels: how many cases to grab where (C1, C2…), and a Lock it button — save everything this shipment
     // wants us to grab, don't let any other Stock Out go to that spot, and send it to Stock Out Big Company to grab from the same spots".
     const lockDraft = { shipment: shipId, lines: Object.keys(plans).map(K => { const x = plans[K];
-      return { forPart: partOf(x.sku), sku: x.sku, boxes: x.pick.length, pcs: x.pick.reduce((a, m) => a + (m.units || 0), 0) * ((/=(\d+)/.exec(partOf(x.sku)) || [0, 1])[1] | 0 || 1), others: x.plan.others || [], short: x.plan.short || 0, grabs: (x.plan.grabs || []).map(g => Object.assign({}, g, { labels: x.plan.locOf.filter(lo => String(lo).split(' + ').indexOf(g.loc) >= 0).length })) }; })
+      return { forPart: partOf(x.sku), sku: x.sku, boxes: x.pick.length, pcs: x.pick.reduce((a, m) => a + (m.units || 0), 0) * ((/=(\d+)/.exec(partOf(x.sku)) || [0, 1])[1] | 0 || 1), others: x.plan.others || [], short: x.plan.short || 0, amzLabel: !!x.plan.amzLbl, grabs: (x.plan.grabs || []).map(g => Object.assign({}, g, { labels: x.plan.locOf.filter(lo => String(lo).split(' + ').indexOf(g.loc) >= 0).length })) }; })
       .filter(x => x.grabs.length) };
     window.AWD_LOCK_DRAFT = lockDraft;
     let mapNote = '';
