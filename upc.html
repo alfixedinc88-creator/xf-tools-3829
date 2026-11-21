@@ -279,7 +279,7 @@ body {
     </style>
     <div id="upc-tabbar">
       <button type="button" id="upc-tab-main" class="on" onclick="upcTab('main')">🏷️ UPC Barcodes</button>
-      <button type="button" id="upc-tab-awd" onclick="upcTab('awd')">📦 AWD Shipment</button>
+      <button type="button" id="upc-tab-awd" onclick="upcTab('awd')">📦 Big Company Shipment</button>
     </div>
 
     <div id="upc-panel-awd" style="display:none">
@@ -4383,7 +4383,7 @@ function upcAwdOpenSkus(sh) {
   return out;
 }
 // 📦 Owner (2026-11-21): "make a tab and move this AWD shipment ready to the new tab … including the name … search for the name to see
-// if that item is under that shipment". Load Barcodes shows the shipment's list (with names) in the 📦 AWD Shipment tab, with a search.
+// if that item is under that shipment". Load Barcodes shows the shipment's list (with names) in the 📦 Big Company Shipment tab, with a search.
 window.upcLoadAwdOpenShip = function(i) {
   var sh = (window._upcAwdOpen || [])[i]; if (!sh) return;
   var skus = upcAwdOpenSkus(sh); if (!skus.length) return;
@@ -4413,7 +4413,7 @@ window.upcAwdFind = function(q) {
   rows.forEach(function(r) { var t = r.getAttribute('data-find') || '', ok = words.every(function(w) { return t.indexOf(w) >= 0; }); r.style.display = ok ? '' : 'none'; if (ok) hit++; });
   var none = document.getElementById('upc-awd-find-none'); if (none) { none.style.display = q && !hit ? 'block' : 'none'; none.textContent = q && !hit ? '✗ "' + q + '" is not in this shipment' : ''; }
 };
-// 🗂 the two tabs of the UPC page (owner 2026-11-21): 🏷️ UPC Barcodes (everything as before) · 📦 AWD Shipment
+// 🗂 the two tabs of the UPC page (owner 2026-11-21): 🏷️ UPC Barcodes (everything as before) · 📦 Big Company Shipment (owner 2026-11-21: "change the AWD shipment to Big company shipment")
 window.upcTab = function(t) {
   t = t === 'awd' ? 'awd' : 'main';
   ['main', 'awd'].forEach(function(k) { var p = document.getElementById('upc-panel-' + k), b = document.getElementById('upc-tab-' + k);
@@ -5310,9 +5310,9 @@ function upcRenderSheet(matches) {
   out += '<th style="padding:10px 8px;text-align:center;font-size:11px;font-weight:700;color:var(--text3);width:80px">PRINT</th>';
   out += '</tr></thead><tbody>';
 
-  // 🔎 each row carries its part #, Amazon SKU, name, UPC and FNSKU so the 📦 AWD Shipment tab can search it (owner 2026-11-21)
+  // 🔎 each row carries its part #, Amazon SKU, name, UPC and FNSKU so the 📦 Big Company Shipment tab can search it (owner 2026-11-21)
   var fd = function(m) { return ' data-find="' + upcEsc([m.partNum, m.name || '', m.amzName || '', (m.shipSkus || []).join(' '), m.upc || '', m.fnsku || ''].join(' ').toLowerCase()) + '"'; };
-  var nm = function(m) { var t = m.name || ''; /* only the 📦 AWD Shipment tab sets a name */ return t ? '<div style="font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text);margin-top:2px">' + upcEsc(t) + '</div>' : ''; };
+  var nm = function(m) { var t = m.name || ''; /* only the 📦 Big Company Shipment tab sets a name */ return t ? '<div style="font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text);margin-top:2px">' + upcEsc(t) + '</div>' : ''; };
   withUPC.forEach(function(m, i) {
     var bcId = 'bc-sh-' + i + '-' + Math.random().toString(36).slice(2,5);
     out += '<tr class="upc-sh-row" style="border-bottom:1px solid #F3F4F6"' + fd(m) + '>';
