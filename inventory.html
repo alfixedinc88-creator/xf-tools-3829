@@ -17717,6 +17717,23 @@ window.invCredLogin = async function() {
     return d;
   }
 
+  // ✏️ Owner (2026-11-23): "when there's variation we can't change the quantities on the variation listing — have a link so we can click
+  // on it and it brings us to their page so we can change it". Each listing gets ✏️ Open on <marketplace> ↗ (its edit / inventory page,
+  // found by item # or SKU); when an update fails it says so right there with the same link.
+  function soEditUrl(r) {
+    var id = String(r.listingId || '').trim(), sku = String(r.sku || '').trim(), q = encodeURIComponent(sku || id);
+    if (r.platform === 'eBay') return /^\d{9,15}$/.test(id) ? 'https://www.ebay.com/sl/list?mode=ReviseItem&itemId=' + id : 'https://www.ebay.com/sh/lst/active?keyword=' + q;
+    if (r.platform === 'Amazon') return 'https://sellercentral.amazon.com/myinventory/inventory?fulfilledBy=all&page=1&pageSize=25&searchField=all&searchTerm=' + q;
+    if (r.platform === 'Walmart') return 'https://seller.walmart.com/items-and-inventory/manage-items?search=' + q;
+    if (r.platform === 'Shopify') return 'https://admin.shopify.com/store/093304-8e/products?query=' + q;
+    return '';
+  }
+  function soEditLink(r, big) {
+    var u = soEditUrl(r); if (!u) return '';
+    return '<a href="' + esc(u) + '" target="_blank" rel="noopener" class="so-edit" onclick="event.stopPropagation()" style="font-size:' + (big ? '12px;font-weight:700' : '11px') + ';color:' + (COLOR[r.platform] || 'var(--accent)') + ';text-decoration:underline;white-space:nowrap">✏️ ' + (big ? 'Change it on ' : 'Open on ') + esc(r.platform) + ' ↗</a>';
+  }
+  window.soEditUrl = soEditUrl;
+
   window.soSearch = async function () {
     var q = (el('so-q').value || '').trim();
     var box = el('so-results');
@@ -17742,6 +17759,7 @@ window.invCredLogin = async function() {
           + '<span class="so-now" id="so-now-' + i + '" style="flex-shrink:0;font-size:12px;font-weight:700;font-family:var(--mono);padding:2px 8px;border-radius:6px;background:var(--bg3);color:var(--text3);white-space:nowrap">Now: …</span></div>'
           + '<div id="so-now-d-' + i + '" style="font-size:10.5px;color:var(--text3)"></div>'
           + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + (r.listingId !== r.sku ? esc(r.listingId) + (r.sku ? ' · ' : '') : '') + (r.sku ? esc(r.sku) : '') + (r.mappedTo ? ' <span style="color:var(--green)" title="This listing\'s SKU was corrected to our part # on Reorder Planner">→ ' + esc(r.mappedTo) + '</span>' : '') + (r.notOnSheet ? ' <span style="color:#b45309" title="Live on the channel (read by Listing Watch) but not on the ' + esc(r.platform) + 'SKU sheet">· not on the SKU sheet</span>' : '') + '</div>'
+          + '<div style="margin-top:2px">' + soEditLink(r) + '</div>'
           + '<div class="so-res" id="so-res-' + i + '" style="font-size:11px;margin-top:2px"></div></div></label>';
       });
     });
@@ -18074,9 +18092,9 @@ window.invCredLogin = async function() {
         var res = d.results || [];
         chunk.forEach(function (i, k) {
           var r = res[k];
-          el('so-res-' + i).innerHTML = !r ? '<span style="color:var(--red)">✗ ' + esc(d.error || 'No answer') + '</span>'
+          el('so-res-' + i).innerHTML = !r ? '<span style="color:var(--red)">✗ ' + esc(d.error || 'No answer') + '</span> ' + soEditLink(soRows[i], true)
             : r.ok ? '<span style="color:var(--green);font-weight:700">✓ Set to ' + qty + '</span>' + (r.detail ? ' <span style="color:var(--text3)">' + esc(r.detail) + '</span>' : '')
-            : '<span style="color:var(--red)">✗ ' + esc(r.error) + '</span>';
+            : '<span style="color:var(--red)">✗ ' + esc(r.error) + '</span> ' + soEditLink(soRows[i], true); // ✏️ can't change it here (e.g. a variation) → change it on their page
         });
       }
     } catch (e) { alert('Error: ' + e.message); }
