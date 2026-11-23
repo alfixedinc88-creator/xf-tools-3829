@@ -14954,5 +14954,22 @@ console.log('\n🏷 UPC page: Amazon label only when WE chose it (not every X0�
   check('…the rows show the item name in the AWD tab (shipment line name, else Amazon\'s); the UPC Barcodes tab rows stay as they were', /var t = m\.name \|\| ''/.test(uh) && /if \(!m\.name && m\.amzName\) m\.name = m\.amzName;/.test(uh) && /m\.partNum \+ nm\(m\) \+ upcAsinHtml\(m\)/.test(uh));
 }
 
+// Owner (2026-11-23): "Inventory → Sold Out — change listing quantities: when there's variation we can't change the quantities on the
+// variation listing — if we can't change it, can we have a link so we can click on it and it brings us to their page to change it?"
+console.log('\n✏️ Sold Out: every listing has "Open on eBay/Amazon/Walmart/Shopify ↗"; a failed update says "Change it on … ↗"');
+{
+  const { readFileSync: rfS } = await import('node:fs');
+  const ih = rfS(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const a = ih.indexOf('  function soEditUrl('), url = new Function(ih.slice(a, ih.indexOf('\n  }\n', a) + 4) + '; return soEditUrl;')();
+  const e = url({ platform: 'eBay', listingId: '132887329098', sku: '24-1-8=10' }), am = url({ platform: 'Amazon', listingId: 'B07DLFVPB3', sku: '23-1-4=10--' }),
+    wm = url({ platform: 'Walmart', listingId: '123', sku: '30-3-6=25x' }), sh = url({ platform: 'Shopify', listingId: '999', sku: '25-2-3=5' });
+  check('eBay item 132887329098 → its Revise page; Amazon / Walmart / Shopify → their inventory page searched by the SKU',
+    e === 'https://www.ebay.com/sl/list?mode=ReviseItem&itemId=132887329098' && /sellercentral\.amazon\.com\/myinventory\/inventory\?.*searchTerm=23-1-4%3D10--$/.test(am)
+      && /seller\.walmart\.com\/.*search=30-3-6%3D25x$/.test(wm) && sh === 'https://admin.shopify.com/store/093304-8e/products?query=25-2-3%3D5', { e, am, wm, sh });
+  check('…on every row (opens a new tab, doesn\'t tick / untick the row); on a ✗ update (or no answer) "✏️ Change it on <marketplace> ↗" right next to the error',
+    /\+ '<div style="margin-top:2px">' \+ soEditLink\(r\) \+ '<\/div>'/.test(ih) && /target="_blank" rel="noopener" class="so-edit" onclick="event\.stopPropagation\(\)"/.test(ih)
+      && /esc\(r\.error\) \+ '<\/span> ' \+ soEditLink\(soRows\[i\], true\)/.test(ih) && /esc\(d\.error \|\| 'No answer'\) \+ '<\/span> ' \+ soEditLink\(soRows\[i\], true\)/.test(ih));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
