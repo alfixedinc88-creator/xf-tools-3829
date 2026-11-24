@@ -1090,6 +1090,21 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
 .launcher-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:14px; } @media(min-width:600px){.launcher-grid{grid-template-columns:repeat(3,1fr);}}
 .launcher-mgmt-row { display:grid;grid-template-columns:1fr;gap:14px;max-width:480px;margin:0 auto;width:100%; } @media(min-width:500px){.launcher-mgmt-row{grid-template-columns:1fr 1fr;}}
+.xf-todo { margin:18px auto 0;text-align:left;background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow); }
+.xf-todo h3 { margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.xf-todo .td-sec { font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin:10px 0 4px; }
+.xf-todo .td-row { display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-top:1px solid var(--border); }
+.xf-todo .td-main { flex:1;min-width:0; }
+.xf-todo .td-title { font-weight:700;font-size:14px;color:var(--text);word-break:break-word; }
+.xf-todo .td-row.done .td-title { text-decoration:line-through;color:var(--text3); }
+.xf-todo .td-sub { font-size:12px;color:var(--text2);margin-top:2px; }
+.xf-todo .td-btn { padding:6px 10px;border-radius:8px;border:1.5px solid var(--accent);background:var(--bg2);color:var(--accent);font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;font-family:inherit; }
+.xf-todo .td-btn.go { background:var(--accent);color:#fff; }
+.xf-todo .td-btn.ok { border-color:var(--green);background:var(--green);color:#fff; }
+.xf-todo .td-btn.gh { border-color:var(--border2);color:var(--text2); }
+.xf-todo .td-add { display:flex;gap:6px;flex-wrap:wrap;margin-top:8px; }
+.xf-todo .td-add input, .xf-todo .td-add select { padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;background:var(--bg2);color:var(--text); }
+.xf-todo .td-add input { flex:1;min-width:160px; }
 .launcher-section-label { font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin:28px 0 12px;width:100%;text-align:center; }
 .launcher-card {
   background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;
@@ -1306,6 +1321,21 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <button onclick="window.xfRefresh ? xfRefresh() : location.reload()" style="background:#fff;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit" title="Reload this page">🔄 Refresh</button><button data-xf-signout onclick="xfSignOut()" style="background:#fff;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">🚪 Sign Out</button>
     </div>
     <div style="display:flex;justify-content:center;margin-top:10px"><div class="xf-lang-switch" data-no-xl role="group" aria-label="Language / Idioma"><span>🌐</span><button type="button" data-xf-lang="en" aria-pressed="true" onclick="XFLang.set('en')">English</button><button type="button" data-xf-lang="es" aria-pressed="false" onclick="XFLang.set('es')">Español</button></div></div>
+
+    <!-- ✅ Owner (2026-11-24): "on the main page add a to do listing — something we can do next, so when the next person has nothing to do they
+         can check it and click which one they are going to do; and something I put down for my guys to do daily". -->
+    <div class="xf-todo" id="xf-todo">
+      <h3>✅ To-Do <span id="xf-todo-sum" style="font-size:12px;font-weight:600;color:var(--text2)"></span>
+        <button type="button" class="td-btn gh" style="margin-left:auto" onclick="xfTodoLoad(true)">↻</button></h3>
+      <div id="xf-todo-list" style="font-size:13px;color:var(--text3)">Loading…</div>
+      <div id="xf-todo-admin" style="display:none">
+        <div class="td-add"><input id="xf-todo-title" maxlength="200" placeholder="What needs doing? (e.g. Count aisle C2, sweep the garage)" onkeydown="if(event.key==='Enter')xfTodoAdd()">
+          <select id="xf-todo-kind"><option value="once">📝 To do next</option><option value="daily">📅 Every day</option></select>
+          <button type="button" class="td-btn go xf-todo-addbtn" onclick="xfTodoAdd()">＋ Add</button></div>
+        <details id="xf-todo-hist" style="margin-top:8px" ontoggle="if(this.open)xfTodoHist()"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">🕘 History — who took / finished what (last 7 days)</summary><div id="xf-todo-hist-out" style="font-size:12px;margin-top:6px"></div></details>
+      </div>
+      <div id="xf-todo-msg" style="font-size:12px;margin-top:6px"></div>
+    </div>
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
@@ -1538,7 +1568,99 @@ function applyRoleVisibility() {
   var isMgmt = !!(XF_CRED_USER && XF_CRED_USER.roles && XF_CRED_USER.roles.includes('mgmt'));
   var mgmtRow = document.querySelector('.launcher-mgmt-row');
   if (mgmtRow) mgmtRow.style.display = isMgmt ? '' : 'none';
+  if (typeof window.xfTodoLoad === 'function') window.xfTodoLoad(); // ✅ the To-Do list on the main page
 }
+
+// ═══ ✅ To-Do list (owner 2026-11-24) ═══
+// 📅 Every day (fresh each day) and 📝 To do next. Anyone signed in: 🙋 I'll do it → ✅ Done (who / when kept, ↩ give back / undo).
+// Mgmt / Admin / Owner: ＋ Add, ✏️ change, 🗑 remove, 🕘 History. No WiFi → the tap is kept on this device and sent when it is back
+// (each with its own request #, so it is never done twice).
+(function() {
+  var W = 'https://xfitting-lookup.alfixedinc88.workers.dev', TD = { tasks: [], boss: false }, OB_KEY = 'xf_todo_outbox';
+  function g(id) { return document.getElementById(id); }
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function tm(v) { try { return v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return ''; } }
+  function me() { return (window.XF_CRED_USER && (XF_CRED_USER.displayName || XF_CRED_USER.username)) || ''; }
+  function msg(t, c) { var m = g('xf-todo-msg'); if (m) { m.style.color = c || 'var(--text2)'; m.textContent = t || ''; } }
+  function obRead() { try { return JSON.parse(localStorage.getItem(OB_KEY) || '[]') || []; } catch (e) { return []; } }
+  function obWrite(a) { try { localStorage.setItem(OB_KEY, JSON.stringify(a)); } catch (e) {} }
+  function post(body) {
+    return fetch(W + '/todo', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': localStorage.getItem('xf_cred_token') || '' }, body: JSON.stringify(body) })
+      .then(function(r) { return r.json().then(function(d) { d._status = r.status; return d; }); });
+  }
+  function render() {
+    var L = g('xf-todo-list'); if (!L) return;
+    var daily = TD.tasks.filter(function(x) { return x.kind === 'daily'; }), once = TD.tasks.filter(function(x) { return x.kind !== 'daily'; });
+    var pend = {}; obRead().forEach(function(o) { pend[o.id + '|' + o.action] = 1; });
+    var row = function(x) {
+      var mine = x.takenBy === me(), st = x.status, sub = '', btns = '';
+      if (st === 'done') sub = '✅ Done by <b>' + esc(x.doneBy) + '</b> ' + esc(tm(x.doneAt)) + (x.takenBy && x.takenBy !== x.doneBy ? ' (taken by ' + esc(x.takenBy) + ')' : '');
+      else if (st === 'taken') sub = '🙋 <b>' + esc(x.takenBy) + '</b> is doing it · since ' + esc(tm(x.takenAt));
+      if (x.notes) sub = esc(x.notes) + (sub ? '<br>' + sub : '');
+      if (st === 'open') btns = '<button type="button" class="td-btn go" onclick="xfTodoAct(' + x.id + ',\'take\')">🙋 I\'ll do it</button>';
+      else if (st === 'taken') btns = '<button type="button" class="td-btn ok" onclick="xfTodoAct(' + x.id + ',\'done\')">✅ Done</button>'
+        + (mine || TD.boss ? ' <button type="button" class="td-btn gh" title="Give it back — someone else can take it" onclick="xfTodoAct(' + x.id + ',\'giveback\')">↩</button>' : '');
+      else if (x.doneBy === me() || TD.boss) btns = '<button type="button" class="td-btn gh" title="Not done after all" onclick="xfTodoAct(' + x.id + ',\'undo\')">↩ Undo</button>';
+      if (TD.boss) btns += ' <button type="button" class="td-btn gh xf-todo-edit" title="Change" onclick="xfTodoEdit(' + x.id + ')">✏️</button> <button type="button" class="td-btn gh xf-todo-del" title="Remove from the list" onclick="xfTodoAct(' + x.id + ',\'remove\')">🗑</button>';
+      if (pend[x.id + '|take'] || pend[x.id + '|done']) sub += (sub ? '<br>' : '') + '<span style="color:var(--orange)">📴 saved on this device — sent when WiFi is back</span>';
+      return '<div class="td-row' + (st === 'done' ? ' done' : '') + '"><div class="td-main"><div class="td-title">' + esc(x.title) + '</div>' + (sub ? '<div class="td-sub">' + sub + '</div>' : '') + '</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">' + btns + '</div></div>';
+    };
+    var open = TD.tasks.filter(function(x) { return x.status === 'open'; }).length, dDone = daily.filter(function(x) { return x.status === 'done'; }).length;
+    var sm = g('xf-todo-sum'); if (sm) sm.textContent = TD.tasks.length ? (open + ' open' + (daily.length ? ' · today ' + dDone + ' of ' + daily.length + ' daily done' : '')) : '';
+    L.innerHTML = !TD.tasks.length ? '<div style="color:var(--text3)">Nothing on the list.' + (TD.boss ? ' Add something below.' : '') + '</div>'
+      : (daily.length ? '<div class="td-sec">📅 Every day</div>' + daily.map(row).join('') : '') + (once.length ? '<div class="td-sec">📝 To do next</div>' + once.map(row).join('') : '');
+    var ad = g('xf-todo-admin'); if (ad) ad.style.display = TD.boss ? '' : 'none';
+  }
+  function apply(d) { if (d && Array.isArray(d.tasks)) { TD.tasks = d.tasks; if (d.boss != null) TD.boss = !!d.boss; } render(); }
+  window.xfTodoLoad = function(force) {
+    if (!localStorage.getItem('xf_cred_token')) return;
+    xfTodoFlush();
+    return fetch(W + '/todo', { headers: { 'X-Cred-Token': localStorage.getItem('xf_cred_token') || '' } }).then(function(r) { return r.json(); })
+      .then(function(d) { if (d && d.ok) { TD.boss = !!d.boss; apply(d); msg(''); } else msg((d && d.error) || 'Could not load the list', 'var(--red)'); })
+      .catch(function() { render(); msg('📴 No WiFi — showing the last list; taps are kept and sent when WiFi is back', 'var(--orange)'); });
+  };
+  window.xfTodoFlush = function() {
+    var q = obRead(); if (!q.length || !navigator.onLine) return;
+    var next = function() { var a = obRead(); if (!a.length) return; var o = a[0];
+      post(o).then(function(d) { obWrite(obRead().slice(1)); apply(d); if (!d.ok && d.error) msg('⚠ ' + d.error, 'var(--orange)'); next(); }).catch(function() {}); };
+    next();
+  };
+  window.addEventListener('online', function() { window.xfTodoFlush(); setTimeout(function() { window.xfTodoLoad(); }, 1500); });
+  window.xfTodoAct = function(id, action) {
+    var x = TD.tasks.filter(function(t) { return t.id === id; })[0]; if (!x) return;
+    if (action === 'remove' && !confirm('🗑 Remove "' + x.title + '" from the list? (kept in 🕘 History)')) return;
+    if (action === 'undo' && !confirm('↩ "' + x.title + '" is NOT done after all?')) return;
+    var body = { action: action, id: id, _requestId: 'todo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), _outbox: true, _byUserId: (window.XF_CRED_USER && XF_CRED_USER.userId) || 0 };
+    // shown at once on this device
+    if (action === 'take') { x.status = 'taken'; x.takenBy = me(); x.takenAt = new Date().toISOString(); }
+    if (action === 'done') { x.status = 'done'; x.doneBy = me(); x.doneAt = new Date().toISOString(); }
+    render();
+    post(body).then(function(d) { apply(d); if (!d.ok) msg('⚠ ' + (d.error || 'not saved'), 'var(--red)'); else msg(''); })
+      .catch(function() { if (action === 'take' || action === 'done' || action === 'giveback' || action === 'undo') { var q = obRead(); q.push(body); obWrite(q); render(); msg('📴 No WiFi — kept on this device, sent when WiFi is back', 'var(--orange)'); }
+        else msg('📴 No WiFi — try again when it is back', 'var(--red)'); });
+  };
+  window.xfTodoAdd = function() {
+    var i = g('xf-todo-title'), k = g('xf-todo-kind'), t = (i && i.value || '').trim(); if (!t) { if (i) i.focus(); return; }
+    post({ action: 'add', title: t, kind: k ? k.value : 'once', _requestId: 'todo-add-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) })
+      .then(function(d) { if (d.ok) { if (i) i.value = ''; apply(d); msg('✅ Added', 'var(--green)'); } else msg('⚠ ' + (d.error || 'not added'), 'var(--red)'); })
+      .catch(function() { msg('📴 No WiFi — add it again when it is back', 'var(--red)'); });
+  };
+  window.xfTodoEdit = function(id) {
+    var x = TD.tasks.filter(function(t) { return t.id === id; })[0]; if (!x) return;
+    var nt = prompt('✏️ Change the task:', x.title); if (nt == null) return; nt = nt.trim(); if (!nt) return;
+    var nn = prompt('Notes (optional — how / where):', x.notes || ''); if (nn == null) nn = x.notes || '';
+    post({ action: 'edit', id: id, title: nt, notes: nn, _requestId: 'todo-ed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) })
+      .then(function(d) { apply(d); if (!d.ok) msg('⚠ ' + (d.error || 'not saved'), 'var(--red)'); }).catch(function() { msg('📴 No WiFi — try again when it is back', 'var(--red)'); });
+  };
+  window.xfTodoHist = function() {
+    var o = g('xf-todo-hist-out'); if (!o) return; o.textContent = 'Loading…';
+    var A = { add: '＋ added', take: '🙋 took', done: '✅ finished', giveback: '↩ gave back', undo: '↩ undid', edit: '✏️ changed', remove: '🗑 removed' };
+    fetch(W + '/todo?log=7', { headers: { 'X-Cred-Token': localStorage.getItem('xf_cred_token') || '' } }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { o.textContent = (d && d.error) || 'Could not load'; return; }
+      o.innerHTML = !d.log.length ? 'Nothing yet.' : d.log.map(function(l) { return '<div style="padding:3px 0;border-top:1px solid var(--border)">' + esc(tm(l.at)) + ' · <b>' + esc(l.by_user) + '</b> ' + (A[l.action] || esc(l.action)) + ' “' + esc(l.title) + '”' + (l.detail ? ' <span style="color:var(--text3)">(' + esc(l.detail) + ')</span>' : '') + '</div>'; }).join('');
+    }).catch(function() { o.textContent = '📴 No WiFi'; });
+  };
+})();
 
 function backToLauncher() {
   // Hide all app divs (null-safe — some may have been removed)

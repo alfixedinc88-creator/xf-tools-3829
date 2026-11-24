@@ -290,6 +290,8 @@ document.addEventListener('input', function (e) {
         { key: 'dupes', label: '⚠️ Double Print Warning', sel: '#ps-print-dupe-card' },
         { key: 'autoprint', label: '🤖 Auto print report', sel: '#ps-ap-card' },
         { key: 'summary', label: 'Printed by person', sel: '#ps-pl-summary' } ] }] },
+    { key: 'todo', file: 'index.html', name: '✅ To-Do list (main page)', needs: 'any sign-in', card: '#xf-todo', tabs: [], parts: [
+      { key: 'todoadmin', label: '＋ Add / ✏️ Change / 🗑 Remove / 🕘 History (Mgmt / Admin / Owner — the server checks too)', sel: '#xf-todo-admin, #xf-todo .xf-todo-edit, #xf-todo .xf-todo-del' } ] },
     { key: 'messenger', file: 'index.html', name: '💬 Messenger', needs: 'any sign-in', card: card("launchApp('messenger')"), tabs: [] },
     { key: 'training', file: 'training.html', name: '🎓 Training', needs: 'any sign-in', card: card('training.html'), tabs: [], parts: [
       { key: 'picker', label: '🧺 Picker Guide', sel: '#modules a.mod[href="#picker"]' },
