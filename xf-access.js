@@ -132,7 +132,8 @@ document.addEventListener('input', function (e) {
       { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan', parts: [
         { key: 'quickadd', label: 'Quick Add', sel: '#inv-quickadd-card' },
-        { key: 'stockinhist', label: '📜 Stock In History', sel: '#inv-quickadd-card span[onclick="invShowStockInHistory()"]' } ] },
+        { key: 'stockinhist', label: '📜 Stock In History', sel: '#inv-quickadd-card span[onclick="invShowStockInHistory()"]' },
+        { key: 'stockinlist', label: '📋 Stock In list — ➕ add boxes, put away later (scan box → scan shelf)', sel: '#inv-sil-card, #inv-qa-list-btn' } ] },
       { key: 'putshelf', label: '📥 Put on Shelf (scan the box, then the shelf)', sel: '#inv-tab-putshelf', parts: [
         { key: 'hist', label: '📜 Put on Shelf — History', sel: '#ps2-hist-card' },
         { key: 'map', label: '🗺 Shelf map (after a box scan + Show the shelf map)', sel: '.ps2-map, #ps2-map-btn' } ] },

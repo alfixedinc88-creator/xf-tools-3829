@@ -6660,7 +6660,7 @@ async function inventoryOutboxCheck(request, env) {
     }
     // Anything else the server finished without its own table (changes nothing to count, e.g. a label marked done):
     // its stored result is the record — never "Not in History — sending again" forever.
-    if (!['inventory/log', 'inventory/transfer', 'inventory/containers/extra', 'inventory/containers/found-in', 'inventory/containers/upc-issue',
+    if (!['inventory/log', 'inventory/stockin-list/put', 'inventory/transfer', 'inventory/containers/extra', 'inventory/containers/found-in', 'inventory/containers/upc-issue',
       'inventory/containers/recheck', 'inventory/containers/short', 'inventory/recount/column-done', 'inventory/containers/pcs-check'].includes(r.endpoint)) {
       out[id] = res && res.ok !== false && !res.error ? { state: 'saved', result: res } : { state: 'missing' }; continue;
     }
@@ -6907,6 +6907,11 @@ async function inventoryVerifyInner(request, env) {
             inheritJ = String(existingRow.units_per_case || '');
             inheritM = String(existingRow.vendor || '');
           }
+          // 📦 Owner rule (2026-11-24, found with the 📋 Stock In list: a 67-1-1=5 box at a new spot got the =10's 10 pcs): the SAME
+          // part # on another shelf first — the family's biggest pack only when this part # has none on record.
+          const samePart = await d1First(env, 'SELECT units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND units_per_case > 0 ORDER BY cases DESC LIMIT 1',
+            [String(partNum || '').trim().toUpperCase()]).catch(() => null);
+          if (samePart && parseFloat(samePart.units_per_case) > 0) inheritJ = String(parseFloat(samePart.units_per_case));
           // 💲 Owner (2026-11-03, 23-6-2: price history newest $0.833, but new rows took the old COGS list's $1.833): the
           // newest price this part # really came in at (💲 Price history) first; the COGS list only when there is none.
           const lastPrice = await d1First(env,
@@ -6936,6 +6941,11 @@ async function inventoryVerifyInner(request, env) {
       else if (parseInt(item.d1Id) > 0) {
         const pe = await d1First(env, 'SELECT pcs_per_box FROM pallet_extra WHERE log_id = ? LIMIT 1', [parseInt(item.d1Id)]).catch(() => null);
         if (pe && parseFloat(pe.pcs_per_box) > 0) inheritJ = String(parseFloat(pe.pcs_per_box));
+        // 📋 put away from the Stock In list: the QTY per Case they tapped for that box (owner 2026-11-24)
+        else {
+          const sl = await d1First(env, 'SELECT pcs FROM stockin_list WHERE log_id = ? LIMIT 1', [parseInt(item.d1Id)]).catch(() => null);
+          if (sl && parseFloat(sl.pcs) > 0) inheritJ = String(parseFloat(sl.pcs));
+        }
       }
       // D1 lookups above are sufficient — no Sheets fallback needed
       // Write G:O — same structure as transfer verify new rows
@@ -10126,6 +10136,70 @@ async function recountNewRound(env, session) {
 // it is cancelled (Rejected; nothing on the shelf changed). Already approved →
 // only within 30 minutes, and through the same Cancel managers use (reverses
 // it, History keeps Part Total Before → After); older → ask a manager.
+// 📋 Stock In list (owner 2026-11-24): "if we have more than 1 box … after it confirms the QTY Case / QTY per Case it can be added to
+// a Stock In list, so we can scan the whole car, all added to our Stock In list, then we arrange it by location to put it back; when they
+// bring it to the recommended location, each box they bring back they have to scan the box, then scan the shelf".
+// A list entry changes NO stock. Stock is added only when it is put away (scan box → scan shelf): /put marks the entry and makes the
+// SAME Stock In as Quick Add (inventoryLog, isNew → adds to that part # + spot), in one step — an entry can be put away once only
+// (a second phone / a re-send gets "already put away", never a second Stock In). Everything kept: who added, who put it where, when.
+async function stockInListTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS stockin_list (id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT, name TEXT, sku TEXT, cases REAL, pcs REAL,
+    rec_loc TEXT, added_by TEXT, added_at TEXT, status TEXT DEFAULT 'open', done_loc TEXT, done_by TEXT, done_at TEXT, log_id INTEGER, note TEXT)`).run();
+}
+async function stockInList(path, method, request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await stockInListTables(env);
+  const who = String((session && (session.displayName || session.username)) || '').slice(0, 40) || 'OPS';
+  const U = x => String(x == null ? '' : x).trim().toUpperCase().replace(/\s+/g, '');
+  if (method === 'GET' && path === '/inventory/stockin-list') {
+    const open = await d1All(env, "SELECT * FROM stockin_list WHERE status IN ('open', 'putting') ORDER BY id").catch(() => []);
+    const since = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
+    const done = await d1All(env, "SELECT * FROM stockin_list WHERE status IN ('done', 'removed') AND COALESCE(done_at, added_at) >= ? ORDER BY COALESCE(done_at, added_at) DESC LIMIT 100", [since]).catch(() => []);
+    return J({ ok: true, open, done });
+  }
+  if (method !== 'POST') return J({ ok: false, error: 'Not found' }, 404);
+  const b = await request.json().catch(() => ({}));
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { // never twice (the phone's outbox re-sends): one guard per kind
+    const claim = path === '/inventory/stockin-list/add' ? await claimRequestId(env, rid, 'inventory/stockin-list/add')
+      : path === '/inventory/stockin-list/put' ? await claimRequestId(env, rid, 'inventory/stockin-list/put') : await claimRequestId(env, rid, 'inventory/stockin-list/remove');
+    if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const done = async o => { if (rid) await recordRequestResult(env, rid, o); return J(o); };
+  const now = new Date().toISOString();
+  if (path === '/inventory/stockin-list/add') {
+    const part = U(b.part), cases = Math.round((parseFloat(b.cases) || 0) * 1000) / 1000, pcs = Math.round((parseFloat(b.pcs) || 0) * 1000) / 1000;
+    if (!part || /^\d{11,14}$/.test(part)) return fail({ ok: false, error: 'Scan the box (the part #)' }, 400);
+    if (!(cases > 0)) return fail({ ok: false, error: 'Tap QTY Case' }, 400);
+    const ins = await env.DB.prepare('INSERT INTO stockin_list (part, name, sku, cases, pcs, rec_loc, added_by, added_at, status) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(part, String(b.name || '').slice(0, 200), U(b.sku || part).slice(0, 80), cases, pcs, U(b.recLoc).slice(0, 40), who, now, 'open').run();
+    return done({ ok: true, id: ins.meta.last_row_id, part, cases, pcs, recLoc: U(b.recLoc) });
+  }
+  const id = parseInt(b.id, 10) || 0, row = id ? await d1First(env, 'SELECT * FROM stockin_list WHERE id = ?', [id]) : null;
+  if (!row) return fail({ ok: false, error: 'Not on the Stock In list' }, 404);
+  if (path === '/inventory/stockin-list/remove') {
+    if (row.status !== 'open') return fail({ ok: false, error: row.status === 'done' ? 'Already put away at ' + row.done_loc + ' by ' + row.done_by : 'Already taken off the list' }, 409);
+    await env.DB.prepare("UPDATE stockin_list SET status = 'removed', done_by = ?, done_at = ?, note = ? WHERE id = ? AND status = 'open'").bind(who, now, String(b.why || 'taken off the list').slice(0, 200), id).run();
+    return done({ ok: true, id, removed: true });
+  }
+  if (path === '/inventory/stockin-list/put') {
+    const loc = U(b.location);
+    if (!/^[A-Z0-9]+=\S+$/.test(loc) && loc !== 'GARAGE') return fail({ ok: false, error: 'Scan the shelf label (e.g. C1=1-2-3)' }, 400);
+    // claim it first: only one phone can put an entry away
+    const cl = await env.DB.prepare("UPDATE stockin_list SET status = 'putting', done_by = ?, done_at = ? WHERE id = ? AND status = 'open'").bind(who, now, id).run();
+    if (!(cl.meta && cl.meta.changes)) return fail({ ok: false, error: row.status === 'done' ? `Already put away at ${row.done_loc} by ${row.done_by}` : 'Not on the Stock In list any more' }, 409);
+    const off = row.rec_loc && row.rec_loc !== loc;
+    const note = '[STOCK IN LIST] ' + (row.rec_loc ? (off ? 'put at ' + loc + ' (we said ' + row.rec_loc + ')' : 'put at the spot we said') : 'no spot on record — put at ' + loc) + ' · added by ' + (row.added_by || '?');
+    const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify({ type: 'IN', partNum: row.part, sku: row.sku || row.part,
+      name: row.name || '', location: loc, cases: row.cases, initials: who, notes: note, isNew: true, isPlaceholder: false, unitsPerCase: row.pcs || 0,
+      _boxPcs: row.pcs || 0 }) }), env); // auto-approve: a NEW row gets this box's QTY per Case (an existing row keeps its own)
+    const ld = await lr.json().catch(() => ({}));
+    if (!ld.ok) { await env.DB.prepare("UPDATE stockin_list SET status = 'open', done_by = NULL, done_at = NULL WHERE id = ?").bind(id).run(); return fail({ ok: false, error: ld.error || 'Stock In failed' }, 500); }
+    await env.DB.prepare("UPDATE stockin_list SET status = 'done', done_loc = ?, log_id = ?, note = ? WHERE id = ?").bind(loc, ld.d1Id || null, off ? 'not the spot we said (' + row.rec_loc + ')' : '', id).run();
+    return done({ ok: true, id, part: row.part, cases: row.cases, pcs: row.pcs, location: loc, recLoc: row.rec_loc || '', off: !!off, d1Id: ld.d1Id || null, autoApproved: !!ld.autoApproved });
+  }
+  return fail({ ok: false, error: 'Not found' }, 404);
+}
 async function inventoryCancelOwn(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));
@@ -12090,6 +12164,7 @@ const _app = {
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
       if (path === '/inventory/offline-pack' && method === 'GET') return await inventoryOfflinePack(env);
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
+      if (path.startsWith('/inventory/stockin-list')) return await stockInList(path, method, request, env, session); // 📋 owner 2026-11-24
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
       if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
       if (path === '/inventory/recount/report' && method === 'GET') {
@@ -18737,7 +18812,8 @@ async function palletFoundIn(request, env, session) {
 // Everything the 📶 phone outbox sends (inventory.html invPost): recorded as the person who made it (see the router).
 const OUTBOX_PATHS = new Set(['/todo', '/inventory/log', '/inventory/transfer', '/inventory/containers/upc-issue', '/inventory/containers/recheck',
   '/inventory/containers/short', '/inventory/containers/pcs-check', '/inventory/containers/pallet-count', '/inventory/containers/extra',
-  '/inventory/containers/mark-moved', '/inventory/containers/found-in', '/inventory/recount/column-done', '/inventory/barcode-job', '/inventory/barcode-job/stuck']);
+  '/inventory/containers/mark-moved', '/inventory/containers/found-in', '/inventory/recount/column-done', '/inventory/barcode-job', '/inventory/barcode-job/stuck',
+  '/inventory/stockin-list/add', '/inventory/stockin-list/remove', '/inventory/stockin-list/put']);
 async function palletCountLog(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));
