@@ -14993,5 +14993,67 @@ console.log('\n📏 Label Printer: the location / part # always fits across the 
     !bad.length && now < was && sizeOf(L.loc('C1=1-1-2', 1, '')) >= 60, { bad, was, now });
 }
 
+// Owner (2026-11-24): "Stock In / Found on shelf: if more than 1 box, after it confirms the QTY Case / QTY per Case it can be added to a
+// Stock In list, so we can scan the whole car, all added to our Stock In list, then we arrange it with location to put it back; when they
+// bring it to the recommended location, each box they bring back they have to scan the box, then scan the shelf".
+console.log('\n📋 Stock In list: add boxes (no stock yet) → put away: scan box → scan shelf → the Stock In, once only; totals add up');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('67-1-1','List tee','67-1-1=10','C1=6-7-1',4,10), ('67-1-1','List tee','67-1-1=5','C2=6-7-2',2,5)").run();
+  const tot = p => sq.prepare("SELECT COALESCE(SUM(cases),0) c, COALESCE(SUM(cases*units_per_case),0) pcs FROM master_list WHERE part_num = ?").get(p);
+  const logs = p => sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE part_num = ? AND notes LIKE '[STOCK IN LIST]%'").get(p).n;
+  const b10 = tot('67-1-1=10'), b5 = tot('67-1-1=5');
+  const A = await post('/inventory/stockin-list/add', { part: '67-1-1=10', name: 'List tee', cases: 2, pcs: 10, recLoc: 'C1=6-7-1', _requestId: 'sil-a1' });
+  const A2 = await post('/inventory/stockin-list/add', { part: '67-1-1=10', name: 'List tee', cases: 2, pcs: 10, recLoc: 'C1=6-7-1', _requestId: 'sil-a1' }); // the phone sent it twice
+  const B = await post('/inventory/stockin-list/add', { part: '67-1-1=5', cases: 3, pcs: 5, recLoc: 'C2=6-7-2', _requestId: 'sil-b1' });
+  const C = await post('/inventory/stockin-list/add', { part: '67-9-9=1', cases: 1, pcs: 0, recLoc: '', _requestId: 'sil-c1' });
+  const L1 = await get('/inventory/stockin-list');
+  const mine = L1.open.filter(x => /^67-/.test(x.part));
+  check('➕ 3 boxes on the list (the same add sent twice is kept once); NOTHING added to stock yet (67-1-1=10 still ' + b10.c + ', =5 still ' + b5.c + ')',
+    A.ok && A2.id === A.id && B.ok && C.ok && mine.length === 3 && tot('67-1-1=10').c === b10.c && tot('67-1-1=5').c === b5.c && logs('67-1-1=10') === 0, { A, A2, mine: mine.length });
+  const P1 = await post('/inventory/stockin-list/put', { id: A.id, location: 'C1=6-7-1', _requestId: 'sil-p1' });
+  const P1b = await post('/inventory/stockin-list/put', { id: A.id, location: 'C1=6-7-1', _requestId: 'sil-p1' }); // re-sent
+  const P1c = await post('/inventory/stockin-list/put', { id: A.id, location: 'C1=6-7-1', _requestId: 'sil-p1-other-phone' });
+  check('scan box → scan shelf C1=6-7-1 → ONE Stock In (67-1-1=10 × 2 at C1=6-7-1, "[STOCK IN LIST] put at the spot we said"); re-sent = the same answer; another phone → "Already put away", no 2nd Stock In',
+    P1.ok && P1.d1Id && P1b.d1Id === P1.d1Id && P1c.ok === false && /Already put away at C1=6-7-1/.test(P1c.error) && logs('67-1-1=10') === 1
+      && /put at the spot we said/.test(sq.prepare('SELECT notes FROM inventory_log WHERE id = ?').get(P1.d1Id).notes), { P1, P1c });
+  const appr = async d1 => { const it = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === d1); if (it) await post('/inventory/verify', { rowIndex: it.rowIndex, action: 'Approved', item: it }); };
+  if (!P1.autoApproved) await appr(P1.d1Id);
+  const P2 = await post('/inventory/stockin-list/put', { id: B.id, location: 'C3=6-7-3', _requestId: 'sil-p2' });
+  if (!P2.autoApproved) await appr(P2.d1Id);
+  const R = await post('/inventory/stockin-list/remove', { id: C.id, _requestId: 'sil-r1' }), PC = await post('/inventory/stockin-list/put', { id: C.id, location: 'C1=1-1-1', _requestId: 'sil-pc' });
+  const a10 = tot('67-1-1=10'), a5 = tot('67-1-1=5'), n999 = sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE part_num = '67-9-9=1'").get().n;
+  const rows = [['67-1-1=10 cases', b10.c, 2, a10.c], ['67-1-1=10 pcs', b10.pcs, 20, a10.pcs], ['67-1-1=5 cases', b5.c, 3, a5.c], ['67-1-1=5 pcs', b5.pcs, 15, a5.pcs], ['67-9-9=1 (taken off) Stock Ins', 0, 0, n999]];
+  const bad = rows.filter(([, before, add, after]) => Math.abs(before + add - after) > 1e-9);
+  console.log('    expected vs counted: ' + rows.map(([k, b0, ad, af]) => k + ' ' + b0 + ' + ' + ad + ' = ' + (b0 + ad) + ' → ' + af + (Math.abs(b0 + ad - af) < 1e-9 ? ' ✅' : ' ❌')).join(' · '));
+  check('old + added = new, exactly: 67-1-1=10 4 + 2 = 6 cases (60 pcs), 67-1-1=5 2 + 3 = 5 (25 pcs); a box taken off the list adds nothing and can\'t be put away after',
+    !bad.length && R.ok && PC.ok === false && n999 === 0, { rows, R, PC });
+  const L2 = await get('/inventory/stockin-list'), dB = (L2.done || []).find(x => x.id === B.id), dC = (L2.done || []).find(x => x.id === C.id);
+  check('…kept: put at another spot than we said → "not the spot we said (C2=6-7-2)"; taken off → kept as removed; who + when on each; none left open',
+    P2.ok && P2.off && dB && dB.done_loc === 'C3=6-7-3' && /C2=6-7-2/.test(dB.note) && dB.done_by && dC && dC.status === 'removed' && !(L2.open || []).some(x => /^67-/.test(x.part)), { dB, dC });
+  const { readFileSync: rfI } = await import('node:fs');
+  const ih = rfI(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screen: ➕ Add to Stock In list in Quick Add; tapping QTY per Case with NO spot puts it on the list (a spot scanned → saved right away, as before); the 📋 Stock In list card: 1️⃣ scan the BOX → 📍 where → 2️⃣ scan the SHELF (another spot asks first); sorted by the spot in walking order; works with no WiFi (outbox)',
+    /id="inv-qa-list-btn" onclick="invSilAdd\(\)"/.test(ih) && /if \(!\(g\('inv-qa-shelf'\) \|\| \{\}\)\.value\) \{ if \(window\.invSilAdd\) invSilAdd\(\); return; \}/.test(ih) && /if \(window\.invQuickAddSubmit\) invQuickAddSubmit\(\);/.test(ih)
+      && /<div class="icard" id="inv-sil-card">/.test(ih) && /Not the spot we said/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/put'/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/add'/.test(ih) && /invPullWalkCompare\(a\.rec_loc, b\.rec_loc\)/.test(ih));
+  const pick = new Function('invPullWalkCompare', ih.slice(ih.indexOf('  function invSilRec('), ih.indexOf('  window.invSilRec = invSilRec;')) + '; return invSilRec;')((a, b) => String(a).localeCompare(String(b)));
+  const d = { locations: [{ partNum: '67-1-1=5', location: 'BO=1-1-1', cases: 2 }, { partNum: '67-1-1=10', location: 'C1=6-7-1', cases: 4 }, { partNum: '67-1-1=10', location: 'C2=0-0-0', cases: 0 }] };
+  check('…the spot we recommend: where we have that exact part # (C1=6-7-1), else another pack size of it, else none (put where there is room)',
+    pick(d, '67-1-1=10') === 'C1=6-7-1' && pick(d, '67-1-1=25') === 'BO=1-1-1' && pick({ locations: [] }, 'X') === '', [pick(d, '67-1-1=10'), pick(d, '67-1-1=25')]);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '67-1-1'; DELETE FROM stockin_list WHERE part LIKE '67-%'");
+}
+
+// Found with the 📋 Stock In list (2026-11-24): a Stock In of a pack size at a NEW spot took the family's BIGGEST pack's pieces per case
+// (67-1-1=5 → 10 pcs) — pieces counted wrong. Now the same part # on another shelf first.
+console.log('\n📦 A new spot for a pack size gets ITS OWN pieces per case (not the biggest pack of the item)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('68-1-1','Inh tee','68-1-1=10','C1=6-8-1',4,10), ('68-1-1','Inh tee','68-1-1=5','C2=6-8-2',2,5)").run();
+  const r = await post('/inventory/log', { type: 'IN', partNum: '68-1-1=5', sku: '68-1-1=5', location: 'C3=6-8-3', cases: 3, initials: 'TS', isNew: true, unitsPerCase: 5 });
+  if (!r.autoApproved) { const it = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === r.d1Id); if (it) await post('/inventory/verify', { rowIndex: it.rowIndex, action: 'Approved', item: it }); }
+  const row = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num = '68-1-1=5' AND location LIKE 'C3=6-8-3%'").get() || {};
+  const pcs = sq.prepare("SELECT SUM(cases*units_per_case) p FROM master_list WHERE part_num = '68-1-1=5'").get().p;
+  check('68-1-1=5 × 3 at a new spot C3=6-8-3 → 5 pcs a case (not the =10\'s 10): pieces 10 + 15 = 25 ✅', row.cases === 3 && row.u === 5 && pcs === 25, { row, pcs });
+  sq.exec("DELETE FROM master_list WHERE base_sku = '68-1-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
