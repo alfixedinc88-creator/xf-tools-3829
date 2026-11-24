@@ -14993,6 +14993,45 @@ console.log('\n📏 Label Printer: the location / part # always fits across the 
     !bad.length && now < was && sizeOf(L.loc('C1=1-1-2', 1, '')) >= 60, { bad, was, now });
 }
 
+// Owner (2026-11-24): "on the main page add a to do listing — something we can do next, so when the next person has nothing to do they can check it
+// and click which one they are going to do; and something I put down for my guys to do daily".
+console.log('\n✅ Main page To-Do: 📅 every day + 📝 to do next; 🙋 I\'ll do it → ✅ Done, who / when kept; only Mgmt adds');
+{
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const P = async (b, tok) => { const r = await call('/todo', { method: 'POST', headers: { 'X-Cred-Token': tok || login.token, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); const d = await r.json(); d._st = r.status; return d; };
+  const G = async tok => (await (await call('/todo', { headers: { 'X-Cred-Token': tok || login.token } })).json());
+  check('the list needs a sign-in (no token → 401)', (await call('/todo')).status === 401, null);
+  const no = await P({ action: 'add', title: 'Sweep the garage', kind: 'daily' }, pkT);
+  const a1 = await P({ action: 'add', title: 'Sweep the garage', kind: 'daily' }), a2 = await P({ action: 'add', title: 'Count aisle C2', kind: 'once', _requestId: 'todo-t-1' }), a2b = await P({ action: 'add', title: 'Count aisle C2', kind: 'once', _requestId: 'todo-t-1' });
+  const L0 = await G(pkT), d0 = L0.tasks.find(x => x.title === 'Sweep the garage'), o0 = L0.tasks.find(x => x.title === 'Count aisle C2');
+  check('Mgmt adds "Sweep the garage" (📅 every day) + "Count aisle C2" (📝 to do next); a picker can\'t add (403); the same tap twice adds it once',
+    no._st === 403 && a1.ok && a2.ok && L0.tasks.filter(x => x.title === 'Count aisle C2').length === 1 && d0 && d0.kind === 'daily' && d0.status === 'open' && o0 && o0.kind === 'once' && !L0.boss, L0);
+  const t1 = await P({ action: 'take', id: o0.id }, pkT), t2 = await P({ action: 'take', id: o0.id });
+  const L1 = await G(), o1 = L1.tasks.find(x => x.id === o0.id);
+  check('…the picker taps 🙋 I\'ll do it → "PK is doing it" (who / when); someone else can\'t take it too', t1.ok && o1.status === 'taken' && o1.takenBy === 'PK' && !!o1.takenAt && !t2.ok && /PK is already doing it/.test(t2.error), { t2, o1 });
+  const dn = await P({ action: 'done', id: o0.id }, pkT), dd = await P({ action: 'done', id: d0.id }, pkT);
+  const L2 = await G(pkT), o2 = L2.tasks.find(x => x.id === o0.id), d2 = L2.tasks.find(x => x.id === d0.id);
+  check('…✅ Done → done by PK with the time (still shown today, crossed out); the daily one done for today too', dn.ok && dd.ok && o2.status === 'done' && o2.doneBy === 'PK' && d2.status === 'done' && d2.doneBy === 'PK', { o2, d2 });
+  // the next day: the daily one is open again, the one-time one is gone from the list (kept in history)
+  const tmr = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  sq.prepare("UPDATE todo_state SET done_at = ? WHERE task_id = ?").run(new Date(Date.now() - 2 * 86400000).toISOString(), o0.id);
+  sq.prepare("UPDATE todo_state SET day = ? WHERE task_id = ?").run('2000-01-01', d0.id); // yesterday's daily record
+  const L3 = await G(), d3 = L3.tasks.find(x => x.id === d0.id);
+  check('…a new day: 📅 "Sweep the garage" is open again (yesterday kept); the finished 📝 one is off the list', d3 && d3.status === 'open' && !L3.tasks.some(x => x.id === o0.id)
+    && sq.prepare("SELECT COUNT(*) n FROM todo_state WHERE task_id = ? AND day = '2000-01-01'").get(d0.id).n === 1, L3.tasks);
+  const rm = await P({ action: 'remove', id: d0.id }, pkT), rm2 = await P({ action: 'remove', id: d0.id });
+  const log = await (await call('/todo?log=7', { headers: { 'X-Cred-Token': login.token } })).json(), plog = await (await call('/todo?log=7', { headers: { 'X-Cred-Token': pkT } })).json();
+  const acts = (log.log || []).map(l => l.by_user + ' ' + l.action + ' ' + l.title).reverse();
+  check('…only Mgmt removes (picker 403); 🕘 History (Mgmt only) keeps every step: who added, took, finished, removed',
+    rm.ok === false && rm2.ok && !plog.ok && JSON.stringify(acts) === JSON.stringify(['TS add Sweep the garage', 'TS add Count aisle C2', 'PK take Count aisle C2', 'PK done Count aisle C2', 'PK done Sweep the garage', 'TS remove Sweep the garage']), acts);
+  const { readFileSync: rfT } = await import('node:fs');
+  const ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), xa = rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8'), wk = rfT(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…on the main page (above the apps) with 🙋 I\'ll do it / ✅ Done / ↩; taps kept on the device with no WiFi (own request #); in 🧩 Pages & Tabs; in the phone outbox list',
+    /id="xf-todo"/.test(ih) && ih.indexOf('id="xf-todo"') < ih.indexOf('🏭 Warehouse</div>') && /🙋 I\\'ll do it/.test(ih) && /xf_todo_outbox/.test(ih) && /window\.xfTodoLoad\(\); \/\/ ✅ the To-Do list/.test(ih)
+      && /key: 'todo', file: 'index\.html'/.test(xa) && /const OUTBOX_PATHS = new Set\(\['\/todo',/.test(wk), null);
+  sq.exec("DELETE FROM todo_task; DELETE FROM todo_state; DELETE FROM todo_log");
+}
+
 // Owner (2026-11-24): "Stock In / Found on shelf: if more than 1 box, after it confirms the QTY Case / QTY per Case it can be added to a
 // Stock In list, so we can scan the whole car, all added to our Stock In list, then we arrange it with location to put it back; when they
 // bring it to the recommended location, each box they bring back they have to scan the box, then scan the shelf".

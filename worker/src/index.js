@@ -11518,6 +11518,7 @@ const _app = {
     if (url.pathname === '/awd/claim' && (method === 'GET' || method === 'POST')) return await awdClaim(request, env, session);
     if (url.pathname === '/awd/plan-cache' && (method === 'GET' || method === 'POST')) return await awdPlanCache(request, env, session);
     if (url.pathname === '/awd/lock' && (method === 'GET' || method === 'POST')) return await awdLock(request, url, env, session);
+    if (url.pathname === '/todo' && (method === 'GET' || method === 'POST')) return await todoRoute(request, url, env, session); // ✅ main page To-Do list
     if (url.pathname === '/awd/box-pallet' && (method === 'GET' || method === 'POST')) return await awdBoxPallet(request, url, env, session);
     if (url.pathname === '/awd/activity' && (method === 'GET' || method === 'POST')) return await awdActivity(request, url, env, session); // 🕘 Shipment Builder history
     if (url.pathname === '/awd/amz-barcode' && (method === 'GET' || method === 'POST')) return await awdAmzBarcode(request, env, session); // 🏷 the ASINs whose bags carry Amazon's barcode
@@ -17403,6 +17404,92 @@ async function ensureProcessedRequestsTable(env) {
 // Returns { isDuplicate: true, cachedResponse } if it's already been
 // processed (or is currently mid-processing by a concurrent replay) —
 // caller should return cachedResponse directly instead of doing the work.
+// ✅ To-Do list on the main page. Owner (2026-11-24): "on the main page add a to do listing — something we can do next, so when the next person
+// has nothing to do they can check it and click which one they are going to do; and something I put down for my guys to do daily".
+//   • 📅 Every day (kind 'daily'): starts fresh each New York day; each day keeps who took it and who finished it, and when.
+//   • 📝 To do next (kind 'once'): open → 🙋 taken (who / when) → ✅ done (who / when); ↩ give back puts it back open.
+// Mgmt / Admin / Owner add, change and remove tasks; everyone signed in takes and finishes them. Every step is kept in todo_log
+// (who, when, what) — GET ?log=N days (Mgmt and up). POST { action, id, title, notes, kind, _requestId } — the phone outbox may send
+// one again: kept once (_requestId).
+async function todoTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS todo_task (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, notes TEXT, kind TEXT NOT NULL DEFAULT 'once',
+    sort INTEGER DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_by TEXT, created_at TEXT, removed_by TEXT, removed_at TEXT)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS todo_state (task_id INTEGER NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL, taken_by TEXT, taken_at TEXT,
+    done_by TEXT, done_at TEXT, PRIMARY KEY (task_id, day))`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS todo_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER, title TEXT, action TEXT, day TEXT, by_user TEXT, at TEXT, detail TEXT)').run();
+}
+async function todoRoute(request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session) return J({ ok: false, error: 'Sign in' }, 401);
+  await todoTables(env);
+  const roles = (session && session.roles) || [], boss = roles.some(r => r === 'mgmt' || r === 'admin' || r === 'owner');
+  const who = String(session.displayName || session.username || '?').slice(0, 40), day = shipTodayKey(), t = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+  const list = async () => {
+    const tasks = ((await env.DB.prepare('SELECT id, title, notes, kind, sort, created_by, created_at FROM todo_task WHERE active = 1 ORDER BY kind DESC, sort, id').all()).results || []);
+    const st = {}; ((await env.DB.prepare("SELECT * FROM todo_state WHERE day = ? OR day = 'once'").bind(day).all()).results || []).forEach(r => { st[r.task_id + '|' + r.day] = r; });
+    // a finished "to do next" task stays on the list the day it was finished (crossed out), then only in the history
+    const out = tasks.map(x => { const s0 = st[x.id + '|' + (x.kind === 'daily' ? day : 'once')] || null;
+      return { id: x.id, title: x.title, notes: x.notes || '', kind: x.kind, by: x.created_by, at: x.created_at,
+        status: s0 ? s0.status : 'open', takenBy: s0 ? s0.taken_by : null, takenAt: s0 ? s0.taken_at : null, doneBy: s0 ? s0.done_by : null, doneAt: s0 ? s0.done_at : null }; })
+      .filter(x => !(x.kind === 'once' && x.status === 'done' && Date.parse(x.doneAt || 0) < Date.now() - 86400000));
+    return out;
+  };
+  if (request.method === 'GET') {
+    const days = parseInt(url.searchParams.get('log'), 10);
+    if (days > 0) {
+      if (!boss) return J({ ok: false, error: 'Mgmt / Admin only' }, 403);
+      const since = new Date(Date.now() - Math.min(days, 90) * 86400000).toISOString();
+      return J({ ok: true, log: ((await env.DB.prepare('SELECT * FROM todo_log WHERE at >= ? ORDER BY id DESC LIMIT 500').bind(since).all()).results || []) });
+    }
+    return J({ ok: true, day, boss, tasks: await list() });
+  }
+  const b = await request.json().catch(() => ({}));
+  const rid = t(b._requestId, 80);
+  if (rid) { const c = await claimRequestId(env, rid, 'todo'); if (c.isDuplicate) return J(c.cachedResponse || { ok: true, duplicate: true }); }
+  const now = new Date().toISOString(), action = t(b.action, 20), id = parseInt(b.id, 10) || 0;
+  const log = (taskId, title, act, d, detail) => env.DB.prepare('INSERT INTO todo_log (task_id, title, action, day, by_user, at, detail) VALUES (?,?,?,?,?,?,?)')
+    .bind(taskId, title, act, d, who, now, detail || '').run();
+  const done = async res => { if (rid) await recordRequestResult(env, rid, res).catch(() => {}); return J(res, res.ok ? 200 : (res.status || 400)); };
+  if (action === 'add') {
+    if (!boss) return done({ ok: false, error: 'Only Mgmt / Admin / Owner can add to the list', status: 403 });
+    const title = t(b.title, 200), kind = b.kind === 'daily' ? 'daily' : 'once';
+    if (!title) return done({ ok: false, error: 'Type what needs doing' });
+    const r = await env.DB.prepare('INSERT INTO todo_task (title, notes, kind, created_by, created_at) VALUES (?,?,?,?,?)').bind(title, t(b.notes, 600), kind, who, now).run();
+    const newId = r.meta && r.meta.last_row_id; await log(newId, title, 'add', kind === 'daily' ? 'every day' : '', kind);
+    return done({ ok: true, id: newId, tasks: await list() });
+  }
+  const task = id ? await env.DB.prepare('SELECT * FROM todo_task WHERE id = ? AND active = 1').bind(id).first() : null;
+  if (!task) return done({ ok: false, error: 'That task is not on the list any more', status: 404 });
+  const d = task.kind === 'daily' ? day : 'once';
+  const cur = await env.DB.prepare('SELECT * FROM todo_state WHERE task_id = ? AND day = ?').bind(id, d).first();
+  if (action === 'edit' || action === 'remove') {
+    if (!boss) return done({ ok: false, error: 'Only Mgmt / Admin / Owner can change the list', status: 403 });
+    if (action === 'remove') { await env.DB.prepare('UPDATE todo_task SET active = 0, removed_by = ?, removed_at = ? WHERE id = ?').bind(who, now, id).run(); await log(id, task.title, 'remove', d, ''); }
+    else { const title = t(b.title, 200) || task.title; await env.DB.prepare('UPDATE todo_task SET title = ?, notes = ? WHERE id = ?').bind(title, t(b.notes, 600), id).run();
+      await log(id, title, 'edit', d, task.title !== title ? 'was: ' + task.title : ''); }
+    return done({ ok: true, tasks: await list() });
+  }
+  if (action === 'take') {
+    if (cur && cur.status === 'done') return done({ ok: false, error: '✅ Already done by ' + (cur.done_by || '?'), tasks: await list() });
+    if (cur && cur.status === 'taken' && cur.taken_by !== who) return done({ ok: false, error: '🙋 ' + (cur.taken_by || '?') + ' is already doing it', tasks: await list() });
+    await env.DB.prepare('INSERT INTO todo_state (task_id, day, status, taken_by, taken_at) VALUES (?,?,?,?,?) ON CONFLICT(task_id, day) DO UPDATE SET status = excluded.status, taken_by = excluded.taken_by, taken_at = excluded.taken_at, done_by = NULL, done_at = NULL')
+      .bind(id, d, 'taken', who, now).run();
+    await log(id, task.title, 'take', d === 'once' ? '' : d, ''); return done({ ok: true, tasks: await list() });
+  }
+  if (action === 'done') {
+    if (cur && cur.status === 'done') return done({ ok: true, already: true, tasks: await list() });
+    await env.DB.prepare('INSERT INTO todo_state (task_id, day, status, taken_by, taken_at, done_by, done_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(task_id, day) DO UPDATE SET status = excluded.status, done_by = excluded.done_by, done_at = excluded.done_at, taken_by = COALESCE(todo_state.taken_by, excluded.taken_by), taken_at = COALESCE(todo_state.taken_at, excluded.taken_at)')
+      .bind(id, d, 'done', who, now, who, now).run();
+    await log(id, task.title, 'done', d === 'once' ? '' : d, cur && cur.taken_by && cur.taken_by !== who ? 'taken by ' + cur.taken_by : ''); return done({ ok: true, tasks: await list() });
+  }
+  if (action === 'giveback' || action === 'undo') {
+    if (action === 'undo' && !boss && !(cur && cur.done_by === who)) return done({ ok: false, error: 'Only the person who finished it (or Mgmt) can undo it', status: 403 });
+    if (action === 'giveback' && !boss && !(cur && cur.taken_by === who)) return done({ ok: false, error: 'Only the person doing it (or Mgmt) can give it back', status: 403 });
+    await env.DB.prepare('DELETE FROM todo_state WHERE task_id = ? AND day = ?').bind(id, d).run();
+    await log(id, task.title, action, d === 'once' ? '' : d, cur ? (cur.done_by ? 'done by ' + cur.done_by : 'taken by ' + (cur.taken_by || '?')) : ''); return done({ ok: true, tasks: await list() });
+  }
+  return done({ ok: false, error: 'Unknown action' });
+}
 async function claimRequestId(env, requestId, endpoint) {
   if (!requestId || !env.DB) return { isDuplicate: false }; // no id sent, or D1 unavailable — dedup not possible, proceed normally
   try {
@@ -18723,7 +18810,7 @@ async function palletFoundIn(request, env, session) {
 // starting a pallet: is it opened, and how many boxes are on it (our record → what they counted). Kept for History so
 // an extra / short box can be traced to before or after the pallet was started. Inventory does not change.
 // Everything the 📶 phone outbox sends (inventory.html invPost): recorded as the person who made it (see the router).
-const OUTBOX_PATHS = new Set(['/inventory/log', '/inventory/transfer', '/inventory/containers/upc-issue', '/inventory/containers/recheck',
+const OUTBOX_PATHS = new Set(['/todo', '/inventory/log', '/inventory/transfer', '/inventory/containers/upc-issue', '/inventory/containers/recheck',
   '/inventory/containers/short', '/inventory/containers/pcs-check', '/inventory/containers/pallet-count', '/inventory/containers/extra',
   '/inventory/containers/mark-moved', '/inventory/containers/found-in', '/inventory/recount/column-done', '/inventory/barcode-job', '/inventory/barcode-job/stuck',
   '/inventory/stockin-list/add', '/inventory/stockin-list/remove', '/inventory/stockin-list/put']);
