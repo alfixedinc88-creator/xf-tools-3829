@@ -793,6 +793,28 @@ window.invCredLogin = async function() {
     <!-- My Stock In today (this phone): tap ✕ Cancel to undo a mistake (see /inventory/cancel-own). -->
     <div id="inv-qa-mine" style="margin-top:12px"></div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
+    <!-- 📋 Owner (2026-11-24): more than 1 box → add each to the Stock In list (no spot needed), put them away later: scan box → scan shelf -->
+    <button type="button" id="inv-qa-list-btn" onclick="invSilAdd()" style="width:100%;margin-top:8px;padding:12px;border-radius:10px;border:2px solid var(--accent);background:var(--bg);color:var(--accent);font-size:15px;font-weight:800;cursor:pointer">➕ Add to Stock In list <span style="font-weight:600;font-size:12px">(no spot yet — put away later)</span></button>
+  </div>
+
+  <!-- 📋 Stock In list (owner 2026-11-24): "scan the whole car, all added to our Stock In list, then we arrange it with location to put it
+       back; when they bring it to the recommended location, each box they bring back they have to scan the box, then scan the shelf".
+       Nothing is added to stock until the box is put away (box → shelf), then it is the same Stock In as Quick Add. -->
+  <div class="icard" id="inv-sil-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div class="icard-label" style="margin-bottom:0">📋 Stock In list <span id="inv-sil-count" style="font-weight:600;color:var(--text3)"></span></div>
+      <button type="button" onclick="invSilLoad()" style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer">↻</button>
+    </div>
+    <div id="inv-sil-step" style="font-size:17px;font-weight:800;margin:8px 0 6px">1️⃣ Scan the BOX you are putting away</div>
+    <div style="display:flex;gap:6px">
+      <input id="inv-sil-inp" type="text" inputmode="none" autocomplete="off" placeholder="scan here…" onkeydown="if(event.key==='Enter'){event.preventDefault();invSilScan(this.value);this.value='';}" onblur="xfrKbOff(this)"
+        style="flex:1;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:16px;font-family:var(--mono);background:var(--bg);color:var(--text)">
+      <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-sil-inp')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
+      <button type="button" class="inv-x-btn" title="Start over" onmousedown="event.preventDefault()" onclick="invSilReset()" style="flex-shrink:0">&#x2715;</button>
+    </div>
+    <div id="inv-sil-res" style="margin-top:8px"></div>
+    <div id="inv-sil-list" style="margin-top:8px;font-size:13px"></div>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">✅ Put away / taken off (last 36 h)</summary><div id="inv-sil-done" style="margin-top:4px;font-size:12px"></div></details>
   </div>
   <!-- Quick Add / Stock In History — who put how many cases into where,
        most recent first. Reuses the same /inventory/history endpoint the
@@ -5685,8 +5707,10 @@ window.invCredLogin = async function() {
   window.invQaUpc = function(n) {
     if (n === 'more') { xfrKeypad('QTY per Case — how many pieces in each case?', '', function(v) { invQaUpc(v); }); return; }
     var u = g('inv-qa-upc'); if (u) u.value = n; invQaPadsRender();
-    var miss = !(g('inv-qa-partnum') || {}).value ? 'Scan the box first' : !(g('inv-qa-shelf') || {}).value ? 'Scan the spot where you put it' : !(parseFloat((g('inv-qa-cases') || {}).value) > 0) ? 'Tap QTY Case' : '';
+    var miss = !(g('inv-qa-partnum') || {}).value ? 'Scan the box first' : !(parseFloat((g('inv-qa-cases') || {}).value) > 0) ? 'Tap QTY Case' : '';
     if (miss) { invFlash(miss + ' — then tap the pieces to save', 'warn'); return; }
+    // 📋 no spot scanned → it goes on the Stock In list, to put away later (owner 2026-11-24); a spot scanned → saved now, as before
+    if (!(g('inv-qa-shelf') || {}).value) { if (window.invSilAdd) invSilAdd(); return; }
     if (window.invQuickAddSubmit) invQuickAddSubmit();
   };
 
@@ -5955,6 +5979,119 @@ window.invCredLogin = async function() {
         invFlash('✕ Cancelled: ' + x.part + ' × ' + x.cases + ' → ' + x.loc, 'success');
       }).catch(function() { invFlash('Not cancelled — check WiFi', 'error'); });
   };
+
+  // ── 📋 Stock In list (owner 2026-11-24) ─────────────────────────────────────────────────────────────────────────────
+  // Quick Add with no spot → ➕ on the list (part #, QTY Case, QTY per Case, the spot we recommend = where we already have it).
+  // Put away: 1️⃣ scan the BOX → which entry, where it goes → 2️⃣ scan the SHELF → the Stock In is saved (server, once only).
+  var SIL = { open: [], done: [], cur: null, pending: [] };
+  function invSilRec(d, P) { // the spot we recommend: where we have this exact part # (walking order), else another pack size of it
+    var L = ((d && d.locations) || []).filter(function(l) { return !l.isPlaceholder && (parseFloat(l.cases) || 0) > 0; })
+      .sort(function(a, b) { return invPullWalkCompare(a.location, b.location); });
+    var same = L.filter(function(l) { return String(l.partNum || '').toUpperCase() === P; })[0];
+    return String(((same || L[0]) || {}).location || '').toUpperCase();
+  }
+  window.invSilRec = invSilRec;
+  window.invSilAdd = function() {
+    var raw = ((g('inv-qa-partnum') || {}).value || '').trim().toUpperCase(), cases = parseFloat((g('inv-qa-cases') || {}).value), pcs = parseFloat((g('inv-qa-upc') || {}).value) || 0;
+    if (!raw) { invFlash('Scan the box first', 'error'); return; }
+    if (!(cases > 0)) { invFlash('Tap QTY Case', 'error'); return; }
+    var btn = g('inv-qa-list-btn'); if (btn) btn.disabled = true;
+    var send = function(part, name, sku, rec) {
+      invPost(W + '/inventory/stockin-list/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, name: name || '', sku: sku || part, cases: cases, pcs: pcs, recLoc: rec || '' }) })
+        .then(function(r) { return r.json(); }).then(function(d) {
+          if (!d || !d.ok) { invFlash('Not added: ' + ((d && d.error) || 'error'), 'error'); return; }
+          if (d.queued) SIL.pending.push({ part: part, name: name, cases: cases, pcs: pcs, rec_loc: rec, added_by: (INV_CRED_USER && INV_CRED_USER.displayName) || '', queued: true });
+          invFlash((d.queued ? '📶 Saved on this phone — ' : '📋 On the Stock In list: ') + part + ' × ' + xfrN(cases) + (pcs ? ' × ' + xfrN(pcs) + ' pcs' : '') + (rec ? ' → 📍 ' + rec : ' (no spot on record yet)') + ' — scan the next box', d.queued ? 'warn' : 'success');
+          ['inv-qa-partnum', 'inv-qa-shelf', 'inv-qa-cases', 'inv-qa-upc'].forEach(function(id) { var x = g(id); if (x) x.value = ''; });
+          invQaRec = 0; invQaPadsRender(); invQaWhere(null);
+          var nd = g('inv-qa-name-display'); if (nd) nd.style.display = 'none'; var ph = g('inv-qa-photo'); if (ph) { ph.style.display = 'none'; ph.src = ''; }
+          invSilLoad(); var pi = g('inv-qa-partnum'); if (pi) pi.focus();
+        }).catch(function() { invFlash('Not added — try again', 'error'); })
+        .finally(function() { if (btn) btn.disabled = false; });
+    };
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(raw)).then(function(r) { return r.json(); }).then(function(d) {
+      var part = d && d.partNum ? String(d.partNum).toUpperCase() : raw;
+      if (d && !d.partNum && (d.upcNotLinked || /^\d{11,14}$/.test(raw))) { invFlash('Barcode ' + raw + ' is not linked to a part # yet — ⌨ type the part #', 'error'); if (btn) btn.disabled = false; return; }
+      send(part, d && d.name, d && d.sku, invSilRec(d, part));
+    }).catch(function() { if (/^\d{11,14}$/.test(raw)) { invFlash('No WiFi — ⌨ type the part # (not the barcode)', 'error'); if (btn) btn.disabled = false; return; } send(raw, '', raw, ''); });
+  };
+  window.invSilLoad = function() {
+    return wFetch(W + '/inventory/stockin-list').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return; SIL.open = d.open || []; SIL.done = d.done || []; SIL.pending = [];
+      try { localStorage.setItem('xf_sil_cache', JSON.stringify({ open: SIL.open, done: SIL.done })); } catch (e) {}
+      invSilRender();
+    }).catch(function() { try { var c = JSON.parse(localStorage.getItem('xf_sil_cache') || 'null'); if (c) { SIL.open = c.open || []; SIL.done = c.done || []; } } catch (e) {} invSilRender(); });
+  };
+  function invSilSorted() { // by the spot we recommend, walking order; no spot last
+    return SIL.open.concat(SIL.pending).slice().sort(function(a, b) {
+      if (!a.rec_loc !== !b.rec_loc) return a.rec_loc ? -1 : 1;
+      return (a.rec_loc ? invPullWalkCompare(a.rec_loc, b.rec_loc) : 0) || String(a.part).localeCompare(String(b.part)) || (a.id || 0) - (b.id || 0); });
+  }
+  window.invSilSorted = invSilSorted;
+  function invSilRender() {
+    var box = g('inv-sil-list'), cnt = g('inv-sil-count'), dn = g('inv-sil-done'); if (!box) return;
+    var L = invSilSorted(), E = xfrEsc;
+    if (cnt) cnt.textContent = L.length ? '— ' + L.length + ' to put away' : '';
+    if (!L.length) box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Nothing on the list. More than one box? Scan each box in Quick Add, tap QTY Case + QTY per Case, then ➕ Add to Stock In list.</div>';
+    else { var area = null;
+      box.innerHTML = L.map(function(x) {
+        var a = x.rec_loc ? String(x.rec_loc).split('=')[0] : '— no spot on record —', head = a !== area ? (area = a, '<div style="margin-top:8px;font-size:12px;font-weight:800;color:var(--accent)">📍 ' + E(a) + '</div>') : '';
+        var on = SIL.cur && SIL.cur.id === x.id && x.id;
+        return head + '<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:8px;border:' + (on ? '2.5px solid var(--accent)' : '1px solid var(--border)') + ';margin-top:4px;background:var(--bg2)">'
+          + '<div style="flex:1;min-width:0"><div><b style="font-family:var(--mono)">' + E(x.part) + '</b> × ' + xfrN(x.cases) + ' case(s)' + (x.pcs ? ' × ' + xfrN(x.pcs) + ' pcs' : '') + '</div>'
+          + (x.name ? '<div style="font-size:11.5px;color:var(--text2)">' + E(x.name) + '</div>' : '')
+          + '<div style="font-size:11px;color:var(--text3)">' + (x.rec_loc ? '→ <b style="font-family:var(--mono);color:var(--text)">' + E(x.rec_loc) + '</b>' : 'no spot on record — put it where there is room') + ' · added by ' + E(x.added_by || '?')
+          + (x.queued ? ' · <span style="color:var(--orange)">📶 on the phone — sends when WiFi is back</span>' : '') + (x.status === 'putting' ? ' · ⏳ being put away' : '') + '</div></div>'
+          + (x.id && x.status !== 'putting' ? '<button type="button" onclick="invSilRemove(' + x.id + ')" title="Take it off the list (nothing is added to stock)" style="padding:6px 9px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:pointer">✕</button>' : '') + '</div>';
+      }).join('');
+    }
+    if (dn) dn.innerHTML = (SIL.done || []).map(function(x) {
+      var t = x.done_at ? new Date(x.done_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      return '<div style="padding:4px 0;border-top:1px solid var(--border)">' + (x.status === 'done' ? '✅ ' : '✕ ') + '<b style="font-family:var(--mono)">' + E(x.part) + '</b> × ' + xfrN(x.cases)
+        + (x.status === 'done' ? ' → <b style="font-family:var(--mono)">' + E(x.done_loc) + '</b>' + (x.note ? ' <span style="color:var(--orange)">(' + E(x.note) + ')</span>' : '') : ' taken off the list') + ' · ' + E(x.done_by || '') + ' ' + E(t) + '</div>';
+    }).join('') || '<div style="color:var(--text3)">Nothing yet.</div>';
+  }
+  window.invSilRender = invSilRender;
+  window.invSilReset = function() { SIL.cur = null; var st = g('inv-sil-step'), r = g('inv-sil-res'); if (st) st.textContent = '1️⃣ Scan the BOX you are putting away'; if (r) r.innerHTML = ''; invSilRender(); var i = g('inv-sil-inp'); if (i) i.focus(); };
+  window.invSilScan = function(v) {
+    v = String(v || '').trim().toUpperCase(); if (!v) return;
+    var res = g('inv-sil-res'), st = g('inv-sil-step'), E = xfrEsc;
+    if (!SIL.cur) { // 1️⃣ the box
+      var pick = function(part) {
+        var hits = invSilSorted().filter(function(x) { return x.id && x.status !== 'putting' && String(x.part).toUpperCase() === part; });
+        if (!hits.length) { res.innerHTML = '<div style="padding:10px;border-radius:9px;background:var(--red-bg,#fee2e2);color:var(--red);font-weight:800">✗ ' + E(part) + ' is not on the Stock In list — wrong box? (or add it with Quick Add)</div>'; return; }
+        SIL.cur = hits[0]; var x = SIL.cur;
+        st.textContent = '2️⃣ Bring it to ' + (x.rec_loc || 'a spot with room') + ' — scan the SHELF';
+        res.innerHTML = '<div style="padding:10px;border-radius:9px;background:var(--green-bg,#dcfce7);border:1px solid var(--green)"><div style="font-size:15px;font-weight:800"><span style="font-family:var(--mono)">' + E(x.part) + '</span> × ' + xfrN(x.cases) + ' case(s)' + (x.pcs ? ' × ' + xfrN(x.pcs) + ' pcs' : '') + '</div>'
+          + (x.name ? '<div style="font-size:12px">' + E(x.name) + '</div>' : '') + '<div style="font-size:22px;font-weight:900;margin-top:4px;font-family:var(--mono)">📍 ' + E(x.rec_loc || 'no spot on record') + '</div>'
+          + (hits.length > 1 ? '<div style="font-size:11.5px;color:var(--text3)">' + hits.length + ' entries of this part # on the list — this is the first (walking order)</div>' : '') + '</div>';
+        invSilRender();
+      };
+      wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(v)).then(function(r) { return r.json(); }).then(function(d) { pick(d && d.partNum ? String(d.partNum).toUpperCase() : v); }).catch(function() { pick(v); });
+      return;
+    }
+    // 2️⃣ the shelf
+    var x = SIL.cur, loc = String(invFullSpotLabel(v) || '').toUpperCase();
+    if (!loc || loc.indexOf('=') < 0 && loc !== 'GARAGE') { res.innerHTML += '<div style="color:var(--red);font-weight:700;margin-top:4px">That is not a shelf label — scan the SHELF (e.g. C1=1-2-3)</div>'; return; }
+    if (x.rec_loc && loc !== String(x.rec_loc).toUpperCase() && !confirm('Not the spot we said.\n\nWe said: ' + x.rec_loc + '\nYou scanned: ' + loc + '\n\nPut ' + x.part + ' × ' + x.cases + ' at ' + loc + '?')) return;
+    st.textContent = '⏳ Saving…';
+    invPost(W + '/inventory/stockin-list/put', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: x.id, location: loc }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { st.textContent = '2️⃣ Scan the SHELF'; res.innerHTML += '<div style="color:var(--red);font-weight:800;margin-top:4px">✗ ' + E((d && d.error) || 'Not saved') + '</div>'; if (d && /Already|any more/.test(d.error || '')) { SIL.cur = null; invSilLoad(); st.textContent = '1️⃣ Scan the BOX you are putting away'; } return; }
+        invFlash((d.queued ? '📶 Saved on this phone — ' : '✓ Stock In: ') + x.part + ' × ' + xfrN(x.cases) + ' → ' + loc + (d.queued ? '' : d.autoApproved ? '' : ' — pending approval'), d.queued ? 'warn' : 'success');
+        if (d.queued) { SIL.open = SIL.open.filter(function(y) { return y.id !== x.id; }); }
+        invQaMineAdd({ id: d.d1Id || null, part: x.part, loc: loc, cases: x.cases, pcs: x.pcs || 0, at: new Date().toISOString() });
+        res.innerHTML = '<div style="padding:10px;border-radius:9px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800">✓ ' + E(x.part) + ' × ' + xfrN(x.cases) + ' put at ' + E(loc) + ' — scan the next box</div>';
+        SIL.cur = null; st.textContent = '1️⃣ Scan the BOX you are putting away'; invFetchPendingCount(); invSilLoad();
+      }).catch(function() { st.textContent = '2️⃣ Scan the SHELF'; invFlash('Not saved — try again', 'error'); });
+  };
+  window.invSilRemove = function(id) {
+    var x = SIL.open.filter(function(y) { return y.id === id; })[0]; if (!x) return;
+    if (!confirm('Take it off the Stock In list?\n\n' + x.part + ' × ' + x.cases + ' case(s)\n\nNothing is added to stock.')) return;
+    invPost(W + '/inventory/stockin-list/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function(r) { return r.json(); }).then(function(d) { if (!d || !d.ok) { invFlash('Not taken off: ' + ((d && d.error) || 'error'), 'error'); } if (SIL.cur && SIL.cur.id === id) invSilReset(); invSilLoad(); });
+  };
+  setTimeout(function() { if (window.invSilLoad) invSilLoad(); }, 800);
 
   window.invCloseResult = function() {
     // Same as clearing the search entirely — hides the result/location/
@@ -18154,6 +18291,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261121a"></script>
+<script src="xf-access.js?v=20261124a"></script>
 </body>
 </html>
