@@ -2412,7 +2412,7 @@ console.log('\nLabel Printer: barcode in the center of the label; pick how many 
   const grab = re => (lp.match(re) || [''])[0];
   const src = grab(/function lpBarcodeLayout\(val, s\) \{[\s\S]*?\n  \}/) + '\n' + grab(/function lpArrowZPL\(dir, x, y, w, h\) \{[\s\S]*?\n  \}/) + '\n' + grab(/function lpGenZPL\(loc, copies(?:, arrow)?\) \{[\s\S]*?\n  \}/);
   const S = { width: 406, height: 203, textSize: 24, textY: 6, barHeight: 100, barY: 36, barShift: 0, darkness: 10 };
-  const gen = new Function('lpGetSettings', src + '; return { lpGenZPL, lpBarcodeLayout };')(() => S);
+  const gen = new Function('lpGetSettings', (lp.slice(lp.indexOf('  function lpTextEm('), lp.indexOf('  window.lpTextFit'))) + src + '; return { lpGenZPL, lpBarcodeLayout };')(() => S); // + lpTextFit (owner 2026-11-24)
   const z = gen.lpGenZPL('BARN=1-1-2-1', 3);
   const fo = z.match(/\^FO(\d+),\d+\^BY(\d)/), w = (11 * 'BARN=1-1-2-1'.length + 35) * 2;
   check('a location barcode sits in the middle: same space left and right (406-dot label, 334-dot barcode → starts at 36)',
@@ -2434,8 +2434,10 @@ console.log('\nLabel Printer: barcode in the center of the label; pick how many 
   // Owner: "for the location, I want the word to be big too".
   const big = zz => { const t = +((zz.match(/\^A0N,(\d+),\d+\^FD/) || [])[1] || 0), b = zz.match(/\^FO\d+,(\d+)\^BY\d,3,(\d+)\^BCN/) || []; return { t, by: +b[1], bh: +b[2] }; };
   const L1 = big(z), L2 = big(gen.lpGenZPL('C1=1-1-2')), L3 = big(z2);
-  check('…the location word prints big (was 24 dots): BARN=1-1-2-1 ≥ 48, C1=1-1-2 ≥ 60, a long one still fits (≥ 24); barcode under it, ≥ 40 dots tall, inside the 203-dot label',
-    L1.t >= 48 && L2.t >= 60 && L3.t >= 24 && L3.t * 0.62 * long.length <= 390 && [L1, L2, L3].every(q => q.by >= 6 + q.t + 6 && q.bh >= 40 && q.by + q.bh <= 203), [L1, L2, L3]);
+  // owner 2026-11-24 (photo: "BO=1-11-3-…" cut off): the word was sized wider than the label really holds — now as big as REALLY fits
+  // (BARN=1-1-2-1 was 52, which ran off the edge; ~40 fits). Still well above the old 24.
+  check('…the location word prints big (was 24 dots): BARN=1-1-2-1 ≥ 38 (as big as fits), C1=1-1-2 ≥ 60, a very long one (20 letters) fits across the label (≥ 20, was forced to 24 even when that ran off); barcode under it, ≥ 40 dots tall, inside the 203-dot label',
+    L1.t >= 38 && L2.t >= 60 && L3.t >= 20 && L3.t * 0.62 * long.length <= 390 && [L1, L2, L3].every(q => q.by >= 6 + q.t + 6 && q.bh >= 40 && q.by + q.bh <= 203), [L1, L2, L3]);
   check('…a How many box (− / + / 1·2·5·10) on Print Single Label and on Print Selected Labels',
     /id="lp-single-copies"/.test(lp) && /id="lp-print-copies"/.test(lp) && /var n = lpCopies\('lp-single-copies'\);\s*var zpl = lpGenZPL\(loc, n(?:, window\.lpSingleArrow \|\| '')?\);/.test(lp) && /var n = lpCopies\('lp-print-copies'\);/.test(lp), null);
 }
@@ -3535,7 +3537,7 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
   sq.prepare("DELETE FROM master_list WHERE part_num = '26-3-6=10X'").run();
   const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
   const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies(?:, pic)?\) \{[\s\S]*?\n  \}/) || [''])[0]; // (2026-10-17: + optional photo)
-  const gen = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }));
+  const gen = new Function('lpGetSettings', (lp.slice(lp.indexOf('  function lpTextEm('), lp.indexOf('  window.lpTextFit'))) + src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }));
   const z = gen('26-3-6', '3/4" PEX Female Tee', 2);
   const ts = +((z.match(/\^A0N,(\d+),\d+\^FD26-3-6\^FS/) || [])[1] || 0), by = +((z.match(/\^BY(\d),3,/) || [])[1] || 0);
   check('26-3-6 label: part # text bigger than the old 24 dots (' + ts + '), barcode bars 3 dots wide instead of 2 (still fits 2"), name printed under it, 2 copies',
@@ -5146,7 +5148,7 @@ console.log('\n🏷️ Label Printer: every label stops at the gap between label
   const { readFileSync } = await import('node:fs');
   const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
   const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies(?:, pic)?\) \{[\s\S]*?\n  \}/) || [''])[0]; // (2026-10-17: + optional photo)
-  const z = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }))('201-2-14=OLD', '1 ff960 ring', 1);
+  const z = new Function('lpGetSettings', (lp.slice(lp.indexOf('  function lpTextEm('), lp.indexOf('  window.lpTextFit'))) + src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }))('201-2-14=OLD', '1 ff960 ring', 1);
   const y = (z.match(/\^FO\d+,(\d+)/g) || []).map(m => +m.split(',')[1]), bh = +((z.match(/\^BCN,(\d+)/) || [])[1] || 0);
   check('201-2-14=OLD + "1 ff960 ring": part #, barcode and name all inside one 203-dot label; gap sensing (^MNY) on SKU and location labels',
     /\^MNY/.test(z) && /'\^MNY', \/\/ stop at the gap/.test(lp) && y.every(v => v >= 0 && v < 203) && y[1] + bh < 203, { y, bh });
@@ -7249,7 +7251,7 @@ console.log('\n🏷 Label Printer: the product photo on the part # label (Zebra)
   const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
   const a = lp.indexOf('  function lpGenSkuZPL(sku, name, copies, pic) {'), b = lp.indexOf('  function lpPicGF(sku) {');
   const ctx = { Math, String, Uint8Array, Float32Array, parseInt, window: {}, lpGetSettings: () => ({ width: 406, height: 203, barShift: 0, darkness: 10 }) };
-  vm.createContext(ctx); vm.runInContext(lp.slice(a, b) + '\nthis.Z = lpGenSkuZPL; this.D = lpDither; this.G = lpBitsToGF;', ctx);
+  vm.createContext(ctx); vm.runInContext((lp.slice(lp.indexOf('  function lpTextEm('), lp.indexOf('  window.lpTextFit'))) + lp.slice(a, b) + '\nthis.Z = lpGenSkuZPL; this.D = lpDither; this.G = lpBitsToGF;', ctx);
   // a tiny 8×2 "photo": left half black, right half white
   const gf = ctx.G(ctx.D(new Float32Array([0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255]), 8, 2), 8, 2);
   const pic = { gf: ctx.G(new Uint8Array(122 * 122), 122, 122), w: 122, h: 122 };
@@ -14969,6 +14971,26 @@ console.log('\n✏️ Sold Out: every listing has "Open on eBay/Amazon/Walmart/S
   check('…on every row (opens a new tab, doesn\'t tick / untick the row); on a ✗ update (or no answer) "✏️ Change it on <marketplace> ↗" right next to the error',
     /\+ '<div style="margin-top:2px">' \+ soEditLink\(r\) \+ '<\/div>'/.test(ih) && /target="_blank" rel="noopener" class="so-edit" onclick="event\.stopPropagation\(\)"/.test(ih)
       && /esc\(r\.error\) \+ '<\/span> ' \+ soEditLink\(soRows\[i\], true\)/.test(ih) && /esc\(d\.error \|\| 'No answer'\) \+ '<\/span> ' \+ soEditLink\(soRows\[i\], true\)/.test(ih));
+}
+
+// Owner (2026-11-24, photo of 2 labels "BO=1-11-3-…" with the end cut off): "the Label Printer → Print Single Label: the number turning
+// out is not good, please fix". The name was sized for narrower letters than the Zebra draws, and the Text size setting could push it off.
+console.log('\n📏 Label Printer: the location / part # always fits across the label (never cut off at the end)');
+{
+  const { readFileSync: rfL } = await import('node:fs');
+  const lh = rfL(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const fnL = name => { const a = lh.indexOf('  function ' + name + '('); return lh.slice(a, lh.indexOf('\n  }\n', a) + 4); };
+  const mk = textSize => new Function('g', 'window', fnL('lpGetSettings') + fnL('lpTextEm') + fnL('lpTextFit') + fnL('lpBarcodeLayout') + fnL('lpArrowZPL') + fnL('lpGenZPL') + fnL('lpGenSkuZPL') + '; return { loc: lpGenZPL, sku: lpGenSkuZPL, em: lpTextEm };')(
+    id => id === 'lp-set-textsize' ? { value: String(textSize) } : null, {});
+  const sizeOf = zpl => +((/\^A0N,(\d+),\d+\^FD/.exec(zpl) || [])[1] || 0);
+  const bad = [];
+  [24, 80].forEach(tsz => { const L = mk(tsz);
+    ['BO=1-11-3-1', 'BO=1-11-3-10', 'GARAGE=1-2-3-TOP', 'BARN=10-12-3', 'C1=1-1-2'].forEach(loc => { const z = sizeOf(L.loc(loc, 1, ''));
+      if (!(z >= 16 && L.em(loc) * 1.08 * z <= 406 - 16)) bad.push(loc + ' @' + tsz + ': ' + z); });
+    ['26-3-6=10X', '201-2-14=OLDFIRST'].forEach(k => { const z = sizeOf(L.sku(k, 'tee', 1, null)); if (!(z >= 16 && L.em(k) * 1.08 * z <= 406 - 16)) bad.push(k + ' sku @' + tsz + ': ' + z); }); });
+  const L = mk(24), was = Math.floor(390 / (0.62 * 11)), now = sizeOf(L.loc('BO=1-11-3-1', 1, ''));
+  check('BO=1-11-3-1 (the photo) and every other name / part # fit across the 2" label — also with the Text size setting at 80; short ones stay big (C1=1-1-2 ≥ 60)',
+    !bad.length && now < was && sizeOf(L.loc('C1=1-1-2', 1, '')) >= 60, { bad, was, now });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
