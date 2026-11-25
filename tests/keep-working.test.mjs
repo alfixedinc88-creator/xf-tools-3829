@@ -15094,5 +15094,18 @@ console.log('\n📦 A new spot for a pack size gets ITS OWN pieces per case (not
   sq.exec("DELETE FROM master_list WHERE base_sku = '68-1-1'");
 }
 
+// Owner (2026-11-25): "the To-Do — make it a small box like Warehouse Lookup / AWD Planner, and we click into it to add or see the to-do list".
+console.log('\n🗂 Main page: ✅ To-Do is a card (first in 🏭 Warehouse); tapping it opens the list');
+{
+  const { readFileSync: rfT } = await import('node:fs');
+  const ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), ax = rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const grid = ih.slice(ih.indexOf('🏭 Warehouse</div>'), ih.indexOf("onclick=\"window.location.href='warehouse.html'\""));
+  check('✅ To-Do card before Warehouse Lookup, shows "N open · today x of y daily done"; the list is in a pop-up (hidden until tapped) with ✕ / tap outside / Esc to close; I\'ll do it / Done / Add work as before inside it; 🧩 Pages & Tabs hides card + list together',
+    /<div class="launcher-card" id="xf-todo-card" onclick="xfTodoOpen\(\)"/.test(grid) && /id="xf-todo-card-sum"/.test(ih)
+      && /<div id="xf-todo-modal" class="xf-todo-modal" style="display:none" onclick="if\(event\.target===this\)xfTodoClose\(\)">\s*<div class="xf-todo" id="xf-todo">/.test(ih)
+      && /window\.xfTodoOpen = function\(\) \{ var m = g\('xf-todo-modal'\); if \(!m\) return; m\.style\.display = 'flex'; window\.xfTodoLoad\(true\); \};/.test(ih)
+      && /e\.key === 'Escape'\) window\.xfTodoClose\(\)/.test(ih) && /cs\.textContent = sm \? sm\.textContent : ''/.test(ih) && /card: '#xf-todo-card, #xf-todo'/.test(ax));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
