@@ -15026,9 +15026,11 @@ console.log('\n✅ Main page To-Do: 📅 every day + 📝 to do next; 🙋 I\'ll
     rm.ok === false && rm2.ok && !plog.ok && JSON.stringify(acts) === JSON.stringify(['TS add Sweep the garage', 'TS add Count aisle C2', 'PK take Count aisle C2', 'PK done Count aisle C2', 'PK done Sweep the garage', 'TS remove Sweep the garage']), acts);
   const { readFileSync: rfT } = await import('node:fs');
   const ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), xa = rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8'), wk = rfT(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
-  check('…on the main page (above the apps) with 🙋 I\'ll do it / ✅ Done / ↩; taps kept on the device with no WiFi (own request #); in 🧩 Pages & Tabs; in the phone outbox list',
-    /id="xf-todo"/.test(ih) && ih.indexOf('id="xf-todo"') < ih.indexOf('🏭 Warehouse</div>') && /🙋 I\\'ll do it/.test(ih) && /xf_todo_outbox/.test(ih) && /window\.xfTodoLoad\(\); \/\/ ✅ the To-Do list/.test(ih)
-      && /key: 'todo', file: 'index\.html'/.test(xa) && /const OUTBOX_PATHS = new Set\(\['\/todo',/.test(wk), null);
+  // 🗂 owner 2026-11-25: the list is its own page (todo.html), opened from the ✅ To-Do card on the main page (first in 🏭 Warehouse)
+  const tp = rfT(fileURLToPath(new URL('../todo.html', import.meta.url)), 'utf8');
+  check('…on its own page (todo.html, from the ✅ To-Do card on the main page) with 🙋 I\'ll do it / ✅ Done / ↩; taps kept on the device with no WiFi (own request #); in 🧩 Pages & Tabs; in the phone outbox list',
+    /id="xf-todo"/.test(tp) && /🙋 I\\'ll do it/.test(tp) && /xf_todo_outbox/.test(tp) && /id="xf-todo-card" onclick="window\.location\.href='todo\.html'"/.test(ih) && ih.indexOf('id="xf-todo-card"') < ih.indexOf("href='warehouse.html'")
+      && /key: 'todo', file: 'todo\.html'/.test(xa) && /const OUTBOX_PATHS = new Set\(\['\/todo',/.test(wk), null);
   sq.exec("DELETE FROM todo_task; DELETE FROM todo_state; DELETE FROM todo_log");
 }
 
@@ -15095,16 +15097,18 @@ console.log('\n📦 A new spot for a pack size gets ITS OWN pieces per case (not
 }
 
 // Owner (2026-11-25): "the To-Do — make it a small box like Warehouse Lookup / AWD Planner, and we click into it to add or see the to-do list".
-console.log('\n🗂 Main page: ✅ To-Do is a card (first in 🏭 Warehouse); tapping it opens the list');
+console.log('\n🗂 Main page: ✅ To-Do is a card (first in 🏭 Warehouse); tapping it goes to the To-Do page (like the other apps)');
 {
+  // Owner (2026-11-25): "make it a small box like Warehouse Lookup / AWD Planner" → then: "when you click on the To-Do, I want it to enter the
+  // other page, like what we do for others".
   const { readFileSync: rfT } = await import('node:fs');
-  const ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), ax = rfT(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), tp = rfT(fileURLToPath(new URL('../todo.html', import.meta.url)), 'utf8');
+  const sw = rfT(fileURLToPath(new URL('../sw.js', import.meta.url)), 'utf8');
   const grid = ih.slice(ih.indexOf('🏭 Warehouse</div>'), ih.indexOf("onclick=\"window.location.href='warehouse.html'\""));
-  check('✅ To-Do card before Warehouse Lookup, shows "N open · today x of y daily done"; the list is in a pop-up (hidden until tapped) with ✕ / tap outside / Esc to close; I\'ll do it / Done / Add work as before inside it; 🧩 Pages & Tabs hides card + list together',
-    /<div class="launcher-card" id="xf-todo-card" onclick="xfTodoOpen\(\)"/.test(grid) && /id="xf-todo-card-sum"/.test(ih)
-      && /<div id="xf-todo-modal" class="xf-todo-modal" style="display:none" onclick="if\(event\.target===this\)xfTodoClose\(\)">\s*<div class="xf-todo" id="xf-todo">/.test(ih)
-      && /window\.xfTodoOpen = function\(\) \{ var m = g\('xf-todo-modal'\); if \(!m\) return; m\.style\.display = 'flex'; window\.xfTodoLoad\(true\); \};/.test(ih)
-      && /e\.key === 'Escape'\) window\.xfTodoClose\(\)/.test(ih) && /cs\.textContent = sm \? sm\.textContent : ''/.test(ih) && /card: '#xf-todo-card, #xf-todo'/.test(ax));
+  check('✅ To-Do card first in 🏭 Warehouse → todo.html; the card shows "N open · today x of y daily done"; the list is no longer on the main page; todo.html: sign-in, 🔄 Refresh / 🚪 Sign Out / ← Apps, the same list + Add + History; works with no WiFi (OFFLINE_PAGES)',
+    /<div class="launcher-card" id="xf-todo-card" onclick="window\.location\.href='todo\.html'"/.test(grid) && /id="xf-todo-card-sum"/.test(ih) && !/id="xf-todo"/.test(ih) && /window\.xfTodoCardSum\(\)/.test(ih)
+      && /<div id="tdp-gate"/.test(tp) && /<div class="xf-todo" id="xf-todo">/.test(tp) && /id="xf-todo-admin"/.test(tp) && /window\.xfTodoHist = function/.test(tp) && /← Apps<\/button>/.test(tp) && /data-xf-signout/.test(tp)
+      && /'todo\.html'/.test(sw.slice(sw.indexOf('const OFFLINE_PAGES'), sw.indexOf('const LIB_HOSTS'))));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
