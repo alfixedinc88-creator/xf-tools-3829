@@ -800,7 +800,7 @@ window.invCredLogin = async function() {
   <!-- 📋 Stock In list (owner 2026-11-24): "scan the whole car, all added to our Stock In list, then we arrange it with location to put it
        back; when they bring it to the recommended location, each box they bring back they have to scan the box, then scan the shelf".
        Nothing is added to stock until the box is put away (box → shelf), then it is the same Stock In as Quick Add. -->
-  <div class="icard" id="inv-sil-card">
+  <div class="icard" id="inv-sil-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
       <div class="icard-label" style="margin-bottom:0">📋 Stock In list <span id="inv-sil-count" style="font-weight:600;color:var(--text3)"></span></div>
       <button type="button" onclick="invSilLoad()" style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer">↻</button>
@@ -2322,6 +2322,8 @@ window.invCredLogin = async function() {
     // Quick Add — Stock In only; doesn't make sense for Stock Out.
     var quickAddCard = g("inv-quickadd-card");
     if (quickAddCard) quickAddCard.style.display = mode === "in" ? "block" : "none";
+    // 📋 Stock In list (scan the box you are putting away) — Stock In only too (owner 2026-11-25: "Stock Out Shelving only for the stock out")
+    var silCard = g("inv-sil-card"); if (silCard) silCard.style.display = mode === "in" ? "block" : "none";
     // Scan or Search — Stock In now uses Quick Add instead; Stock Out
     // still needs this to find an existing item to pull, so it only
     // hides for Stock In, never removed for Stock Out.

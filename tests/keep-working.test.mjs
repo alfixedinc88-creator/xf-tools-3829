@@ -15076,7 +15076,7 @@ console.log('\n📋 Stock In list: add boxes (no stock yet) → put away: scan b
   const ih = rfI(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('screen: ➕ Add to Stock In list in Quick Add; tapping QTY per Case with NO spot puts it on the list (a spot scanned → saved right away, as before); the 📋 Stock In list card: 1️⃣ scan the BOX → 📍 where → 2️⃣ scan the SHELF (another spot asks first); sorted by the spot in walking order; works with no WiFi (outbox)',
     /id="inv-qa-list-btn" onclick="invSilAdd\(\)"/.test(ih) && /if \(!\(g\('inv-qa-shelf'\) \|\| \{\}\)\.value\) \{ if \(window\.invSilAdd\) invSilAdd\(\); return; \}/.test(ih) && /if \(window\.invQuickAddSubmit\) invQuickAddSubmit\(\);/.test(ih)
-      && /<div class="icard" id="inv-sil-card">/.test(ih) && /Not the spot we said/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/put'/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/add'/.test(ih) && /invPullWalkCompare\(a\.rec_loc, b\.rec_loc\)/.test(ih));
+      && /<div class="icard" id="inv-sil-card"(?: style="display:none")?>/.test(ih) /* hidden until Stock In mode (owner 2026-11-25) */ && /Not the spot we said/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/put'/.test(ih) && /invPost\(W \+ '\/inventory\/stockin-list\/add'/.test(ih) && /invPullWalkCompare\(a\.rec_loc, b\.rec_loc\)/.test(ih));
   const pick = new Function('invPullWalkCompare', ih.slice(ih.indexOf('  function invSilRec('), ih.indexOf('  window.invSilRec = invSilRec;')) + '; return invSilRec;')((a, b) => String(a).localeCompare(String(b)));
   const d = { locations: [{ partNum: '67-1-1=5', location: 'BO=1-1-1', cases: 2 }, { partNum: '67-1-1=10', location: 'C1=6-7-1', cases: 4 }, { partNum: '67-1-1=10', location: 'C2=0-0-0', cases: 0 }] };
   check('…the spot we recommend: where we have that exact part # (C1=6-7-1), else another pack size of it, else none (put where there is room)',
@@ -15165,6 +15165,16 @@ console.log('\n🗂 To-Do: Office / Warehouse / Maintenance tabs; pick the tab a
     ['office', 'warehouse', 'maintenance'].every(k => new RegExp('id="td-tab-' + k + '" onclick="xfTodoTab\\(\'' + k + '\'\\)"').test(tp)) && /id="xf-todo-sect"/.test(tp) && /id="xf-todo-who"/.test(tp) && /id="xf-todo-notes"/.test(tp)
       && /localStorage\.setItem\('xf_todo_tab'/.test(tp) && /b\.textContent = '💾 Save'/.test(tp) && /👤 for ' \+ esc\(x\.assignee\)/.test(tp) && /'for you'/.test(tp) && /' · 👤 ' \+ forMe \+ ' for you'/.test(ih));
   sq.exec("DELETE FROM todo_task; DELETE FROM todo_state; DELETE FROM todo_log");
+}
+
+// Owner (2026-11-25): "Stock Out Shelving — remove the 'scan the box you are putting away', we don't need that here, that's for the Stock In;
+// Stock Out Shelving is only for the stock out".
+console.log('\n📋 The Stock In list (scan the box you are putting away) shows on Stock In only — not on Stock Out Shelving / Big Company');
+{
+  const { readFileSync: rfM } = await import('node:fs');
+  const ih = rfM(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('the 📋 Stock In list card starts hidden and is shown only in Stock In mode (like Quick Add)',
+    /<div class="icard" id="inv-sil-card" style="display:none">/.test(ih) && /var silCard = g\("inv-sil-card"\); if \(silCard\) silCard\.style\.display = mode === "in" \? "block" : "none";/.test(ih));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
