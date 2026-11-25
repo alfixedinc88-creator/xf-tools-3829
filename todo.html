@@ -38,6 +38,11 @@ body { margin:0; background:var(--bg); font-family:var(--sans); color:var(--text
 .xf-todo .td-add { display:flex;gap:6px;flex-wrap:wrap;margin-top:8px; }
 .xf-todo .td-add input, .xf-todo .td-add select { padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;background:var(--bg2);color:var(--text); }
 .xf-todo .td-add input { flex:1;min-width:160px; }
+.td-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 6px; border-bottom:1.5px solid var(--border); }
+.td-tab { padding:9px 14px; border:none; border-bottom:3px solid transparent; background:none; font-family:inherit; font-size:14px; font-weight:800; color:var(--text3); cursor:pointer; }
+.td-tab.on { color:var(--accent); border-bottom-color:var(--accent); }
+.td-tab .n { font-size:11px; font-weight:700; background:var(--bg3); color:var(--text2); border-radius:10px; padding:1px 7px; margin-left:4px; }
+.td-for { display:inline-block; font-size:11px; font-weight:800; padding:1px 7px; border-radius:10px; background:#ede9fe; color:#6d28d9; margin-left:6px; vertical-align:middle; }
   </style>
 <script src="xf-lang.js?v=20261005a"></script>
 </head>
@@ -92,11 +97,22 @@ window.tdpLogin = async function() {
       <h3>✅ To-Do <span id="xf-todo-sum" style="font-size:12px;font-weight:600;color:var(--text2)"></span>
         <button type="button" class="td-btn gh" style="margin-left:auto" onclick="xfTodoLoad(true)">↻</button>
 </h3>
+      <!-- 🗂 Owner (2026-11-25): "separate it into different sections: 1. Office 2. Warehouse 3. Maintenance" -->
+      <div class="td-tabs" id="td-tabs">
+        <button type="button" class="td-tab" id="td-tab-office" onclick="xfTodoTab('office')">🧑‍💼 Office<span class="n" id="td-n-office"></span></button>
+        <button type="button" class="td-tab" id="td-tab-warehouse" onclick="xfTodoTab('warehouse')">🏭 Warehouse<span class="n" id="td-n-warehouse"></span></button>
+        <button type="button" class="td-tab" id="td-tab-maintenance" onclick="xfTodoTab('maintenance')">🔧 Maintenance<span class="n" id="td-n-maintenance"></span></button>
+      </div>
       <div id="xf-todo-list" style="font-size:13px;color:var(--text3)">Loading…</div>
       <div id="xf-todo-admin" style="display:none">
         <div class="td-add"><input id="xf-todo-title" maxlength="200" placeholder="What needs doing? (e.g. Count aisle C2, sweep the garage)" onkeydown="if(event.key==='Enter')xfTodoAdd()">
           <select id="xf-todo-kind"><option value="once">📝 To do next</option><option value="daily">📅 Every day</option></select>
-          <button type="button" class="td-btn go xf-todo-addbtn" onclick="xfTodoAdd()">＋ Add</button></div>
+          <!-- 🗂 which tab it goes to, and the staff who needs to do it (owner 2026-11-25) -->
+          <select id="xf-todo-sect" title="Which tab"><option value="office">🧑‍💼 Office</option><option value="warehouse">🏭 Warehouse</option><option value="maintenance">🔧 Maintenance</option></select>
+          <select id="xf-todo-who" title="Who needs to do it"><option value="">👥 Anyone</option></select>
+          <button type="button" class="td-btn go xf-todo-addbtn" id="xf-todo-addbtn" onclick="xfTodoAdd()">＋ Add</button>
+          <button type="button" class="td-btn gh" id="xf-todo-cancel" style="display:none" onclick="xfTodoEditCancel()">Cancel</button></div>
+        <input id="xf-todo-notes" maxlength="600" placeholder="Notes (optional — how / where)" style="width:100%;margin-top:6px;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;background:var(--bg2);color:var(--text)">
         <details id="xf-todo-hist" style="margin-top:8px" ontoggle="if(this.open)xfTodoHist()"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">🕘 History — who took / finished what (last 7 days)</summary><div id="xf-todo-hist-out" style="font-size:12px;margin-top:6px"></div></details>
       </div>
       <div id="xf-todo-msg" style="font-size:12px;margin-top:6px"></div>
@@ -110,7 +126,10 @@ window.tdpLogin = async function() {
 // Mgmt / Admin / Owner: ＋ Add, ✏️ change, 🗑 remove, 🕘 History. No WiFi → the tap is kept on this device and sent when it is back
 // (each with its own request #, so it is never done twice).
 (function() {
-  var W = 'https://xfitting-lookup.alfixedinc88.workers.dev', TD = { tasks: [], boss: false }, OB_KEY = 'xf_todo_outbox';
+  var W = 'https://xfitting-lookup.alfixedinc88.workers.dev', TD = { tasks: [], boss: false, staff: [], tab: 'warehouse', editId: 0 }, OB_KEY = 'xf_todo_outbox';
+  try { var t0 = localStorage.getItem('xf_todo_tab'); if (t0) TD.tab = t0; } catch (e) {}
+  var SECT = { office: '🧑‍💼 Office', warehouse: '🏭 Warehouse', maintenance: '🔧 Maintenance' };
+  function sectOf(x) { return SECT[x.section] ? x.section : 'warehouse'; }
   function g(id) { return document.getElementById(id); }
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function tm(v) { try { return v ? new Date(v).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return ''; } }
@@ -124,29 +143,39 @@ window.tdpLogin = async function() {
   }
   function render() {
     var L = g('xf-todo-list'); if (!L) return;
-    var daily = TD.tasks.filter(function(x) { return x.kind === 'daily'; }), once = TD.tasks.filter(function(x) { return x.kind !== 'daily'; });
+    // 🗂 the tab picked (Office / Warehouse / Maintenance); the ones for me first
+    var inTab = TD.tasks.filter(function(x) { return sectOf(x) === TD.tab; }).sort(function(a, b) { return (b.assignee === me()) - (a.assignee === me()); });
+    var daily = inTab.filter(function(x) { return x.kind === 'daily'; }), once = inTab.filter(function(x) { return x.kind !== 'daily'; });
+    Object.keys(SECT).forEach(function(k) { var n = TD.tasks.filter(function(x) { return sectOf(x) === k && x.status !== 'done'; }).length, el = g('td-n-' + k), b = g('td-tab-' + k);
+      if (el) el.textContent = n ? n : ''; if (b) b.classList.toggle('on', k === TD.tab); });
     var pend = {}; obRead().forEach(function(o) { pend[o.id + '|' + o.action] = 1; });
     var row = function(x) {
       var mine = x.takenBy === me(), st = x.status, sub = '', btns = '';
       if (st === 'done') sub = '✅ Done by <b>' + esc(x.doneBy) + '</b> ' + esc(tm(x.doneAt)) + (x.takenBy && x.takenBy !== x.doneBy ? ' (taken by ' + esc(x.takenBy) + ')' : '');
       else if (st === 'taken') sub = '🙋 <b>' + esc(x.takenBy) + '</b> is doing it · since ' + esc(tm(x.takenAt));
       if (x.notes) sub = esc(x.notes) + (sub ? '<br>' + sub : '');
-      if (st === 'open') btns = '<button type="button" class="td-btn go" onclick="xfTodoAct(' + x.id + ',\'take\')">🙋 I\'ll do it</button>';
-      else if (st === 'taken') btns = '<button type="button" class="td-btn ok" onclick="xfTodoAct(' + x.id + ',\'done\')">✅ Done</button>'
+      var notMine = x.assignee && x.assignee !== me() && !TD.boss; // 👤 given to someone else
+      if (st === 'open') btns = notMine ? '<span class="td-sub">👤 for ' + esc(x.assignee) + '</span>' : '<button type="button" class="td-btn go" onclick="xfTodoAct(' + x.id + ',\'take\')">🙋 I\'ll do it</button>';
+      else if (st === 'taken') btns = (notMine && !mine ? '' : '<button type="button" class="td-btn ok" onclick="xfTodoAct(' + x.id + ',\'done\')">✅ Done</button>')
         + (mine || TD.boss ? ' <button type="button" class="td-btn gh" title="Give it back — someone else can take it" onclick="xfTodoAct(' + x.id + ',\'giveback\')">↩</button>' : '');
       else if (x.doneBy === me() || TD.boss) btns = '<button type="button" class="td-btn gh" title="Not done after all" onclick="xfTodoAct(' + x.id + ',\'undo\')">↩ Undo</button>';
       if (TD.boss) btns += ' <button type="button" class="td-btn gh xf-todo-edit" title="Change" onclick="xfTodoEdit(' + x.id + ')">✏️</button> <button type="button" class="td-btn gh xf-todo-del" title="Remove from the list" onclick="xfTodoAct(' + x.id + ',\'remove\')">🗑</button>';
       if (pend[x.id + '|take'] || pend[x.id + '|done']) sub += (sub ? '<br>' : '') + '<span style="color:var(--orange)">📴 saved on this device — sent when WiFi is back</span>';
-      return '<div class="td-row' + (st === 'done' ? ' done' : '') + '"><div class="td-main"><div class="td-title">' + esc(x.title) + '</div>' + (sub ? '<div class="td-sub">' + sub + '</div>' : '') + '</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">' + btns + '</div></div>';
+      return '<div class="td-row' + (st === 'done' ? ' done' : '') + '"><div class="td-main"><div class="td-title">' + esc(x.title) + (x.assignee ? '<span class="td-for">👤 ' + (x.assignee === me() ? 'for you' : esc(x.assignee)) + '</span>' : '') + '</div>' + (sub ? '<div class="td-sub">' + sub + '</div>' : '') + '</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">' + btns + '</div></div>';
     };
-    var open = TD.tasks.filter(function(x) { return x.status === 'open'; }).length, dDone = daily.filter(function(x) { return x.status === 'done'; }).length;
-    var sm = g('xf-todo-sum'); if (sm) sm.textContent = TD.tasks.length ? (open + ' open' + (daily.length ? ' · today ' + dDone + ' of ' + daily.length + ' daily done' : '')) : '';
+    var allDaily = TD.tasks.filter(function(x) { return x.kind === 'daily'; }); // the top line counts all three tabs
+    var open = TD.tasks.filter(function(x) { return x.status === 'open'; }).length, dDone = allDaily.filter(function(x) { return x.status === 'done'; }).length;
+    var sm = g('xf-todo-sum'); if (sm) sm.textContent = TD.tasks.length ? (open + ' open' + (allDaily.length ? ' · today ' + dDone + ' of ' + allDaily.length + ' daily done' : '')) : '';
     var cs = g('xf-todo-card-sum'); if (cs) { cs.textContent = sm ? sm.textContent : ''; cs.style.display = cs.textContent ? 'inline-block' : 'none'; } // 🗂 on the ✅ To-Do card too
-    L.innerHTML = !TD.tasks.length ? '<div style="color:var(--text3)">Nothing on the list.' + (TD.boss ? ' Add something below.' : '') + '</div>'
+    L.innerHTML = !inTab.length ? '<div style="color:var(--text3);padding:6px 0">Nothing in ' + SECT[TD.tab] + '.' + (TD.boss ? ' Add something below.' : '') + '</div>'
       : (daily.length ? '<div class="td-sec">📅 Every day</div>' + daily.map(row).join('') : '') + (once.length ? '<div class="td-sec">📝 To do next</div>' + once.map(row).join('') : '');
     var ad = g('xf-todo-admin'); if (ad) ad.style.display = TD.boss ? '' : 'none';
+    var ws = g('xf-todo-who'); if (ws && ws.options.length !== TD.staff.length + 1) { var cur = ws.value;
+      ws.innerHTML = '<option value="">👥 Anyone</option>' + TD.staff.map(function(n) { return '<option value="' + esc(n) + '">👤 ' + esc(n) + '</option>'; }).join(''); ws.value = cur; }
+    var ss = g('xf-todo-sect'); if (ss && !TD.editId) ss.value = TD.tab;
   }
-  function apply(d) { if (d && Array.isArray(d.tasks)) { TD.tasks = d.tasks; if (d.boss != null) TD.boss = !!d.boss; } render(); }
+  window.xfTodoTab = function(t) { if (!SECT[t]) return; TD.tab = t; try { localStorage.setItem('xf_todo_tab', t); } catch (e) {} render(); };
+  function apply(d) { if (d && Array.isArray(d.tasks)) { TD.tasks = d.tasks; if (d.boss != null) TD.boss = !!d.boss; if (Array.isArray(d.staff) && d.staff.length) TD.staff = d.staff; } render(); }
   window.xfTodoLoad = function(force) {
     if (!localStorage.getItem('xf_cred_token')) return;
     xfTodoFlush();
@@ -174,18 +203,29 @@ window.tdpLogin = async function() {
       .catch(function() { if (action === 'take' || action === 'done' || action === 'giveback' || action === 'undo') { var q = obRead(); q.push(body); obWrite(q); render(); msg('📴 No WiFi — kept on this device, sent when WiFi is back', 'var(--orange)'); }
         else msg('📴 No WiFi — try again when it is back', 'var(--red)'); });
   };
+  // ＋ Add (or 💾 Save when ✏️ changing one): what, every day / next, which tab, who (anyone or one staff), notes
   window.xfTodoAdd = function() {
-    var i = g('xf-todo-title'), k = g('xf-todo-kind'), t = (i && i.value || '').trim(); if (!t) { if (i) i.focus(); return; }
-    post({ action: 'add', title: t, kind: k ? k.value : 'once', _requestId: 'todo-add-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) })
-      .then(function(d) { if (d.ok) { if (i) i.value = ''; apply(d); msg('✅ Added', 'var(--green)'); } else msg('⚠ ' + (d.error || 'not added'), 'var(--red)'); })
-      .catch(function() { msg('📴 No WiFi — add it again when it is back', 'var(--red)'); });
+    var i = g('xf-todo-title'), k = g('xf-todo-kind'), sc = g('xf-todo-sect'), w = g('xf-todo-who'), nt = g('xf-todo-notes'), t = (i && i.value || '').trim(); if (!t) { if (i) i.focus(); return; }
+    var sect = sc ? sc.value : TD.tab, who = w ? w.value : '', notes = nt ? nt.value.trim() : '', editing = TD.editId;
+    var body = editing ? { action: 'edit', id: editing, title: t, notes: notes, section: sect, assignee: who, _requestId: 'todo-ed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }
+      : { action: 'add', title: t, kind: k ? k.value : 'once', section: sect, assignee: who, notes: notes, _requestId: 'todo-add-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) };
+    post(body).then(function(d) {
+      if (!d.ok) { msg('⚠ ' + (d.error || 'not saved'), 'var(--red)'); return; }
+      xfTodoEditCancel(); TD.tab = sect; try { localStorage.setItem('xf_todo_tab', sect); } catch (e) {}
+      apply(d); msg((editing ? '💾 Saved' : '✅ Added') + ' to ' + SECT[sect] + (who ? ' — for ' + who : ''), 'var(--green)');
+    }).catch(function() { msg('📴 No WiFi — try again when it is back', 'var(--red)'); });
   };
   window.xfTodoEdit = function(id) {
     var x = TD.tasks.filter(function(t) { return t.id === id; })[0]; if (!x) return;
-    var nt = prompt('✏️ Change the task:', x.title); if (nt == null) return; nt = nt.trim(); if (!nt) return;
-    var nn = prompt('Notes (optional — how / where):', x.notes || ''); if (nn == null) nn = x.notes || '';
-    post({ action: 'edit', id: id, title: nt, notes: nn, _requestId: 'todo-ed-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) })
-      .then(function(d) { apply(d); if (!d.ok) msg('⚠ ' + (d.error || 'not saved'), 'var(--red)'); }).catch(function() { msg('📴 No WiFi — try again when it is back', 'var(--red)'); });
+    TD.editId = id; var set = function(k, v) { var e = g(k); if (e) e.value = v; };
+    set('xf-todo-title', x.title); set('xf-todo-notes', x.notes || ''); set('xf-todo-sect', sectOf(x)); set('xf-todo-who', x.assignee || ''); set('xf-todo-kind', x.kind === 'daily' ? 'daily' : 'once');
+    var k = g('xf-todo-kind'); if (k) k.disabled = true; // every day / next stays as it is
+    var b = g('xf-todo-addbtn'), c = g('xf-todo-cancel'); if (b) b.textContent = '💾 Save'; if (c) c.style.display = '';
+    msg('✏️ Changing "' + x.title + '" — change it above, then 💾 Save', 'var(--accent)'); var ti = g('xf-todo-title'); if (ti) { ti.focus(); ti.scrollIntoView({ block: 'center' }); }
+  };
+  window.xfTodoEditCancel = function() {
+    TD.editId = 0; ['xf-todo-title', 'xf-todo-notes', 'xf-todo-who'].forEach(function(k) { var e = g(k); if (e) e.value = ''; });
+    var k = g('xf-todo-kind'); if (k) k.disabled = false; var b = g('xf-todo-addbtn'), c = g('xf-todo-cancel'); if (b) b.textContent = '＋ Add'; if (c) c.style.display = 'none'; msg('');
   };
   window.xfTodoHist = function() {
     var o = g('xf-todo-hist-out'); if (!o) return; o.textContent = 'Loading…';
@@ -205,6 +245,6 @@ window.tdpLogin = async function() {
 </script>
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261125b"></script>
+<script src="xf-access.js?v=20261125c"></script>
 </body>
 </html>

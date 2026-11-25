@@ -1551,7 +1551,8 @@ window.xfTodoCardSum = function() {
   fetch('https://xfitting-lookup.alfixedinc88.workers.dev/todo', { headers: { 'X-Cred-Token': tok } }).then(function(r) { return r.json(); }).then(function(d) {
     var T = (d && d.tasks) || [], daily = T.filter(function(x) { return x.kind === 'daily'; }), open = T.filter(function(x) { return x.status === 'open'; }).length;
     var dDone = daily.filter(function(x) { return x.status === 'done'; }).length;
-    cs.textContent = T.length ? open + ' open' + (daily.length ? ' · today ' + dDone + ' of ' + daily.length + ' daily done' : '') : '';
+    var forMe = T.filter(function(x) { return x.assignee && x.assignee === d.me && x.status !== 'done'; }).length; // 👤 given to me (owner 2026-11-25)
+    cs.textContent = T.length ? open + ' open' + (daily.length ? ' · today ' + dDone + ' of ' + daily.length + ' daily done' : '') + (forMe ? ' · 👤 ' + forMe + ' for you' : '') : '';
     cs.style.display = cs.textContent ? 'inline-block' : 'none';
   }).catch(function() {});
 };
@@ -3528,5 +3529,5 @@ function showToast(msg) {
 
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261125b"></script>
+<script src="xf-access.js?v=20261125c"></script>
 </html>

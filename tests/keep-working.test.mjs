@@ -7589,7 +7589,7 @@ console.log('\n🧩 Pages & Tabs: every tab and card has a check mark (new ones 
   ]);
   const TABS = { 'inventory.html': /id="(inv-tab-[a-z0-9]+)"/g, 'packship.html': /id="(ps-tab-[a-z0-9]+)"/g, 'reorder.html': /id="(ro-tab-[a-z0-9]+)"/g,
     'repricer.html': /id="(tab-[a-z0-9-]+)"/g, 'awd.html': /id="(tab-[a-z0-9]+)"/g, 'sales.html': /id="(db-tab-[a-z0-9]+)"/g, 'ldash.html': /id="(ldash-ih-btn-[a-z]+)"/g,
-    'imagemaker.html': /id="(imx-tab-[a-z]+)"/g, 'upc.html': /id="(upc-tab-[a-z]+)"/g, 'warehouse.html': /class="tabitem[^"]*"[^>]*onclick="switchTab\('([a-z]+)'\)"/g };
+    'imagemaker.html': /id="(imx-tab-[a-z]+)"/g, 'upc.html': /id="(upc-tab-[a-z]+)"/g, 'todo.html': /id="(td-tab-[a-z]+)"/g, 'warehouse.html': /class="tabitem[^"]*"[^>]*onclick="switchTab\('([a-z]+)'\)"/g };
   const CARDS = { 'inventory.html': /<(?:div|details)[^>]*class="icard(?: [^"]*)?"[^>]*id="([\w-]+)"|<(?:div|details)[^>]*id="([\w-]+)"[^>]*class="icard(?: [^"]*)?"/g,
     'packship.html': /<div[^>]*class="ps-card(?: [^"]*)?"[^>]*id="([\w-]+)"|<div[^>]*id="([\w-]+)"[^>]*class="ps-card(?: [^"]*)?"/g };
   const noMark = [], stale = [];
@@ -15134,6 +15134,37 @@ console.log('\n🗂 Main page: ✅ To-Do is a card (first in 🏭 Warehouse); ta
     /<div class="launcher-card" id="xf-todo-card" onclick="window\.location\.href='todo\.html'"/.test(grid) && /id="xf-todo-card-sum"/.test(ih) && !/id="xf-todo"/.test(ih) && /window\.xfTodoCardSum\(\)/.test(ih)
       && /<div id="tdp-gate"/.test(tp) && /<div class="xf-todo" id="xf-todo">/.test(tp) && /id="xf-todo-admin"/.test(tp) && /window\.xfTodoHist = function/.test(tp) && /← Apps<\/button>/.test(tp) && /data-xf-signout/.test(tp)
       && /'todo\.html'/.test(sw.slice(sw.indexOf('const OFFLINE_PAGES'), sw.indexOf('const LIB_HOSTS'))));
+}
+
+// Owner (2026-11-25): "To-Do: separate it into different sections 1. Office 2. Warehouse 3. Maintenance; when we add a new to-do we can
+// pick which tab it goes to and also add a staff who needs to do it".
+console.log('\n🗂 To-Do: Office / Warehouse / Maintenance tabs; pick the tab and the staff when adding');
+{
+  sq.exec("DELETE FROM todo_task; DELETE FROM todo_state; DELETE FROM todo_log");
+  const pkT = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const P = async (b, tok) => { const r = await call('/todo', { method: 'POST', headers: { 'X-Cred-Token': tok || login.token, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); const d = await r.json(); d._st = r.status; return d; };
+  const G = async tok => (await (await call('/todo', { headers: { 'X-Cred-Token': tok || login.token } })).json());
+  const a = await P({ action: 'add', title: 'Answer eBay messages', kind: 'daily', section: 'office', assignee: 'PK' });
+  const b = await P({ action: 'add', title: 'Fix the dock door', kind: 'once', section: 'maintenance', assignee: 'ZZ' });
+  const c = await P({ action: 'add', title: 'Count aisle C2', kind: 'once' }); // no section sent → Warehouse
+  const Lb = await G(), Lp = await G(pkT), T = id => Lb.tasks.find(x => x.id === id);
+  check('added to 🧑‍💼 Office (for PK), 🔧 Maintenance (for ZZ), and 🏭 Warehouse (none picked → Warehouse); Mgmt gets the staff list to pick from (PK, TS…), a picker doesn\'t',
+    a.ok && b.ok && c.ok && T(a.id).section === 'office' && T(a.id).assignee === 'PK' && T(b.id).section === 'maintenance' && T(b.id).assignee === 'ZZ' && T(c.id).section === 'warehouse' && !T(c.id).assignee
+      && Lb.staff.includes('PK') && Lb.staff.includes('TS') && (Lp.staff || []).length === 0 && Lp.me === 'PK', { tasks: Lb.tasks, staff: Lb.staff });
+  const nz = await P({ action: 'take', id: b.id }, pkT), ok1 = await P({ action: 'take', id: a.id }, pkT), ok2 = await P({ action: 'done', id: a.id }, pkT), any = await P({ action: 'take', id: c.id }, pkT);
+  check('👤 given to someone: only that person (or Mgmt) takes it — PK can\'t take ZZ\'s (403 "for ZZ"), takes + finishes his own; a task for anyone stays open to all',
+    nz._st === 403 && /for ZZ/.test(nz.error) && ok1.ok && ok2.ok && any.ok, { nz, ok1: ok1.ok, ok2: ok2.ok });
+  const ed = await P({ action: 'edit', id: c.id, title: 'Count aisle C2', notes: '', section: 'maintenance', assignee: 'PK' }), Le = await G();
+  const lg = await (await call('/todo?log=7', { headers: { 'X-Cred-Token': login.token } })).json(), eLog = (lg.log || []).find(l => l.task_id === c.id && l.action === 'edit');
+  check('✏️ change moves it to another tab and gives it to a staff — kept in 🕘 History ("warehouse → maintenance · for: anyone → PK"); the add says where and for whom',
+    ed.ok && Le.tasks.find(x => x.id === c.id).section === 'maintenance' && Le.tasks.find(x => x.id === c.id).assignee === 'PK' && eLog && /warehouse → maintenance/.test(eLog.detail) && /anyone → PK/.test(eLog.detail)
+      && (lg.log || []).some(l => l.task_id === a.id && l.action === 'add' && /office · for PK/.test(l.detail)), eLog);
+  const { readFileSync: rfT } = await import('node:fs');
+  const tp = rfT(fileURLToPath(new URL('../todo.html', import.meta.url)), 'utf8'), ih = rfT(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
+  check('page: 3 tabs (🧑‍💼 Office / 🏭 Warehouse / 🔧 Maintenance, open count on each, the one picked remembered); Add has "which tab" + "👥 Anyone / 👤 staff" + notes; ✏️ fills the same form → 💾 Save; "👤 for you" first; someone else\'s shows "👤 for NAME" (no I\'ll do it); main-page card says "👤 N for you"',
+    ['office', 'warehouse', 'maintenance'].every(k => new RegExp('id="td-tab-' + k + '" onclick="xfTodoTab\\(\'' + k + '\'\\)"').test(tp)) && /id="xf-todo-sect"/.test(tp) && /id="xf-todo-who"/.test(tp) && /id="xf-todo-notes"/.test(tp)
+      && /localStorage\.setItem\('xf_todo_tab'/.test(tp) && /b\.textContent = '💾 Save'/.test(tp) && /👤 for ' \+ esc\(x\.assignee\)/.test(tp) && /'for you'/.test(tp) && /' · 👤 ' \+ forMe \+ ' for you'/.test(ih));
+  sq.exec("DELETE FROM todo_task; DELETE FROM todo_state; DELETE FROM todo_log");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
