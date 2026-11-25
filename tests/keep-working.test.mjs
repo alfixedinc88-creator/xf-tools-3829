@@ -2399,8 +2399,9 @@ console.log('\nPicking / Packing: a scan shows the WHOLE order (never just part 
     && /_psRenderPickProduct\(tracking, data\.lineItems, data\.orderNum\);\s*_psRecheckItems\(tracking, data\.lineItems, 'pick', data\.orderNum\);/.test(ph), null);
   const ix = rd('index.html'), lp = rd('labelprint.html'), xa = rd('xf-access.js');
   const wh = ix.slice(ix.indexOf('🏭 Warehouse</div>'), ix.indexOf('⚡ Operator</div>'));
-  check('Label Printer: its card is in the 🏭 Warehouse group everyone sees (not the managers-only row), and any signed-in account can open it',
-    /labelprint\.html/.test(wh) && !/labelprint\.html/.test(ix.slice(ix.indexOf('⚡ Operator</div>'))) && !/does not have access to Label Printer/.test(lp)
+  // Owner 2026-11-25: "merge the Label Printer into the UPC Barcodes" → reached from the UPC Barcodes card (🖨️ Label Printer tab) in the same 🏭 Warehouse group.
+  check('Label Printer: its card (now UPC Barcodes → 🖨️ Label Printer tab) is in the 🏭 Warehouse group everyone sees (not the managers-only row), and any signed-in account can open it',
+    /upc\.html/.test(wh) && /id="upc-tab-lp"/.test(rd('upc.html')) && /labelprint\.html\?embed=1/.test(rd('upc.html')) && !/labelprint\.html/.test(ix.slice(ix.indexOf('⚡ Operator</div>'))) && !/does not have access to Label Printer/.test(lp)
     && /key: 'labelprint', file: 'labelprint\.html', name: '🏷️ Label Printer', needs: 'any sign-in'/.test(xa), null);
 }
 
@@ -15092,6 +15093,30 @@ console.log('\n📦 A new spot for a pack size gets ITS OWN pieces per case (not
   const pcs = sq.prepare("SELECT SUM(cases*units_per_case) p FROM master_list WHERE part_num = '68-1-1=5'").get().p;
   check('68-1-1=5 × 3 at a new spot C3=6-8-3 → 5 pcs a case (not the =10\'s 10): pieces 10 + 15 = 25 ✅', row.cases === 3 && row.u === 5 && pcs === 25, { row, pcs });
   sq.exec("DELETE FROM master_list WHERE base_sku = '68-1-1'");
+}
+
+// Owner (2026-11-25): "merge the 'Label Printer' into the 'UPC Barcodes' — in UPC Barcodes add one more tab for 'label printer'".
+console.log('\n🖨️ UPC Barcodes → 🖨️ Label Printer tab (the Label Printer merged in; its own card off the main page)');
+{
+  const { readFileSync: rfU } = await import('node:fs');
+  const R = f => rfU(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const uh = R('upc.html'), ih = R('index.html'), lp = R('labelprint.html'), xa = R('xf-access.js');
+  check('UPC Barcodes has 3 tabs: 🏷️ UPC Barcodes · 📦 Big Company Shipment · 🖨️ Label Printer (opens labelprint.html inside, printer access allowed); in 🧩 Pages & Tabs',
+    /id="upc-tab-main"[\s\S]{0,200}id="upc-tab-awd"[\s\S]{0,200}id="upc-tab-lp"[^>]*onclick="upcTab\('lp'\)">🖨️ Label Printer</.test(uh)
+      && /<iframe id="upc-lp-frame"[^>]*allow="serial; usb; bluetooth"/.test(uh) && /f\.setAttribute\('src', 'labelprint\.html\?embed=1'\)/.test(uh)
+      && /key: 'lp', label: '🖨️ Label Printer tab[^']*', sel: '#upc-tab-lp'/.test(xa), null);
+  // run upcTab: switching shows one panel, the Label Printer loads once on first open
+  const els = {}; const el = id => els[id] || (els[id] = { id, style: {}, attrs: {}, classList: { on: false, toggle(_, v) { this.on = v; } },
+    getAttribute(k) { return this.attrs[k] || null; }, setAttribute(k, v) { this.attrs[k] = v; this.sets = (this.sets || 0) + 1; }, addEventListener() {} });
+  const src = uh.slice(uh.indexOf('window.upcTab = function(t) {'), uh.indexOf('async function upcAutoLoadSavedShipment()'));
+  const win = {};
+  new Function('window', 'document', 'localStorage', 'navigator', 'setTimeout', src + '; window.upcLpOpen = upcLpOpen;')(win, { getElementById: el }, { setItem() {} }, { userAgent: 'Mobi' }, () => {});
+  win.upcTab('lp'); const a = el('upc-panel-lp').style.display, b = el('upc-panel-main').style.display; win.upcTab('main'); win.upcTab('lp');
+  check('…tapping 🖨️ Label Printer shows only that tab and loads the Label Printer once (not again on every tap); the other tabs still switch',
+    a === '' && b === 'none' && el('upc-tab-lp').classList.on && el('upc-lp-frame').attrs.src === 'labelprint.html?embed=1' && el('upc-lp-frame').sets === 1, { a, b });
+  check('…the main page has no separate Label Printer card any more (UPC Barcodes says it has the Label Printer); labelprint.html still opens on its own and hides its header only inside the tab',
+    !/onclick="window\.location\.href='labelprint\.html'"/.test(ih) && /UPC Barcodes<\/div>\s*<div class="launcher-card-desc">[^<]*🖨️ Label Printer/.test(ih)
+      && /\[\?&\]embed=1\\b\/\.test\(location\.search\)\) document\.documentElement\.classList\.add\('lp-embed'\)/.test(lp) && /html\.lp-embed #labelprint-app \.lp-header\{display:none\}/.test(lp), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

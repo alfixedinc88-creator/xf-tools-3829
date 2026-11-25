@@ -195,6 +195,9 @@ window.lpCredLogin = async function() {
 #labelprint-app .lp-count-badge { background:#0891B2;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px }
 </style>
 
+<!-- 🖨️ Owner (2026-11-25): opened as the Label Printer tab of UPC Barcodes (?embed=1) → its own header is hidden (UPC has ← Apps / Sign Out) -->
+<script>if (/[?&]embed=1\b/.test(location.search)) document.documentElement.classList.add('lp-embed');</script>
+<style>html.lp-embed #labelprint-app .lp-header{display:none} html.lp-embed body{background:#fff}</style>
 <div class="lp-header">
   <div class="lp-header-title">🏷️ Label Printer <span style="font-size:12px;font-weight:500;color:var(--text3)">ZP 450</span></div>
   <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">

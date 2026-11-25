@@ -280,6 +280,13 @@ body {
     <div id="upc-tabbar">
       <button type="button" id="upc-tab-main" class="on" onclick="upcTab('main')">🏷️ UPC Barcodes</button>
       <button type="button" id="upc-tab-awd" onclick="upcTab('awd')">📦 Big Company Shipment</button>
+      <button type="button" id="upc-tab-lp" onclick="upcTab('lp')">🖨️ Label Printer</button>
+    </div>
+
+    <!-- 🖨️ Owner (2026-11-25): "merge the Label Printer into the UPC Barcodes — add one more tab for label printer". The same Label Printer
+         page (labelprint.html, unchanged: printer connection, locations, saved labels, single label), opened inside this tab. -->
+    <div id="upc-panel-lp" style="display:none">
+      <iframe id="upc-lp-frame" title="Label Printer" allow="serial; usb; bluetooth" style="width:100%;min-height:75vh;border:1.5px solid var(--border);border-radius:12px;background:#fff;display:block"></iframe>
     </div>
 
     <div id="upc-panel-awd" style="display:none">
@@ -4349,7 +4356,7 @@ function upcOnLaunch() {
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
   upcLoadAwdOpen();
-  try { if (localStorage.getItem('upc_tab') === 'awd' && window.upcTab) upcTab('awd'); } catch (e) {} // 🗂 the tab you were on
+  try { var _ut = localStorage.getItem('upc_tab'); if ((_ut === 'awd' || _ut === 'lp') && window.upcTab) upcTab(_ut); } catch (e) {} // 🗂 the tab you were on
   // Ensure FNSKU map is loaded for AWD Label Match feature
   if (!AWD_DB.loaded) loadAWDPlannerDB();
 }
@@ -4414,13 +4421,27 @@ window.upcAwdFind = function(q) {
   var none = document.getElementById('upc-awd-find-none'); if (none) { none.style.display = q && !hit ? 'block' : 'none'; none.textContent = q && !hit ? '✗ "' + q + '" is not in this shipment' : ''; }
 };
 // 🗂 the two tabs of the UPC page (owner 2026-11-21): 🏷️ UPC Barcodes (everything as before) · 📦 Big Company Shipment (owner 2026-11-21: "change the AWD shipment to Big company shipment")
+// · 🖨️ Label Printer (owner 2026-11-25: the Label Printer page, merged in as a tab — loaded the first time the tab is opened)
 window.upcTab = function(t) {
-  t = t === 'awd' ? 'awd' : 'main';
-  ['main', 'awd'].forEach(function(k) { var p = document.getElementById('upc-panel-' + k), b = document.getElementById('upc-tab-' + k);
+  t = t === 'awd' || t === 'lp' ? t : 'main';
+  ['main', 'awd', 'lp'].forEach(function(k) { var p = document.getElementById('upc-panel-' + k), b = document.getElementById('upc-tab-' + k);
     if (p) p.style.display = k === t ? '' : 'none'; if (b) b.classList.toggle('on', k === t); });
   try { localStorage.setItem('upc_tab', t); } catch (e) {}
+  if (t === 'lp') upcLpOpen();
   if (t === 'awd') { var i = document.getElementById('upc-awdbox-inp'); if (i && !/Mobi|Android/i.test(navigator.userAgent)) setTimeout(function() { i.focus(); }, 50); }
 };
+
+// 🖨️ the Label Printer tab: labelprint.html?embed=1 (its own header hidden — this page has ← Apps / Sign Out); the frame grows with its page
+function upcLpOpen() {
+  var f = document.getElementById('upc-lp-frame'); if (!f) return;
+  if (!f.getAttribute('src')) {
+    f.setAttribute('src', 'labelprint.html?embed=1');
+    f.addEventListener('load', function() {
+      try { var d = f.contentDocument, fit = function() { f.style.height = Math.max(d.documentElement.scrollHeight, d.body ? d.body.scrollHeight : 0) + 'px'; };
+        fit(); if (window.ResizeObserver) new ResizeObserver(fit).observe(d.body); } catch (e) {}
+    });
+  }
+}
 
 async function upcAutoLoadSavedShipment() {
   try {

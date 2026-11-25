@@ -90,7 +90,8 @@ document.addEventListener('input', function (e) {
         { key: 'discontinued', label: 'Discontinued SKUs', sel: '#page-settings .card .card:has(#disc-panel)' } ] }] },
     { key: 'upc', file: 'upc.html', name: '🏷️ UPC Barcodes', needs: 'Ops / Mobile / Mgmt', card: card('upc.html'), tabs: [ // 🗂 owner 2026-11-21: two tabs
       { key: 'main', label: '🏷️ UPC Barcodes tab', sel: '#upc-tab-main' },
-      { key: 'awd', label: '📦 Big Company Shipment tab (AWD shipments ready, scan the Amazon box label, search the shipment)', sel: '#upc-tab-awd' } ], parts: [
+      { key: 'awd', label: '📦 Big Company Shipment tab (AWD shipments ready, scan the Amazon box label, search the shipment)', sel: '#upc-tab-awd' },
+      { key: 'lp', label: '🖨️ Label Printer tab (the Label Printer, merged in — owner 2026-11-25)', sel: '#upc-tab-lp' } ], parts: [
       { key: 'awdfind', label: '🔎 Search the AWD shipment (name, part #, UPC, FNSKU)', sel: '#upc-awd-find-wrap' },
       { key: 'awdbox', label: '📦 AWD box — scan the Amazon label → print its bag UPC / Amazon barcode', sel: '#upc-awdbox-card' },
       { key: 'dns', label: '🚫 Do Not Separate', sel: '#upc-app button[onclick="upcShowDNS()"]' },
