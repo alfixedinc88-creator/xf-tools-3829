@@ -1090,6 +1090,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
 .launcher-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:14px; } @media(min-width:600px){.launcher-grid{grid-template-columns:repeat(3,1fr);}}
 .launcher-mgmt-row { display:grid;grid-template-columns:1fr;gap:14px;max-width:480px;margin:0 auto;width:100%; } @media(min-width:500px){.launcher-mgmt-row{grid-template-columns:1fr 1fr;}}
+.xf-todo-modal { position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow-y:auto; }
+.xf-todo-modal .xf-todo { width:100%;max-width:640px;margin:0; }
 .xf-todo { margin:18px auto 0;text-align:left;background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow); }
 .xf-todo h3 { margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
 .xf-todo .td-sec { font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin:10px 0 4px; }
@@ -1324,9 +1326,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
     <!-- ✅ Owner (2026-11-24): "on the main page add a to do listing — something we can do next, so when the next person has nothing to do they
          can check it and click which one they are going to do; and something I put down for my guys to do daily". -->
+    <!-- 🗂 Owner (2026-11-25): "make the To-Do a small box like Warehouse Lookup / AWD Planner, and we click into it to add or see the
+         to-do list" — the list opens over the page from the ✅ To-Do card (first in 🏭 Warehouse); everything inside works as before. -->
+    <div id="xf-todo-modal" class="xf-todo-modal" style="display:none" onclick="if(event.target===this)xfTodoClose()">
     <div class="xf-todo" id="xf-todo">
       <h3>✅ To-Do <span id="xf-todo-sum" style="font-size:12px;font-weight:600;color:var(--text2)"></span>
-        <button type="button" class="td-btn gh" style="margin-left:auto" onclick="xfTodoLoad(true)">↻</button></h3>
+        <button type="button" class="td-btn gh" style="margin-left:auto" onclick="xfTodoLoad(true)">↻</button>
+        <button type="button" class="td-btn gh" title="Close" onclick="xfTodoClose()">✕</button></h3>
       <div id="xf-todo-list" style="font-size:13px;color:var(--text3)">Loading…</div>
       <div id="xf-todo-admin" style="display:none">
         <div class="td-add"><input id="xf-todo-title" maxlength="200" placeholder="What needs doing? (e.g. Count aisle C2, sweep the garage)" onkeydown="if(event.key==='Enter')xfTodoAdd()">
@@ -1336,9 +1342,16 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       </div>
       <div id="xf-todo-msg" style="font-size:12px;margin-top:6px"></div>
     </div>
+    </div>
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
+      <div class="launcher-card" id="xf-todo-card" onclick="xfTodoOpen()" style="border-color:#dcfce7">
+        <div class="launcher-card-icon">✅</div>
+        <div class="launcher-card-title">To-Do</div>
+        <div class="launcher-card-desc">Every-day tasks and what to do next — tap to see, take or add</div>
+        <div id="xf-todo-card-sum" style="display:none;margin-top:10px;font-size:11px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:700;letter-spacing:.5px"></div>
+      </div>
       <div class="launcher-card" onclick="window.location.href='warehouse.html'">
         <div class="launcher-card-icon">📍</div>
         <div class="launcher-card-title">Warehouse Lookup</div>
@@ -1601,11 +1614,16 @@ function applyRoleVisibility() {
     };
     var open = TD.tasks.filter(function(x) { return x.status === 'open'; }).length, dDone = daily.filter(function(x) { return x.status === 'done'; }).length;
     var sm = g('xf-todo-sum'); if (sm) sm.textContent = TD.tasks.length ? (open + ' open' + (daily.length ? ' · today ' + dDone + ' of ' + daily.length + ' daily done' : '')) : '';
+    var cs = g('xf-todo-card-sum'); if (cs) { cs.textContent = sm ? sm.textContent : ''; cs.style.display = cs.textContent ? 'inline-block' : 'none'; } // 🗂 on the ✅ To-Do card too
     L.innerHTML = !TD.tasks.length ? '<div style="color:var(--text3)">Nothing on the list.' + (TD.boss ? ' Add something below.' : '') + '</div>'
       : (daily.length ? '<div class="td-sec">📅 Every day</div>' + daily.map(row).join('') : '') + (once.length ? '<div class="td-sec">📝 To do next</div>' + once.map(row).join('') : '');
     var ad = g('xf-todo-admin'); if (ad) ad.style.display = TD.boss ? '' : 'none';
   }
   function apply(d) { if (d && Array.isArray(d.tasks)) { TD.tasks = d.tasks; if (d.boss != null) TD.boss = !!d.boss; } render(); }
+  // 🗂 the ✅ To-Do card opens the list over the page; ✕ / tap outside / Esc closes it (owner 2026-11-25)
+  window.xfTodoOpen = function() { var m = g('xf-todo-modal'); if (!m) return; m.style.display = 'flex'; window.xfTodoLoad(true); };
+  window.xfTodoClose = function() { var m = g('xf-todo-modal'); if (m) m.style.display = 'none'; };
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') window.xfTodoClose(); });
   window.xfTodoLoad = function(force) {
     if (!localStorage.getItem('xf_cred_token')) return;
     xfTodoFlush();
@@ -3628,5 +3646,5 @@ function showToast(msg) {
 
 
 <script src="xf-signout.js?v=20261019b"></script>
-<script src="xf-access.js?v=20261124a"></script>
+<script src="xf-access.js?v=20261125a"></script>
 </html>
