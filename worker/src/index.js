@@ -17417,7 +17417,11 @@ async function todoTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS todo_state (task_id INTEGER NOT NULL, day TEXT NOT NULL, status TEXT NOT NULL, taken_by TEXT, taken_at TEXT,
     done_by TEXT, done_at TEXT, PRIMARY KEY (task_id, day))`).run();
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS todo_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER, title TEXT, action TEXT, day TEXT, by_user TEXT, at TEXT, detail TEXT)').run();
+  // 🗂 Owner (2026-11-25): sections 1. Office 2. Warehouse 3. Maintenance, and the staff who needs to do it (empty = anyone)
+  for (const c of ['section TEXT', 'assignee TEXT']) { try { await env.DB.prepare('ALTER TABLE todo_task ADD COLUMN ' + c).run(); } catch (_) {} }
 }
+const TODO_SECTIONS = ['office', 'warehouse', 'maintenance'];
+const todoSection = v => TODO_SECTIONS.includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'warehouse';
 async function todoRoute(request, url, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   if (!session) return J({ ok: false, error: 'Sign in' }, 401);
@@ -17425,11 +17429,11 @@ async function todoRoute(request, url, env, session) {
   const roles = (session && session.roles) || [], boss = roles.some(r => r === 'mgmt' || r === 'admin' || r === 'owner');
   const who = String(session.displayName || session.username || '?').slice(0, 40), day = shipTodayKey(), t = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
   const list = async () => {
-    const tasks = ((await env.DB.prepare('SELECT id, title, notes, kind, sort, created_by, created_at FROM todo_task WHERE active = 1 ORDER BY kind DESC, sort, id').all()).results || []);
+    const tasks = ((await env.DB.prepare('SELECT id, title, notes, kind, sort, created_by, created_at, section, assignee FROM todo_task WHERE active = 1 ORDER BY kind DESC, sort, id').all()).results || []);
     const st = {}; ((await env.DB.prepare("SELECT * FROM todo_state WHERE day = ? OR day = 'once'").bind(day).all()).results || []).forEach(r => { st[r.task_id + '|' + r.day] = r; });
     // a finished "to do next" task stays on the list the day it was finished (crossed out), then only in the history
     const out = tasks.map(x => { const s0 = st[x.id + '|' + (x.kind === 'daily' ? day : 'once')] || null;
-      return { id: x.id, title: x.title, notes: x.notes || '', kind: x.kind, by: x.created_by, at: x.created_at,
+      return { id: x.id, title: x.title, notes: x.notes || '', kind: x.kind, by: x.created_by, at: x.created_at, section: todoSection(x.section), assignee: x.assignee || '',
         status: s0 ? s0.status : 'open', takenBy: s0 ? s0.taken_by : null, takenAt: s0 ? s0.taken_at : null, doneBy: s0 ? s0.done_by : null, doneAt: s0 ? s0.done_at : null }; })
       .filter(x => !(x.kind === 'once' && x.status === 'done' && Date.parse(x.doneAt || 0) < Date.now() - 86400000));
     return out;
@@ -17441,7 +17445,10 @@ async function todoRoute(request, url, env, session) {
       const since = new Date(Date.now() - Math.min(days, 90) * 86400000).toISOString();
       return J({ ok: true, log: ((await env.DB.prepare('SELECT * FROM todo_log WHERE at >= ? ORDER BY id DESC LIMIT 500').bind(since).all()).results || []) });
     }
-    return J({ ok: true, day, boss, tasks: await list() });
+    // the staff to pick from when adding (Mgmt and up): every active sign-in's name
+    const staff = boss ? (((await env.DB.prepare('SELECT display_name, username FROM cred_users WHERE active = 1 ORDER BY display_name').all().catch(() => ({ results: [] }))).results) || [])
+      .map(u => String(u.display_name || u.username || '').trim()).filter((v, i, a) => v && a.indexOf(v) === i) : [];
+    return J({ ok: true, day, boss, me: who, staff, tasks: await list() });
   }
   const b = await request.json().catch(() => ({}));
   const rid = t(b._requestId, 80);
@@ -17452,10 +17459,10 @@ async function todoRoute(request, url, env, session) {
   const done = async res => { if (rid) await recordRequestResult(env, rid, res).catch(() => {}); return J(res, res.ok ? 200 : (res.status || 400)); };
   if (action === 'add') {
     if (!boss) return done({ ok: false, error: 'Only Mgmt / Admin / Owner can add to the list', status: 403 });
-    const title = t(b.title, 200), kind = b.kind === 'daily' ? 'daily' : 'once';
+    const title = t(b.title, 200), kind = b.kind === 'daily' ? 'daily' : 'once', section = todoSection(b.section), assignee = t(b.assignee, 40);
     if (!title) return done({ ok: false, error: 'Type what needs doing' });
-    const r = await env.DB.prepare('INSERT INTO todo_task (title, notes, kind, created_by, created_at) VALUES (?,?,?,?,?)').bind(title, t(b.notes, 600), kind, who, now).run();
-    const newId = r.meta && r.meta.last_row_id; await log(newId, title, 'add', kind === 'daily' ? 'every day' : '', kind);
+    const r = await env.DB.prepare('INSERT INTO todo_task (title, notes, kind, created_by, created_at, section, assignee) VALUES (?,?,?,?,?,?,?)').bind(title, t(b.notes, 600), kind, who, now, section, assignee || null).run();
+    const newId = r.meta && r.meta.last_row_id; await log(newId, title, 'add', kind === 'daily' ? 'every day' : '', kind + ' · ' + section + (assignee ? ' · for ' + assignee : ''));
     return done({ ok: true, id: newId, tasks: await list() });
   }
   const task = id ? await env.DB.prepare('SELECT * FROM todo_task WHERE id = ? AND active = 1').bind(id).first() : null;
@@ -17465,10 +17472,17 @@ async function todoRoute(request, url, env, session) {
   if (action === 'edit' || action === 'remove') {
     if (!boss) return done({ ok: false, error: 'Only Mgmt / Admin / Owner can change the list', status: 403 });
     if (action === 'remove') { await env.DB.prepare('UPDATE todo_task SET active = 0, removed_by = ?, removed_at = ? WHERE id = ?').bind(who, now, id).run(); await log(id, task.title, 'remove', d, ''); }
-    else { const title = t(b.title, 200) || task.title; await env.DB.prepare('UPDATE todo_task SET title = ?, notes = ? WHERE id = ?').bind(title, t(b.notes, 600), id).run();
-      await log(id, title, 'edit', d, task.title !== title ? 'was: ' + task.title : ''); }
+    else { const title = t(b.title, 200) || task.title, section = b.section != null ? todoSection(b.section) : todoSection(task.section), assignee = b.assignee != null ? t(b.assignee, 40) : (task.assignee || '');
+      await env.DB.prepare('UPDATE todo_task SET title = ?, notes = ?, section = ?, assignee = ? WHERE id = ?').bind(title, t(b.notes, 600), section, assignee || null, id).run();
+      const ch = [task.title !== title ? 'was: ' + task.title : '', todoSection(task.section) !== section ? todoSection(task.section) + ' → ' + section : '',
+        (task.assignee || '') !== assignee ? 'for: ' + (task.assignee || 'anyone') + ' → ' + (assignee || 'anyone') : ''].filter(Boolean).join(' · ');
+      await log(id, title, 'edit', d, ch); }
     return done({ ok: true, tasks: await list() });
   }
+  // 👤 a task given to one staff member: only that person (or Mgmt) takes / finishes it
+  const notYours = task.assignee && task.assignee !== who && !boss;
+  if ((action === 'take' || action === 'done') && notYours && !(action === 'done' && cur && cur.taken_by === who))
+    return done({ ok: false, error: '👤 This one is for ' + task.assignee, status: 403, tasks: await list() });
   if (action === 'take') {
     if (cur && cur.status === 'done') return done({ ok: false, error: '✅ Already done by ' + (cur.done_by || '?'), tasks: await list() });
     if (cur && cur.status === 'taken' && cur.taken_by !== who) return done({ ok: false, error: '🙋 ' + (cur.taken_by || '?') + ' is already doing it', tasks: await list() });
